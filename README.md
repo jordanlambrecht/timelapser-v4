@@ -141,15 +141,49 @@ NEON_PROJECT_ID="your-neon-project-id"
 
 ## 🧪 Testing
 
-### Monitor Worker Logs
+### **Automated Test Suite**
+Comprehensive pytest-based testing for the Python worker components:
+
+```bash
+cd python-worker
+
+# Run all tests
+./run-tests.sh
+
+# Quick unit tests only  
+./run-tests.sh quick
+
+# Tests with coverage report
+./run-tests.sh coverage
+
+# Verbose test output
+./run-tests.sh verbose
+```
+
+### **Test Coverage**
+- ✅ **Database Operations**: CRUD operations, connection handling, error cases
+- ✅ **RTSP Capture**: Camera connections, image capture, timeout handling  
+- ✅ **Video Generation**: FFmpeg integration, quality settings, error recovery
+- ✅ **Time Windows**: Daylight capture logic, overnight windows, invalid times
+- ✅ **Health Monitoring**: Camera status tracking, failure detection
+
+### **Manual Testing**
+
+#### Monitor Worker Logs
 ```bash
 tail -f data/worker.log
 ```
 
-### Check Database Connection
+#### Check Database Connection
 ```bash
 cd python-worker && source venv/bin/activate
 python -c "from database import Database; db = Database(); print('Database connected!')"
+```
+
+#### Test Camera Connection
+```bash
+cd python-worker && source venv/bin/activate
+python test_camera.py 1  # Test camera ID 1
 ```
 
 ## 🚨 Troubleshooting
