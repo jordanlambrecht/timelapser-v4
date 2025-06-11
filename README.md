@@ -120,10 +120,16 @@ timelapser-v4/
 
 ## ⚙️ Configuration
 
-### Environment Variables (.env.local)
+### Environment Variables
+1. **Copy the example file:**
+```bash
+cp .env.example .env.local
+```
+
+2. **Update with your database credentials:**
 ```env
-DATABASE_URL="postgresql://neondb_owner:npg_JYrHT0d7Gpzo@ep-polished-wind-a81rqv6u-pooler.eastus2.azure.neon.tech/neondb?sslmode=require"
-NEON_PROJECT_ID="muddy-math-60649735"
+DATABASE_URL="postgresql://username:password@host:port/database?sslmode=require"
+NEON_PROJECT_ID="your-neon-project-id"
 ```
 
 ### Default Settings
@@ -135,21 +141,15 @@ NEON_PROJECT_ID="muddy-math-60649735"
 
 ## 🧪 Testing
 
-### Test Camera Connection
-```bash
-cd python-worker && source venv/bin/activate
-python test_camera.py [camera_id]
-```
-
-### Test Video Generation
-```bash
-cd python-worker && source venv/bin/activate
-python video_generator.py ../data/cameras/camera-1/images/2025-06-10/ --with-db ../data/videos
-```
-
 ### Monitor Worker Logs
 ```bash
 tail -f data/worker.log
+```
+
+### Check Database Connection
+```bash
+cd python-worker && source venv/bin/activate
+python -c "from database import Database; db = Database(); print('Database connected!')"
 ```
 
 ## 🚨 Troubleshooting
