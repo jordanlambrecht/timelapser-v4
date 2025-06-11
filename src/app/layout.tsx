@@ -23,6 +23,7 @@ export default function RootLayout({
             <div className="space-x-4">
               <a href="/" className="hover:text-slate-300">Dashboard</a>
               <a href="/settings" className="hover:text-slate-300">Settings</a>
+              <a href="/tests" className="hover:text-slate-300">Tests</a>
             </div>
           </div>
         </nav>

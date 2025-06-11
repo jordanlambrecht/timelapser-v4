@@ -160,6 +160,17 @@ cd python-worker
 ./run-tests.sh verbose
 ```
 
+### **Web-Based Test Dashboard**
+View test results through the web interface:
+- **URL**: http://localhost:3000/tests
+- **Features**: 
+  - Real-time test execution and results
+  - Test categorization (Database, RTSP, Time Windows, Video Generation)
+  - Success/failure statistics with visual indicators
+  - Auto-refresh capability
+  - Raw test output viewing
+  - Multiple test types (quick, standard, coverage, verbose)
+
 ### **Test Coverage**
 - ✅ **Database Operations**: CRUD operations, connection handling, error cases
 - ✅ **RTSP Capture**: Camera connections, image capture, timeout handling  
