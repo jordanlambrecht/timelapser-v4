@@ -1,0 +1,27 @@
+# FastAPI and API dependencies
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+pydantic==2.11.5
+pydantic-settings==2.9.1
+
+# Database
+psycopg[binary,pool]==3.2.9
+alembic==1.16.1
+sqlalchemy==2.0.41
+
+# Image processing (for worker integration)
+opencv-python==4.11.0.86
+Pillow==11.2.1
+
+# Async and scheduling
+asyncio-throttle==1.0.2
+apscheduler==3.11.0
+
+# Utilities
+python-multipart==0.0.20
+python-dotenv==1.1.0
+loguru==0.7.3
+
+# Development Only
+pytest==8.4.0
+pytest-asyncio==1.0.0
