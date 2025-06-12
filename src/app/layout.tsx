@@ -3,6 +3,7 @@ import { Inter } from "next/font/google"
 import "./globals.css"
 import { cn } from "@/lib/utils"
 import { NavigationLinks } from "@/components/navigation-links"
+import { SpirographLogo } from "@/components/spirograph-logo"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -50,12 +51,9 @@ export default function RootLayout({
         <nav className='relative z-20 border-b glass-strong border-purple-muted/20'>
           <div className='px-6 py-4 mx-auto max-w-7xl'>
             <div className='flex items-center justify-between'>
-              {/* Logo area */}
+              {/* Logo area with spirograph */}
               <div className='flex items-center space-x-4'>
-                <div className='relative'>
-                  <div className='w-12 h-12 bg-gradient-to-br from-pink to-cyan rounded-xl rotate-12 floating' />
-                  <div className='absolute inset-0 w-12 h-12 bg-gradient-to-br from-purple to-pink rounded-xl -rotate-6 opacity-70' />
-                </div>
+                <SpirographLogo size={48} />
                 <div>
                   <h1 className='text-2xl font-bold gradient-text'>
                     Timelapser
