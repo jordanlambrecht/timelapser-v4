@@ -1,60 +1,56 @@
-"use client"
+'use client'
 
-import { useState, useEffect } from "react"
-import { Camera, Timelapse } from "@/lib/db"
+import { useState, useEffect } from 'react'
+import { Button } from "@/components/ui/button"
+import { Plus, Camera, Video, Clock, Activity, Zap, Eye } from "lucide-react"
+import { CameraCard } from "@/components/camera-card"
+import { StatsCard } from "@/components/stats-card"
+import { CameraModal } from "@/components/camera-modal"
+
+interface Camera {
+  id: number
+  name: string
+  rtsp_url: string
+  status: string
+  health_status: 'online' | 'offline' | 'unknown'
+  last_capture_at?: string
+  consecutive_failures: number
+  time_window_start?: string
+  time_window_end?: string
+  use_time_window: boolean
+}
+
+interface Timelapse {
+  id: number
+  camera_id: number
+  status: string
+  image_count: number
+  last_capture_at?: string
+}
 
 interface Video {
   id: number
   camera_id: number
-  name: string
-  status: "generating" | "completed" | "failed"
-  file_size: number
-  duration_seconds: number
+  status: string
+  file_size?: number
+  duration?: number
   created_at: string
-  camera_name?: string
 }
 
 export default function Dashboard() {
   const [cameras, setCameras] = useState<Camera[]>([])
   const [timelapses, setTimelapses] = useState<Timelapse[]>([])
   const [videos, setVideos] = useState<Video[]>([])
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingCamera, setEditingCamera] = useState<Camera | undefined>()
   const [loading, setLoading] = useState(true)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [showAddCamera, setShowAddCamera] = useState(false)
-  const [generatingVideo, setGeneratingVideo] = useState<number | null>(null)
 
-  // Form state for adding cameras
-  const [newCamera, setNewCamera] = useState({
-    name: "",
-    rtsp_url: "",
-    use_time_window: false,
-    time_window_start: "06:00",
-    time_window_end: "18:00",
-  })
-
-  useEffect(() => {
-    fetchData()
-    
-    // Set up polling for real-time updates every 30 seconds
-    const interval = setInterval(() => {
-      fetchData(true) // Pass true to indicate this is a background refresh
-    }, 30000)
-    
-    // Cleanup interval on component unmount
-    return () => clearInterval(interval)
-  }, [])
-
-  const fetchData = async (isBackgroundRefresh = false) => {
+  const fetchData = async () => {
     try {
-      if (isBackgroundRefresh) {
-        setIsRefreshing(true)
-      }
-      
       const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
-        fetch("/api/cameras"),
-        fetch("/api/timelapses"),
-        fetch("/api/videos"),
+        fetch('/api/cameras'),
+        fetch('/api/timelapses'),
+        fetch('/api/videos')
       ])
 
       const camerasData = await camerasRes.json()
@@ -64,647 +60,259 @@ export default function Dashboard() {
       setCameras(Array.isArray(camerasData) ? camerasData : [])
       setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
       setVideos(Array.isArray(videosData) ? videosData : [])
-      setLastUpdated(new Date())
     } catch (error) {
-      console.error("Failed to fetch data:", error)
-      setCameras([])
-      setTimelapses([])
-      setVideos([])
+      console.error('Error fetching data:', error)
     } finally {
       setLoading(false)
-      if (isBackgroundRefresh) {
-        setIsRefreshing(false)
-      }
     }
   }
 
-  const addCamera = async (e: React.FormEvent) => {
-    e.preventDefault()
-    try {
-      const response = await fetch("/api/cameras", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newCamera),
-      })
+  useEffect(() => {
+    fetchData()
+    const interval = setInterval(fetchData, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
-      if (response.ok) {
-        setNewCamera({
-          name: "",
-          rtsp_url: "",
-          use_time_window: false,
-          time_window_start: "06:00",
-          time_window_end: "18:00",
-        })
-        setShowAddCamera(false)
-        fetchData()
-      }
-    } catch (error) {
-      console.error("Failed to add camera:", error)
-    }
-  }
-
-  const removeCamera = async (cameraId: number) => {
+  const handleSaveCamera = async (cameraData: any) => {
     try {
-      const response = await fetch(`/api/cameras/${cameraId}`, {
-        method: "DELETE",
+      const url = editingCamera ? `/api/cameras/${editingCamera.id}` : '/api/cameras'
+      const method = editingCamera ? 'PUT' : 'POST'
+      
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cameraData)
       })
 
       if (response.ok) {
         fetchData()
+        setEditingCamera(undefined)
       }
     } catch (error) {
-      console.error("Failed to remove camera:", error)
+      console.error('Error saving camera:', error)
     }
   }
 
-  const toggleTimelapse = async (cameraId: number, currentStatus: string) => {
-    const newStatus = currentStatus === "running" ? "stopped" : "running"
-
+  const handleToggleTimelapse = async (cameraId: number, currentStatus: string) => {
     try {
-      const response = await fetch("/api/timelapses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ camera_id: cameraId, status: newStatus }),
+      const newStatus = currentStatus === 'running' ? 'stopped' : 'running'
+      await fetch('/api/timelapses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ camera_id: cameraId, status: newStatus })
       })
+      fetchData()
+    } catch (error) {
+      console.error('Error toggling timelapse:', error)
+    }
+  }
 
-      const result = await response.json()
-
-      if (response.ok && result.success) {
-        // Success - refresh data and show success message
+  const handleDeleteCamera = async (cameraId: number) => {
+    if (confirm('Are you sure you want to delete this camera?')) {
+      try {
+        await fetch(`/api/cameras/${cameraId}`, { method: 'DELETE' })
         fetchData()
-        if (newStatus === "running") {
-          // Show success message for started timelapse
-          alert("✅ Timelapse started successfully!")
-        }
-      } else {
-        // Handle validation errors
-        const errorMessage = result.details || result.error || "Unknown error"
-        alert(`❌ Cannot start timelapse:\n\n${errorMessage}`)
-
-        // If it's a connectivity issue, offer to refresh camera status
-        if (
-          result.error?.includes("offline") ||
-          result.error?.includes("connection")
-        ) {
-          if (
-            confirm("\nWould you like to refresh camera status and try again?")
-          ) {
-            // Refresh data to update camera health status
-            await fetchData()
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Failed to toggle timelapse:", error)
-      alert(
-        "❌ Failed to update timelapse. Please check your connection and try again."
-      )
-    }
-  }
-
-  const getTimelapseStatus = (cameraId: number) => {
-    const timelapse = timelapses.find((t) => t.camera_id === cameraId)
-    return timelapse?.status || "stopped"
-  }
-
-  const getCameraVideos = (cameraId: number) => {
-    return videos.filter((v) => v.camera_id === cameraId)
-  }
-
-  const formatLastCapture = (lastCaptureAt: string | null) => {
-    if (!lastCaptureAt) return "Never"
-
-    const lastCapture = new Date(lastCaptureAt)
-    const now = new Date()
-    const diffMs = now.getTime() - lastCapture.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-
-    if (diffMins < 1) return "Just now"
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`
-    return `${Math.floor(diffMins / 1440)}d ago`
-  }
-
-  const getCameraReadiness = (camera: Camera) => {
-    // Check if camera is ready for timelapse
-    const isEnabled = camera.status === "active"
-    const isOnline = camera.health_status === "online"
-    const hasRecentCapture =
-      camera.last_capture_at &&
-      new Date().getTime() - new Date(camera.last_capture_at).getTime() < 600000 // 10 minutes
-
-    if (isEnabled && isOnline && hasRecentCapture) {
-      return {
-        status: "ready",
-        message: "Ready for timelapse",
-        color: "text-green-600",
-        bgColor: "bg-green-50",
-      }
-    } else if (!isEnabled) {
-      return {
-        status: "disabled",
-        message: "Camera disabled",
-        color: "text-gray-600",
-        bgColor: "bg-gray-50",
-      }
-    } else if (!isOnline) {
-      return {
-        status: "offline",
-        message: "Camera offline - check connection",
-        color: "text-red-600",
-        bgColor: "bg-red-50",
-      }
-    } else {
-      return {
-        status: "unknown",
-        message: "Camera status unknown - test connection",
-        color: "text-yellow-600",
-        bgColor: "bg-yellow-50",
+      } catch (error) {
+        console.error('Error deleting camera:', error)
       }
     }
   }
 
-  const generateVideo = async (cameraId: number) => {
-    setGeneratingVideo(cameraId)
+  const handleGenerateVideo = async (cameraId: number) => {
     try {
-      const response = await fetch("/api/videos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          camera_id: cameraId,
-          framerate: 30,
-          quality: "medium",
-        }),
+      await fetch('/api/videos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ camera_id: cameraId })
       })
-
-      const result = await response.json()
-
-      if (result.success) {
-        console.log("Video generation started:", result)
-        // Refresh data to show new video
-        fetchData()
-      } else {
-        console.error("Video generation failed:", result.error)
-        alert("Video generation failed: " + result.error)
-      }
+      fetchData()
     } catch (error) {
-      console.error("Failed to generate video:", error)
-      alert("Failed to generate video")
-    } finally {
-      setGeneratingVideo(null)
+      console.error('Error generating video:', error)
     }
   }
 
-  const downloadVideo = (videoId: number, videoName: string) => {
-    const downloadUrl = `/api/videos/${videoId}/download`
-    const link = document.createElement("a")
-    link.href = downloadUrl
-    link.download = `${videoName}.mp4`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const deleteVideo = async (videoId: number) => {
-    if (!confirm("Are you sure you want to delete this video?")) return
-
-    try {
-      const response = await fetch(`/api/videos/${videoId}`, {
-        method: "DELETE",
-      })
-
-      if (response.ok) {
-        fetchData() // Refresh to remove deleted video
-      } else {
-        alert("Failed to delete video")
-      }
-    } catch (error) {
-      console.error("Failed to delete video:", error)
-      alert("Failed to delete video")
-    }
-  }
+  // Calculate stats
+  const onlineCameras = cameras.filter(c => c.health_status === 'online').length
+  const activTimelapses = timelapses.filter(t => t.status === 'running').length
+  const totalVideos = videos.filter(v => v.status === 'completed').length
+  const totalImages = timelapses.reduce((sum, t) => sum + (t.image_count || 0), 0)
 
   if (loading) {
-    return <div className='py-8 text-center'>Loading...</div>
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-6">
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-pink/20 border-t-pink rounded-full animate-spin mx-auto" />
+            <div className="absolute inset-0 w-16 h-16 border-4 border-cyan/20 border-b-cyan rounded-full animate-spin mx-auto" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+          </div>
+          <div>
+            <p className="text-white font-medium">Loading dashboard...</p>
+            <p className="text-grey-light/60 text-sm mt-1">Fetching camera data</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className='space-y-6'>
-      <div className='flex items-center justify-between'>
-        <div className='flex items-center gap-4'>
-          <h1 className='text-3xl font-bold'>Camera Dashboard</h1>
-          {isRefreshing && (
-            <div className='flex items-center gap-2 text-sm text-blue-600'>
-              <div className='w-4 h-4 border-2 border-blue-600 border-solid rounded-full animate-spin border-t-transparent'></div>
-              <span>Refreshing...</span>
-            </div>
-          )}
-        </div>
-        <div className='flex gap-2'>
-          <button
-            onClick={() => fetchData()}
-            className='px-3 py-2 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50'
-            disabled={isRefreshing}
-          >
-            Refresh Now
-          </button>
-          <button
-            onClick={() => setShowAddCamera(true)}
-            className='px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700'
-          >
-            Add Camera
-          </button>
-        </div>
-      </div>
-
-      {/* System Status Summary */}
-      {cameras.length > 0 && (
-        <div className='p-4 rounded-lg bg-gray-50'>
-          <div className='grid grid-cols-2 gap-4 md:grid-cols-4'>
-            <div className='text-center'>
-              <div className='text-2xl font-bold text-blue-600'>
-                {cameras.length}
+    <div className="space-y-12 relative">
+      {/* Hero Section with Asymmetric Layout */}
+      <div className="relative">
+        {/* Floating accent elements */}
+        <div className="absolute -top-4 right-1/4 w-2 h-2 bg-yellow/60 rounded-full floating" />
+        <div className="absolute top-8 left-1/3 w-1 h-12 bg-purple/30 rounded-full floating" style={{ animationDelay: '1s' }} />
+        
+        <div className="grid lg:grid-cols-3 gap-8 items-end">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="space-y-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-pink to-cyan rounded-xl rotate-12 floating" />
+                <h1 className="text-6xl font-bold gradient-text leading-tight">
+                  Control Center
+                </h1>
               </div>
-              <div className='text-sm text-gray-600'>Total Cameras</div>
-            </div>
-            <div className='text-center'>
-              <div className='text-2xl font-bold text-green-600'>
-                {
-                  cameras.filter((c) => getTimelapseStatus(c.id) === "running")
-                    .length
-                }
-              </div>
-              <div className='text-sm text-gray-600'>Active Timelapses</div>
-            </div>
-            <div className='text-center'>
-              <div className='text-2xl font-bold text-green-600'>
-                {
-                  cameras.filter((c) => getCameraReadiness(c).status === "ready")
-                    .length
-                }
-              </div>
-              <div className='text-sm text-gray-600'>Ready Cameras</div>
-            </div>
-            <div className='text-center'>
-              <div className='text-2xl font-bold text-purple-600'>
-                {videos.length}
-              </div>
-              <div className='text-sm text-gray-600'>Total Videos</div>
-            </div>
-          </div>
-          {lastUpdated && (
-            <div className='mt-3 text-xs text-center text-gray-500'>
-              Last updated: {lastUpdated.toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Add Camera Modal */}
-      {showAddCamera && (
-        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50'>
-          <div className='p-6 bg-white rounded-lg w-96'>
-            <h2 className='mb-4 text-xl font-bold'>Add New Camera</h2>
-            <form onSubmit={addCamera} className='space-y-4'>
-              <div>
-                <label className='block mb-1 text-sm font-medium'>
-                  Camera Name
-                </label>
-                <input
-                  type='text'
-                  value={newCamera.name}
-                  onChange={(e) =>
-                    setNewCamera({ ...newCamera, name: e.target.value })
-                  }
-                  className='w-full p-2 border border-gray-300 rounded'
-                  required
-                />
-              </div>
-              <div>
-                <label className='block mb-1 text-sm font-medium'>
-                  RTSP URL
-                </label>
-                <input
-                  type='url'
-                  value={newCamera.rtsp_url}
-                  onChange={(e) =>
-                    setNewCamera({ ...newCamera, rtsp_url: e.target.value })
-                  }
-                  className='w-full p-2 border border-gray-300 rounded'
-                  placeholder='rtsp://...'
-                  required
-                />
-              </div>
-
-              {/* Time Window Settings */}
-              <div className='pt-4 border-t'>
-                <div className='flex items-center mb-3'>
-                  <input
-                    type='checkbox'
-                    id='use_time_window'
-                    checked={newCamera.use_time_window}
-                    onChange={(e) =>
-                      setNewCamera({
-                        ...newCamera,
-                        use_time_window: e.target.checked,
-                      })
-                    }
-                    className='mr-2'
-                  />
-                  <label
-                    htmlFor='use_time_window'
-                    className='text-sm font-medium'
-                  >
-                    Enable time window (daylight hours only)
-                  </label>
-                </div>
-
-                {newCamera.use_time_window && (
-                  <div className='grid grid-cols-2 gap-3'>
-                    <div>
-                      <label className='block mb-1 text-xs text-gray-600'>
-                        Start Time
-                      </label>
-                      <input
-                        type='time'
-                        value={newCamera.time_window_start}
-                        onChange={(e) =>
-                          setNewCamera({
-                            ...newCamera,
-                            time_window_start: e.target.value,
-                          })
-                        }
-                        className='w-full p-2 text-sm border border-gray-300 rounded'
-                      />
-                    </div>
-                    <div>
-                      <label className='block mb-1 text-xs text-gray-600'>
-                        End Time
-                      </label>
-                      <input
-                        type='time'
-                        value={newCamera.time_window_end}
-                        onChange={(e) =>
-                          setNewCamera({
-                            ...newCamera,
-                            time_window_end: e.target.value,
-                          })
-                        }
-                        className='w-full p-2 text-sm border border-gray-300 rounded'
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {newCamera.use_time_window && (
-                  <p className='mt-2 text-xs text-gray-500'>
-                    Camera will only capture images between{" "}
-                    {newCamera.time_window_start} and{" "}
-                    {newCamera.time_window_end}
-                  </p>
-                )}
-              </div>
-              <div className='flex justify-end space-x-2'>
-                <button
-                  type='button'
-                  onClick={() => setShowAddCamera(false)}
-                  className='px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50'
-                >
-                  Cancel
-                </button>
-                <button
-                  type='submit'
-                  className='px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700'
-                >
-                  Add Camera
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Cameras Grid */}
-      <div className='grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3'>
-        {cameras.map((camera) => {
-          const timelapseStatus = getTimelapseStatus(camera.id)
-          const cameraVideos = getCameraVideos(camera.id)
-          const isGenerating = generatingVideo === camera.id
-          const readiness = getCameraReadiness(camera)
-
-          return (
-            <div
-              key={camera.id}
-              className='p-4 border border-gray-300 rounded-lg'
-            >
-              {/* Display Last Captured Image */}
-              {camera.last_image_path ? (
-                <img
-                  src={camera.last_image_path}
-                  alt={`Last capture from ${camera.name}`}
-                  className='w-full h-48 mb-3 rounded-md object-cover'
-                />
-              ) : (
-                <div className='flex items-center justify-center w-full h-48 mb-3 bg-gray-200 rounded-md'>
-                  <svg
-                    className='w-12 h-12 text-gray-400'
-                    fill='none'
-                    stroke='currentColor'
-                    viewBox='0 0 24 24'
-                    xmlns='http://www.w3.org/2000/svg'
-                  >
-                    <path
-                      strokeLinecap='round'
-                      strokeLinejoin='round'
-                      strokeWidth='2'
-                      d='M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z'
-                    ></path>
-                  </svg>
-                </div>
-              )}
-
-              <div className='flex items-start justify-between mb-3'>
-                <div className='flex-1'>
-                  <h3 className='text-lg font-semibold'>{camera.name}</h3>
-                  {/* Camera Readiness Status */}
-                  <div
-                    className={`text-sm mt-1 p-2 rounded-md ${readiness.bgColor}`}
-                  >
-                    <div className={`font-medium ${readiness.color}`}>
-                      {readiness.status === "ready" && "✅ "}
-                      {readiness.status === "offline" && "🔴 "}
-                      {readiness.status === "disabled" && "⚪ "}
-                      {readiness.status === "unknown" && "⚠️ "}
-                      {readiness.message}
-                    </div>
-                    {camera.consecutive_failures > 0 && (
-                      <div className='mt-1 text-xs text-red-500'>
-                        {camera.consecutive_failures} consecutive failures
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeCamera(camera.id)}
-                  className='text-sm text-red-600 hover:text-red-800'
-                >
-                  Remove
-                </button>
-              </div>
-
-              <p className='mb-3 text-sm text-gray-600 truncate'>
-                {camera.rtsp_url}
+              <p className="text-grey-light/70 text-lg max-w-2xl">
+                Monitor your RTSP cameras, manage timelapses, and create stunning videos 
+                with professional-grade automation tools.
               </p>
-
-              {/* Time Window Display */}
-              {camera.use_time_window && (
-                <div className='p-2 mb-3 text-xs text-blue-600 rounded bg-blue-50'>
-                  🕐 Active: {camera.time_window_start?.slice(0, 5)} -{" "}
-                  {camera.time_window_end?.slice(0, 5)}
-                </div>
-              )}
-
-              {/* Last Capture Info */}
-              <div className='p-2 mb-3 text-xs text-gray-500 rounded bg-gray-50'>
-                <div className='flex justify-between'>
-                  <span>Last capture:</span>
-                  <span
-                    className={
-                      camera.last_capture_success === false
-                        ? "text-red-500"
-                        : ""
-                    }
-                  >
-                    {formatLastCapture(camera.last_capture_at)}
-                    {camera.last_capture_success === false && " ❌"}
-                    {camera.last_capture_success === true && " ✅"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Timelapse Controls */}
-              <div className='flex items-center justify-between mb-4'>
-                <span
-                  className={`px-2 py-1 rounded text-xs ${
-                    timelapseStatus === "running"
-                      ? "bg-green-100 text-green-800"
-                      : "bg-gray-100 text-gray-800"
-                  }`}
-                >
-                  Timelapse: {timelapseStatus}
-                </span>
-
-                <button
-                  onClick={() => toggleTimelapse(camera.id, timelapseStatus)}
-                  disabled={
-                    timelapseStatus !== "running" &&
-                    readiness.status !== "ready"
-                  }
-                  className={`px-3 py-1 rounded text-sm ${
-                    timelapseStatus === "running"
-                      ? "bg-red-600 text-white hover:bg-red-700"
-                      : readiness.status === "ready"
-                      ? "bg-green-600 text-white hover:bg-green-700"
-                      : "bg-gray-400 text-gray-200 cursor-not-allowed"
-                  }`}
-                  title={
-                    timelapseStatus === "running"
-                      ? "Stop timelapse"
-                      : readiness.status === "ready"
-                      ? "Start timelapse"
-                      : `Cannot start: ${readiness.message}`
-                  }
-                >
-                  {timelapseStatus === "running" ? "Stop" : "Start"}
-                </button>
-              </div>
-
-              {/* Video Section */}
-              <div className='pt-3 border-t'>
-                <div className='flex items-center justify-between mb-2'>
-                  <h4 className='text-sm font-medium'>
-                    Videos ({cameraVideos.length})
-                  </h4>
-                  <button
-                    onClick={() => generateVideo(camera.id)}
-                    disabled={isGenerating}
-                    className={`px-2 py-1 rounded text-xs ${
-                      isGenerating
-                        ? "bg-gray-400 text-white cursor-not-allowed"
-                        : "bg-blue-600 text-white hover:bg-blue-700"
-                    }`}
-                  >
-                    {isGenerating ? "Generating..." : "Generate Video"}
-                  </button>
-                </div>
-
-                {/* Video List */}
-                <div className='space-y-1 overflow-y-auto max-h-32'>
-                  {cameraVideos.length === 0 ? (
-                    <p className='text-xs italic text-gray-500'>
-                      No videos yet
-                    </p>
-                  ) : (
-                    cameraVideos.map((video) => (
-                      <div
-                        key={video.id}
-                        className='flex items-center justify-between p-2 text-xs rounded bg-gray-50'
-                      >
-                        <div className='flex-1 min-w-0'>
-                          <p className='font-medium truncate'>{video.name}</p>
-                          <p className='text-gray-500'>
-                            {video.status === "completed" && (
-                              <>
-                                {video.file_size
-                                  ? (video.file_size / 1024 / 1024).toFixed(1)
-                                  : "0"}
-                                MB •{" "}
-                                {video.duration_seconds
-                                  ? Number(video.duration_seconds).toFixed(1)
-                                  : "0"}
-                                s
-                              </>
-                            )}
-                            {video.status === "generating" && "Generating..."}
-                            {video.status === "failed" && "Failed"}
-                          </p>
-                        </div>
-                        <div className='flex gap-1 ml-2'>
-                          {video.status === "completed" && (
-                            <button
-                              onClick={() =>
-                                downloadVideo(video.id, video.name)
-                              }
-                              className='text-blue-600 hover:text-blue-800'
-                              title='Download'
-                            >
-                              ↓
-                            </button>
-                          )}
-                          <button
-                            onClick={() => deleteVideo(video.id)}
-                            className='text-red-600 hover:text-red-800'
-                            title='Delete'
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
             </div>
-          )
-        })}
+          </div>
+          
+          <div className="flex justify-end">
+            <Button 
+              onClick={() => setIsModalOpen(true)}
+              size="lg"
+              className="bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black font-bold px-8 py-4 text-lg rounded-2xl hover:shadow-2xl hover:shadow-pink/20 transition-all duration-300 hover:scale-105"
+            >
+              <Plus className="w-6 h-6 mr-3" />
+              Add Camera
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {cameras.length === 0 && (
-        <div className='py-12 text-center text-gray-500'>
-          <p>No cameras configured yet.</p>
-          <p>Click "Add Camera" to get started.</p>
+      {/* Stats Grid with Creative Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatsCard
+          title="Total Cameras"
+          value={cameras.length}
+          description={`${onlineCameras} online`}
+          icon={Camera}
+          color="cyan"
+          trend={onlineCameras > 0 ? { value: Math.round((onlineCameras / cameras.length) * 100), label: "uptime" } : undefined}
+        />
+        <StatsCard
+          title="Active Recordings"
+          value={activTimelapses}
+          description="Currently capturing"
+          icon={Activity}
+          color="success"
+        />
+        <StatsCard
+          title="Generated Videos"
+          value={totalVideos}
+          description="Ready to download"
+          icon={Video}
+          color="purple"
+        />
+        <StatsCard
+          title="Total Frames"
+          value={totalImages.toLocaleString()}
+          description="Images captured"
+          icon={Zap}
+          color="yellow"
+        />
+      </div>
+
+      {/* Cameras Section with Dynamic Layout */}
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <h2 className="text-3xl font-bold text-white">Camera Network</h2>
+            <div className="flex items-center space-x-4 text-sm">
+              {cameras.length > 0 && (
+                <>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-success rounded-full" />
+                    <span className="text-grey-light/70">{onlineCameras} online</span>
+                  </div>
+                  <div className="w-1 h-4 bg-purple-muted/30 rounded-full" />
+                  <div className="flex items-center space-x-2">
+                    <Eye className="w-4 h-4 text-cyan/70" />
+                    <span className="text-grey-light/70">{cameras.length} total</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
-      )}
+
+        {cameras.length === 0 ? (
+          <div className="text-center py-16 relative">
+            {/* Empty state with creative design */}
+            <div className="relative max-w-md mx-auto">
+              <div className="absolute -top-8 -left-8 w-4 h-4 bg-pink/40 rounded-full floating" />
+              <div className="absolute -top-4 -right-6 w-2 h-2 bg-cyan/60 rounded-full floating" style={{ animationDelay: '1s' }} />
+              
+              <div className="glass-strong p-12 rounded-3xl border border-purple-muted/30">
+                <div className="w-20 h-20 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-2xl flex items-center justify-center mx-auto mb-6 rotate-12">
+                  <Camera className="w-10 h-10 text-white" />
+                </div>
+                
+                <h3 className="text-2xl font-bold text-white mb-3">No cameras yet</h3>
+                <p className="text-grey-light/60 mb-8 leading-relaxed">
+                  Ready to create your first timelapse? Add an RTSP camera to get started 
+                  with professional automated video creation.
+                </p>
+                
+                <Button 
+                  onClick={() => setIsModalOpen(true)}
+                  className="bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black font-bold px-8 py-3 rounded-xl hover:shadow-xl transition-all duration-300"
+                >
+                  <Plus className="w-5 h-5 mr-2" />
+                  Add Your First Camera
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+            {cameras.map((camera) => {
+              const timelapse = timelapses.find(t => t.camera_id === camera.id)
+              const cameraVideos = videos.filter(v => v.camera_id === camera.id)
+
+              return (
+                <CameraCard
+                  key={camera.id}
+                  camera={camera}
+                  timelapse={timelapse}
+                  videos={cameraVideos}
+                  onToggleTimelapse={handleToggleTimelapse}
+                  onEditCamera={(id) => {
+                    const cam = cameras.find(c => c.id === id)
+                    setEditingCamera(cam)
+                    setIsModalOpen(true)
+                  }}
+                  onDeleteCamera={handleDeleteCamera}
+                  onGenerateVideo={handleGenerateVideo}
+                />
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Camera Modal */}
+      <CameraModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false)
+          setEditingCamera(undefined)
+        }}
+        onSave={handleSaveCamera}
+        camera={editingCamera}
+        title={editingCamera ? 'Edit Camera' : 'Add New Camera'}
+      />
     </div>
   )
 }
