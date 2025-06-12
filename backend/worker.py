@@ -264,9 +264,13 @@ class ModernTimelapseWorker:
 
 
 if __name__ == "__main__":
+    # Ensure data directory exists
+    os.makedirs(settings.data_directory, exist_ok=True)
+    
     # Setup logging
+    log_path = os.path.join(settings.data_directory, "worker.log")
     logger.add(
-        settings.data_directory + "/worker.log",
+        log_path,
         rotation="10 MB",
         retention="30 days",
         level=settings.log_level,
