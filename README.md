@@ -1,249 +1,310 @@
-# Timelapser v4
+# Timelapser v4 - Modern RTSP Timelapse Platform
 
-A comprehensive time-lapse automation platform for RTSP camera ecosystems designed for **long-running timelapses** (days to months).
+A comprehensive time-lapse automation platform for RTSP camera ecosystems with FastAPI backend, connection pooling, Pydantic validation, and modern architecture.
 
-## ✅ Complete Features
+## 🚀 Architecture
 
-### 📹 **RTSP Image Capture**
-- ✅ **Automated image capture** from RTSP streams every configurable interval
-- ✅ **Concurrent camera processing** (up to 4 cameras simultaneously)
-- ✅ **Retry logic** for failed captures (3 attempts with delays)
-- ✅ **Organized file storage** by camera and date (`/data/cameras/camera-{id}/images/YYYY-MM-DD/`)
-- ✅ **Comprehensive logging** to database and files
+### Backend Stack
+- **FastAPI** - Modern Python API with automatic OpenAPI documentation
+- **Pydantic** - Data validation and serialization
+- **PostgreSQL** - Database with connection pooling (psycopg3)
+- **Alembic** - Database migration management
+- **Python Worker** - Background RTSP capture and processing
 
-### 🎬 **Video Generation System**
-- ✅ **FFmpeg integration** with quality settings (low/medium/high)
-- ✅ **Database-tracked generation** with full metadata
-- ✅ **Flexible input sources** - single day or entire camera history
-- ✅ **Multiple quality presets** with resolution scaling
-- ✅ **Background job processing** via Python worker
-- ✅ **API-triggered generation** via web interface
+### Frontend Stack  
+- **Next.js 14** - React framework with App Router and Server Components
+- **TypeScript** - Type safety matching backend Pydantic models
+- **Tailwind CSS** - Utility-first styling
 
-### 🌐 **Web Interface**
-- ✅ **Camera management** - Add/remove RTSP cameras
-- ✅ **Timelapse controls** - Start/stop captures per camera
-- ✅ **Video generation** - One-click video creation from captured images
-- ✅ **Video management** - List, download, and delete generated videos
-- ✅ **Settings configuration** - Capture intervals (1 second to 24 hours)
-- ✅ **Real-time status** - Live camera and video generation status
+### Key Improvements
+- ✅ **Connection Pooling** - Efficient database connections for long-running processes
+- ✅ **Input Validation** - Pydantic models prevent injection attacks and data corruption
+- ✅ **OpenAPI Documentation** - Auto-generated API docs at `/docs`
+- ✅ **Type Safety** - TypeScript interfaces match Pydantic models exactly
+- ✅ **Database Migrations** - Alembic for schema version control
+- ✅ **Modern Patterns** - Server Components, proper error handling, structured logging
 
-### 🔄 **Background Processing**
-- ✅ **Scheduled image capture** based on configurable intervals
-- ✅ **Automatic video generation** request processing
-- ✅ **Dynamic configuration updates** without restart
-- ✅ **Health monitoring** and error recovery
-- ✅ **Graceful shutdown** handling
+## 📋 Prerequisites
 
-### 🗄️ **Database Schema**
-- ✅ **cameras** - Camera configuration and status
-- ✅ **timelapses** - Timelapse status per camera  
-- ✅ **videos** - Generated video metadata and tracking
-- ✅ **settings** - Global configuration parameters
-- ✅ **logs** - Capture attempts and system events
+- **Node.js 18+** and **npm/pnpm**
+- **Python 3.11+**
+- **PostgreSQL database** (Neon recommended)
+- **FFmpeg** for video processing
+- **RTSP camera streams**
 
-## 🚀 Quick Start
+## 🛠️ Quick Setup
 
-### 1. Web Interface
+### 1. Clone and Install Dependencies
+
 ```bash
-cd /Users/jordanlambrecht/dev-local/timelapser-v4
+cd /path/to/timelapser-v4
+
+# Install Next.js dependencies
 npm install
+
+# Setup FastAPI backend
+cd backend
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cd ..
+```
+
+### 2. Environment Configuration
+
+```bash
+# Copy environment template
+cp backend/.env.example backend/.env
+
+# Edit with your actual values
+nano backend/.env
+```
+
+Required environment variables:
+```env
+DATABASE_URL=postgresql://user:pass@host:port/dbname
+NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
+```
+
+### 3. Database Setup
+
+The database schema is already created in your Neon instance. For future migrations:
+
+```bash
+cd backend
+source venv/bin/activate
+alembic revision --autogenerate -m "description"
+alembic upgrade head
+```
+
+### 4. Start Services
+
+**Option A: Automatic Startup (Recommended)**
+```bash
+./start-services.sh
+```
+
+**Option B: Manual Startup**
+```bash
+# Terminal 1: Backend API
+cd backend
+source venv/bin/activate
+python -m app.main
+
+# Terminal 2: Worker Process  
+cd backend
+source venv/bin/activate
+python worker.py
+
+# Terminal 3: Next.js Frontend
 npm run dev
 ```
-**Access at**: http://localhost:3000
 
-### 2. Python Worker (Background Processing)
-```bash
-# Setup (one-time)
-./setup-worker.sh
+## 🎯 Access Points
 
-# Start background worker
-./run-worker.sh
-```
+- **Frontend Dashboard**: http://localhost:3000
+- **FastAPI Documentation**: http://localhost:8000/docs
+- **API Health Check**: http://localhost:8000/health
 
-## 🎯 Usage Workflow
-
-### **Long-Running Timelapses**
-1. **Add Camera**: Enter RTSP URL in web interface
-2. **Start Timelapse**: Click "Start" - begins capturing images every 5 minutes (configurable)
-3. **Let it Run**: Camera captures images automatically for days/weeks/months
-4. **Generate Video**: Click "Generate Video" to create MP4 from all captured images
-5. **Download**: Download the final timelapse video
-
-### **Video Management**
-- **Generate Videos**: Create MP4s from any camera's captured images
-- **Quality Options**: Low (720p), Medium (1080p), High (original resolution)
-- **Framerate Control**: 1-60 fps (default 30 fps)
-- **Download/Delete**: Manage generated videos through web interface
-
-## 📊 API Endpoints
+## 📚 API Documentation
 
 ### Camera Management
-- `GET /api/cameras` - List all cameras
-- `POST /api/cameras` - Add new camera
-- `DELETE /api/cameras/[id]` - Remove camera
+```bash
+# List all cameras
+GET /api/cameras
 
-### Timelapse Control  
-- `GET /api/timelapses` - List timelapse status
-- `POST /api/timelapses` - Start/stop timelapses
+# Create camera with validation
+POST /api/cameras
+{
+  "name": "Front Door", 
+  "rtsp_url": "rtsp://192.168.1.100:554/stream",
+  "status": "active",
+  "use_time_window": true,
+  "time_window_start": "06:00:00",
+  "time_window_end": "18:00:00"
+}
 
-### Video Operations
-- `GET /api/videos` - List all videos (with filtering)
-- `POST /api/videos` - Generate new video from camera images
-- `GET /api/videos/[id]` - Get video details
-- `DELETE /api/videos/[id]` - Delete video and file
-- `GET /api/videos/[id]/download` - Download video file
+# Update camera
+PUT /api/cameras/{id}
 
-### Configuration
-- `GET /api/settings` - Get current settings
-- `PUT /api/settings` - Update settings (capture intervals, etc.)
-- `GET /api/logs` - View capture and system logs
+# Delete camera
+DELETE /api/cameras/{id}
+```
 
-## 📁 File Organization
+### Timelapse Control
+```bash
+# Start timelapse
+PUT /api/timelapses/{camera_id}
+{"status": "running"}
+
+# Stop timelapse  
+PUT /api/timelapses/{camera_id}
+{"status": "stopped"}
+```
+
+### Video Generation
+```bash
+# Generate video
+POST /api/videos
+{
+  "camera_id": 1,
+  "name": "Construction Progress",
+  "settings": {"quality": "high", "framerate": 30}
+}
+```
+
+## 🏗️ Project Structure
 
 ```
 timelapser-v4/
-├── src/                          # Next.js web application
-│   ├── app/api/                 # API routes
-│   └── app/page.tsx             # Main dashboard
-├── python-worker/               # RTSP capture & video generation
-│   ├── main.py                  # Background worker scheduler
-│   ├── capture.py               # RTSP image capture
-│   ├── video_generator.py       # FFmpeg video generation
-│   └── database.py              # Database integration
-├── data/                        # Generated content
-│   ├── cameras/                 # Per-camera image storage
-│   │   └── camera-{id}/images/YYYY-MM-DD/
-│   ├── videos/                  # Generated MP4 files
-│   └── worker.log               # Background worker logs
-└── README.md
+├── backend/                  # Python backend
+│   ├── app/
+│   │   ├── main.py          # FastAPI application
+│   │   ├── config.py        # Settings management
+│   │   ├── database.py      # Connection pooling
+│   │   ├── models/          # Pydantic models
+│   │   └── routers/         # API endpoints
+│   ├── alembic/             # Database migrations
+│   ├── worker.py            # Background worker
+│   └── requirements.txt     # Python dependencies
+├── src/                     # Next.js frontend
+│   ├── app/                 # App Router pages
+│   ├── components/          # React components
+│   └── lib/
+│       └── fastapi-client.ts # API client
+├── data/                    # File storage
+│   ├── cameras/            # Captured images
+│   └── videos/             # Generated timelapses
+└── start-services.sh       # Startup script
 ```
 
-## ⚙️ Configuration
+## 🔧 Configuration
 
-### Environment Variables
-1. **Copy the example file:**
+### Camera Settings
+- **Time Windows**: Only capture during specified hours (e.g., daylight only)
+- **Health Monitoring**: Automatic offline detection and alerts  
+- **Custom Intervals**: Per-camera capture frequency
+- **RTSP Validation**: URL format validation prevents injection attacks
+
+### System Settings
+- **Capture Interval**: Global default (5 minutes)
+- **Concurrent Cameras**: Max simultaneous captures (4)
+- **Health Checks**: Camera monitoring frequency (2 minutes)
+- **Connection Pooling**: Database efficiency settings
+
+## 📊 Features
+
+### ✅ Core Features
+- **Multi-Camera Support** - Manage dozens of RTSP cameras
+- **Automated Capture** - Background image collection with scheduling
+- **Video Generation** - FFmpeg integration for high-quality timelapses
+- **Health Monitoring** - Real-time camera status and alerts
+- **Time Windows** - Smart capture scheduling (daylight only, etc.)
+- **Day Numbering** - Track "Day 1", "Day 47" progression for overlays
+
+### ✅ Technical Features  
+- **Connection Pooling** - Efficient database resource management
+- **Input Validation** - Pydantic prevents malicious input
+- **Type Safety** - End-to-end TypeScript/Python type matching
+- **Error Recovery** - Robust retry logic and graceful failures
+- **OpenAPI Docs** - Auto-generated API documentation
+- **Database Migrations** - Version-controlled schema changes
+
+### ✅ User Experience
+- **Server Components** - Fast page loads with Next.js App Router
+- **Real-time Status** - Live camera health and capture indicators
+- **Responsive Design** - Works on desktop, tablet, and mobile
+- **Easy Setup** - Single script deployment with validation
+
+## 🔒 Security Features
+
+- **RTSP URL Validation** - Prevents injection attacks
+- **Input Sanitization** - All API inputs validated by Pydantic
+- **Connection Security** - Pooled connections with proper cleanup
+- **File Path Validation** - Prevents directory traversal
+- **Error Handling** - No sensitive data leaked in error messages
+
+## 📈 Performance Optimizations
+
+- **Database Indexes** - Optimized queries for large datasets
+- **Connection Pooling** - Reduced connection overhead
+- **Concurrent Processing** - Multi-threaded image capture
+- **Server Components** - Reduced client-side JavaScript
+- **File Organization** - Efficient directory structure for storage
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**FastAPI won't start:**
 ```bash
-cp .env.example .env.local
+# Check database connection
+cd backend && source venv/bin/activate
+python -c "from app.database import async_db; print('DB connection OK')"
 ```
 
-2. **Update with your database credentials:**
-```env
-DATABASE_URL="postgresql://username:password@host:port/database?sslmode=require"
-NEON_PROJECT_ID="your-neon-project-id"
-```
-
-### Default Settings
-- **Capture Interval**: 300 seconds (5 minutes)
-- **Max Concurrent Cameras**: 4
-- **Video Quality**: Medium (1080p, CRF 23)
-- **Default Framerate**: 30 fps
-- **Retry Attempts**: 3 per failed capture
-
-## 🧪 Testing
-
-### **Automated Test Suite**
-Comprehensive pytest-based testing for the Python worker components:
-
+**Camera capture failing:**
 ```bash
-cd python-worker
-
-# Run all tests
-./run-tests.sh
-
-# Quick unit tests only  
-./run-tests.sh quick
-
-# Tests with coverage report
-./run-tests.sh coverage
-
-# Verbose test output
-./run-tests.sh verbose
+# Test RTSP URL manually
+ffmpeg -i "rtsp://your-camera-url" -frames:v 1 test.jpg
 ```
 
-### **Web-Based Test Dashboard**
-View test results through the web interface:
-- **URL**: http://localhost:3000/tests
-- **Features**: 
-  - Real-time test execution and results
-  - Test categorization (Database, RTSP, Time Windows, Video Generation)
-  - Success/failure statistics with visual indicators
-  - Auto-refresh capability
-  - Raw test output viewing
-  - Multiple test types (quick, standard, coverage, verbose)
-
-### **Test Coverage**
-- ✅ **Database Operations**: CRUD operations, connection handling, error cases
-- ✅ **RTSP Capture**: Camera connections, image capture, timeout handling  
-- ✅ **Video Generation**: FFmpeg integration, quality settings, error recovery
-- ✅ **Time Windows**: Daylight capture logic, overnight windows, invalid times
-- ✅ **Health Monitoring**: Camera status tracking, failure detection
-
-### **Manual Testing**
-
-#### Monitor Worker Logs
+**Worker not capturing:**
 ```bash
+# Check worker logs
 tail -f data/worker.log
+
+# Verify camera time windows
+curl http://localhost:8000/api/cameras
 ```
 
-#### Check Database Connection
+### Logs Location
+- **Worker**: `data/worker.log`
+- **FastAPI**: `data/api.log` (if configured)
+- **Next.js**: Console output
+
+## 🚀 Production Deployment
+
+### Docker Setup (Coming Soon)
+- Multi-container setup with docker-compose
+- Environment-based configuration
+- Health checks and auto-restart
+- Volume management for persistent data
+
+### Scaling Considerations
+- Database connection pool sizing
+- Worker concurrency limits
+- File storage management
+- Network bandwidth planning
+
+## 🎯 Next Steps
+
+High-priority features on the roadmap:
+- **Day Overlay System** - Video overlays showing "Day 1", "Day 47", etc.
+- **Docker Deployment** - Complete containerization
+- **Storage Management** - Automatic cleanup and archival
+- **Real-time Updates** - WebSocket integration for live status
+- **Advanced Monitoring** - Metrics and alerting system
+
+## 🤝 Development
+
+### Adding New Features
+1. Create Pydantic models in `backend/app/models/`
+2. Add database methods in `database.py`
+3. Create API routes in `routers/`
+4. Update TypeScript interfaces in `fastapi-client.ts`
+5. Build frontend components
+
+### Database Changes
 ```bash
-cd python-worker && source venv/bin/activate
-python -c "from database import Database; db = Database(); print('Database connected!')"
+# Create migration
+cd backend
+alembic revision --autogenerate -m "add new feature"
+
+# Apply migration
+alembic upgrade head
 ```
-
-#### Test Camera Connection
-```bash
-cd python-worker && source venv/bin/activate
-python test_camera.py 1  # Test camera ID 1
-```
-
-## 🚨 Troubleshooting
-
-### **Camera Issues**
-- **"Failed to open RTSP stream"**: Check RTSP URL format and camera accessibility
-- **"Connection timeout"**: Verify network connectivity and camera credentials
-
-### **Video Generation Issues**  
-- **"Need at least 2 images"**: Ensure timelapse has been running and capturing images
-- **"FFmpeg not found"**: Install FFmpeg system-wide
-
-### **Worker Issues**
-- **Database connection failures**: Verify DATABASE_URL in .env.local
-- **No capturing**: Check if timelapses are set to "running" status
-
-## 🏗️ Architecture
-
-**Multi-Service Design:**
-- **Next.js Frontend**: Web dashboard and API endpoints
-- **Python Worker**: Background RTSP capture and video generation  
-- **PostgreSQL**: Metadata, configuration, and logging
-- **FFmpeg**: High-quality video generation
-- **File System**: Organized image and video storage
-
-**Optimized for Long-Running Operations:**
-- Handles network interruptions and camera failures
-- Automatic retry logic and error recovery
-- Dynamic configuration updates without restart
-- Comprehensive logging and status tracking
-- Efficient concurrent processing
-
-## 🎯 Use Cases
-
-- **Construction Monitoring**: Daily progress documentation over months
-- **Environmental Tracking**: Weather patterns, seasonal changes, scientific observation
-- **Event Documentation**: Long-duration events with time-compressed playback
-- **Security Enhancement**: Extended surveillance with rapid time period review
-- **Creative Projects**: Artistic timelapses with precise timing control
-
-## 🔮 Future Enhancements
-
-- **Docker Deployment**: Complete containerized setup
-- **Cloud Storage**: S3-compatible storage integration
-- **Advanced Scheduling**: Time windows, camera-specific intervals
-- **Real-time Previews**: Live camera feeds in web interface
-- **Mobile App**: iOS/Android companion app
-- **Multi-user Support**: User authentication and permissions
 
 ---
 
-**Built for reliability and designed to run unattended for months while creating stunning timelapses from your RTSP camera infrastructure.**
+**Built for long-running timelapses** - From days to months of continuous capture, with enterprise-grade reliability and modern development practices.
