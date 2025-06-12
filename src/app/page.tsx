@@ -6,6 +6,7 @@ import { Plus, Camera, Video, Clock, Activity, Zap, Eye } from "lucide-react"
 import { CameraCard } from "@/components/camera-card"
 import { StatsCard } from "@/components/stats-card"
 import { CameraModal } from "@/components/camera-modal"
+import { SpirographLogo } from "@/components/spirograph-logo"
 
 interface Camera {
   id: number
@@ -165,8 +166,8 @@ export default function Dashboard() {
         <div className="grid lg:grid-cols-3 gap-8 items-end">
           <div className="lg:col-span-2 space-y-6">
             <div className="space-y-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-gradient-to-br from-pink to-cyan rounded-xl rotate-12 floating" />
+              <div className="flex items-center space-x-4">
+                <SpirographLogo size={64} />
                 <h1 className="text-6xl font-bold gradient-text leading-tight">
                   Control Center
                 </h1>
