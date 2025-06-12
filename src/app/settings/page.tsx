@@ -95,12 +95,31 @@ export default function Settings() {
     return presets.find((p) => p.value === sec)?.label || "Custom interval"
   }
 
+  // TODO: This needs to be moved to a layout file
   if (loading) {
     return (
-      <div className='flex items-center justify-center min-h-[400px]'>
-        <div className='space-y-4 text-center'>
-          <div className='w-8 h-8 mx-auto border-2 rounded-full border-primary border-t-transparent animate-spin' />
-          <p className='text-muted-foreground'>Loading settings...</p>
+      <div className='flex items-center justify-center min-h-[60vh]'>
+        <div className='space-y-6 text-center'>
+          <div className='relative'>
+            <div className='w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-t-cyan animate-spin' />
+            <div
+              className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-purple/20 border-b-purple-light animate-spin'
+              style={{
+                animationDirection: "reverse",
+                animationDuration: "1.5s",
+              }}
+            />
+            <div
+              className='absolute w-12 h-12 mx-auto border-2 rounded-full inset-2 border-pink/30 border-l-pink animate-spin'
+              style={{ animationDuration: "2s" }}
+            />
+          </div>
+          <div>
+            <p className='font-medium text-white'>Loading settings...</p>
+            <p className='mt-1 text-sm text-grey-light/60'>
+              Configuring system preferences
+            </p>
+          </div>
         </div>
       </div>
     )
