@@ -4,6 +4,7 @@ import "./globals.css"
 import { cn } from "@/lib/utils"
 import { NavigationLinks } from "@/components/navigation-links"
 import { SpirographLogo } from "@/components/spirograph-logo"
+import { Toaster } from "sonner"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -104,6 +105,14 @@ export default function RootLayout({
             style={{ animationDelay: "2s" }}
           />
         </div>
+
+        {/* Toast notifications */}
+        <Toaster 
+          position="top-right"
+          richColors
+          closeButton
+          theme="dark"
+        />
       </body>
     </html>
   )
