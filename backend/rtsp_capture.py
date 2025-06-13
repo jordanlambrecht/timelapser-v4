@@ -1,9 +1,11 @@
+# backend/rtsp_capture.py
+
 import cv2
 import os
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 import time
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ class RTSPCapture:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"capture_{timestamp}.jpg"
 
-    def capture_frame_from_stream(self, rtsp_url: str) -> Optional[any]:
+    def capture_frame_from_stream(self, rtsp_url: str) -> Optional[Any]:
         """Capture a single frame from RTSP stream with timeout handling"""
         cap = None
         try:
@@ -90,7 +92,12 @@ class RTSPCapture:
             return False
 
     def capture_image(
-        self, camera_id: int, camera_name: str, rtsp_url: str, database=None, timelapse_id: int = None
+        self,
+        camera_id: int,
+        camera_name: str,
+        rtsp_url: str,
+        database=None,
+        timelapse_id: Optional[int] = None,
     ) -> Tuple[bool, str, Optional[str]]:
         """
         Capture image from camera with retry logic and database tracking
@@ -118,27 +125,31 @@ class RTSPCapture:
                 if self.save_frame(frame, filepath):
                     # Get file size for database
                     file_size = filepath.stat().st_size
-                    
+
                     # Update camera's last image path for UI display
                     if database:
                         relative_path = f"/api/images/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
                         try:
                             database.update_camera_last_image(camera_id, relative_path)
-                            logger.debug(f"Updated camera {camera_id} last_image_path: {relative_path}")
+                            logger.debug(
+                                f"Updated camera {camera_id} last_image_path: {relative_path}"
+                            )
                         except Exception as e:
-                            logger.warning(f"Failed to update camera last_image_path: {e}")
-                    
+                            logger.warning(
+                                f"Failed to update camera last_image_path: {e}"
+                            )
+
                     # Record in database if provided and timelapse is active
                     if database and timelapse_id:
                         image_id = database.record_captured_image(
                             camera_id=camera_id,
                             timelapse_id=timelapse_id,
                             file_path=str(filepath),
-                            file_size=file_size
+                            file_size=file_size,
                         )
                         if image_id:
                             logger.info(f"Recorded image {image_id} in database")
-                    
+
                     message = f"Successfully captured and saved image: {filename}"
                     logger.info(message)
                     return True, message, str(filepath)
