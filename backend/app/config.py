@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
@@ -20,6 +20,9 @@ class Settings(BaseSettings):
         "http://localhost:3002",
     ]
 
+    # Frontend URL for SSE events
+    frontend_url: str = "http://localhost:3000"
+
     # File storage
     data_directory: str = "./data"
     images_directory: str = "./data/cameras"
@@ -34,9 +37,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: Optional[str] = None
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False
+    )
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]
