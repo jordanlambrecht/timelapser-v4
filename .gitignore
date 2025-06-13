@@ -219,3 +219,11 @@ local-docs/
 tests
 tests/**
 tests/
+
+_local-docs
+_local-docs/**
+_local-docs/
+
+_tests
+_tests/**
+_tests/
