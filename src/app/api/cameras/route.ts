@@ -3,6 +3,9 @@ import { sql } from "@/lib/db"
 import fs from "fs/promises"
 import path from "path"
 
+// Import eventEmitter for broadcasting changes
+import { eventEmitter } from "@/app/api/events/route"
+
 export async function GET() {
   try {
     // Assumes 'images' table has 'camera_id', 'captured_at', and 'file_name'
@@ -99,7 +102,16 @@ export async function POST(request: NextRequest) {
       ) RETURNING *
     `
 
-    return NextResponse.json(result[0], { status: 201 })
+    const newCamera = result[0]
+
+    // Broadcast camera added event
+    eventEmitter.emit({
+      type: 'camera_added',
+      camera: newCamera,
+      timestamp: new Date().toISOString()
+    })
+
+    return NextResponse.json(newCamera, { status: 201 })
   } catch (error) {
     console.error("Database error:", error)
     return NextResponse.json(
