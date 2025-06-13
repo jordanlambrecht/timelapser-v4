@@ -1,4 +1,6 @@
-from pydantic import BaseModel, field_validator, Field
+# backend/app/models/camera.py
+
+from pydantic import BaseModel, field_validator, Field, ConfigDict
 from typing import Optional, Literal
 from datetime import datetime, time
 import re
@@ -101,8 +103,7 @@ class Camera(CameraBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CameraWithTimelapse(Camera):
@@ -110,6 +111,3 @@ class CameraWithTimelapse(Camera):
 
     timelapse_status: Optional[Literal["running", "stopped", "paused"]] = None
     timelapse_id: Optional[int] = None
-
-    class Config:
-        from_attributes = True
