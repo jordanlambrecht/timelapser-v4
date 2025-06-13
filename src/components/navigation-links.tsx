@@ -1,7 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Settings } from "lucide-react"
+import { LayoutDashboard, Settings, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function NavigationLinks() {
@@ -13,6 +13,12 @@ export function NavigationLinks() {
       label: 'Dashboard',
       icon: LayoutDashboard,
       isActive: pathname === '/'
+    },
+    {
+      href: '/logs',
+      label: 'Logs',
+      icon: FileText,
+      isActive: pathname === '/logs'
     },
     {
       href: '/settings',

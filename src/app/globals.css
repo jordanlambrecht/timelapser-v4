@@ -32,23 +32,25 @@
     @apply bg-blue text-white font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
-}
+  /* Custom scrollbar with new colors */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
 
-/* Custom scrollbar with new colors */
-::-webkit-scrollbar {
-  width: 6px;
-}
+  ::-webkit-scrollbar-track {
+    @apply bg-black/30;
+  }
 
-::-webkit-scrollbar-track {
-  @apply bg-black/30;
-}
+  ::-webkit-scrollbar-thumb {
+    @apply bg-purple/60 rounded-full;
+  }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-purple/60 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-purple/80;
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-purple/80;
+  }
+  button {
+    @apply cursor-pointer;
+  }
 }
 
 /* Gradient text utilities */
