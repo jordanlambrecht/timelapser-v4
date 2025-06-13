@@ -4,6 +4,9 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 
+// Import eventEmitter for broadcasting changes
+import { eventEmitter } from '@/app/api/events/route'
+
 const execAsync = promisify(exec)
 
 export async function GET(request: NextRequest) {
@@ -61,73 +64,95 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { 
-      camera_id, 
-      timelapse_id,
-      video_name, 
-      framerate = 30, 
-      quality = 'medium',
-      day_start = null,
-      day_end = null 
-    } = body
+    const { camera_id, video_name } = body
     
-    // Validate required fields - need either camera_id or timelapse_id
-    if (!camera_id && !timelapse_id) {
+    if (!camera_id) {
       return NextResponse.json(
-        { error: 'Either camera_id or timelapse_id is required' },
+        { error: 'camera_id is required' },
         { status: 400 }
       )
     }
 
-    // Trigger video generation using Python script with new timelapse support
-    const pythonWorkerDir = '/Users/jordanlambrecht/dev-local/timelapser-v4/python-worker'
-    const outputDir = '/Users/jordanlambrecht/dev-local/timelapser-v4/data/videos'
+    // Get camera details
+    const cameras = await sql`SELECT * FROM cameras WHERE id = ${camera_id}`
+    if (cameras.length === 0) {
+      return NextResponse.json({ error: 'Camera not found' }, { status: 404 })
+    }
     
-    // Build command - prefer timelapse_id if provided
-    const activateCmd = `cd ${pythonWorkerDir} && source venv/bin/activate`
-    let pythonCmd = ''
+    const camera = cameras[0]
+
+    // Get active timelapse for this camera
+    const timelapses = await sql`
+      SELECT * FROM timelapses 
+      WHERE camera_id = ${camera_id} AND status = 'running'
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `
     
-    if (timelapse_id) {
-      // Use new timelapse-based generation
-      pythonCmd = `python -c "
+    if (timelapses.length === 0) {
+      return NextResponse.json({
+        error: 'No active timelapse found for this camera. Start a timelapse first.'
+      }, { status: 400 })
+    }
+    
+    const timelapse = timelapses[0]
+
+    // Check if there are images for this timelapse
+    const images = await sql`
+      SELECT COUNT(*) as count FROM images WHERE timelapse_id = ${timelapse.id}
+    `
+    
+    const imageCount = images[0]?.count || 0
+    if (imageCount === 0) {
+      return NextResponse.json({
+        error: 'No images found for this timelapse. Capture some images first.'
+      }, { status: 400 })
+    }
+
+    // Trigger video generation using Python worker
+    const pythonWorkerDir = '/Users/jordanlambrecht/dev-local/timelapser-v4/backend'
+    
+    const pythonCmd = `cd ${pythonWorkerDir} && source venv/bin/activate && python -c "
 import sys
 sys.path.append('.')
 from video_generator import VideoGenerator
-from database import Database
+from app.database import SyncDatabase
+import os
 
-db = Database()
+# Create database and video generator instances
+db = SyncDatabase()
+db.initialize()  # Initialize the database pool
+
 generator = VideoGenerator(db)
 
-success, message, video_id = generator.generate_video_from_timelapse(
-    timelapse_id=${timelapse_id},
-    output_directory='${outputDir}',
-    video_name=${video_name ? `'${video_name}'` : 'None'},
-    framerate=${framerate},
-    quality='${quality}',
-    day_start=${day_start || 'None'},
-    day_end=${day_end || 'None'}
-)
+# Generate video for timelapse
+timelapse_id = ${timelapse.id}
+camera_name = '${camera.name.replace(/'/g, "\\'")}'
+output_directory = '/Users/jordanlambrecht/dev-local/timelapser-v4/data/videos'
 
-print(f'SUCCESS:{success}')
-print(f'MESSAGE:{message}')
-print(f'VIDEO_ID:{video_id}')
-"`
-    } else {
-      // Fallback to camera-based generation (legacy)
-      const camera = await sql`SELECT * FROM cameras WHERE id = ${camera_id}`.then(r => r[0])
-      if (!camera) {
-        return NextResponse.json({ error: 'Camera not found' }, { status: 404 })
-      }
-      
-      let imagesDir = `/Users/jordanlambrecht/dev-local/timelapser-v4/data/cameras/camera-${camera_id}/images`
-      pythonCmd = `python video_generator.py "${imagesDir}" --with-db "${outputDir}"`
-    }
+# Create output directory if it doesn't exist
+os.makedirs(output_directory, exist_ok=True)
+
+try:
+    success, message, video_id = generator.generate_video_from_timelapse_with_overlays(
+        timelapse_id=timelapse_id,
+        output_directory=output_directory,
+        video_name='${video_name ? video_name.replace(/'/g, "\\'") : ''}' or None,
+        framerate=30,
+        quality='medium'
+    )
     
-    const fullCmd = `${activateCmd} && ${pythonCmd}`
+    print(f'SUCCESS:{success}')
+    print(f'MESSAGE:{message}')
+    print(f'VIDEO_ID:{video_id}')
+finally:
+    # Clean up database connection
+    db.close()
+"`
     
     try {
       // Execute video generation (with timeout)
-      const { stdout, stderr } = await execAsync(fullCmd, { 
+      const { stdout, stderr } = await execAsync(pythonCmd, { 
         timeout: 300000, // 5 minute timeout
         env: { ...process.env, PATH: process.env.PATH }
       })
@@ -135,53 +160,47 @@ print(f'VIDEO_ID:{video_id}')
       console.log('Video generation output:', stdout)
       if (stderr) console.error('Video generation stderr:', stderr)
       
-      if (timelapse_id) {
-        // Parse new format output
-        const successMatch = stdout.match(/SUCCESS:(true|false)/i)
-        const messageMatch = stdout.match(/MESSAGE:(.+)/)
-        const videoIdMatch = stdout.match(/VIDEO_ID:(\d+)/)
+      // Parse output
+      const successMatch = stdout.match(/SUCCESS:(true|false)/i)
+      const messageMatch = stdout.match(/MESSAGE:(.+)/)
+      const videoIdMatch = stdout.match(/VIDEO_ID:(\d+|None)/)
+      
+      const success = successMatch ? successMatch[1].toLowerCase() === 'true' : false
+      const message = messageMatch ? messageMatch[1].trim() : 'Video generation completed'
+      const videoId = videoIdMatch && videoIdMatch[1] !== 'None' ? parseInt(videoIdMatch[1]) : null
+      
+      if (success && videoId) {
+        // Fetch the created video record
+        const videos = await sql`SELECT * FROM videos WHERE id = ${videoId}`
+        const video = videos.length > 0 ? videos[0] : null
         
-        const success = successMatch ? successMatch[1].toLowerCase() === 'true' : false
-        const message = messageMatch ? messageMatch[1].trim() : 'Video generation completed'
-        const videoId = videoIdMatch ? parseInt(videoIdMatch[1]) : null
-        
-        if (success && videoId) {
-          // Fetch the created video record
-          const videos = await sql`SELECT * FROM videos WHERE id = ${videoId}`
-          
-          return NextResponse.json({
-            success: true,
-            message: message,
-            video: videos.length > 0 ? videos[0] : null,
-            video_id: videoId
-          })
-        } else {
-          return NextResponse.json({
-            success: false,
-            error: message || 'Video generation failed'
-          }, { status: 400 })
-        }
-      } else {
-        // Legacy format parsing
-        const videoIdMatch = stdout.match(/Video ID: (\d+)/)
-        const videoId = videoIdMatch ? parseInt(videoIdMatch[1]) : null
-        
-        if (videoId) {
-          const videos = await sql`SELECT * FROM videos WHERE id = ${videoId}`
-          
-          return NextResponse.json({
-            success: true,
-            message: 'Video generation completed',
-            video: videos.length > 0 ? videos[0] : null,
-            video_id: videoId
-          })
-        }
+        // Broadcast video completed event
+        eventEmitter.emit({
+          type: 'video_completed',
+          camera_id: camera_id,
+          video: video,
+          timestamp: new Date().toISOString()
+        })
         
         return NextResponse.json({
           success: true,
-          message: 'Video generation initiated',
-          output: stdout
+          message: message,
+          video: video,
+          video_id: videoId
         })
+      } else {
+        // Broadcast video failed event
+        eventEmitter.emit({
+          type: 'video_failed',
+          camera_id: camera_id,
+          error: message || 'Video generation failed',
+          timestamp: new Date().toISOString()
+        })
+        
+        return NextResponse.json({
+          success: false,
+          error: message || 'Video generation failed'
+        }, { status: 400 })
       }
       
     } catch (execError: any) {
