@@ -1,5 +1,11 @@
-import { useState } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { useState, useEffect } from "react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -14,145 +20,214 @@ interface CameraModalProps {
   title: string
 }
 
-export function CameraModal({ isOpen, onClose, onSave, camera, title }: CameraModalProps) {
+export function CameraModal({
+  isOpen,
+  onClose,
+  onSave,
+  camera,
+  title,
+}: CameraModalProps) {
   const [formData, setFormData] = useState({
-    name: camera?.name || '',
-    rtsp_url: camera?.rtsp_url || '',
-    use_time_window: camera?.use_time_window || false,
-    time_window_start: camera?.time_window_start || '06:00',
-    time_window_end: camera?.time_window_end || '18:00',
+    name: "",
+    rtsp_url: "",
+    use_time_window: false,
+    time_window_start: "06:00",
+    time_window_end: "18:00",
   })
+  const [saving, setSaving] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Update form data when camera prop changes or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        name: camera?.name || "",
+        rtsp_url: camera?.rtsp_url || "",
+        use_time_window: camera?.use_time_window || false,
+        time_window_start: camera?.time_window_start || "06:00",
+        time_window_end: camera?.time_window_end || "18:00",
+      })
+      setSaving(false) // Reset saving state when modal opens
+    }
+  }, [isOpen, camera])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    onSave(formData)
-    onClose()
+    setSaving(true)
+    try {
+      await onSave(formData)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="glass-strong border-purple-muted/50 max-w-lg">
-        <DialogHeader className="relative">
-          <div className="absolute -top-2 -right-2 w-16 h-16 bg-gradient-to-bl from-pink/10 to-transparent rounded-full" />
-          <DialogTitle className="flex items-center space-x-3 text-xl">
-            <div className="p-2 bg-gradient-to-br from-cyan/20 to-purple/20 rounded-xl">
-              <Camera className="w-6 h-6 text-white" />
+      <DialogContent className='max-w-lg glass-strong border-purple-muted/50'>
+        <DialogHeader className='relative'>
+          <div className='absolute w-16 h-16 rounded-full -top-2 -right-2 bg-gradient-to-bl from-pink/10 to-transparent' />
+          <DialogTitle className='flex items-center space-x-3 text-xl'>
+            <div className='p-2 bg-gradient-to-br from-cyan/20 to-purple/20 rounded-xl'>
+              <Camera className='w-6 h-6 text-white' />
             </div>
-            <span className="text-white">{title}</span>
+            <span className='text-white'>{title}</span>
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-8 mt-6">
-          <div className="space-y-6">
+        <form onSubmit={handleSubmit} className='mt-6 space-y-8'>
+          <div className='space-y-6'>
             {/* Camera Name */}
-            <div className="space-y-3">
-              <Label htmlFor="name" className="text-white font-medium flex items-center space-x-2">
-                <Settings className="w-4 h-4 text-cyan/70" />
+            <div className='space-y-3'>
+              <Label
+                htmlFor='name'
+                className='flex items-center space-x-2 font-medium text-white'
+              >
+                <Settings className='w-4 h-4 text-cyan/70' />
                 <span>Camera Name</span>
               </Label>
               <Input
-                id="name"
+                id='name'
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="e.g., Front Door Camera"
-                className="bg-black/30 border-purple-muted/30 text-white placeholder:text-grey-light/40 focus:border-pink/50 focus:ring-2 focus:ring-pink/20 rounded-xl h-12"
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder='e.g., Front Door Camera'
+                className='h-12 text-white bg-black/30 border-purple-muted/30 placeholder:text-grey-light/40 focus:border-pink/50 focus:ring-2 focus:ring-pink/20 rounded-xl'
                 required
               />
             </div>
 
             {/* RTSP URL */}
-            <div className="space-y-3">
-              <Label htmlFor="rtsp_url" className="text-white font-medium flex items-center space-x-2">
-                <Wifi className="w-4 h-4 text-purple-light/70" />
+            <div className='space-y-3'>
+              <Label
+                htmlFor='rtsp_url'
+                className='flex items-center space-x-2 font-medium text-white'
+              >
+                <Wifi className='w-4 h-4 text-purple-light/70' />
                 <span>RTSP Stream URL</span>
               </Label>
               <Input
-                id="rtsp_url"
+                id='rtsp_url'
                 value={formData.rtsp_url}
-                onChange={(e) => setFormData(prev => ({ ...prev, rtsp_url: e.target.value }))}
-                placeholder="rtsp://192.168.1.100:554/stream"
-                className="bg-black/30 border-purple-muted/30 text-white placeholder:text-grey-light/40 focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 rounded-xl h-12 font-mono text-sm"
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, rtsp_url: e.target.value }))
+                }
+                placeholder='rtsp://192.168.1.100:554/stream'
+                className='h-12 font-mono text-sm text-white bg-black/30 border-purple-muted/30 placeholder:text-grey-light/40 focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 rounded-xl'
                 required
               />
-              <p className="text-xs text-grey-light/60 mt-2">
+              <p className='mt-2 text-xs text-grey-light/60'>
                 Secure RTSP streams (rtsps://) are supported
               </p>
             </div>
 
             {/* Time Window Section */}
-            <div className="space-y-6 p-6 bg-black/20 rounded-2xl border border-purple-muted/20">
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <Label className="text-white font-medium flex items-center space-x-2">
-                    <Clock className="w-4 h-4 text-yellow/70" />
+            <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+              <div className='flex items-center justify-between'>
+                <div className='space-y-2'>
+                  <Label className='flex items-center space-x-2 font-medium text-white'>
+                    <Clock className='w-4 h-4 text-yellow/70' />
                     <span>Time Window</span>
                   </Label>
-                  <p className="text-sm text-grey-light/60">
+                  <p className='text-sm text-grey-light/60'>
                     Capture only during specific hours (e.g., daylight only)
                   </p>
                 </div>
                 <Switch
                   checked={formData.use_time_window}
-                  onCheckedChange={(checked) => 
-                    setFormData(prev => ({ ...prev, use_time_window: checked }))
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      use_time_window: checked,
+                    }))
                   }
-                  className="data-[state=checked]:bg-success data-[state=unchecked]:bg-purple-muted/50"
+                  className='data-[state=checked]:bg-success data-[state=unchecked]:bg-purple-muted/50'
                 />
               </div>
 
               {formData.use_time_window && (
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="time_start" className="text-grey-light/70 text-sm">
+                <div className='grid grid-cols-2 gap-4 mt-4'>
+                  <div className='space-y-2'>
+                    <Label
+                      htmlFor='time_start'
+                      className='text-sm text-grey-light/70'
+                    >
                       Start Time
                     </Label>
                     <Input
-                      id="time_start"
-                      type="time"
+                      id='time_start'
+                      type='time'
                       value={formData.time_window_start}
-                      onChange={(e) => setFormData(prev => ({ ...prev, time_window_start: e.target.value }))}
-                      className="bg-black/30 border-purple-muted/30 text-white focus:border-success/50 rounded-xl h-10"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          time_window_start: e.target.value,
+                        }))
+                      }
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="time_end" className="text-grey-light/70 text-sm">
+                  <div className='space-y-2'>
+                    <Label
+                      htmlFor='time_end'
+                      className='text-sm text-grey-light/70'
+                    >
                       End Time
                     </Label>
                     <Input
-                      id="time_end"
-                      type="time"
+                      id='time_end'
+                      type='time'
                       value={formData.time_window_end}
-                      onChange={(e) => setFormData(prev => ({ ...prev, time_window_end: e.target.value }))}
-                      className="bg-black/30 border-purple-muted/30 text-white focus:border-success/50 rounded-xl h-10"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          time_window_end: e.target.value,
+                        }))
+                      }
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
                     />
                   </div>
                 </div>
               )}
 
               {formData.use_time_window && (
-                <div className="mt-4 p-3 bg-success/10 border border-success/20 rounded-xl">
-                  <p className="text-sm text-success/80">
-                    ✓ Camera will capture from <span className="font-mono">{formData.time_window_start}</span> to <span className="font-mono">{formData.time_window_end}</span>
+                <div className='p-3 mt-4 border bg-success/10 border-success/20 rounded-xl'>
+                  <p className='text-sm text-success/80'>
+                    ✓ Camera will capture from{" "}
+                    <span className='font-mono'>
+                      {formData.time_window_start}
+                    </span>{" "}
+                    to{" "}
+                    <span className='font-mono'>
+                      {formData.time_window_end}
+                    </span>
                   </p>
                 </div>
               )}
             </div>
           </div>
 
-          <DialogFooter className="gap-3 pt-4">
-            <Button 
-              type="button" 
-              variant="outline" 
+          <DialogFooter className='gap-3 pt-4'>
+            <Button
+              type='button'
+              variant='outline'
               onClick={onClose}
-              className="border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white px-6"
+              className='px-6 border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white'
             >
               Cancel
             </Button>
-            <Button 
-              type="submit" 
-              className="bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black font-bold px-8 hover:shadow-lg hover:shadow-pink/20 transition-all duration-300"
+            <Button
+              type='submit'
+              disabled={saving}
+              className='px-8 font-bold text-black transition-all duration-300 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan hover:shadow-lg hover:shadow-pink/20 disabled:opacity-50 disabled:cursor-not-allowed'
             >
-              {camera ? 'Update' : 'Add'} Camera
+              {saving ? (
+                <>
+                  <div className='w-4 h-4 mr-2 border-2 rounded-full border-black/30 border-t-black animate-spin' />
+                  {camera ? "Updating..." : "Adding..."}
+                </>
+              ) : (
+                <>{camera ? "Update" : "Add"} Camera</>
+              )}
             </Button>
           </DialogFooter>
         </form>
