@@ -1,11 +1,12 @@
+# backend/app/database.py
 import asyncio
-import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from datetime import datetime, date
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, cast  # Added cast
 from loguru import logger
 import json
+import requests
 from contextlib import asynccontextmanager, contextmanager
 
 from .config import settings
@@ -26,8 +27,9 @@ class AsyncDatabase:
                 max_size=settings.db_pool_size,
                 max_waiting=settings.db_max_overflow,
                 kwargs={"row_factory": dict_row},
+                open=False,
             )
-            await self._pool.wait()
+            await self._pool.open()
             logger.info("Async database pool initialized")
         except Exception as e:
             logger.error(f"Failed to initialize async database pool: {e}")
@@ -66,7 +68,7 @@ class AsyncDatabase:
                     ORDER BY c.id
                 """
                 )
-                return await cur.fetchall()
+                return cast(List[Dict[str, Any]], await cur.fetchall())
 
     async def get_camera_by_id(self, camera_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific camera by ID"""
@@ -81,7 +83,8 @@ class AsyncDatabase:
                 """,
                     (camera_id,),
                 )
-                return await cur.fetchone()
+                row = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], row)
 
     async def create_camera(self, camera_data: Dict[str, Any]) -> Optional[int]:
         """Create a new camera"""
@@ -98,8 +101,9 @@ class AsyncDatabase:
                 """,
                     camera_data,
                 )
-                result = await cur.fetchone()
-                return result["id"] if result else None
+                result_row = await cur.fetchone()
+                result_dict = cast(Optional[Dict[str, Any]], result_row)
+                return result_dict["id"] if result_dict else None
 
     async def update_camera(self, camera_id: int, camera_data: Dict[str, Any]) -> bool:
         """Update a camera"""
@@ -167,7 +171,7 @@ class AsyncDatabase:
                         ORDER BY t.created_at DESC
                     """
                     )
-                return await cur.fetchall()
+                return cast(List[Dict[str, Any]], await cur.fetchall())
 
     async def create_or_update_timelapse(
         self, camera_id: int, status: str
@@ -180,12 +184,14 @@ class AsyncDatabase:
                     "SELECT id, status FROM timelapses WHERE camera_id = %s",
                     (camera_id,),
                 )
-                existing = await cur.fetchone()
+                existing_row = await cur.fetchone()
+                existing_dict = cast(Optional[Dict[str, Any]], existing_row)
+                timelapse_id: Optional[int] = None
 
-                if existing:
-                    timelapse_id = existing["id"]
+                if existing_dict:
+                    timelapse_id = cast(int, existing_dict["id"])
                     # If changing from stopped/paused to running, update start_date
-                    if existing["status"] != "running" and status == "running":
+                    if existing_dict["status"] != "running" and status == "running":
                         await cur.execute(
                             """
                             UPDATE timelapses 
@@ -213,10 +219,13 @@ class AsyncDatabase:
                     """,
                         (camera_id, status),
                     )
-                    result = await cur.fetchone()
-                    timelapse_id = result["id"] if result else None
+                    result_row_new = await cur.fetchone()
+                    result_dict_new = cast(Optional[Dict[str, Any]], result_row_new)
+                    timelapse_id = result_dict_new["id"] if result_dict_new else None
 
                 return timelapse_id
+
+    # Duplicate method removed - using the first one at line 148
 
     # Video methods
     async def get_videos(self, camera_id: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -243,7 +252,7 @@ class AsyncDatabase:
                         ORDER BY v.created_at DESC
                     """
                     )
-                return await cur.fetchall()
+                return cast(List[Dict[str, Any]], await cur.fetchall())
 
     async def get_video_by_id(self, video_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific video by ID"""
@@ -258,7 +267,8 @@ class AsyncDatabase:
                 """,
                     (video_id,),
                 )
-                return await cur.fetchone()
+                row = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], row)
 
     async def create_video_record(
         self, camera_id: int, name: str, settings: dict
@@ -274,8 +284,9 @@ class AsyncDatabase:
                 """,
                     (camera_id, name, json.dumps(settings)),
                 )
-                result = await cur.fetchone()
-                return result["id"] if result else None
+                result_row = await cur.fetchone()
+                result_dict = cast(Optional[Dict[str, Any]], result_row)
+                return result_dict["id"] if result_dict else None
 
     async def update_video_record(self, video_id: int, **kwargs):
         """Update video record with provided fields"""
@@ -376,7 +387,7 @@ class SyncDatabase:
                     ORDER BY c.id
                 """
                 )
-                return cur.fetchall()
+                return cast(List[Dict[str, Any]], cur.fetchall())
 
     def record_captured_image(
         self, camera_id: int, timelapse_id: int, file_path: str, file_size: int
@@ -388,16 +399,17 @@ class SyncDatabase:
                 cur.execute(
                     "SELECT start_date FROM timelapses WHERE id = %s", (timelapse_id,)
                 )
-                timelapse = cur.fetchone()
+                timelapse_row = cur.fetchone()
+                timelapse_dict = cast(Optional[Dict[str, Any]], timelapse_row)
 
-                if not timelapse or not timelapse["start_date"]:
+                if not timelapse_dict or not timelapse_dict.get("start_date"):
                     logger.error(
                         f"Timelapse {timelapse_id} not found or missing start_date"
                     )
                     return None
 
                 # Calculate day number (1-based)
-                start_date = timelapse["start_date"]
+                start_date = timelapse_dict["start_date"]  # Already checked it exists
                 current_date = date.today()
                 day_number = (current_date - start_date).days + 1
 
@@ -411,7 +423,14 @@ class SyncDatabase:
                     (camera_id, timelapse_id, file_path, day_number, file_size),
                 )
 
-                image_id = cur.fetchone()["id"]
+                image_row = cur.fetchone()
+                image_dict = cast(Optional[Dict[str, Any]], image_row)
+                if not image_dict:
+                    logger.error(
+                        f"Failed to retrieve image ID after insert for timelapse {timelapse_id}"
+                    )
+                    return None
+                image_id = cast(int, image_dict["id"])
 
                 # Update timelapse image count and last capture
                 cur.execute(
@@ -425,58 +444,14 @@ class SyncDatabase:
                     (timelapse_id,),
                 )
 
-                conn.commit()
-                return image_id
-
-    def update_camera_health(self, camera_id: int, success: bool):
-        """Update camera capture success status (separate from connectivity)"""
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                if success:
-                    # Capture was successful
-                    cur.execute(
-                        """
-                        UPDATE cameras 
-                        SET last_capture_at = CURRENT_TIMESTAMP,
-                            last_capture_success = true,
-                            consecutive_failures = 0,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """,
-                        (camera_id,),
-                    )
-                else:
-                    # Capture failed
-                    cur.execute(
-                        """
-                        UPDATE cameras 
-                        SET last_capture_success = false,
-                            consecutive_failures = consecutive_failures + 1,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """,
-                        (camera_id,),
-                    )
-
-                conn.commit()
-
-    def update_camera_connectivity(self, camera_id: int, is_online: bool):
-        """Update camera health status based on RTSP connectivity test"""
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                new_status = "online" if is_online else "offline"
-
-                cur.execute(
-                    """
-                    UPDATE cameras 
-                    SET health_status = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """,
-                    (new_status, camera_id),
+                logger.info(
+                    f"Recorded image {image_id} for timelapse {timelapse_id}, day {day_number}"
                 )
 
-                conn.commit()
+                # Broadcast SSE event for new image capture
+                self.notify_image_captured(camera_id, image_id, day_number)
+
+                return image_id
 
     def get_active_cameras(self) -> List[Dict]:
         """Get all active cameras (for health checking)"""
@@ -490,7 +465,7 @@ class SyncDatabase:
                     ORDER BY id
                 """
                 )
-                return cur.fetchall()
+                return cast(List[Dict[str, Any]], cur.fetchall())
 
     def get_active_timelapse_for_camera(self, camera_id: int) -> Optional[Dict]:
         """Get the active (running) timelapse for a camera"""
@@ -498,43 +473,334 @@ class SyncDatabase:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT * FROM timelapses 
-                    WHERE camera_id = %s AND status = 'running'
-                    ORDER BY created_at DESC 
+                    SELECT * 
+                    FROM timelapses 
+                    WHERE camera_id = %s AND status = 'running' 
                     LIMIT 1
-                """,
+                    """,
                     (camera_id,),
                 )
-                return cur.fetchone()
+                row = cur.fetchone()
+                return cast(Optional[Dict[str, Any]], row)
 
-    def get_offline_cameras(self) -> List[Dict]:
-        """Get cameras that are currently offline"""
+    def update_camera_health(self, camera_id: int, success: bool) -> None:
+        """Update camera health status based on capture success/failure"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                if success:
+                    # Reset consecutive failures, mark as online
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET health_status = 'online',
+                            consecutive_failures = 0,
+                            last_capture_at = CURRENT_TIMESTAMP,
+                            last_capture_success = true,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (camera_id,),
+                    )
+                else:
+                    # Increment consecutive failures
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET consecutive_failures = consecutive_failures + 1,
+                            last_capture_success = false,
+                            health_status = CASE 
+                                WHEN consecutive_failures + 1 >= 3 THEN 'offline'
+                                ELSE health_status
+                            END,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (camera_id,),
+                    )
+
+    def update_camera_connectivity(self, camera_id: int, is_online: bool) -> None:
+        """Update camera connectivity status (for health checks without capturing)"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                if is_online:
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET health_status = 'online',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (camera_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET health_status = 'offline',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (camera_id,),
+                    )
+
+    def get_system_health(self) -> Dict[str, Any]:
+        """Get overall system health statistics"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Get camera health stats
+                cur.execute(
+                    """
+                    SELECT 
+                        COUNT(*) as total_cameras,
+                        COUNT(CASE WHEN health_status = 'online' THEN 1 END) as online_cameras,
+                        COUNT(CASE WHEN health_status = 'offline' THEN 1 END) as offline_cameras,
+                        COUNT(CASE WHEN status = 'active' THEN 1 END) as active_cameras
+                    FROM cameras
+                    """
+                )
+                camera_stats = cur.fetchone()
+
+                # Get timelapse stats
+                cur.execute(
+                    """
+                    SELECT 
+                        COUNT(CASE WHEN status = 'running' THEN 1 END) as running_timelapses,
+                        COUNT(CASE WHEN status = 'paused' THEN 1 END) as paused_timelapses
+                    FROM timelapses
+                    """
+                )
+                timelapse_stats = cur.fetchone()
+
+                # Get recent captures count (last hour)
+                cur.execute(
+                    """
+                    SELECT COUNT(*) as recent_captures
+                    FROM images 
+                    WHERE captured_at > CURRENT_TIMESTAMP - INTERVAL '1 hour'
+                    """
+                )
+                capture_stats = cur.fetchone()
+
+                # Get disk usage estimation (count of images)
+                cur.execute("SELECT COUNT(*) as total_images FROM images")
+                image_stats = cur.fetchone()
+
+                return {
+                    "cameras": dict(camera_stats) if camera_stats else {},
+                    "timelapses": dict(timelapse_stats) if timelapse_stats else {},
+                    "captures": dict(capture_stats) if capture_stats else {},
+                    "images": dict(image_stats) if image_stats else {},
+                    "timestamp": datetime.now().isoformat(),
+                    "status": (
+                        "healthy"
+                        if camera_stats and dict(camera_stats).get("offline_cameras", 0) == 0
+                        else "degraded"
+                    ),
+                }
+
+    # Video generation methods
+    def get_timelapse_images(
+        self, timelapse_id: int, day_start: Optional[int] = None, day_end: Optional[int] = None
+    ) -> List[Dict]:
+        """Get images for a specific timelapse, optionally filtered by day range"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                query = """
+                    SELECT * FROM images 
+                    WHERE timelapse_id = %s
+                """
+                params = [timelapse_id]
+
+                if day_start is not None:
+                    query += " AND day_number >= %s"
+                    params.append(day_start)
+
+                if day_end is not None:
+                    query += " AND day_number <= %s"
+                    params.append(day_end)
+
+                query += " ORDER BY captured_at"
+
+                cur.execute(query, params)
+                return cast(List[Dict[str, Any]], cur.fetchall())
+
+    def get_timelapse_day_range(self, timelapse_id: int) -> Dict:
+        """Get day range and statistics for a timelapse"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, name, health_status, last_capture_at, consecutive_failures
-                    FROM cameras 
-                    WHERE status = 'active' AND health_status = 'offline'
-                    ORDER BY last_capture_at DESC NULLS LAST
-                """
+                    SELECT 
+                        MIN(day_number) as min_day,
+                        MAX(day_number) as max_day,
+                        COUNT(*) as total_images,
+                        COUNT(DISTINCT day_number) as days_with_images
+                    FROM images 
+                    WHERE timelapse_id = %s
+                """,
+                    (timelapse_id,),
                 )
-                return cur.fetchall()
 
-    def update_camera_last_image(self, camera_id: int, image_path: str):
+                row = cur.fetchone()
+                result_dict = cast(Optional[Dict[str, Any]], row)
+                if result_dict:
+                    return {
+                        "min_day": result_dict.get("min_day", 0) or 0,
+                        "max_day": result_dict.get("max_day", 0) or 0,
+                        "total_images": result_dict.get("total_images", 0) or 0,
+                        "days_with_images": result_dict.get("days_with_images", 0) or 0,
+                    }
+
+                return {
+                    "min_day": 0,
+                    "max_day": 0,
+                    "total_images": 0,
+                    "days_with_images": 0,
+                }
+
+    def create_video_record(
+        self, camera_id: int, name: str, settings: dict
+    ) -> Optional[int]:
+        """Create a new video record"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO videos (camera_id, name, status, settings)
+                    VALUES (%s, %s, 'generating', %s)
+                    RETURNING id
+                """,
+                    (camera_id, name, json.dumps(settings)),
+                )
+                result_row = cur.fetchone()
+                result_dict = cast(Optional[Dict[str, Any]], result_row)
+                return result_dict["id"] if result_dict else None
+
+    def update_video_record(self, video_id: int, **kwargs):
+        """Update video record with provided fields"""
+        valid_fields = [
+            "name",
+            "file_path",
+            "status",
+            "settings",
+            "image_count",
+            "file_size",
+            "duration_seconds",
+            "images_start_date",
+            "images_end_date",
+        ]
+
+        updates = []
+        values = {}
+
+        for field, value in kwargs.items():
+            if field in valid_fields:
+                updates.append(f"{field} = %({field})s")
+                if field == "settings" and isinstance(value, dict):
+                    values[field] = json.dumps(value)
+                else:
+                    values[field] = value
+
+        if not updates:
+            return
+
+        values["video_id"] = video_id
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE videos SET {', '.join(updates)} WHERE id = %(video_id)s"
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, values)
+
+    def update_camera_last_image(self, camera_id: int, last_image_path: str) -> None:
         """Update camera's last image path for UI display"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE cameras 
-                    SET last_image_path = %s,
-                        updated_at = CURRENT_TIMESTAMP
+                    SET last_image_path = %s, updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
-                """,
-                    (image_path, camera_id),
+                    """,
+                    (last_image_path, camera_id),
                 )
-                conn.commit()
+
+    def broadcast_event(self, event_data: Dict[str, Any]) -> None:
+        """Broadcast event via SSE to connected frontend clients"""
+        try:
+            # Ensure event_data is JSON serializable
+            json_data = json.dumps(
+                event_data, default=str
+            )  # Convert non-serializable to string
+
+            # Send event to Next.js SSE endpoint
+            sse_url = f"{settings.frontend_url}/api/events"
+            response = requests.post(
+                sse_url,
+                data=json_data,  # Use data instead of json to avoid double encoding
+                timeout=5,
+                headers={"Content-Type": "application/json"},
+            )
+
+            if response.status_code == 200:
+                logger.debug(
+                    f"Broadcasted SSE event: {event_data['type']} for camera {event_data.get('camera_id')}"
+                )
+            else:
+                logger.warning(
+                    f"Failed to broadcast SSE event: {response.status_code} - {response.text}"
+                )
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to serialize SSE event data: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Failed to send SSE event: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error broadcasting SSE event: {e}")
+
+    def notify_image_captured(
+        self, camera_id: int, image_count: int, day_number: int
+    ) -> None:
+        """Notify frontend that a new image was captured"""
+        self.broadcast_event(
+            {
+                "type": "image_captured",
+                "camera_id": camera_id,
+                "image_count": image_count,
+                "day_number": day_number,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+    def notify_camera_status_changed(
+        self, camera_id: int, status: str, health_status: Optional[str] = None
+    ) -> None:
+        """Notify frontend that camera status changed"""
+        event_data = {
+            "type": "camera_status_changed",
+            "camera_id": camera_id,
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        if health_status:
+            event_data["health_status"] = health_status
+
+        self.broadcast_event(event_data)
+
+    def notify_timelapse_status_changed(
+        self, camera_id: int, timelapse_id: int, status: str
+    ) -> None:
+        """Notify frontend that timelapse status changed"""
+        self.broadcast_event(
+            {
+                "type": "timelapse_status_changed",
+                "camera_id": camera_id,
+                "timelapse_id": timelapse_id,
+                "status": status,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
 
 # Global instances
