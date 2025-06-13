@@ -41,12 +41,14 @@ async def create_camera(camera_data: CameraCreate):
         camera_id = await async_db.create_camera(camera_data.model_dump())
         if not camera_id:
             raise HTTPException(status_code=500, detail="Failed to create camera")
-            
+
         # Fetch the created camera
         camera = await async_db.get_camera_by_id(camera_id)
         if not camera:
-            raise HTTPException(status_code=500, detail="Camera created but could not be retrieved")
-            
+            raise HTTPException(
+                status_code=500, detail="Camera created but could not be retrieved"
+            )
+
         logger.info(f"Created camera {camera_id}: {camera_data.name}")
         return camera
     except ValueError as e:
@@ -64,17 +66,21 @@ async def update_camera(camera_id: int, camera_data: CameraUpdate):
         existing_camera = await async_db.get_camera_by_id(camera_id)
         if not existing_camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-            
+
         # Update camera
-        success = await async_db.update_camera(camera_id, camera_data.model_dump(exclude_unset=True))
+        success = await async_db.update_camera(
+            camera_id, camera_data.model_dump(exclude_unset=True)
+        )
         if not success:
             raise HTTPException(status_code=500, detail="Failed to update camera")
-            
+
         # Fetch updated camera
         updated_camera = await async_db.get_camera_by_id(camera_id)
         if not updated_camera:
-            raise HTTPException(status_code=500, detail="Camera updated but could not be retrieved")
-            
+            raise HTTPException(
+                status_code=500, detail="Camera updated but could not be retrieved"
+            )
+
         logger.info(f"Updated camera {camera_id}")
         return updated_camera
     except HTTPException:
@@ -94,12 +100,12 @@ async def delete_camera(camera_id: int):
         existing_camera = await async_db.get_camera_by_id(camera_id)
         if not existing_camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-            
+
         # Delete camera
         success = await async_db.delete_camera(camera_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete camera")
-            
+
         logger.info(f"Deleted camera {camera_id}: {existing_camera['name']}")
         return {"message": "Camera deleted successfully"}
     except HTTPException:
