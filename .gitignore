@@ -215,3 +215,7 @@ yarn-error.log*
 local-docs
 local-docs/**
 local-docs/
+
+tests
+tests/**
+tests/

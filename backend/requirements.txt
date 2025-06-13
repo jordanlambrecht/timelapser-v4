@@ -17,6 +17,9 @@ Pillow==11.2.1
 asyncio-throttle==1.0.2
 apscheduler==3.11.0
 
+# HTTP requests for SSE broadcasting
+requests==2.32.3
+
 # Utilities
 python-multipart==0.0.20
 python-dotenv==1.1.0

@@ -103,6 +103,9 @@ npm run dev
 ## 🎯 Access Points
 
 - **Frontend Dashboard**: http://localhost:3000
+- **Camera Details**: http://localhost:3000/cameras/[id]
+- **System Logs**: http://localhost:3000/logs
+- **Settings**: http://localhost:3000/settings
 - **FastAPI Documentation**: http://localhost:8000/docs
 - **API Health Check**: http://localhost:8000/health
 
@@ -211,8 +214,12 @@ timelapser-v4/
 - **Database Migrations** - Version-controlled schema changes
 
 ### ✅ User Experience
+- **Dashboard** - Camera grid with real-time status and quick controls
+- **Camera Details** - Individual camera pages with latest images and detailed monitoring
+- **System Logs** - Filterable logs with search functionality and pagination
 - **Server Components** - Fast page loads with Next.js App Router
 - **Real-time Status** - Live camera health and capture indicators
+- **Navigation** - Intuitive menu with active page detection
 - **Responsive Design** - Works on desktop, tablet, and mobile
 - **Easy Setup** - Single script deployment with validation
 
