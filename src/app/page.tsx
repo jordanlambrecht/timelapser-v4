@@ -1,6 +1,6 @@
-'use client'
+"use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Plus, Camera, Video, Clock, Activity, Zap, Eye } from "lucide-react"
 import { CameraCard } from "@/components/camera-card"
@@ -13,7 +13,7 @@ interface Camera {
   name: string
   rtsp_url: string
   status: string
-  health_status: 'online' | 'offline' | 'unknown'
+  health_status: "online" | "offline" | "unknown"
   last_capture_at?: string
   consecutive_failures: number
   time_window_start?: string
@@ -49,9 +49,9 @@ export default function Dashboard() {
   const fetchData = async () => {
     try {
       const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
-        fetch('/api/cameras'),
-        fetch('/api/timelapses'),
-        fetch('/api/videos')
+        fetch("/api/cameras"),
+        fetch("/api/timelapses"),
+        fetch("/api/videos"),
       ])
 
       const camerasData = await camerasRes.json()
@@ -62,93 +62,242 @@ export default function Dashboard() {
       setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
       setVideos(Array.isArray(videosData) ? videosData : [])
     } catch (error) {
-      console.error('Error fetching data:', error)
+      console.error("Error fetching data:", error)
     } finally {
       setLoading(false)
     }
   }
 
+  // Real-time updates via Server-Sent Events
   useEffect(() => {
+    const eventSource = new EventSource("/api/events")
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+
+        console.log("Dashboard SSE event:", data.type, data)
+
+        switch (data.type) {
+          case "camera_added":
+            setCameras((prev) => [data.camera, ...prev])
+            break
+
+          case "camera_updated":
+            setCameras((prev) =>
+              prev.map((camera) =>
+                camera.id === data.camera.id
+                  ? { ...camera, ...data.camera }
+                  : camera
+              )
+            )
+            break
+
+          case "camera_deleted":
+            setCameras((prev) =>
+              prev.filter((camera) => camera.id !== data.camera_id)
+            )
+            setTimelapses((prev) =>
+              prev.filter((t) => t.camera_id !== data.camera_id)
+            )
+            setVideos((prev) =>
+              prev.filter((v) => v.camera_id !== data.camera_id)
+            )
+            break
+
+          case "timelapse_status_changed":
+            setTimelapses((prev) =>
+              prev.map((timelapse) =>
+                timelapse.id === data.timelapse_id
+                  ? { ...timelapse, status: data.status }
+                  : timelapse
+              )
+            )
+            break
+
+          case "video_completed":
+            if (data.video) {
+              setVideos((prev) => [data.video, ...prev])
+            }
+            break
+
+          case "video_failed":
+            console.error("Video generation failed:", data.error)
+            break
+
+          case "image_captured":
+            // Update image count for timelapse
+            setTimelapses((prev) =>
+              prev.map((timelapse) =>
+                timelapse.camera_id === data.camera_id
+                  ? {
+                      ...timelapse,
+                      image_count: data.image_count || timelapse.image_count,
+                    }
+                  : timelapse
+              )
+            )
+            break
+
+          case "connected":
+            console.log("Connected to dashboard events")
+            break
+
+          case "heartbeat":
+            // Keep connection alive
+            break
+
+          default:
+            console.log("Unknown dashboard event:", data.type)
+        }
+      } catch (error) {
+        console.error("Error parsing dashboard SSE event:", error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error("Dashboard SSE connection error:", error)
+    }
+
+    // Cleanup on unmount
+    return () => {
+      eventSource.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    // Initial data fetch only - no more polling!
     fetchData()
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
   }, [])
 
   const handleSaveCamera = async (cameraData: any) => {
     try {
-      const url = editingCamera ? `/api/cameras/${editingCamera.id}` : '/api/cameras'
-      const method = editingCamera ? 'PUT' : 'POST'
-      
+      const url = editingCamera
+        ? `/api/cameras/${editingCamera.id}`
+        : "/api/cameras"
+      const method = editingCamera ? "PUT" : "POST"
+
       const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cameraData)
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cameraData),
       })
 
       if (response.ok) {
-        fetchData()
+        // SSE events will handle updating the state automatically
+        setIsModalOpen(false)
         setEditingCamera(undefined)
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`)
       }
     } catch (error) {
-      console.error('Error saving camera:', error)
+      console.error("Error saving camera:", error)
+      // Keep modal open on error so user can retry
     }
   }
 
-  const handleToggleTimelapse = async (cameraId: number, currentStatus: string) => {
+  const handleToggleTimelapse = async (
+    cameraId: number,
+    currentStatus: string
+  ) => {
     try {
-      const newStatus = currentStatus === 'running' ? 'stopped' : 'running'
-      await fetch('/api/timelapses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ camera_id: cameraId, status: newStatus })
+      const newStatus = currentStatus === "running" ? "stopped" : "running"
+      await fetch("/api/timelapses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: cameraId, status: newStatus }),
       })
-      fetchData()
+      // SSE events will handle updating the state automatically
     } catch (error) {
-      console.error('Error toggling timelapse:', error)
+      console.error("Error toggling timelapse:", error)
+    }
+  }
+
+  const handlePauseTimelapse = async (cameraId: number) => {
+    try {
+      await fetch("/api/timelapses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: cameraId, status: "paused" }),
+      })
+      // SSE events will handle updating the state automatically
+    } catch (error) {
+      console.error("Error pausing timelapse:", error)
+    }
+  }
+
+  const handleResumeTimelapse = async (cameraId: number) => {
+    try {
+      await fetch("/api/timelapses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: cameraId, status: "running" }),
+      })
+      // SSE events will handle updating the state automatically
+    } catch (error) {
+      console.error("Error resuming timelapse:", error)
     }
   }
 
   const handleDeleteCamera = async (cameraId: number) => {
-    if (confirm('Are you sure you want to delete this camera?')) {
+    if (confirm("Are you sure you want to delete this camera?")) {
       try {
-        await fetch(`/api/cameras/${cameraId}`, { method: 'DELETE' })
-        fetchData()
+        await fetch(`/api/cameras/${cameraId}`, { method: "DELETE" })
+        // SSE events will handle updating the state automatically
       } catch (error) {
-        console.error('Error deleting camera:', error)
+        console.error("Error deleting camera:", error)
       }
     }
   }
 
   const handleGenerateVideo = async (cameraId: number) => {
     try {
-      await fetch('/api/videos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ camera_id: cameraId })
+      await fetch("/api/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: cameraId }),
       })
-      fetchData()
+      // SSE events will handle updating the state automatically
     } catch (error) {
-      console.error('Error generating video:', error)
+      console.error("Error generating video:", error)
     }
   }
 
   // Calculate stats
-  const onlineCameras = cameras.filter(c => c.health_status === 'online').length
-  const activTimelapses = timelapses.filter(t => t.status === 'running').length
-  const totalVideos = videos.filter(v => v.status === 'completed').length
-  const totalImages = timelapses.reduce((sum, t) => sum + (t.image_count || 0), 0)
+  const onlineCameras = cameras.filter(
+    (c) => c.health_status === "online"
+  ).length
+  const activTimelapses = timelapses.filter(
+    (t) => t.status === "running"
+  ).length
+  const pausedTimelapses = timelapses.filter(
+    (t) => t.status === "paused"
+  ).length
+  const totalVideos = videos.filter((v) => v.status === "completed").length
+  const totalImages = timelapses.reduce(
+    (sum, t) => sum + (t.image_count || 0),
+    0
+  )
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center space-y-6">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-pink/20 border-t-pink rounded-full animate-spin mx-auto" />
-            <div className="absolute inset-0 w-16 h-16 border-4 border-cyan/20 border-b-cyan rounded-full animate-spin mx-auto" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+      <div className='flex items-center justify-center min-h-[60vh]'>
+        <div className='space-y-6 text-center'>
+          <div className='relative'>
+            <div className='w-16 h-16 mx-auto border-4 rounded-full border-pink/20 border-t-pink animate-spin' />
+            <div
+              className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-b-cyan animate-spin'
+              style={{
+                animationDirection: "reverse",
+                animationDuration: "1.5s",
+              }}
+            />
           </div>
           <div>
-            <p className="text-white font-medium">Loading dashboard...</p>
-            <p className="text-grey-light/60 text-sm mt-1">Fetching camera data</p>
+            <p className='font-medium text-white'>Loading dashboard...</p>
+            <p className='mt-1 text-sm text-grey-light/60'>
+              Fetching camera data
+            </p>
           </div>
         </div>
       </div>
@@ -156,36 +305,39 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-12 relative">
+    <div className='relative space-y-12'>
       {/* Hero Section with Asymmetric Layout */}
-      <div className="relative">
+      <div className='relative'>
         {/* Floating accent elements */}
-        <div className="absolute -top-4 right-1/4 w-2 h-2 bg-yellow/60 rounded-full floating" />
-        <div className="absolute top-8 left-1/3 w-1 h-12 bg-purple/30 rounded-full floating" style={{ animationDelay: '1s' }} />
-        
-        <div className="grid lg:grid-cols-3 gap-8 items-end">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center space-x-4">
+        <div className='absolute w-2 h-2 rounded-full -top-4 right-1/4 bg-yellow/60 floating' />
+        <div
+          className='absolute w-1 h-12 rounded-full top-8 left-1/3 bg-purple/30 floating'
+          style={{ animationDelay: "1s" }}
+        />
+
+        <div className='grid items-end gap-8 lg:grid-cols-3'>
+          <div className='space-y-6 lg:col-span-2'>
+            <div className='space-y-4'>
+              <div className='flex items-center space-x-4'>
                 <SpirographLogo size={64} />
-                <h1 className="text-6xl font-bold gradient-text leading-tight">
+                <h1 className='text-6xl font-bold leading-tight gradient-text'>
                   Control Center
                 </h1>
               </div>
-              <p className="text-grey-light/70 text-lg max-w-2xl">
-                Monitor your RTSP cameras, manage timelapses, and create stunning videos 
-                with professional-grade automation tools.
+              <p className='max-w-2xl text-lg text-grey-light/70'>
+                Monitor your RTSP cameras, manage timelapses, and create
+                stunning videos with professional-grade automation tools.
               </p>
             </div>
           </div>
-          
-          <div className="flex justify-end">
-            <Button 
+
+          <div className='flex justify-end'>
+            <Button
               onClick={() => setIsModalOpen(true)}
-              size="lg"
-              className="bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black font-bold px-8 py-4 text-lg rounded-2xl hover:shadow-2xl hover:shadow-pink/20 transition-all duration-300 hover:scale-105"
+              size='lg'
+              className='px-8 py-4 text-lg font-bold text-black transition-all duration-300 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan rounded-2xl hover:shadow-2xl hover:shadow-pink/20 hover:scale-105'
             >
-              <Plus className="w-6 h-6 mr-3" />
+              <Plus className='w-6 h-6 mr-3' />
               Add Camera
             </Button>
           </div>
@@ -193,54 +345,69 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid with Creative Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className='grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4'>
         <StatsCard
-          title="Total Cameras"
+          title='Total Cameras'
           value={cameras.length}
           description={`${onlineCameras} online`}
           icon={Camera}
-          color="cyan"
-          trend={onlineCameras > 0 ? { value: Math.round((onlineCameras / cameras.length) * 100), label: "uptime" } : undefined}
+          color='cyan'
+          trend={
+            onlineCameras > 0
+              ? {
+                  value: Math.round((onlineCameras / cameras.length) * 100),
+                  label: "uptime",
+                }
+              : undefined
+          }
         />
         <StatsCard
-          title="Active Recordings"
+          title='Active Recordings'
           value={activTimelapses}
-          description="Currently capturing"
+          description={
+            pausedTimelapses > 0
+              ? `${pausedTimelapses} paused`
+              : "Currently capturing"
+          }
           icon={Activity}
-          color="success"
+          color='success'
         />
         <StatsCard
-          title="Generated Videos"
+          title='Generated Videos'
           value={totalVideos}
-          description="Ready to download"
+          description='Ready to download'
           icon={Video}
-          color="purple"
+          color='purple'
         />
         <StatsCard
-          title="Total Frames"
+          title='Total Frames'
           value={totalImages.toLocaleString()}
-          description="Images captured"
+          description='Images captured'
           icon={Zap}
-          color="yellow"
+          color='yellow'
         />
       </div>
 
       {/* Cameras Section with Dynamic Layout */}
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div className="space-y-2">
-            <h2 className="text-3xl font-bold text-white">Camera Network</h2>
-            <div className="flex items-center space-x-4 text-sm">
+      <div className='space-y-8'>
+        <div className='flex items-center justify-between'>
+          <div className='space-y-2'>
+            <h2 className='text-3xl font-bold text-white'>Camera Network</h2>
+            <div className='flex items-center space-x-4 text-sm'>
               {cameras.length > 0 && (
                 <>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-success rounded-full" />
-                    <span className="text-grey-light/70">{onlineCameras} online</span>
+                  <div className='flex items-center space-x-2'>
+                    <div className='w-2 h-2 rounded-full bg-success' />
+                    <span className='text-grey-light/70'>
+                      {onlineCameras} online
+                    </span>
                   </div>
-                  <div className="w-1 h-4 bg-purple-muted/30 rounded-full" />
-                  <div className="flex items-center space-x-2">
-                    <Eye className="w-4 h-4 text-cyan/70" />
-                    <span className="text-grey-light/70">{cameras.length} total</span>
+                  <div className='w-1 h-4 rounded-full bg-purple-muted/30' />
+                  <div className='flex items-center space-x-2'>
+                    <Eye className='w-4 h-4 text-cyan/70' />
+                    <span className='text-grey-light/70'>
+                      {cameras.length} total
+                    </span>
                   </div>
                 </>
               )}
@@ -249,38 +416,47 @@ export default function Dashboard() {
         </div>
 
         {cameras.length === 0 ? (
-          <div className="text-center py-16 relative">
+          <div className='relative py-16 text-center'>
             {/* Empty state with creative design */}
-            <div className="relative max-w-md mx-auto">
-              <div className="absolute -top-8 -left-8 w-4 h-4 bg-pink/40 rounded-full floating" />
-              <div className="absolute -top-4 -right-6 w-2 h-2 bg-cyan/60 rounded-full floating" style={{ animationDelay: '1s' }} />
-              
-              <div className="glass-strong p-12 rounded-3xl border border-purple-muted/30">
-                <div className="w-20 h-20 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-2xl flex items-center justify-center mx-auto mb-6 rotate-12">
-                  <Camera className="w-10 h-10 text-white" />
+            <div className='relative max-w-md mx-auto'>
+              <div className='absolute w-4 h-4 rounded-full -top-8 -left-8 bg-pink/40 floating' />
+              <div
+                className='absolute w-2 h-2 rounded-full -top-4 -right-6 bg-cyan/60 floating'
+                style={{ animationDelay: "1s" }}
+              />
+
+              <div className='p-12 border glass-strong rounded-3xl border-purple-muted/30'>
+                <div className='flex items-center justify-center w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-2xl rotate-12'>
+                  <Camera className='w-10 h-10 text-white' />
                 </div>
-                
-                <h3 className="text-2xl font-bold text-white mb-3">No cameras yet</h3>
-                <p className="text-grey-light/60 mb-8 leading-relaxed">
-                  Ready to create your first timelapse? Add an RTSP camera to get started 
-                  with professional automated video creation.
+
+                <h3 className='mb-3 text-2xl font-bold text-white'>
+                  No cameras yet
+                </h3>
+                <p className='mb-8 leading-relaxed text-grey-light/60'>
+                  Ready to create your first timelapse? Add an RTSP camera to
+                  get started with professional automated video creation.
                 </p>
-                
-                <Button 
+
+                <Button
                   onClick={() => setIsModalOpen(true)}
-                  className="bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black font-bold px-8 py-3 rounded-xl hover:shadow-xl transition-all duration-300"
+                  className='px-8 py-3 font-bold text-black transition-all duration-300 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan rounded-xl hover:shadow-xl'
                 >
-                  <Plus className="w-5 h-5 mr-2" />
+                  <Plus className='w-5 h-5 mr-2' />
                   Add Your First Camera
                 </Button>
               </div>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+          <div className='grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3'>
             {cameras.map((camera) => {
-              const timelapse = timelapses.find(t => t.camera_id === camera.id)
-              const cameraVideos = videos.filter(v => v.camera_id === camera.id)
+              const timelapse = timelapses.find(
+                (t) => t.camera_id === camera.id
+              )
+              const cameraVideos = videos.filter(
+                (v) => v.camera_id === camera.id
+              )
 
               return (
                 <CameraCard
@@ -289,8 +465,10 @@ export default function Dashboard() {
                   timelapse={timelapse}
                   videos={cameraVideos}
                   onToggleTimelapse={handleToggleTimelapse}
+                  onPauseTimelapse={handlePauseTimelapse}
+                  onResumeTimelapse={handleResumeTimelapse}
                   onEditCamera={(id) => {
-                    const cam = cameras.find(c => c.id === id)
+                    const cam = cameras.find((c) => c.id === id)
                     setEditingCamera(cam)
                     setIsModalOpen(true)
                   }}
@@ -312,7 +490,7 @@ export default function Dashboard() {
         }}
         onSave={handleSaveCamera}
         camera={editingCamera}
-        title={editingCamera ? 'Edit Camera' : 'Add New Camera'}
+        title={editingCamera ? "Edit Camera" : "Add New Camera"}
       />
     </div>
   )
