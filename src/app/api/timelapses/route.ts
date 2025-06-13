@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 
+// Import eventEmitter for broadcasting changes
+import { eventEmitter } from '@/app/api/events/route'
+
 export async function GET() {
   try {
     const timelapses = await sql`
@@ -157,9 +160,20 @@ print(f'MESSAGE:{message}')
       `
     }
     
+    const updatedTimelapse = result[0]
+
+    // Broadcast timelapse status changed event
+    eventEmitter.emit({
+      type: 'timelapse_status_changed',
+      camera_id: camera_id,
+      timelapse_id: updatedTimelapse.id,
+      status: status,
+      timestamp: new Date().toISOString()
+    })
+    
     return NextResponse.json({ 
       success: true, 
-      timelapse: result[0],
+      timelapse: updatedTimelapse,
       message: status === 'running' ? 'Timelapse started successfully' : 'Timelapse stopped'
     })
   } catch (error) {
