@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Camera, Clock, Wifi, Settings } from "lucide-react"
+import { toast } from "@/lib/toast"
 
 interface CameraModalProps {
   isOpen: boolean
@@ -56,6 +57,9 @@ export function CameraModal({
     setSaving(true)
     try {
       await onSave(formData)
+      toast.success("Camera settings saved successfully!")
+    } catch (error) {
+      toast.error("Failed to save camera settings. Please try again.")
     } finally {
       setSaving(false)
     }

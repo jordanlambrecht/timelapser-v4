@@ -3,6 +3,7 @@
 
 @theme {
   --color-pink: oklch(91.1% 0.046 18deg);
+  --color-pink-light: oklch(95.6% 0.0218 17.5deg);
   --color-pink-dark: oklch(70.6% 0.141 14.8deg);
   --color-primary: var(--color-pink);
   --color-foreground: var(--color-pink);
@@ -21,7 +22,7 @@
 
   --color-black: oklch(23.4% 0.0065 258deg);
   --color-grey-light: oklch(92.2% 0.0232 278deg);
-  --color-white: oklch(100% 0 1deg);
+  --color-white: oklch(99.1% 0.00426 17.2deg);
 
   --color-success: oklch(80% 0.182 152deg);
   --color-failure: oklch(66.8% 0.22 19.6deg);
