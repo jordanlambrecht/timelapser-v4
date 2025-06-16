@@ -15,6 +15,14 @@ interface Camera {
   use_time_window: boolean
   time_window_start: string | null
   time_window_end: string | null
+  // Full image object instead of just ID
+  last_image?: {
+    id: number
+    captured_at: string
+    file_path: string
+    file_size: number | null
+    day_number: number
+  } | null
 }
 
 interface Timelapse {
@@ -27,32 +35,23 @@ interface Timelapse {
   created_at: string
 }
 
-interface Image {
+interface Video {
   id: number
   camera_id: number
-  timelapse_id: number
-  file_path: string
-  captured_at: string
-  day_number: number
-  file_size: number
+  name: string
+  status: string
+  file_path: string | null
+  file_size: number | null
+  duration_seconds: number | null
+  created_at: string
 }
 
-interface CameraDetails {
-  camera: Camera
-  activeTimelapse: Timelapse | null
-  latestImage: Image | null
-  stats: {
-    currentTimelapseImages: number
-    totalImages: number
-    videoCount: number
-    daysSinceFirstCapture: number
-  }
-  recentLogs: Array<{
-    id: number
-    level: string
-    message: string
-    timestamp: string
-  }>
+interface LogEntry {
+  id: number
+  level: string
+  message: string
+  timestamp: string
+  camera_id: number | null
 }
 
 export default function CameraDetailsPage() {
@@ -60,24 +59,156 @@ export default function CameraDetailsPage() {
   const router = useRouter()
   const cameraId = parseInt(params.id as string)
 
-  const [details, setDetails] = useState<CameraDetails | null>(null)
+  // Individual state for each data type - no artificial CameraDetails structure
+  const [camera, setCamera] = useState<Camera | null>(null)
+  const [timelapses, setTimelapses] = useState<Timelapse[]>([])
+  const [videos, setVideos] = useState<Video[]>([])
+  const [imageCount, setImageCount] = useState<number>(0)
+  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([])
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [imageKey, setImageKey] = useState(Date.now()) // For cache-busting
+
+  // Computed values from real data
+  const activeTimelapse = timelapses.find((t) => t.status === "running") || null
+  const completedVideos = videos.filter((v) => v.status === "completed")
+  const stats = {
+    currentTimelapseImages: activeTimelapse?.image_count || 0,
+    totalImages: imageCount,
+    videoCount: completedVideos.length,
+    daysSinceFirstCapture: camera?.last_capture_at
+      ? Math.floor(
+          (Date.now() - new Date(camera.last_capture_at).getTime()) /
+            (1000 * 60 * 60 * 24)
+        )
+      : 0,
+  }
 
   useEffect(() => {
-    fetchCameraDetails()
+    fetchAllCameraData()
   }, [cameraId])
 
-  const fetchCameraDetails = async () => {
+  // SSE event handling for real-time updates
+  useEffect(() => {
+    let eventSource: EventSource | null = null
+
+    const connectSSE = () => {
+      try {
+        eventSource = new EventSource("/api/events")
+
+        eventSource.onopen = () => {
+          console.log(`SSE connected for camera details (camera ${cameraId})`)
+        }
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+
+            switch (data.type) {
+              case "image_captured":
+                if (data.camera_id === cameraId) {
+                  console.log(`New image captured for camera ${cameraId}`)
+                  // Force image refresh with cache-busting
+                  setImageKey(Date.now())
+                  // Update image count if provided
+                  if (data.image_count !== undefined) {
+                    setImageCount(data.image_count)
+                  }
+                }
+                break
+              case "timelapse_status_changed":
+                if (data.camera_id === cameraId) {
+                  console.log(`Timelapse status changed for camera ${cameraId}`)
+                  // Refresh all data when timelapse status changes
+                  fetchAllCameraData()
+                }
+                break
+              default:
+                console.log("Unknown SSE event:", data.type)
+            }
+          } catch (error) {
+            console.error("Error parsing SSE event:", error)
+          }
+        }
+
+        eventSource.onerror = (error) => {
+          console.error(`SSE connection error for camera details:`, error)
+          if (eventSource) {
+            eventSource.close()
+          }
+        }
+      } catch (error) {
+        console.error("Failed to establish SSE connection:", error)
+      }
+    }
+
+    connectSSE()
+
+    return () => {
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [cameraId])
+
+  const fetchAllCameraData = async () => {
     try {
-      const response = await fetch(`/api/cameras/${cameraId}`)
-      if (!response.ok) {
+      setLoading(true)
+      setError(null)
+
+      // Fetch all data in parallel
+      const [
+        cameraResponse,
+        timelapsesResponse,
+        videosResponse,
+        imageCountResponse,
+        logsResponse,
+      ] = await Promise.all([
+        fetch(`/api/cameras/${cameraId}`),
+        fetch(`/api/timelapses?camera_id=${cameraId}`),
+        fetch(`/api/videos?camera_id=${cameraId}`),
+        fetch(`/api/images/count?camera_id=${cameraId}`),
+        fetch(`/api/logs?camera_id=${cameraId}&limit=10`),
+      ])
+
+      // Check if camera exists
+      if (!cameraResponse.ok) {
         throw new Error("Camera not found")
       }
-      const data = await response.json()
-      setDetails(data)
+
+      // Parse all responses
+      const cameraData = await cameraResponse.json()
+      const timelapsesData = timelapsesResponse.ok
+        ? await timelapsesResponse.json()
+        : []
+      const videosData = videosResponse.ok ? await videosResponse.json() : []
+      const imageCountData = imageCountResponse.ok
+        ? await imageCountResponse.json()
+        : { count: 0 }
+      const logsData = logsResponse.ok ? await logsResponse.json() : []
+
+      // Set all state
+      setCamera(cameraData)
+      setTimelapses(
+        Array.isArray(timelapsesData)
+          ? timelapsesData
+          : timelapsesData.timelapses || []
+      )
+      setVideos(
+        Array.isArray(videosData) ? videosData : videosData.videos || []
+      )
+      setImageCount(
+        typeof imageCountData === "number"
+          ? imageCountData
+          : imageCountData.count || 0
+      )
+      setRecentLogs(Array.isArray(logsData) ? logsData : logsData.logs || [])
+      
+      // No need to fetch latest image separately - it's included in camera data
     } catch (err) {
+      console.error("Error fetching camera data:", err)
       setError(
         err instanceof Error ? err.message : "Failed to fetch camera details"
       )
@@ -87,73 +218,100 @@ export default function CameraDetailsPage() {
   }
 
   const handleTimelapseAction = async (action: "start" | "stop") => {
-    if (!details) return
+    if (!camera) return
 
-    setActionLoading(action)
     try {
-      const response = await fetch("/api/timelapses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          camera_id: cameraId,
-          status: action === "start" ? "running" : "stopped",
-        }),
-      })
+      setActionLoading(action)
 
-      if (response.ok) {
-        // Refresh camera details
-        await fetchCameraDetails()
+      if (action === "start") {
+        const response = await fetch("/api/timelapses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            camera_id: camera.id,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to start timelapse")
+        }
       } else {
-        throw new Error(`Failed to ${action} timelapse`)
+        if (!activeTimelapse) return
+
+        const response = await fetch(`/api/timelapses/${activeTimelapse.id}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status: "completed",
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to stop timelapse")
+        }
       }
+
+      // Refresh data after action
+      await fetchAllCameraData()
     } catch (err) {
-      console.error(`Failed to ${action} timelapse:`, err)
+      console.error(`Error ${action}ing timelapse:`, err)
+      alert(
+        `Failed to ${action} timelapse: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`
+      )
     } finally {
       setActionLoading(null)
     }
   }
 
+  // Helper functions
+  const formatRelativeTime = (timestamp: string) => {
+    const now = new Date()
+    const time = new Date(timestamp)
+    const diffInSeconds = Math.floor((now.getTime() - time.getTime()) / 1000)
+
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+    return `${Math.floor(diffInSeconds / 86400)}d ago`
+  }
+
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 B"
+    if (bytes === 0) return "0 Bytes"
     const k = 1024
-    const sizes = ["B", "KB", "MB", "GB"]
+    const sizes = ["Bytes", "KB", "MB", "GB"]
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
   }
 
-  const formatRelativeTime = (timestamp: string) => {
-    const now = new Date()
-    const past = new Date(timestamp)
-    const diffMs = now.getTime() - past.getTime()
-    const diffMins = Math.floor(diffMs / (1000 * 60))
-    const diffHours = Math.floor(diffMins / 60)
-    const diffDays = Math.floor(diffHours / 24)
-
-    if (diffMins < 1) return "Just now"
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    return `${diffDays}d ago`
+  const getHealthStatusIcon = (status: string) => {
+    switch (status) {
+      case "healthy":
+        return "🟢"
+      case "warning":
+        return "🟡"
+      case "error":
+        return "🔴"
+      default:
+        return "⚪"
+    }
   }
 
   const getHealthStatusColor = (status: string) => {
     switch (status) {
-      case "online":
-        return "text-green-600 bg-green-100"
-      case "offline":
-        return "text-red-600 bg-red-100"
+      case "healthy":
+        return "bg-green-100 text-green-600"
+      case "warning":
+        return "bg-yellow-100 text-yellow-600"
+      case "error":
+        return "bg-red-100 text-red-600"
       default:
-        return "text-gray-600 bg-gray-100"
-    }
-  }
-
-  const getHealthStatusIcon = (status: string) => {
-    switch (status) {
-      case "online":
-        return "🟢"
-      case "offline":
-        return "🔴"
-      default:
-        return "⚪"
+        return "bg-gray-100 text-gray-600"
     }
   }
 
@@ -168,7 +326,7 @@ export default function CameraDetailsPage() {
     )
   }
 
-  if (error || !details) {
+  if (error || !camera) {
     return (
       <div className='flex items-center justify-center min-h-screen bg-gray-50'>
         <div className='text-center'>
@@ -182,8 +340,6 @@ export default function CameraDetailsPage() {
       </div>
     )
   }
-
-  const { camera, activeTimelapse, latestImage, stats, recentLogs } = details
 
   return (
     <div className='min-h-screen bg-gray-50'>
@@ -246,9 +402,9 @@ export default function CameraDetailsPage() {
                   Latest Capture
                 </h2>
                 <div className='overflow-hidden bg-gray-100 rounded-lg aspect-video'>
-                  {latestImage ? (
+                  {camera.last_image ? (
                     <img
-                      src={`/api/cameras/${camera.id}/latest-capture`}
+                      src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
                       alt={`Latest capture from ${camera.name}`}
                       className='object-cover w-full h-full'
                       onError={(e) => {
@@ -302,19 +458,19 @@ export default function CameraDetailsPage() {
                     </div>
                   )}
                 </div>
-                {latestImage && (
+                {camera.last_image && (
                   <div className='grid grid-cols-2 gap-4 mt-4 text-sm text-gray-600'>
                     <div>
                       <span className='font-medium'>Captured:</span>{" "}
-                      {formatRelativeTime(latestImage.captured_at)}
+                      {formatRelativeTime(camera.last_image.captured_at)}
                     </div>
                     <div>
                       <span className='font-medium'>Day:</span>{" "}
-                      {latestImage.day_number}
+                      {camera.last_image.day_number}
                     </div>
                     <div>
                       <span className='font-medium'>File Size:</span>{" "}
-                      {formatFileSize(latestImage.file_size)}
+                      {formatFileSize(camera.last_image.file_size || 0)}
                     </div>
                     <div>
                       <span className='font-medium'>Timelapse:</span>{" "}
