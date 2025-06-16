@@ -127,24 +127,19 @@ class RTSPCapture:
                     file_size = filepath.stat().st_size
 
                     # Update camera's last image path for UI display
-                    if database:
-                        relative_path = f"/api/images/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
-                        try:
-                            database.update_camera_last_image(camera_id, relative_path)
-                            logger.debug(
-                                f"Updated camera {camera_id} last_image_path: {relative_path}"
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to update camera last_image_path: {e}"
-                            )
+                    # Database update is handled by record_captured_image method
+                    logger.debug(
+                        f"Image captured and will be recorded in database for camera {camera_id}"
+                    )
 
                     # Record in database if provided and timelapse is active
                     if database and timelapse_id:
+                        # Store relative path from project root
+                        relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
                         image_id = database.record_captured_image(
                             camera_id=camera_id,
                             timelapse_id=timelapse_id,
-                            file_path=str(filepath),
+                            file_path=relative_db_path,
                             file_size=file_size,
                         )
                         if image_id:
