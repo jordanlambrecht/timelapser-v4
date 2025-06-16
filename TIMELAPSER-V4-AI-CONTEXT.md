@@ -133,6 +133,123 @@ calculations.**
 - `logs/page.tsx` - Log timestamp display with timezone context
 - All timelapse and video generation components
 
+## 🎯 TIMEZONE DISPLAY & COUNTDOWN TIMER IMPROVEMENTS (June 16, 2025)
+
+**LATEST ENHANCEMENT: Refined timezone display system with real-time countdown improvements and compact timezone abbreviations.**
+
+### Real-Time Countdown Enhancements ✅
+
+**Problem Solved**: Countdown timers were only updating every 5 seconds when under 5 minutes, making them feel unresponsive during critical capture moments.
+
+**Solution Implemented**:
+- **Updated `getSmartRefreshInterval()` in `time-utils.ts`**:
+  - 0-3 seconds: 0.5-second updates (for "Now" detection)
+  - **4-300 seconds (5 minutes): 1-second updates** ✅ **(Real-time countdown!)**
+  - 301-600 seconds: 5-second updates
+  - 601+ seconds: Slower intervals for distant times
+
+**Result**: Smooth per-second countdown when approaching capture time: `"4m 59s"` → `"4m 58s"` → `"4m 57s"`
+
+### Absolute Time Display Implementation ✅
+
+**Enhancement**: Added absolute timestamps underneath relative time counters for better temporal context.
+
+**Technical Implementation**:
+- **Enhanced `useCameraCountdown()` hook** to return `lastCaptureAbsolute` and `nextCaptureAbsolute` values
+- **Created `formatAbsoluteTimeForCounter()` function** with smart formatting:
+  - Shows date and time in configured timezone
+  - Only includes year if different from current year
+  - Examples: `"June 16th 13:35 (CDT)"` or `"June 16th, 2025 13:35 (UTC)"`
+- **Updated camera card UI** to display absolute times beneath countdown timers
+
+**Smart Display Logic**:
+- Hidden during "Now" state for cleaner appearance
+- Shows "Paused" instead of absolute time when timelapse is paused
+- Only displays when meaningful timestamp data exists
+
+### Timezone Abbreviation Display ✅
+
+**Problem Solved**: Full timezone names (`"America/Chicago"`) consumed too much UI space.
+
+**Solution Implemented**:
+- **Enhanced `formatAbsoluteTimeForCounter()`** to use `Intl.DateTimeFormat` with `timeZoneName: 'short'`
+- **Automatic DST handling**: Shows correct abbreviations based on timestamp date
+- **Examples of abbreviations**:
+  - America/Chicago: `CDT` (summer) / `CST` (winter)
+  - America/New_York: `EDT` (summer) / `EST` (winter)
+  - Europe/London: `BST` (summer) / `GMT` (winter)
+  - Etc/GMT: `UTC`
+
+**Result**: Compact timezone display saves significant UI space while maintaining clarity.
+
+### Enhanced Visual Feedback ✅
+
+**"Now" State Improvements**:
+- **Pulsing cyan borders** on both timestamp boxes when capture is happening
+- **Animated cyan text** for countdown displays
+- **Pulsing icons** to draw visual attention
+- **Coordinated visual feedback** across last capture and next capture displays
+
+**Conditional Display Logic**:
+- Absolute times hidden during "Now" state
+- Enhanced color-coded status indicators
+- Improved accessibility with clear visual cues
+
+### Technical Implementation Details
+
+**Key Files Modified**:
+- `/src/lib/time-utils.ts` - Enhanced refresh intervals and timezone abbreviation formatting
+- `/src/hooks/use-camera-countdown.ts` - Added absolute time value returns
+- `/src/components/camera-card.tsx` - Integrated absolute time displays with conditional logic
+
+**Smart Refresh Pattern**:
+```typescript
+// Ultra-fast refresh for "Now" state
+if (secondsUntilNext <= 3) return 500 // 0.5 seconds
+
+// Real-time per-second updates when under 5 minutes
+if (secondsUntilNext <= 300) return 1000 // 1 second ✅ KEY IMPROVEMENT
+
+// Moderate refresh for longer countdowns
+if (secondsUntilNext <= 600) return 5000 // 5 seconds
+```
+
+**Timezone Abbreviation Logic**:
+```typescript
+// Get timezone abbreviation for specific date using Intl API
+const timezoneName = new Intl.DateTimeFormat('en-US', {
+  timeZone: configuredTz,
+  timeZoneName: 'short'
+}).formatToParts(date).find(part => part.type === 'timeZoneName')?.value
+```
+
+### User Experience Improvements
+
+**Before These Enhancements**:
+- Countdown timers updated every 5 seconds when under 5 minutes
+- No absolute time context for timestamps
+- Full timezone names cluttered the UI
+- Limited visual feedback for capture timing
+
+**After These Enhancements**:
+- ✅ **Smooth real-time countdown**: Per-second updates when approaching capture
+- ✅ **Rich temporal context**: Absolute timestamps provide date/time reference
+- ✅ **Compact timezone display**: Abbreviations save space while maintaining clarity
+- ✅ **Enhanced visual feedback**: Clear "Now" state indication with pulsing effects
+- ✅ **Smart conditional display**: Information shown only when relevant
+
+### Integration with Existing System
+
+These improvements **build upon** the existing timezone-aware time system without breaking any existing functionality:
+
+- **Maintains compatibility** with all existing timezone calculations
+- **Respects database-configured timezone** settings
+- **Uses existing `useCaptureSettings()` hook** for timezone data
+- **Leverages existing time utility functions** with enhancements
+- **Preserves all SSE real-time update functionality**
+
+**Critical Implementation Note**: These enhancements maintain the sophisticated timezone-aware architecture - they do NOT replace it with simple browser-local time calculations.
+
 ## 🚨 CRITICAL ISSUES IDENTIFIED & FIXED (June 2025)
 
 ### Issue #1: Image Loading Content-Length Error (FIXED)
@@ -736,6 +853,11 @@ NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
 - **Worker event broadcasting** ✅ **FIXED**
 - **Query-based image loading** ✅ **MAJOR IMPROVEMENT**
 - **Latest image display system** ✅ **OVERHAULED**
+- **Timezone-aware time system** ✅ **COMPREHENSIVE IMPLEMENTATION**
+- **Real-time countdown timers** ✅ **ENHANCED - Per-second updates under 5 minutes**
+- **Absolute time displays** ✅ **NEW - Date/time context under countdown timers**
+- **Timezone abbreviation display** ✅ **NEW - Compact timezone indicators (CDT, UTC, etc.)**
+- **Enhanced visual feedback** ✅ **NEW - "Now" state with pulsing cyan effects**
 - Connection pooling and modern FastAPI patterns
 - Database migrations with Alembic
 - Complete TypeScript type safety
@@ -1076,33 +1198,23 @@ the system is ready for:
 
 **Last Updated**: June 16 2025
 
-**System Status**: ✅ **FULLY OPERATIONAL** - All Critical Issues Resolved +
-Major Timezone System Implementation  
-**Architecture**: ✅ **VALIDATED & OPTIMIZED** - Production-Ready FastAPI +
-Next.js + PostgreSQL with timezone-aware time calculations  
-**Recent Achievement**: ✅ **TIMEZONE-AWARE TIME SYSTEM** - All time
-calculations now use database-configured timezone, not browser local time  
-**Backend Stability**: ✅ **CORS_ORIGINS PARSING FIXED** - Robust environment
-variable handling prevents startup failures  
-**User Experience**: ✅ **STANDARDIZED TOAST NOTIFICATIONS** - Consistent
-feedback across all user actions  
-**Key Milestone**: ✅ **ROBUST REAL-TIME FEATURES** - Dashboard and camera
-details update reliably with timezone-correct timestamps  
-**Performance**: ✅ **POSTGRESQL OPTIMIZED** - LATERAL joins + timezone-aware
-queries provide superior performance
+**System Status**: ✅ **FULLY OPERATIONAL** - All Critical Issues Resolved + Major Timezone System + Real-Time UI Enhancements  
+**Architecture**: ✅ **VALIDATED & OPTIMIZED** - Production-Ready FastAPI + Next.js + PostgreSQL with sophisticated timezone-aware time calculations  
+**Recent Achievement**: ✅ **ENHANCED TIMEZONE DISPLAY SYSTEM** - Real-time per-second countdown updates + absolute time displays + compact timezone abbreviations  
+**User Experience**: ✅ **REFINED COUNTDOWN TIMERS** - Smooth per-second updates when under 5 minutes + rich temporal context + enhanced visual feedback  
+**Backend Stability**: ✅ **CORS_ORIGINS PARSING FIXED** - Robust environment variable handling prevents startup failures  
+**Notification System**: ✅ **STANDARDIZED TOAST NOTIFICATIONS** - Consistent feedback across all user actions  
+**Real-Time Features**: ✅ **COMPLETE SSE SYSTEM** - Dashboard and camera details update reliably with timezone-correct timestamps and smooth countdown progression  
+**Performance**: ✅ **POSTGRESQL + UI OPTIMIZED** - LATERAL joins + smart refresh intervals + timezone abbreviations provide superior performance and UX
 
-This system now represents a mature, production-grade timelapser platform with
-validated architecture, timezone-aware time calculations throughout, robust
-backend configuration patterns, comprehensive user feedback systems, and
-completely reliable real-time capabilities. All development and operational
-patterns have been tested and documented for reliable ongoing operation.
+This system now represents a mature, production-grade timelapser platform with validated architecture, sophisticated timezone-aware time calculations, refined real-time countdown displays, robust backend configuration patterns, comprehensive user feedback systems, and completely reliable real-time capabilities with enhanced visual polish. All development and operational patterns have been tested and documented for reliable ongoing operation.
 
 **CRITICAL FOR FUTURE AI ASSISTANTS**:
 
-- The timezone system is sophisticated and should NOT be replaced with simple
-  browser-local time
-- Backend environment variable parsing patterns in config.py are critical for
-  startup reliability
+- The timezone system is sophisticated with recent UI refinements - do NOT replace with simple browser-local time
+- Real-time countdown system uses smart refresh intervals - maintain the 1-second updates for times under 5 minutes
+- Absolute time displays complement relative times - preserve the conditional display logic for "Now" states
+- Timezone abbreviations use Intl API for accuracy - maintain DST-aware abbreviation generation
+- Backend environment variable parsing patterns in config.py are critical for startup reliability
 - Toast notification system is centralized - use it for all user feedback
-- All time displays use hooks and utilities that respect database timezone
-  settings
+- All time displays use enhanced hooks and utilities that respect database timezone settings

@@ -50,7 +50,7 @@ export default function RootLayout({
         </div>
 
         {/* Navigation with active page detection */}
-        <nav className='relative z-20 border-b glass-strong border-purple-muted/20'>
+        <nav className='mx-4 mt-4 relative z-20 border-b glass-strong border-purple-muted/20'>
           <div className='px-6 py-4 mx-auto max-w-7xl'>
             <div className='flex items-center justify-between'>
               {/* Logo area with spirograph */}

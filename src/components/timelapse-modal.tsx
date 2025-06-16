@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatDate } from "@/lib/time-utils"
+import { DeleteTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { useCaptureSettings } from "@/hooks/use-camera-countdown"
 import { toast } from "@/lib/toast"
 
@@ -56,6 +57,11 @@ export function TimelapseModal({
   const [loading, setLoading] = useState(true)
   const [editingVideoId, setEditingVideoId] = useState<number | null>(null)
   const [editName, setEditName] = useState("")
+
+  // Confirmation dialog state
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [videoToDelete, setVideoToDelete] = useState<Video | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
 
   // Get timezone from settings
   const { timezone } = useCaptureSettings()
@@ -133,11 +139,9 @@ export function TimelapseModal({
         setEditName("")
         fetchVideos() // Refresh the list
 
-        // Show success toast
-        toast.success("Video renamed successfully!", {
-          description: `Video has been renamed to "${editName}"`,
-          duration: 4000,
-        })
+        // Show enhanced success toast
+        const oldName = videos.find(v => v.id === videoId)?.file_path?.split("/").pop()?.replace(".mp4", "") || "Unknown"
+        toast.timelapseRenamed(oldName, editName)
       } else {
         throw new Error("Failed to rename video")
       }
@@ -157,29 +161,42 @@ export function TimelapseModal({
   }
 
   const handleDelete = async (video: Video) => {
-    if (!confirm("Are you sure you want to delete this timelapse video?"))
-      return
+    setVideoToDelete(video)
+    setConfirmDeleteOpen(true)
+  }
 
+  const confirmDeleteVideo = async () => {
+    if (!videoToDelete) return
+
+    setDeleteLoading(true)
     try {
-      const response = await fetch(`/api/videos/${video.id}`, {
+      const videoName = getVideoDisplayName(videoToDelete)
+      const response = await fetch(`/api/videos/${videoToDelete.id}`, {
         method: "DELETE",
       })
 
       if (response.ok) {
+        // Show success toast with undo functionality
+        toast.timelapseDeleted(videoName, async () => {
+          // Note: Video undo is complex since we'd need to regenerate
+          // For now, just show a message that undo isn't available for videos
+          toast.info("Video undo not available", {
+            description: "Videos cannot be restored once deleted. You can regenerate them from captured images.",
+            duration: 6000,
+          })
+        })
+
         // If we deleted the selected video, select another one
-        if (selectedVideo?.id === video.id) {
-          const remainingVideos = videos.filter((v) => v.id !== video.id)
+        if (selectedVideo?.id === videoToDelete.id) {
+          const remainingVideos = videos.filter((v) => v.id !== videoToDelete.id)
           setSelectedVideo(
             remainingVideos.length > 0 ? remainingVideos[0] : null
           )
         }
+        
         fetchVideos() // Refresh the list
-
-        // Show success toast
-        toast.success("Video deleted successfully!", {
-          description: "The timelapse video has been removed",
-          duration: 4000,
-        })
+        setConfirmDeleteOpen(false)
+        setVideoToDelete(null)
       } else {
         throw new Error("Failed to delete video")
       }
@@ -190,6 +207,8 @@ export function TimelapseModal({
           error instanceof Error ? error.message : "Please try again",
         duration: 6000,
       })
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -431,6 +450,18 @@ export function TimelapseModal({
           )}
         </div>
       </DialogContent>
+
+      {/* Confirmation Dialog */}
+      <DeleteTimelapseConfirmationDialog
+        isOpen={confirmDeleteOpen}
+        onClose={() => {
+          setConfirmDeleteOpen(false)
+          setVideoToDelete(null)
+        }}
+        onConfirm={confirmDeleteVideo}
+        timelapseVideoName={videoToDelete ? getVideoDisplayName(videoToDelete) : "Unknown Video"}
+        isLoading={deleteLoading}
+      />
     </Dialog>
   )
 }

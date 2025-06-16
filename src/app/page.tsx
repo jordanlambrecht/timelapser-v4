@@ -3,11 +3,13 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Plus, Camera, Video, Clock, Activity, Zap, Eye } from "lucide-react"
+import { Plus, Camera, Video, Clock, Activity, Zap, Eye, Play, Pause, Square } from "lucide-react"
 import { CameraCard } from "@/components/camera-card"
 import { StatsCard } from "@/components/stats-card"
 import { CameraModal } from "@/components/camera-modal"
 import { SpirographLogo } from "@/components/spirograph-logo"
+import { DeleteCameraConfirmationDialog, StopAllTimelapsesConfirmationDialog } from "@/components/ui/confirmation-dialog"
+import { toast } from "@/lib/toast"
 
 interface Camera {
   id: number
@@ -56,6 +58,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [sseConnected, setSseConnected] = useState(false)
   const [lastEventTime, setLastEventTime] = useState<number>(Date.now())
+  
+  // Confirmation dialog state
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [stopAllConfirmOpen, setStopAllConfirmOpen] = useState(false)
+  const [bulkOperationLoading, setBulkOperationLoading] = useState<string | null>(null)
 
   const fetchData = async () => {
     try {
@@ -222,6 +231,12 @@ export default function Dashboard() {
                 )
               )
               
+              // Show toast notification for image capture
+              const camera = cameras.find(c => c.id === data.camera_id)
+              if (camera) {
+                toast.imageCaptured(camera.name)
+              }
+              
               // Force camera data refresh to get updated next_capture_at
               setTimeout(() => {
                 fetch(`/api/cameras/${data.camera_id}`)
@@ -315,6 +330,14 @@ export default function Dashboard() {
 
       if (response.ok) {
         setIsModalOpen(false)
+        
+        // Show appropriate toast
+        if (editingCamera) {
+          toast.cameraRenamed(editingCamera.name, cameraData.name)
+        } else {
+          toast.cameraAdded(cameraData.name)
+        }
+        
         setEditingCamera(undefined)
 
         // If SSE is not connected or hasn't received events recently, refresh data
@@ -327,6 +350,9 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error("Error saving camera:", error)
+      toast.error(editingCamera ? "Failed to update camera" : "Failed to add camera", {
+        description: "Please check your settings and try again"
+      })
       // Keep modal open on error so user can retry
     }
   }
@@ -336,6 +362,7 @@ export default function Dashboard() {
     currentStatus: string
   ) => {
     try {
+      const camera = cameras.find(c => c.id === cameraId)
       const newStatus = currentStatus === "running" ? "stopped" : "running"
       const response = await fetch("/api/timelapses", {
         method: "POST",
@@ -343,7 +370,35 @@ export default function Dashboard() {
         body: JSON.stringify({ camera_id: cameraId, status: newStatus }),
       })
 
-      if (response.ok) {
+      if (response.ok && camera) {
+        if (newStatus === "running") {
+          toast.timelapseStarted(camera.name)
+        } else {
+          // Show stopped toast with undo functionality
+          toast.timelapseStopped(camera.name, async () => {
+            // Undo action - restart the timelapse
+            try {
+              const restartResponse = await fetch("/api/timelapses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ camera_id: cameraId, status: "running" }),
+              })
+              
+              if (restartResponse.ok) {
+                toast.timelapseStarted(camera.name)
+                fetchData() // Refresh to show restarted timelapse
+              } else {
+                throw new Error("Failed to restart timelapse")
+              }
+            } catch (error) {
+              console.error("Failed to restart timelapse:", error)
+              toast.error("Failed to restart timelapse", {
+                description: "You may need to start it manually",
+              })
+            }
+          })
+        }
+        
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
           console.log("⚠️ SSE not reliable, refreshing data manually")
@@ -352,18 +407,24 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error("Error toggling timelapse:", error)
+      toast.error("Failed to toggle timelapse", {
+        description: "Please try again",
+      })
     }
   }
 
   const handlePauseTimelapse = async (cameraId: number) => {
     try {
+      const camera = cameras.find(c => c.id === cameraId)
       const response = await fetch("/api/timelapses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ camera_id: cameraId, status: "paused" }),
       })
 
-      if (response.ok) {
+      if (response.ok && camera) {
+        toast.timelapsePaused(camera.name)
+        
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
           console.log("⚠️ SSE not reliable, refreshing data manually")
@@ -372,18 +433,24 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error("Error pausing timelapse:", error)
+      toast.error("Failed to pause timelapse", {
+        description: "Please try again",
+      })
     }
   }
 
   const handleResumeTimelapse = async (cameraId: number) => {
     try {
+      const camera = cameras.find(c => c.id === cameraId)
       const response = await fetch("/api/timelapses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ camera_id: cameraId, status: "running" }),
       })
 
-      if (response.ok) {
+      if (response.ok && camera) {
+        toast.timelapseResumed(camera.name)
+        
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
           console.log("⚠️ SSE not reliable, refreshing data manually")
@@ -392,17 +459,75 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error("Error resuming timelapse:", error)
+      toast.error("Failed to resume timelapse", {
+        description: "Please try again",
+      })
     }
   }
 
   const handleDeleteCamera = async (cameraId: number) => {
-    if (confirm("Are you sure you want to delete this camera?")) {
-      try {
-        await fetch(`/api/cameras/${cameraId}`, { method: "DELETE" })
+    const camera = cameras.find(c => c.id === cameraId)
+    if (!camera) return
+    
+    setCameraToDelete(camera)
+    setConfirmDeleteOpen(true)
+  }
+
+  const confirmDeleteCamera = async () => {
+    if (!cameraToDelete) return
+    
+    setDeleteLoading(true)
+    try {
+      const response = await fetch(`/api/cameras/${cameraToDelete.id}`, { 
+        method: "DELETE" 
+      })
+      
+      if (response.ok) {
+        // Show success toast with undo functionality
+        toast.cameraDeleted(cameraToDelete.name, async () => {
+          // Undo action - recreate the camera
+          try {
+            const recreateResponse = await fetch("/api/cameras", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: cameraToDelete.name,
+                rtsp_url: cameraToDelete.rtsp_url,
+                use_time_window: cameraToDelete.use_time_window,
+                time_window_start: cameraToDelete.time_window_start,
+                time_window_end: cameraToDelete.time_window_end,
+              }),
+            })
+            
+            if (recreateResponse.ok) {
+              toast.success(`Camera "${cameraToDelete.name}" restored`, {
+                description: "Camera has been recreated successfully",
+              })
+              fetchData() // Refresh to show restored camera
+            } else {
+              throw new Error("Failed to restore camera")
+            }
+          } catch (error) {
+            console.error("Failed to restore camera:", error)
+            toast.error("Failed to restore camera", {
+              description: "You may need to recreate it manually",
+            })
+          }
+        })
+        
         // SSE events will handle updating the state automatically
-      } catch (error) {
-        console.error("Error deleting camera:", error)
+        setConfirmDeleteOpen(false)
+        setCameraToDelete(null)
+      } else {
+        throw new Error("Failed to delete camera")
       }
+    } catch (error) {
+      console.error("Error deleting camera:", error)
+      toast.error("Failed to delete camera", {
+        description: "Please try again",
+      })
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -417,6 +542,200 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Error generating video:", error)
     }
+  }
+
+  // Bulk timelapse control functions
+  const handleBulkStartResume = async () => {
+    setBulkOperationLoading("start")
+    
+    const eligibleCameras = cameras.filter(camera => {
+      const timelapse = timelapses.find(t => t.camera_id === camera.id)
+      return camera.health_status === "online" && (!timelapse || timelapse.status === "stopped" || timelapse.status === "paused")
+    })
+
+    if (eligibleCameras.length === 0) {
+      toast.info("No cameras available to start", {
+        description: "All cameras are already running"
+      })
+      setBulkOperationLoading(null)
+      return
+    }
+
+    let successCount = 0
+    let failCount = 0
+
+    // Process cameras in parallel
+    const promises = eligibleCameras.map(async (camera) => {
+      try {
+        const response = await fetch("/api/timelapses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_id: camera.id, status: "running" }),
+        })
+        
+        if (response.ok) {
+          successCount++
+        } else {
+          failCount++
+        }
+      } catch (error) {
+        console.error(`Failed to start timelapse for camera ${camera.name}:`, error)
+        failCount++
+      }
+    })
+
+    await Promise.all(promises)
+
+    if (successCount > 0) {
+      toast.success(`Started ${successCount} timelapse${successCount > 1 ? 's' : ''}`, {
+        description: failCount > 0 ? `${failCount} failed to start` : "All eligible cameras are now recording"
+      })
+    } else {
+      toast.error("Failed to start any timelapses", {
+        description: "Please check individual cameras and try again"
+      })
+    }
+    
+    setBulkOperationLoading(null)
+  }
+
+  const handleBulkPause = async () => {
+    setBulkOperationLoading("pause")
+    
+    const runningCameras = cameras.filter(camera => {
+      const timelapse = timelapses.find(t => t.camera_id === camera.id)
+      return camera.health_status === "online" && timelapse && timelapse.status === "running"
+    })
+
+    if (runningCameras.length === 0) {
+      toast.info("No running timelapses to pause", {
+        description: "All cameras are either stopped or already paused"
+      })
+      setBulkOperationLoading(null)
+      return
+    }
+
+    let successCount = 0
+    let failCount = 0
+
+    // Process cameras in parallel
+    const promises = runningCameras.map(async (camera) => {
+      try {
+        const response = await fetch("/api/timelapses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_id: camera.id, status: "paused" }),
+        })
+        
+        if (response.ok) {
+          successCount++
+        } else {
+          failCount++
+        }
+      } catch (error) {
+        console.error(`Failed to pause timelapse for camera ${camera.name}:`, error)
+        failCount++
+      }
+    })
+
+    await Promise.all(promises)
+
+    if (successCount > 0) {
+      toast.success(`Paused ${successCount} timelapse${successCount > 1 ? 's' : ''}`, {
+        description: failCount > 0 ? `${failCount} failed to pause` : "Recording paused for all running cameras"
+      })
+    } else {
+      toast.error("Failed to pause any timelapses", {
+        description: "Please check individual cameras and try again"
+      })
+    }
+    
+    setBulkOperationLoading(null)
+  }
+
+  const handleBulkStop = async () => {
+    setBulkOperationLoading("stop")
+    
+    const activeCameras = cameras.filter(camera => {
+      const timelapse = timelapses.find(t => t.camera_id === camera.id)
+      return camera.health_status === "online" && timelapse && (timelapse.status === "running" || timelapse.status === "paused")
+    })
+
+    if (activeCameras.length === 0) {
+      toast.info("No active timelapses to stop", {
+        description: "All cameras are already stopped"
+      })
+      setBulkOperationLoading(null)
+      return
+    }
+
+    let successCount = 0
+    let failCount = 0
+    const stoppedCameras: Camera[] = []
+
+    // Process cameras in parallel
+    const promises = activeCameras.map(async (camera) => {
+      try {
+        const response = await fetch("/api/timelapses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_id: camera.id, status: "stopped" }),
+        })
+        
+        if (response.ok) {
+          successCount++
+          stoppedCameras.push(camera)
+        } else {
+          failCount++
+        }
+      } catch (error) {
+        console.error(`Failed to stop timelapse for camera ${camera.name}:`, error)
+        failCount++
+      }
+    })
+
+    await Promise.all(promises)
+
+    if (successCount > 0) {
+      toast.successWithUndo(`Stopped ${successCount} timelapse${successCount > 1 ? 's' : ''}`, {
+        description: failCount > 0 ? `${failCount} failed to stop` : "All active recordings have been stopped",
+        undoAction: async () => {
+          // Restart all stopped cameras
+          const restartPromises = stoppedCameras.map(async (camera) => {
+            try {
+              await fetch("/api/timelapses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ camera_id: camera.id, status: "running" }),
+              })
+            } catch (error) {
+              console.error(`Failed to restart timelapse for camera ${camera.name}:`, error)
+            }
+          })
+          
+          await Promise.all(restartPromises)
+          toast.success(`Restarted ${stoppedCameras.length} timelapse${stoppedCameras.length > 1 ? 's' : ''}`, {
+            description: "All timelapses have been restarted"
+          })
+        },
+        undoTimeout: 10000,
+      })
+    } else {
+      toast.error("Failed to stop any timelapses", {
+        description: "Please check individual cameras and try again"
+      })
+    }
+    
+    setBulkOperationLoading(null)
+  }
+
+  const handleStopAllWithConfirmation = () => {
+    setStopAllConfirmOpen(true)
+  }
+
+  const confirmStopAll = async () => {
+    setStopAllConfirmOpen(false)
+    await handleBulkStop()
   }
 
   // Calculate stats
@@ -544,6 +863,66 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* Bulk Timelapse Controls */}
+      {cameras.length > 0 && (
+        <div className='space-y-6'>
+          <div className='flex items-center justify-between'>
+            <div className='space-y-2'>
+              <h3 className='text-xl font-semibold text-white'>Bulk Controls</h3>
+              <p className='text-sm text-grey-light/60'>
+                Manage multiple timelapses at once
+              </p>
+            </div>
+          </div>
+          
+          <div className='flex items-center gap-4 p-6 glass rounded-2xl border border-purple-muted/20'>
+            <div className='flex items-center space-x-3'>
+              <div className='p-2 bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-xl'>
+                <Play className='w-5 h-5 text-emerald-400' />
+              </div>
+              <div>
+                <span className='text-sm font-medium text-white'>Bulk Actions</span>
+                <p className='text-xs text-grey-light/60'>Control all cameras at once</p>
+              </div>
+            </div>
+            
+            <div className='flex items-center gap-3 ml-auto'>
+              <Button
+                onClick={handleBulkStartResume}
+                size='sm'
+                disabled={bulkOperationLoading === "start"}
+                className='bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white font-medium px-4 py-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed'
+              >
+                <Play className='w-4 h-4 mr-2' />
+                {bulkOperationLoading === "start" ? "Starting..." : "Start/Resume All"}
+              </Button>
+              
+              <Button
+                onClick={handleBulkPause}
+                size='sm'
+                variant='outline'
+                disabled={bulkOperationLoading === "pause"}
+                className='border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10 hover:border-yellow-500/60 font-medium px-4 py-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed'
+              >
+                <Pause className='w-4 h-4 mr-2' />
+                {bulkOperationLoading === "pause" ? "Pausing..." : "Pause All"}
+              </Button>
+              
+              <Button
+                onClick={handleStopAllWithConfirmation}
+                size='sm'
+                variant='outline'
+                disabled={bulkOperationLoading === "stop"}
+                className='border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 font-medium px-4 py-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed'
+              >
+                <Square className='w-4 h-4 mr-2' />
+                {bulkOperationLoading === "stop" ? "Stopping..." : "Stop All"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cameras Section with Dynamic Layout */}
       <div className='space-y-8'>
         <div className='flex items-center justify-between'>
@@ -639,7 +1018,9 @@ export default function Dashboard() {
                     setEditingCamera(cam)
                     setIsModalOpen(true)
                   }}
-                  onDeleteCamera={handleDeleteCamera}
+                  onDeleteCamera={(cameraId) => {
+                    handleDeleteCamera(cameraId)
+                  }}
                   onGenerateVideo={handleGenerateVideo}
                 />
               )
@@ -658,6 +1039,30 @@ export default function Dashboard() {
         onSave={handleSaveCamera}
         camera={editingCamera}
         title={editingCamera ? "Edit Camera" : "Add New Camera"}
+      />
+
+      {/* Confirmation Dialog */}
+      <DeleteCameraConfirmationDialog
+        isOpen={confirmDeleteOpen}
+        onClose={() => {
+          setConfirmDeleteOpen(false)
+          setCameraToDelete(null)
+        }}
+        onConfirm={confirmDeleteCamera}
+        cameraName={cameraToDelete?.name || "Unknown Camera"}
+        isLoading={deleteLoading}
+      />
+
+      {/* Stop All Confirmation Dialog */}
+      <StopAllTimelapsesConfirmationDialog
+        isOpen={stopAllConfirmOpen}
+        onClose={() => setStopAllConfirmOpen(false)}
+        onConfirm={confirmStopAll}
+        cameraCount={cameras.filter(camera => {
+          const timelapse = timelapses.find(t => t.camera_id === camera.id)
+          return camera.health_status === "online" && timelapse && (timelapse.status === "running" || timelapse.status === "paused")
+        }).length}
+        isLoading={bulkOperationLoading === "stop"}
       />
     </div>
   )

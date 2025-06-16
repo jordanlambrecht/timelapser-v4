@@ -1,35 +1,18 @@
 // src/components/ui/status-badge.tsx
-import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
+// Legacy component - prefer CombinedStatusBadge for new implementations
+import { StatusBadge as ModernStatusBadge, ConnectionStatusBadge as ModernConnectionStatusBadge } from "./combined-status-badge"
 
-interface StatusBadgeProps {
+// Re-export the modern components for backward compatibility
+export const StatusBadge = ModernStatusBadge
+export const ConnectionStatusBadge = ModernConnectionStatusBadge
+
+// Legacy interface for compatibility
+interface LegacyStatusBadgeProps {
   status: "online" | "offline" | "unknown"
   className?: string
 }
 
-export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const variants = {
-    online: "status-online",
-    offline: "status-offline",
-    unknown: "status-unknown",
-  }
-
-  const icons = {
-    online: "●",
-    offline: "●",
-    unknown: "●",
-  }
-
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center space-x-2 text-xs font-medium px-3 py-1.5",
-        variants[status],
-        className
-      )}
-    >
-      <span className='text-current'>{icons[status]}</span>
-      <span className='capitalize'>{status}</span>
-    </div>
-  )
+// Legacy component kept for any direct imports
+export function LegacyStatusBadge({ status, className }: LegacyStatusBadgeProps) {
+  return <ModernStatusBadge status={status} className={className} />
 }

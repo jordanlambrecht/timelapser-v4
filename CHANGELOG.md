@@ -43,6 +43,16 @@ and this project adheres to
 - **Added**: Success, error, and info toasts for all major user actions
 - **Enhanced**: Professional user experience with consistent feedback patterns
 
+#### ⏱️ **Timezone Display & Countdown Timer Enhancements**
+
+- **ENHANCEMENT**: Refined timezone display system with real-time countdown improvements
+- **Added**: Absolute time displays underneath relative countdown timers for temporal context
+- **Enhanced**: Real-time per-second countdown updates when under 5 minutes (was updating every 5 seconds)
+- **Improved**: Timezone abbreviations (CDT, UTC, etc.) instead of full timezone names to save UI space
+- **Added**: Enhanced visual feedback for "Now" state with pulsing cyan effects
+- **Implemented**: Smart conditional display logic (absolute times hidden during "Now" state)
+- **Impact**: Smoother countdown experience with rich temporal context and compact timezone display
+
 ### Backend Changes
 
 #### Configuration & Environment
@@ -98,6 +108,26 @@ and this project adheres to
   formatting
 - **Updated**: All major components to use centralized toast notification system
 
+#### Countdown Timer & Display Enhancements
+
+- **Enhanced**: `/src/lib/time-utils.ts` - Improved `getSmartRefreshInterval()` for real-time countdown
+  - 0-3 seconds: 0.5-second updates (for "Now" detection)
+  - 4-300 seconds: 1-second updates (real-time countdown under 5 minutes)
+  - 301+ seconds: Progressive slower intervals for distant times
+- **Enhanced**: `/src/lib/time-utils.ts` - Added `formatAbsoluteTimeForCounter()` function
+  - Displays date and time in configured timezone
+  - Uses timezone abbreviations via `Intl.DateTimeFormat` with `timeZoneName: 'short'`
+  - Automatic DST handling (CDT/CST, EDT/EST, etc.)
+  - Year display only when different from current year
+- **Enhanced**: `/src/hooks/use-camera-countdown.ts` - Added absolute time returns
+  - `lastCaptureAbsolute` and `nextCaptureAbsolute` values
+  - Smart conditional display logic for "Now" states
+- **Enhanced**: `/src/components/camera-card.tsx` - Integrated absolute time displays
+  - Absolute timestamps shown beneath relative countdown timers
+  - Pulsing cyan visual effects for "Now" state
+  - Smart hiding of absolute times during capture moments
+  - Enhanced visual feedback with coordinated color coding
+
 ### Dependencies
 
 - **Added**: `react-timezone-select` ^3.2.8 - Advanced timezone selection
@@ -112,6 +142,9 @@ and this project adheres to
 - **Fixed**: Inconsistent time displays across different user timezones
 - **Fixed**: Alert dialogs and DOM manipulation replaced with proper toast
   notifications
+- **Fixed**: Countdown timers updating every 5 seconds when under 5 minutes (now updates every second)
+- **Fixed**: Lack of temporal context for relative timestamps (added absolute time displays)
+- **Fixed**: UI space consumption by full timezone names (replaced with compact abbreviations)
 
 ### Technical Improvements
 
@@ -124,6 +157,10 @@ and this project adheres to
   toast system
 - **Maintainability**: Centralized time utilities eliminate duplicate time
   calculation code
+- **Real-time UX**: Smooth per-second countdown progression for imminent captures
+- **Timezone Display**: Automatic DST-aware abbreviation generation using Intl API
+- **Visual Feedback**: Enhanced "Now" state indication with coordinated pulsing effects
+- **Conditional UI**: Smart display logic shows information only when relevant
 
 ### Migration Notes
 

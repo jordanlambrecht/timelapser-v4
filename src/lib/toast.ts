@@ -5,8 +5,14 @@ interface ToastOptions {
   duration?: number
   action?: {
     label: string
-    onClick: () => void
+    onClick: () => void | Promise<void>
   }
+}
+
+interface UndoToastOptions extends ToastOptions {
+  undoAction: () => void | Promise<void>
+  undoLabel?: string
+  undoTimeout?: number
 }
 
 const defaultOptions = {
@@ -123,6 +129,174 @@ export const toast = {
    */
   dismissAll: () => {
     return sonnerToast.dismiss()
+  },
+
+  // Specialized toast functions for common use cases
+  
+  /**
+   * Show a success toast with undo action
+   */
+  successWithUndo: (message: string, options: UndoToastOptions) => {
+    const { undoAction, undoLabel = "Undo", undoTimeout = 5000, ...restOptions } = options
+    
+    return sonnerToast.success(message, {
+      ...defaultOptions,
+      duration: undoTimeout,
+      ...restOptions,
+      action: {
+        label: undoLabel,
+        onClick: async () => {
+          try {
+            await undoAction()
+          } catch (error) {
+            console.error("Undo action failed:", error)
+            toast.error("Undo failed", {
+              description: "Please try the operation again",
+              duration: 4000,
+            })
+          }
+        },
+      },
+      style: {
+        backgroundColor: "oklch(80% 0.182 152deg / 0.1)",
+        borderColor: "oklch(80% 0.182 152deg / 0.3)",
+        color: "oklch(80% 0.182 152deg)",
+      },
+    })
+  },
+
+  // Specific application toasts
+  
+  /**
+   * Toast for when an image is captured
+   */
+  imageCaptured: (cameraName: string, options: ToastOptions = {}) => {
+    return toast.success(`📸 Image captured from ${cameraName}`, {
+      description: "New image added to timelapse sequence",
+      duration: 3000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a camera is deleted (with undo)
+   */
+  cameraDeleted: (cameraName: string, undoAction: () => void | Promise<void>) => {
+    return toast.successWithUndo(`Camera "${cameraName}" deleted`, {
+      description: "Camera and all its data have been removed",
+      undoAction,
+      undoTimeout: 8000,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse video is deleted (with undo)
+   */
+  timelapseDeleted: (videoName: string, undoAction: () => void | Promise<void>) => {
+    return toast.successWithUndo(`Timelapse "${videoName}" deleted`, {
+      description: "Video file has been removed",
+      undoAction,
+      undoTimeout: 8000,
+    })
+  },
+
+  /**
+   * Toast for when a camera is renamed
+   */
+  cameraRenamed: (oldName: string, newName: string, options: ToastOptions = {}) => {
+    return toast.success(`Camera renamed to "${newName}"`, {
+      description: `Previously known as "${oldName}"`,
+      duration: 4000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse is paused
+   */
+  timelapsePaused: (cameraName: string, options: ToastOptions = {}) => {
+    return toast.info(`⏸️ Timelapse paused for ${cameraName}`, {
+      description: "Recording will resume when you unpause",
+      duration: 4000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse is resumed
+   */
+  timelapseResumed: (cameraName: string, options: ToastOptions = {}) => {
+    return toast.success(`▶️ Timelapse resumed for ${cameraName}`, {
+      description: "Recording has continued from where it left off",
+      duration: 4000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse is stopped (with undo)
+   */
+  timelapseStopped: (cameraName: string, undoAction: () => void | Promise<void>) => {
+    return toast.successWithUndo(`⏹️ Timelapse stopped for ${cameraName}`, {
+      description: "Recording session has ended",
+      undoAction,
+      undoLabel: "Restart",
+      undoTimeout: 8000,
+    })
+  },
+
+  /**
+   * Toast for when a camera is added
+   */
+  cameraAdded: (cameraName: string, options: ToastOptions = {}) => {
+    return toast.success(`📹 Camera "${cameraName}" added successfully`, {
+      description: "Camera is now ready for timelapse recording",
+      duration: 5000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse video is renamed
+   */
+  timelapseRenamed: (oldName: string, newName: string, options: ToastOptions = {}) => {
+    return toast.success(`Video renamed to "${newName}"`, {
+      description: `Previously known as "${oldName}"`,
+      duration: 4000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for when a timelapse is started
+   */
+  timelapseStarted: (cameraName: string, options: ToastOptions = {}) => {
+    return toast.success(`🎬 Timelapse started for ${cameraName}`, {
+      description: "Recording has begun - images will be captured automatically",
+      duration: 5000,
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for video generation progress
+   */
+  videoGenerating: (videoName: string, options: ToastOptions = {}) => {
+    return toast.loading(`🎬 Generating video "${videoName}"...`, {
+      description: "This may take a few minutes depending on the number of images",
+      ...options,
+    })
+  },
+
+  /**
+   * Toast for successful video generation
+   */
+  videoGenerated: (videoName: string, options: ToastOptions = {}) => {
+    return toast.success(`🎉 Video "${videoName}" generated successfully!`, {
+      description: "Your timelapse video is ready for download",
+      duration: 6000,
+      ...options,
+    })
   },
 }
 
