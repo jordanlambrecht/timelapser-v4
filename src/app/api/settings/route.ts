@@ -1,53 +1,24 @@
 import { NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/db"
+import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 export async function GET() {
-  try {
-    const settings = await sql`
-      SELECT * FROM settings 
-      ORDER BY key
-    `
-
-    // Convert to key-value object for easier frontend consumption
-    const settingsObj = settings.reduce((acc: any, setting: any) => {
-      acc[setting.key] = setting.value
-      return acc
-    }, {})
-
-    return NextResponse.json(settingsObj)
-  } catch (error) {
-    console.error("Database error:", error)
-    return NextResponse.json(
-      { error: "Failed to fetch settings" },
-      { status: 500 }
-    )
-  }
+  // Proxy to FastAPI backend
+  return proxyToFastAPI("/api/settings")
 }
 
 export async function PUT(request: NextRequest) {
   try {
-    const { key, value } = await request.json()
+    const body = await request.json()
 
-    if (!key || value === undefined) {
-      return NextResponse.json(
-        { error: "Key and value are required" },
-        { status: 400 }
-      )
-    }
-
-    const result = await sql`
-      INSERT INTO settings (key, value) 
-      VALUES (${key}, ${value})
-      ON CONFLICT (key) 
-      DO UPDATE SET value = ${value}, updated_at = CURRENT_TIMESTAMP
-      RETURNING *
-    `
-
-    return NextResponse.json(result[0])
+    // Proxy to FastAPI backend
+    return proxyToFastAPI("/api/settings", {
+      method: "PUT",
+      body,
+    })
   } catch (error) {
-    console.error("Database error:", error)
+    console.error("Settings update error:", error)
     return NextResponse.json(
-      { error: "Failed to update setting" },
+      { error: "Failed to update settings" },
       { status: 500 }
     )
   }
