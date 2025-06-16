@@ -86,6 +86,7 @@ export function CameraModal({
               </Label>
               <Input
                 id='name'
+                data-1p-ignore
                 value={formData.name}
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, name: e.target.value }))

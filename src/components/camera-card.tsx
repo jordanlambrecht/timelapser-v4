@@ -41,6 +41,15 @@ interface CameraCardProps {
     time_window_start?: string
     time_window_end?: string
     use_time_window: boolean
+    next_capture_at?: string
+    // Full image object instead of just ID
+    last_image?: {
+      id: number
+      captured_at: string
+      file_path: string
+      file_size: number | null
+      day_number: number
+    } | null
   }
   timelapse?: {
     id: number
@@ -85,59 +94,122 @@ export function CameraCard({
   const [videoProgressModalOpen, setVideoProgressModalOpen] = useState(false)
   const [currentVideoName, setCurrentVideoName] = useState("")
 
-  // Server-Sent Events for real-time updates
+  // Server-Sent Events for real-time updates with reconnection
   useEffect(() => {
-    const eventSource = new EventSource("/api/events")
+    let eventSource: EventSource | null = null
+    let reconnectTimer: NodeJS.Timeout | null = null
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 5
+    const baseReconnectDelay = 1000 // 1 second
+    let isConnected = false
 
-    eventSource.onmessage = (event) => {
+    const connectSSE = () => {
       try {
-        const data = JSON.parse(event.data)
+        eventSource = new EventSource("/api/events")
 
-        // Handle different event types
-        switch (data.type) {
-          case "image_captured":
-            if (data.camera_id === camera.id) {
-              console.log(`New image captured for camera ${camera.id}`)
-              // Only refresh image if this camera now has captures
-              setImageKey(Date.now()) // Force image reload
-              setImageError(false) // Reset error state
-              setImageLoading(true) // Show loading state
+        eventSource.onopen = () => {
+          console.log(`SSE connected to camera events (camera ${camera.id})`)
+          isConnected = true
+          reconnectAttempts = 0 // Reset on successful connection
+        }
 
-              // Update image count if provided
-              if (data.image_count !== undefined) {
-                setActualImageCount(data.image_count)
-              }
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+
+            // Handle different event types
+            switch (data.type) {
+              case "image_captured":
+                if (data.camera_id === camera.id) {
+                  console.log(`New image captured for camera ${camera.id}`)
+                  // Only refresh image if this camera now has captures
+                  setImageKey(Date.now()) // Force image reload
+                  setImageError(false) // Reset error state
+                  setImageLoading(true) // Show loading state
+
+                  // Update image count if provided
+                  if (data.image_count !== undefined) {
+                    setActualImageCount(data.image_count)
+                  }
+                }
+                break
+              case "camera_status_changed":
+                if (data.camera_id === camera.id) {
+                  console.log(
+                    `Camera ${camera.id} status changed to ${data.status}`
+                  )
+                  // Let the parent component handle status updates via normal refresh
+                }
+                break
+              case "timelapse_status_changed":
+                if (data.camera_id === camera.id) {
+                  console.log(
+                    `Timelapse status changed for camera ${camera.id} to ${data.status}`
+                  )
+                  // Force image refresh when timelapse status changes
+                  setImageKey(Date.now())
+                  setImageError(false)
+                  setImageLoading(true)
+                }
+                break
+              case "connected":
+                console.log("SSE connection established")
+                break
+              case "heartbeat":
+                // Keep connection alive
+                break
+              default:
+                console.log("Unknown SSE event:", data.type)
             }
-            break
-          case "camera_status_changed":
-            if (data.camera_id === camera.id) {
-              console.log(
-                `Camera ${camera.id} status changed to ${data.status}`
-              )
-              // Let the parent component handle status updates via normal refresh
-            }
-            break
-          case "connected":
-            console.log("SSE connected to camera events")
-            break
-          case "heartbeat":
-            // Keep connection alive
-            break
-          default:
-            console.log("Unknown SSE event:", data.type)
+          } catch (error) {
+            console.error("Error parsing SSE event:", error)
+          }
+        }
+
+        eventSource.onerror = (error) => {
+          console.error(`SSE connection error for camera ${camera.id}:`, error)
+          isConnected = false
+
+          // Close the current connection
+          if (eventSource) {
+            eventSource.close()
+          }
+
+          // Attempt reconnection with exponential backoff
+          if (reconnectAttempts < maxReconnectAttempts) {
+            const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
+            console.log(
+              `Attempting SSE reconnection in ${delay}ms (attempt ${
+                reconnectAttempts + 1
+              }/${maxReconnectAttempts})`
+            )
+
+            reconnectTimer = setTimeout(() => {
+              reconnectAttempts++
+              connectSSE()
+            }, delay)
+          } else {
+            console.error(
+              `Max SSE reconnection attempts reached for camera ${camera.id}`
+            )
+          }
         }
       } catch (error) {
-        console.error("Error parsing SSE event:", error)
+        console.error("Failed to create SSE connection:", error)
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error("SSE connection error:", error)
-    }
+    // Initial connection
+    connectSSE()
 
     // Cleanup on unmount
     return () => {
-      eventSource.close()
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
     }
   }, [camera.id])
 
@@ -304,7 +376,9 @@ export function CameraCard({
       }
 
       const lastCaptureTime =
-        camera.last_capture_at || timelapse?.last_capture_at
+        camera.last_image?.captured_at ||
+        camera.last_capture_at ||
+        timelapse?.last_capture_at
 
       if (!lastCaptureTime) {
         setNextCaptureCountdown("First capture due")
@@ -351,6 +425,7 @@ export function CameraCard({
 
     return () => clearInterval(interval)
   }, [
+    camera.last_image?.captured_at,
     camera.last_capture_at,
     timelapse?.last_capture_at,
     captureInterval,
@@ -446,9 +521,14 @@ export function CameraCard({
                 <Camera className='w-5 h-5 text-white' />
               </div>
               <div>
-                <h3 className='text-lg font-bold text-white transition-colors group-hover:text-pink'>
-                  {camera.name}
-                </h3>
+                <Link
+                  href={`/cameras/${camera.id}`}
+                  className='block transition-colors hover:text-pink'
+                >
+                  <h3 className='text-lg font-bold text-white transition-colors group-hover:text-pink cursor-pointer'>
+                    {camera.name}
+                  </h3>
+                </Link>
                 <StatusBadge status={camera.health_status} />
               </div>
             </div>
@@ -514,28 +594,29 @@ export function CameraCard({
             </div>
           )}
 
-          {!camera.last_capture_at && !timelapse?.last_capture_at ? (
+          {!camera.last_image &&
+          !camera.last_capture_at &&
+          !timelapse?.last_capture_at ? (
             // No captures yet - show placeholder immediately
             <Image
-              src="/assets/placeholder-camera.jpg"
+              src='/assets/placeholder-camera.jpg'
               alt={`${camera.name} placeholder`}
               fill
-              className="object-cover opacity-60"
+              className='object-cover opacity-60'
               priority
             />
           ) : imageError ? (
             // API call failed - show placeholder
             <Image
-              src="/assets/placeholder-camera.jpg"
+              src='/assets/placeholder-camera.jpg'
               alt={`${camera.name} placeholder`}
               fill
-              className="object-cover opacity-60"
+              className='object-cover opacity-60'
               priority
             />
           ) : (
             <img
-              key={imageKey} // Force reload when imageKey changes
-              src={`/api/cameras/${camera.id}/latest-capture`}
+              src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
               alt={`Last capture from ${camera.name}`}
               className={cn(
                 "absolute inset-0 w-full h-full object-cover transition-all duration-500",
@@ -569,7 +650,9 @@ export function CameraCard({
                 )}
               >
                 {formatTimeAgo(
-                  camera.last_capture_at || timelapse?.last_capture_at
+                  camera.last_image?.captured_at ||
+                    camera.last_capture_at ||
+                    timelapse?.last_capture_at
                 )}
               </div>
             </div>
@@ -603,7 +686,9 @@ export function CameraCard({
             </div>
             <p className='font-bold text-white'>
               {formatTimeAgo(
-                camera.last_capture_at || timelapse?.last_capture_at
+                camera.last_image?.captured_at ||
+                  camera.last_capture_at ||
+                  timelapse?.last_capture_at
               )}
             </p>
             {camera.consecutive_failures > 0 && (
@@ -664,7 +749,6 @@ export function CameraCard({
           </div>
         </div>
 
-        {/* Time Window with enhanced styling */}
         {camera.use_time_window &&
           camera.time_window_start &&
           camera.time_window_end && (
@@ -681,7 +765,6 @@ export function CameraCard({
             </div>
           )}
 
-        {/* Enhanced Controls */}
         <div className='flex items-center justify-between pt-2'>
           <div
             className={cn(
@@ -721,6 +804,19 @@ export function CameraCard({
           </div>
 
           <div className='flex items-center space-x-2'>
+            {/* Details button */}
+            <Button
+              asChild
+              size='sm'
+              variant='outline'
+              className='border-purple-muted/30 text-white hover:bg-purple/20 hover:border-purple/50 min-w-[80px]'
+            >
+              <Link href={`/cameras/${camera.id}`}>
+                <Eye className='w-4 h-4 mr-1' />
+                Details
+              </Link>
+            </Button>
+
             {/* Pause/Resume button - only show when running or paused */}
             {(isTimelapseRunning || isTimelapsePaused) && (
               <Button
