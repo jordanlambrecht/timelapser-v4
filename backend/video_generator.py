@@ -5,7 +5,7 @@ import subprocess
 import logging
 import re
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Union
+from typing import Tuple, Optional, Union
 import glob
 from datetime import datetime, date
 from app.database import SyncDatabase
@@ -500,8 +500,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         try:
             # Ensure database is available
             if not self.db:
-                return False, "Database connection required for timelapse video generation", None
-            
+                return (
+                    False,
+                    "Database connection required for timelapse video generation",
+                    None,
+                )
+
             # Type assertion for the rest of the method
             db = self.db
 
