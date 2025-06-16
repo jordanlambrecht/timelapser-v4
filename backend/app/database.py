@@ -1,4 +1,5 @@
 # backend/app/database.py
+
 import asyncio
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
@@ -529,7 +530,7 @@ class AsyncDatabase:
 
             if response.status_code == 200:
                 response_data = response.json()
-                client_count = response_data.get('clients', 0)
+                client_count = response_data.get("clients", 0)
                 logger.debug(
                     f"Broadcasted SSE event: {event_data['type']} to {client_count} clients"
                 )
@@ -836,6 +837,43 @@ class SyncDatabase:
             with conn.cursor() as cur:
                 cur.execute(query, values)
 
+    def get_timelapse_images(
+        self,
+        timelapse_id: int,
+        day_start: Optional[int] = None,
+        day_end: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get images for a timelapse with optional day range filtering"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                query = """
+                    SELECT 
+                        i.id,
+                        i.camera_id,
+                        i.timelapse_id,
+                        i.file_path,
+                        i.captured_at,
+                        i.day_number,
+                        i.file_size
+                    FROM images i
+                    WHERE i.timelapse_id = %s
+                """
+                params = [timelapse_id]
+
+                # Add day range filtering if specified
+                if day_start is not None:
+                    query += " AND i.day_number >= %s"
+                    params.append(day_start)
+
+                if day_end is not None:
+                    query += " AND i.day_number <= %s"
+                    params.append(day_end)
+
+                query += " ORDER BY i.captured_at"
+
+                cur.execute(query, params)
+                return cast(List[Dict[str, Any]], cur.fetchall())
+
     def get_timelapse_day_range(self, timelapse_id: int) -> Dict:
         """Get day range and statistics for a timelapse"""
         with self.get_connection() as conn:
@@ -932,7 +970,9 @@ class SyncDatabase:
                 """
                 )
                 camera_stats_row = cur.fetchone()
-                camera_stats = cast(Dict[str, Any], camera_stats_row) if camera_stats_row else {}
+                camera_stats = (
+                    cast(Dict[str, Any], camera_stats_row) if camera_stats_row else {}
+                )
 
                 # Get timelapse statistics
                 cur.execute(
@@ -944,7 +984,11 @@ class SyncDatabase:
                 """
                 )
                 timelapse_stats_row = cur.fetchone()
-                timelapse_stats = cast(Dict[str, Any], timelapse_stats_row) if timelapse_stats_row else {}
+                timelapse_stats = (
+                    cast(Dict[str, Any], timelapse_stats_row)
+                    if timelapse_stats_row
+                    else {}
+                )
 
                 # Get recent captures (last 24 hours)
                 cur.execute(
@@ -955,12 +999,16 @@ class SyncDatabase:
                 """
                 )
                 capture_stats_row = cur.fetchone()
-                capture_stats = cast(Dict[str, Any], capture_stats_row) if capture_stats_row else {}
+                capture_stats = (
+                    cast(Dict[str, Any], capture_stats_row) if capture_stats_row else {}
+                )
 
                 # Get total images
                 cur.execute("SELECT COUNT(*) as total_images FROM images")
                 image_stats_row = cur.fetchone()
-                image_stats = cast(Dict[str, Any], image_stats_row) if image_stats_row else {}
+                image_stats = (
+                    cast(Dict[str, Any], image_stats_row) if image_stats_row else {}
+                )
 
                 return {
                     "cameras": {
@@ -970,8 +1018,12 @@ class SyncDatabase:
                         "active_cameras": camera_stats.get("active_cameras", 0),
                     },
                     "timelapses": {
-                        "running_timelapses": timelapse_stats.get("running_timelapses", 0),
-                        "paused_timelapses": timelapse_stats.get("paused_timelapses", 0),
+                        "running_timelapses": timelapse_stats.get(
+                            "running_timelapses", 0
+                        ),
+                        "paused_timelapses": timelapse_stats.get(
+                            "paused_timelapses", 0
+                        ),
                     },
                     "captures": {
                         "recent_captures": capture_stats.get("recent_captures", 0),
@@ -996,7 +1048,7 @@ class SyncDatabase:
 
             if response.status_code == 200:
                 response_data = response.json()
-                client_count = response_data.get('clients', 0)
+                client_count = response_data.get("clients", 0)
                 logger.debug(
                     f"Worker broadcasted SSE event: {event_data['type']} to {client_count} clients"
                 )
