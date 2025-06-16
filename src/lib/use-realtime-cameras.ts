@@ -1,3 +1,4 @@
+// src/lib/use-realtime-cameras.ts
 "use client"
 
 import { useEffect, useState, useRef } from "react"

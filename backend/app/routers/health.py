@@ -1,3 +1,4 @@
+# backend/app/routers/health.py
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 from loguru import logger
@@ -14,8 +15,8 @@ async def health_check():
         # Test database connectivity
         health_stats = sync_db.get_system_health()
         db_healthy = health_stats.get("status") == "healthy"
-        
-        # Test async database connectivity  
+
+        # Test async database connectivity
         async_healthy = True
         try:
             # Quick test of async database
@@ -38,10 +39,16 @@ async def health_check():
                 "api": "healthy",  # If we reach this point, FastAPI is working
             },
             "quick_stats": {
-                "total_cameras": health_stats.get("cameras", {}).get("total_cameras", 0),
-                "online_cameras": health_stats.get("cameras", {}).get("online_cameras", 0),
-                "running_timelapses": health_stats.get("timelapses", {}).get("running_timelapses", 0),
-            }
+                "total_cameras": health_stats.get("cameras", {}).get(
+                    "total_cameras", 0
+                ),
+                "online_cameras": health_stats.get("cameras", {}).get(
+                    "online_cameras", 0
+                ),
+                "running_timelapses": health_stats.get("timelapses", {}).get(
+                    "running_timelapses", 0
+                ),
+            },
         }
 
     except Exception as e:

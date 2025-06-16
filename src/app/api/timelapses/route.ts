@@ -1,3 +1,4 @@
+// src/app/api/timelapses/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI, proxyToFastAPIWithQuery } from "@/lib/fastapi-proxy"
 

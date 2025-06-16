@@ -1,3 +1,4 @@
+# backend/app/routers/images.py
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, Dict, Any, cast
 from loguru import logger

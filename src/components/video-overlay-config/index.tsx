@@ -1,3 +1,4 @@
+// src/components/video-overlay-config/index.tsx
 "use client"
 
 import { useState } from "react"

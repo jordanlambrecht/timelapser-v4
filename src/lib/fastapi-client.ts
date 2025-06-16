@@ -1,3 +1,4 @@
+// src/lib/fastapi-client.ts
 // Updated TypeScript interfaces to match FastAPI Pydantic models exactly
 
 // Image interfaces (defined early for Camera relationships)

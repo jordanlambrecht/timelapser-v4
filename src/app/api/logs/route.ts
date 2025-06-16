@@ -1,3 +1,4 @@
+// src/app/api/logs/route.ts
 import { NextRequest } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 

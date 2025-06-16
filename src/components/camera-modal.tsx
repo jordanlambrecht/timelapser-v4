@@ -1,3 +1,4 @@
+// src/components/camera-modal.tsx
 import { useState, useEffect } from "react"
 import {
   Dialog,

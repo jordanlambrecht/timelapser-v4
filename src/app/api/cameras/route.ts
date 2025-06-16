@@ -1,3 +1,4 @@
+// src/app/api/cameras/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 

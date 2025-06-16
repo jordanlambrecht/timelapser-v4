@@ -1,3 +1,4 @@
+// src/app/api/images/[...path]/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { readFile } from "fs/promises"
 import { join } from "path"

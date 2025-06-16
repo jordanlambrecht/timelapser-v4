@@ -1,35 +1,36 @@
-'use client'
+// src/components/navigation-links.tsx
+"use client"
 
-import { usePathname } from 'next/navigation'
+import { usePathname } from "next/navigation"
 import { LayoutDashboard, Settings, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function NavigationLinks() {
   const pathname = usePathname()
-  
+
   const links = [
     {
-      href: '/',
-      label: 'Dashboard',
+      href: "/",
+      label: "Dashboard",
       icon: LayoutDashboard,
-      isActive: pathname === '/'
+      isActive: pathname === "/",
     },
     {
-      href: '/logs',
-      label: 'Logs',
+      href: "/logs",
+      label: "Logs",
       icon: FileText,
-      isActive: pathname === '/logs'
+      isActive: pathname === "/logs",
     },
     {
-      href: '/settings',
-      label: 'Settings', 
+      href: "/settings",
+      label: "Settings",
       icon: Settings,
-      isActive: pathname === '/settings'
-    }
+      isActive: pathname === "/settings",
+    },
   ]
 
   return (
-    <div className="hidden md:flex items-center space-x-1 bg-black/30 rounded-full p-1 border border-purple-muted/30 backdrop-blur-sm">
+    <div className='hidden md:flex items-center space-x-1 bg-black/30 rounded-full p-1 border border-purple-muted/30 backdrop-blur-sm'>
       {links.map((link) => {
         const Icon = link.icon
         return (
@@ -43,7 +44,7 @@ export function NavigationLinks() {
                 : "text-white hover:text-pink hover:bg-black/30"
             )}
           >
-            <Icon className="w-4 h-4" />
+            <Icon className='w-4 h-4' />
             <span>{link.label}</span>
           </a>
         )

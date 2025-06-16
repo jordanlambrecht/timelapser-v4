@@ -1,3 +1,4 @@
+# backend/app/routers/cameras.py
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse, Response
 from typing import List

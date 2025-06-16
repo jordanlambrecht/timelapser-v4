@@ -1,3 +1,4 @@
+// src/components/video-generation-modal/index.tsx
 "use client"
 
 import { useState } from "react"

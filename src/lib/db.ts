@@ -1,3 +1,4 @@
+// src/lib/db.ts
 // ⚠️ DEPRECATED - DO NOT USE ⚠️
 // This file provides direct database access from the frontend, which is a security risk.
 // ALL database operations should go through the FastAPI backend for security.

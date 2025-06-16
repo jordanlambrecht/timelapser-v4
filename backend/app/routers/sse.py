@@ -1,3 +1,4 @@
+# backend/app/routers/sse.py
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator

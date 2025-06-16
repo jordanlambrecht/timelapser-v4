@@ -1,3 +1,4 @@
+// src/app/api/events/route.ts
 import { NextRequest, NextResponse } from "next/server"
 
 // SECURITY: Define allowed event types and their expected structure
