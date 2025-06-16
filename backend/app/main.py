@@ -7,7 +7,17 @@ from loguru import logger
 
 from .config import settings
 from .database import async_db, sync_db
-from .routers import cameras, timelapses, videos, settings as settings_router, sse
+from .routers import (
+    cameras,
+    timelapses,
+    videos,
+    settings as settings_router,
+    sse,
+    logs,
+    images,
+    health,
+    dashboard,
+)
 
 
 @asynccontextmanager
@@ -18,9 +28,9 @@ async def lifespan(app: FastAPI):
     await async_db.initialize()
     sync_db.initialize()
     logger.info("Database connections initialized")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down FastAPI application")
     await async_db.close()
@@ -35,7 +45,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -52,20 +62,14 @@ app.add_middleware(
 @app.exception_handler(ValueError)
 async def value_error_handler(request, exc):
     """Handle validation errors"""
-    return JSONResponse(
-        status_code=400,
-        content={"detail": str(exc)}
-    )
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     """Handle general exceptions"""
     logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # Include routers
@@ -74,6 +78,10 @@ app.include_router(timelapses.router, prefix="/api/timelapses", tags=["timelapse
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 app.include_router(sse.router, prefix="/api/sse", tags=["real-time"])
+app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
+app.include_router(images.router, prefix="/api/images", tags=["images"])
+app.include_router(health.router, prefix="/api/health", tags=["health"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 
 
 # Health check endpoint
@@ -86,11 +94,7 @@ async def health_check():
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {
-        "message": "Timelapser API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
+    return {"message": "Timelapser API", "version": "1.0.0", "docs": "/docs"}
 
 
 if __name__ == "__main__":
@@ -99,5 +103,5 @@ if __name__ == "__main__":
         host=settings.api_host,
         port=settings.api_port,
         reload=settings.api_reload,
-        log_level=settings.log_level.lower()
+        log_level=settings.log_level.lower(),
     )
