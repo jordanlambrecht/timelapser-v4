@@ -19,6 +19,14 @@ interface Camera {
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
+  // Full image object instead of just ID
+  last_image?: {
+    id: number
+    captured_at: string
+    file_path: string
+    file_size: number | null
+    day_number: number
+  } | null
 }
 
 interface Timelapse {
@@ -45,123 +53,227 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCamera, setEditingCamera] = useState<Camera | undefined>()
   const [loading, setLoading] = useState(true)
+  const [sseConnected, setSseConnected] = useState(false)
+  const [lastEventTime, setLastEventTime] = useState<number>(Date.now())
 
   const fetchData = async () => {
     try {
-      const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
-        fetch("/api/cameras"),
-        fetch("/api/timelapses"),
-        fetch("/api/videos"),
-      ])
+      // Use new aggregated dashboard endpoint for better performance
+      const response = await fetch("/api/dashboard")
 
-      const camerasData = await camerasRes.json()
-      const timelapsesData = await timelapsesRes.json()
-      const videosData = await videosRes.json()
+      if (!response.ok) {
+        throw new Error(`Dashboard API failed: ${response.status}`)
+      }
 
-      setCameras(Array.isArray(camerasData) ? camerasData : [])
-      setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
-      setVideos(Array.isArray(videosData) ? videosData : [])
+      const dashboardData = await response.json()
+
+      // Set data from aggregated response
+      setCameras(
+        Array.isArray(dashboardData.cameras) ? dashboardData.cameras : []
+      )
+      setTimelapses(
+        Array.isArray(dashboardData.timelapses) ? dashboardData.timelapses : []
+      )
+      setVideos(Array.isArray(dashboardData.videos) ? dashboardData.videos : [])
+
+      // Log performance metadata
+      if (dashboardData.metadata) {
+        console.log("Dashboard loaded:", dashboardData.metadata)
+      }
     } catch (error) {
-      console.error("Error fetching data:", error)
+      console.error("Error fetching dashboard data:", error)
+
+      // Fallback to individual API calls if aggregated endpoint fails
+      console.log("Falling back to individual API calls...")
+      try {
+        const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
+          fetch("/api/cameras"),
+          fetch("/api/timelapses"),
+          fetch("/api/videos"),
+        ])
+
+        const camerasData = await camerasRes.json()
+        const timelapsesData = await timelapsesRes.json()
+        const videosData = await videosRes.json()
+
+        setCameras(Array.isArray(camerasData) ? camerasData : [])
+        setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
+        setVideos(Array.isArray(videosData) ? videosData : [])
+      } catch (fallbackError) {
+        console.error("Fallback API calls also failed:", fallbackError)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  // Real-time updates via Server-Sent Events
+  // Real-time updates via Server-Sent Events with reconnection logic
   useEffect(() => {
-    const eventSource = new EventSource("/api/events")
+    let eventSource: EventSource | null = null
+    let reconnectTimer: NodeJS.Timeout | null = null
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 5
+    const baseReconnectDelay = 1000 // Start with 1 second
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
+    const connectSSE = () => {
+      // Clean up existing connection
+      if (eventSource) {
+        eventSource.close()
+      }
 
-        console.log("Dashboard SSE event:", data.type, data)
+      console.log(`Connecting to SSE... (attempt ${reconnectAttempts + 1})`)
+      eventSource = new EventSource("/api/events")
 
-        switch (data.type) {
-          case "camera_added":
-            setCameras((prev) => [data.camera, ...prev])
-            break
+      eventSource.onopen = () => {
+        console.log("✅ SSE connected successfully")
+        setSseConnected(true)
+        reconnectAttempts = 0 // Reset attempts on successful connection
+      }
 
-          case "camera_updated":
-            setCameras((prev) =>
-              prev.map((camera) =>
-                camera.id === data.camera.id
-                  ? { ...camera, ...data.camera }
-                  : camera
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          setLastEventTime(Date.now()) // Track when we last received an event
+
+          console.log("Dashboard SSE event:", data.type, data)
+
+          switch (data.type) {
+            case "camera_added":
+              setCameras((prev) => [data.camera, ...prev])
+              break
+
+            case "camera_updated":
+              setCameras((prev) =>
+                prev.map((camera) =>
+                  camera.id === data.camera.id
+                    ? { ...camera, ...data.camera }
+                    : camera
+                )
               )
-            )
-            break
+              break
 
-          case "camera_deleted":
-            setCameras((prev) =>
-              prev.filter((camera) => camera.id !== data.camera_id)
-            )
-            setTimelapses((prev) =>
-              prev.filter((t) => t.camera_id !== data.camera_id)
-            )
-            setVideos((prev) =>
-              prev.filter((v) => v.camera_id !== data.camera_id)
-            )
-            break
-
-          case "timelapse_status_changed":
-            setTimelapses((prev) =>
-              prev.map((timelapse) =>
-                timelapse.id === data.timelapse_id
-                  ? { ...timelapse, status: data.status }
-                  : timelapse
+            case "camera_deleted":
+              setCameras((prev) =>
+                prev.filter((camera) => camera.id !== data.camera_id)
               )
-            )
-            break
-
-          case "video_completed":
-            if (data.video) {
-              setVideos((prev) => [data.video, ...prev])
-            }
-            break
-
-          case "video_failed":
-            console.error("Video generation failed:", data.error)
-            break
-
-          case "image_captured":
-            // Update image count for timelapse
-            setTimelapses((prev) =>
-              prev.map((timelapse) =>
-                timelapse.camera_id === data.camera_id
-                  ? {
-                      ...timelapse,
-                      image_count: data.image_count || timelapse.image_count,
-                    }
-                  : timelapse
+              setTimelapses((prev) =>
+                prev.filter((t) => t.camera_id !== data.camera_id)
               )
-            )
-            break
+              setVideos((prev) =>
+                prev.filter((v) => v.camera_id !== data.camera_id)
+              )
+              break
 
-          case "connected":
-            console.log("Connected to dashboard events")
-            break
+            case "timelapse_status_changed":
+              console.log("🔄 Processing timelapse status change:", data)
+              setTimelapses((prev) => {
+                const updated = prev.map((timelapse) =>
+                  timelapse.camera_id === data.camera_id
+                    ? {
+                        ...timelapse,
+                        status: data.status,
+                        id: data.timelapse_id || timelapse.id,
+                      }
+                    : timelapse
+                )
 
-          case "heartbeat":
-            // Keep connection alive
-            break
+                // If no existing timelapse for this camera, create one
+                const hasExisting = prev.some(
+                  (t) => t.camera_id === data.camera_id
+                )
+                if (!hasExisting && data.timelapse_id) {
+                  return [
+                    ...updated,
+                    {
+                      id: data.timelapse_id,
+                      camera_id: data.camera_id,
+                      status: data.status,
+                      image_count: 0,
+                      last_capture_at: undefined,
+                    },
+                  ]
+                }
 
-          default:
-            console.log("Unknown dashboard event:", data.type)
+                return updated
+              })
+              break
+
+            case "video_completed":
+              if (data.video) {
+                setVideos((prev) => [data.video, ...prev])
+              }
+              break
+
+            case "video_failed":
+              console.error("Video generation failed:", data.error)
+              break
+
+            case "image_captured":
+              // Update image count for timelapse
+              setTimelapses((prev) =>
+                prev.map((timelapse) =>
+                  timelapse.camera_id === data.camera_id
+                    ? {
+                        ...timelapse,
+                        image_count: data.image_count || timelapse.image_count,
+                      }
+                    : timelapse
+                )
+              )
+              break
+
+            case "connected":
+              console.log("Connected to dashboard events")
+              break
+
+            case "heartbeat":
+              // Keep connection alive
+              break
+
+            default:
+              console.log("Unknown dashboard event:", data.type)
+          }
+        } catch (error) {
+          console.error("Error parsing dashboard SSE event:", error)
         }
-      } catch (error) {
-        console.error("Error parsing dashboard SSE event:", error)
+      }
+
+      eventSource.onerror = (error) => {
+        console.error("Dashboard SSE connection error:", error)
+        setSseConnected(false)
+
+        // Attempt to reconnect with exponential backoff
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
+          console.log(
+            `Attempting to reconnect SSE in ${delay}ms... (${
+              reconnectAttempts + 1
+            }/${maxReconnectAttempts})`
+          )
+
+          reconnectAttempts++
+          reconnectTimer = setTimeout(() => {
+            connectSSE()
+          }, delay)
+        } else {
+          console.error(
+            "Max SSE reconnection attempts reached. Please refresh the page."
+          )
+        }
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error("Dashboard SSE connection error:", error)
-    }
+    // Initial connection
+    connectSSE()
 
     // Cleanup on unmount
     return () => {
-      eventSource.close()
+      if (eventSource) {
+        eventSource.close()
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+      }
     }
   }, [])
 
@@ -184,9 +296,14 @@ export default function Dashboard() {
       })
 
       if (response.ok) {
-        // SSE events will handle updating the state automatically
         setIsModalOpen(false)
         setEditingCamera(undefined)
+
+        // If SSE is not connected or hasn't received events recently, refresh data
+        if (!sseConnected || Date.now() - lastEventTime > 10000) {
+          console.log("⚠️ SSE not reliable, refreshing data manually")
+          setTimeout(() => fetchData(), 1000) // Refresh after 1 second
+        }
       } else {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -202,12 +319,19 @@ export default function Dashboard() {
   ) => {
     try {
       const newStatus = currentStatus === "running" ? "stopped" : "running"
-      await fetch("/api/timelapses", {
+      const response = await fetch("/api/timelapses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ camera_id: cameraId, status: newStatus }),
       })
-      // SSE events will handle updating the state automatically
+
+      if (response.ok) {
+        // If SSE is not connected or hasn't received events recently, refresh data
+        if (!sseConnected || Date.now() - lastEventTime > 10000) {
+          console.log("⚠️ SSE not reliable, refreshing data manually")
+          setTimeout(() => fetchData(), 1000) // Refresh after 1 second
+        }
+      }
     } catch (error) {
       console.error("Error toggling timelapse:", error)
     }
@@ -215,12 +339,19 @@ export default function Dashboard() {
 
   const handlePauseTimelapse = async (cameraId: number) => {
     try {
-      await fetch("/api/timelapses", {
+      const response = await fetch("/api/timelapses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ camera_id: cameraId, status: "paused" }),
       })
-      // SSE events will handle updating the state automatically
+
+      if (response.ok) {
+        // If SSE is not connected or hasn't received events recently, refresh data
+        if (!sseConnected || Date.now() - lastEventTime > 10000) {
+          console.log("⚠️ SSE not reliable, refreshing data manually")
+          setTimeout(() => fetchData(), 1000) // Refresh after 1 second
+        }
+      }
     } catch (error) {
       console.error("Error pausing timelapse:", error)
     }
@@ -228,12 +359,19 @@ export default function Dashboard() {
 
   const handleResumeTimelapse = async (cameraId: number) => {
     try {
-      await fetch("/api/timelapses", {
+      const response = await fetch("/api/timelapses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ camera_id: cameraId, status: "running" }),
       })
-      // SSE events will handle updating the state automatically
+
+      if (response.ok) {
+        // If SSE is not connected or hasn't received events recently, refresh data
+        if (!sseConnected || Date.now() - lastEventTime > 10000) {
+          console.log("⚠️ SSE not reliable, refreshing data manually")
+          setTimeout(() => fetchData(), 1000) // Refresh after 1 second
+        }
+      }
     } catch (error) {
       console.error("Error resuming timelapse:", error)
     }
@@ -407,6 +545,17 @@ export default function Dashboard() {
                     <Eye className='w-4 h-4 text-cyan/70' />
                     <span className='text-grey-light/70'>
                       {cameras.length} total
+                    </span>
+                  </div>
+                  <div className='w-1 h-4 rounded-full bg-purple-muted/30' />
+                  <div className='flex items-center space-x-2'>
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        sseConnected ? "bg-success" : "bg-error"
+                      }`}
+                    />
+                    <span className='text-grey-light/70'>
+                      {sseConnected ? "live updates" : "disconnected"}
                     </span>
                   </div>
                 </>
