@@ -13,27 +13,56 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Settings as SettingsIcon, Clock, Save, RefreshCw } from "lucide-react"
+import {
+  Settings as SettingsIcon,
+  Clock,
+  Save,
+  RefreshCw,
+  Globe,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
+import { TimezoneSelector } from "@/components/timezone-selector-combobox"
+import { toast } from "@/lib/toast"
 
 export default function Settings() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [captureInterval, setCaptureInterval] = useState("")
+  const [timezone, setTimezone] = useState("America/Chicago")
+
+  // Debug timezone changes
+  const handleTimezoneChange = (newTimezone: string) => {
+    console.log(
+      "🎯 Settings page: timezone changing from",
+      timezone,
+      "to",
+      newTimezone
+    )
+    setTimezone(newTimezone)
+  }
 
   useEffect(() => {
     fetchSettings()
   }, [])
 
   const fetchSettings = async () => {
+    console.log("🔄 Fetching settings from API...")
     try {
       const response = await fetch("/api/settings", { cache: "no-store" })
       const data = await response.json()
+      console.log("📥 Received settings:", data)
+
       setSettings(data)
       setCaptureInterval(data.capture_interval || "300")
+      setTimezone(data.timezone || "America/Chicago")
+
+      console.log("✅ Settings state updated:", {
+        captureInterval: data.capture_interval || "300",
+        timezone: data.timezone || "America/Chicago",
+      })
     } catch (error) {
-      console.error("Failed to fetch settings:", error)
+      console.error("❌ Failed to fetch settings:", error)
     } finally {
       setLoading(false)
     }
@@ -43,34 +72,79 @@ export default function Settings() {
     e.preventDefault()
     setSaving(true)
 
+    console.log("💾 Saving settings:", { captureInterval, timezone })
+
     try {
-      const response = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          key: "capture_interval",
-          value: captureInterval,
-        }),
+      // Save both capture interval and timezone
+      const updates = [
+        { key: "capture_interval", value: captureInterval },
+        { key: "timezone", value: timezone },
+      ]
+
+      console.log("🔄 Updates to save:", updates)
+
+      for (const update of updates) {
+        console.log(`📤 Saving ${update.key}:`, update.value)
+
+        // Add more detailed logging for debugging
+        const requestUrl = "/api/settings"
+        const requestOptions = {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(update),
+        }
+
+        console.log(`🔍 Request details for ${update.key}:`, {
+          url: requestUrl,
+          method: requestOptions.method,
+          headers: requestOptions.headers,
+          body: update,
+        })
+
+        const response = await fetch(requestUrl, requestOptions)
+
+        console.log(
+          `📥 Response for ${update.key}:`,
+          response.status,
+          response.statusText,
+          response.ok
+        )
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error(`❌ Failed to save ${update.key}:`, {
+            status: response.status,
+            statusText: response.statusText,
+            errorText,
+            headers: Object.fromEntries(response.headers.entries()),
+          })
+          throw new Error(
+            `Failed to save ${update.key}: ${response.status} ${response.statusText} - ${errorText}`
+          )
+        }
+
+        const result = await response.json()
+        console.log(`✅ Saved ${update.key} successfully:`, result)
+      }
+
+      // Show success toast
+      toast.success("Settings saved successfully!", {
+        description: "Your capture interval and timezone have been updated",
+        duration: 4000,
       })
 
-      if (response.ok) {
-        // Show success feedback
-        const button = e.target as HTMLFormElement
-        const submitBtn = button.querySelector('button[type="submit"]')
-        if (submitBtn) {
-          const originalText = submitBtn.textContent
-          submitBtn.textContent = "✅ Saved!"
-          setTimeout(() => {
-            submitBtn.textContent = originalText
-          }, 2000)
-        }
-        fetchSettings()
-      } else {
-        alert("Failed to save settings")
-      }
-    } catch (error) {
-      console.error("Failed to save settings:", error)
-      alert("Failed to save settings")
+      console.log("🔄 Fetching updated settings...")
+      await fetchSettings()
+    } catch (error: unknown) {
+      console.error("❌ Failed to save settings:", error)
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error occurred"
+
+      // Show error toast
+      toast.error("Failed to save settings", {
+        description: errorMessage,
+        duration: 6000,
+      })
     } finally {
       setSaving(false)
     }
@@ -138,111 +212,139 @@ export default function Settings() {
         </div>
       </div>
 
-      <div className='grid gap-6 lg:grid-cols-2'>
-        {/* Capture Settings */}
-        <Card className='transition-all duration-300 glass hover:glow'>
-          <CardHeader>
-            <CardTitle className='flex items-center space-x-2'>
-              <Clock className='w-5 h-5 text-primary' />
-              <span>Capture Interval</span>
-            </CardTitle>
-            <CardDescription>
-              How often images are captured from your cameras
-            </CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-6'>
-            <form onSubmit={saveSettings} className='space-y-4'>
-              <div className='space-y-3'>
-                <Label htmlFor='interval' className='text-sm font-medium'>
-                  Interval (seconds)
-                </Label>
-                <div className='flex space-x-3'>
-                  <Input
-                    id='interval'
-                    type='number'
-                    value={captureInterval}
-                    onChange={(e) => setCaptureInterval(e.target.value)}
-                    min='1'
-                    max='86400'
-                    className='bg-background/50 border-borderColor/50 focus:border-primary/50'
-                    required
-                  />
-                  <Badge className='px-3 py-2 whitespace-nowrap'>
-                    {formatInterval(captureInterval)}
-                  </Badge>
+      {/* Unified Settings Form */}
+      <form onSubmit={saveSettings} className='space-y-6'>
+        <div className='grid gap-6 lg:grid-cols-2'>
+          {/* Capture Settings */}
+          <Card className='transition-all duration-300 glass hover:glow'>
+            <CardHeader>
+              <CardTitle className='flex items-center space-x-2'>
+                <Clock className='w-5 h-5 text-primary' />
+                <span>Capture Interval</span>
+              </CardTitle>
+              <CardDescription>
+                How often images are captured from your cameras
+              </CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-6'>
+              <div className='space-y-4'>
+                <div className='space-y-3'>
+                  <Label htmlFor='interval' className='text-sm font-medium'>
+                    Interval (seconds)
+                  </Label>
+                  <div className='flex space-x-3'>
+                    <Input
+                      id='interval'
+                      type='number'
+                      value={captureInterval}
+                      onChange={(e) => setCaptureInterval(e.target.value)}
+                      min='1'
+                      max='86400'
+                      className='bg-background/50 border-borderColor/50 focus:border-primary/50'
+                      required
+                    />
+                    <Badge className='px-3 py-2 whitespace-nowrap'>
+                      {formatInterval(captureInterval)}
+                    </Badge>
+                  </div>
+                  <p className='text-xs text-muted-foreground'>
+                    Range: 1 second to 24 hours (86,400 seconds)
+                  </p>
                 </div>
-                <p className='text-xs text-muted-foreground'>
-                  Range: 1 second to 24 hours (86,400 seconds)
-                </p>
-              </div>
 
-              {/* Quick Presets */}
-              <div className='space-y-3'>
-                <Label className='text-sm font-medium'>Quick Presets</Label>
-                <div className='grid grid-cols-2 gap-2'>
-                  {[
-                    { label: "30s", value: "30" },
-                    { label: "1m", value: "60" },
-                    { label: "5m", value: "300" },
-                    { label: "15m", value: "900" },
-                    { label: "1h", value: "3600" },
-                    { label: "6h", value: "21600" },
-                  ].map((preset) => (
-                    <Button
-                      key={preset.value}
-                      type='button'
-                      variant={
-                        captureInterval === preset.value ? "default" : "outline"
-                      }
-                      size='sm'
-                      onClick={() => setCaptureInterval(preset.value)}
-                      className={cn(
-                        "text-xs",
-                        captureInterval === preset.value &&
-                          "bg-primary text-primary-foreground"
-                      )}
-                    >
-                      {preset.label}
-                    </Button>
-                  ))}
+                {/* Quick Presets */}
+                <div className='space-y-3'>
+                  <Label className='text-sm font-medium'>Quick Presets</Label>
+                  <div className='grid grid-cols-2 gap-2'>
+                    {[
+                      { label: "30s", value: "30" },
+                      { label: "1m", value: "60" },
+                      { label: "5m", value: "300" },
+                      { label: "15m", value: "900" },
+                      { label: "1h", value: "3600" },
+                      { label: "6h", value: "21600" },
+                    ].map((preset) => (
+                      <Button
+                        key={preset.value}
+                        type='button'
+                        variant={
+                          captureInterval === preset.value
+                            ? "default"
+                            : "outline"
+                        }
+                        size='sm'
+                        onClick={() => setCaptureInterval(preset.value)}
+                        className={cn(
+                          "text-xs",
+                          captureInterval === preset.value &&
+                            "bg-primary text-primary-foreground"
+                        )}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className='flex pt-2 space-x-3'>
-                <Button
-                  type='submit'
-                  disabled={saving}
-                  className='flex-1 bg-primary hover:bg-primary/90'
-                >
-                  {saving ? (
-                    <>
-                      <RefreshCw className='w-4 h-4 mr-2 animate-spin' />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className='w-4 h-4 mr-2' />
-                      Save Settings
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+          {/* Timezone Settings */}
+          <Card className='transition-all duration-300 glass hover:glow'>
+            <CardHeader className='mb-2 pb-0'>
+              <CardTitle className='flex items-center space-x-2'>
+                <Globe className='w-5 h-5 text-pink' />
+                <span className='text-white'>Timezone Configuration</span>
+              </CardTitle>
+              <CardDescription>
+                Set the timezone for accurate time calculations and display
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TimezoneSelector
+                value={timezone}
+                onChange={handleTimezoneChange}
+                disabled={saving}
+              />
+            </CardContent>
+          </Card>
+        </div>
 
-        {/* Current Configuration */}
-        <Card className='transition-all duration-300 glass hover:glow'>
-          <CardHeader>
-            <CardTitle className='flex items-center space-x-2'>
-              <SettingsIcon className='w-5 h-5 text-primary' />
-              <span>Current Configuration</span>
-            </CardTitle>
-            <CardDescription>
-              Active system settings and their values
-            </CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-4'>
+        {/*  Save Button */}
+        <div className='flex justify-center pt-4'>
+          <Button
+            type='submit'
+            disabled={saving}
+            className='transition-colors duration-300 ease-in text-purple-dark min-w-[200px] bg-primary hover:bg-primary/50'
+          >
+            {saving ? (
+              <>
+                <RefreshCw className='w-4 h-4 mr-2 animate-spin' />
+                Saving Settings...
+              </>
+            ) : (
+              <>
+                <Save className='w-4 h-4 mr-2' />
+                Save All Settings
+              </>
+            )}
+          </Button>
+        </div>
+      </form>
+
+      {/* Current Configuration - Full Width */}
+      <Card className='transition-all duration-300 glass hover:glow'>
+        <CardHeader>
+          <CardTitle className='flex items-center space-x-2'>
+            <SettingsIcon className='w-5 h-5 text-primary' />
+            <span>Current Configuration</span>
+          </CardTitle>
+          <CardDescription>
+            Active system settings and their values
+          </CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-3'>
             {Object.entries(settings).map(([key, value]) => (
               <div
                 key={key}
@@ -257,23 +359,37 @@ export default function Settings() {
                       {getIntervalPreset(value)}
                     </p>
                   )}
+                  {key === "timezone" && (
+                    <p className='text-xs text-muted-foreground'>
+                      {new Date().toLocaleString("en-US", {
+                        timeZone: value,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: true,
+                      })}
+                    </p>
+                  )}
                 </div>
                 <Badge variant='secondary'>
-                  {key === "capture_interval" ? formatInterval(value) : value}
+                  {key === "capture_interval"
+                    ? formatInterval(value)
+                    : key === "timezone"
+                    ? value.split("/").pop()
+                    : value}
                 </Badge>
               </div>
             ))}
+          </div>
 
-            {Object.keys(settings).length === 0 && (
-              <div className='py-6 text-center'>
-                <p className='text-sm text-muted-foreground'>
-                  No settings configured yet
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          {Object.keys(settings).length === 0 && (
+            <div className='py-6 text-center'>
+              <p className='text-sm text-muted-foreground'>
+                No settings configured yet
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Info Cards */}
       <div className='grid gap-6 md:grid-cols-2'>

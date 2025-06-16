@@ -12,6 +12,7 @@ import {
   Bug,
   Sigma,
 } from "lucide-react"
+import { useCaptureSettings } from "@/hooks/use-camera-countdown"
 
 interface Log {
   id: number
@@ -38,6 +39,9 @@ interface LogStats {
 export default function LogsPage() {
   const [logs, setLogs] = useState<Log[]>([])
   const [cameras, setCameras] = useState<Camera[]>([])
+
+  // Get timezone from settings
+  const { timezone } = useCaptureSettings()
   const [stats, setStats] = useState<LogStats>({
     errors: 0,
     warnings: 0,
@@ -161,6 +165,7 @@ export default function LogsPage() {
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
     return date.toLocaleString("en-US", {
+      timeZone: timezone,
       month: "short",
       day: "numeric",
       hour: "2-digit",

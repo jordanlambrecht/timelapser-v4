@@ -108,7 +108,7 @@ export default function RootLayout({
         </div>
 
         {/* Toast notifications */}
-        <Toaster position='top-right' richColors closeButton theme='dark' />
+        <Toaster position='bottom-right' richColors closeButton theme='dark' />
       </body>
     </html>
   )

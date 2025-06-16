@@ -3,6 +3,12 @@
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
+import {
+  useRelativeTime,
+  useCaptureSettings,
+} from "@/hooks/use-camera-countdown"
+import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
+import { toast } from "@/lib/toast"
 
 interface Camera {
   id: number
@@ -59,6 +65,9 @@ export default function CameraDetailsPage() {
   const router = useRouter()
   const cameraId = parseInt(params.id as string)
 
+  // Get timezone from settings
+  const { timezone } = useCaptureSettings()
+
   // Individual state for each data type - no artificial CameraDetails structure
   const [camera, setCamera] = useState<Camera | null>(null)
   const [timelapses, setTimelapses] = useState<Timelapse[]>([])
@@ -70,6 +79,16 @@ export default function CameraDetailsPage() {
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [imageKey, setImageKey] = useState(Date.now()) // For cache-busting
+
+  // Use the new time formatting hooks
+  const lastImageCapturedText = useRelativeTime(
+    camera?.last_image?.captured_at,
+    {
+      includeAbsolute: false,
+      refreshInterval: 30000,
+      timezone: timezone,
+    }
+  )
 
   // Computed values from real data
   const activeTimelapse = timelapses.find((t) => t.status === "running") || null
@@ -205,7 +224,7 @@ export default function CameraDetailsPage() {
           : imageCountData.count || 0
       )
       setRecentLogs(Array.isArray(logsData) ? logsData : logsData.logs || [])
-      
+
       // No need to fetch latest image separately - it's included in camera data
     } catch (err) {
       console.error("Error fetching camera data:", err)
@@ -257,30 +276,25 @@ export default function CameraDetailsPage() {
 
       // Refresh data after action
       await fetchAllCameraData()
+
+      // Show success toast
+      toast.success(`Timelapse ${action}ed successfully!`, {
+        description: `Camera "${camera.name}" timelapse has been ${action}ed`,
+        duration: 4000,
+      })
     } catch (err) {
       console.error(`Error ${action}ing timelapse:`, err)
-      alert(
-        `Failed to ${action} timelapse: ${
-          err instanceof Error ? err.message : "Unknown error"
-        }`
-      )
+      toast.error(`Failed to ${action} timelapse`, {
+        description:
+          err instanceof Error ? err.message : "Unknown error occurred",
+        duration: 6000,
+      })
     } finally {
       setActionLoading(null)
     }
   }
 
   // Helper functions
-  const formatRelativeTime = (timestamp: string) => {
-    const now = new Date()
-    const time = new Date(timestamp)
-    const diffInSeconds = Math.floor((now.getTime() - time.getTime()) / 1000)
-
-    if (diffInSeconds < 60) return `${diffInSeconds}s ago`
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
-    return `${Math.floor(diffInSeconds / 86400)}d ago`
-  }
-
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes"
     const k = 1024
@@ -462,7 +476,7 @@ export default function CameraDetailsPage() {
                   <div className='grid grid-cols-2 gap-4 mt-4 text-sm text-gray-600'>
                     <div>
                       <span className='font-medium'>Captured:</span>{" "}
-                      {formatRelativeTime(camera.last_image.captured_at)}
+                      {lastImageCapturedText}
                     </div>
                     <div>
                       <span className='font-medium'>Day:</span>{" "}
@@ -508,7 +522,7 @@ export default function CameraDetailsPage() {
                         <div className='flex-1'>
                           <p className='text-sm text-gray-900'>{log.message}</p>
                           <p className='mt-1 text-xs text-gray-500'>
-                            {formatRelativeTime(log.timestamp)}
+                            {formatRelativeTime(log.timestamp, { timezone })}
                           </p>
                         </div>
                       </div>
@@ -576,9 +590,10 @@ export default function CameraDetailsPage() {
                   <div className='flex justify-between'>
                     <span className='text-gray-600'>Started</span>
                     <span className='text-sm'>
-                      {new Date(
-                        activeTimelapse.start_date
-                      ).toLocaleDateString()}
+                      {new Date(activeTimelapse.start_date).toLocaleDateString(
+                        "en-US",
+                        { timeZone: timezone }
+                      )}
                     </span>
                   </div>
                   <div className='flex justify-between'>
@@ -591,7 +606,9 @@ export default function CameraDetailsPage() {
                     <div className='flex justify-between'>
                       <span className='text-gray-600'>Last Capture</span>
                       <span className='text-sm'>
-                        {formatRelativeTime(activeTimelapse.last_capture_at)}
+                        {formatRelativeTime(activeTimelapse.last_capture_at, {
+                          timezone,
+                        })}
                       </span>
                     </div>
                   )}

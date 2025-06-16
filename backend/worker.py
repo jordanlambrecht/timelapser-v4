@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Updated Timelapser Worker with FastAPI Integration
+Timelapser Worker with FastAPI
 Uses asyncio and async database connections
 """
 
 import os
-import sys
 import signal
 import asyncio
 from pathlib import Path
-from datetime import datetime, time
+from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
@@ -133,6 +132,17 @@ class AsyncTimelapseWorker:
                     None, sync_db.update_camera_health, camera_id, "online", True
                 )
 
+                # Calculate and update next capture time
+                capture_interval = await loop.run_in_executor(
+                    None, sync_db.get_capture_interval_setting
+                )
+                await loop.run_in_executor(
+                    None,
+                    sync_db.calculate_and_update_next_capture,
+                    camera_id,
+                    capture_interval,
+                )
+
                 # Get updated timelapse info for accurate image count
                 updated_timelapse = await loop.run_in_executor(
                     None, sync_db.get_active_timelapse_for_camera, camera_id
@@ -141,6 +151,22 @@ class AsyncTimelapseWorker:
                     logger.info(
                         f"Image captured, count: {updated_timelapse.get('image_count', 0)}"
                     )
+
+                # Broadcast image captured event with next_capture_at
+                await loop.run_in_executor(
+                    None,
+                    sync_db.broadcast_event,
+                    {
+                        "type": "image_captured",
+                        "camera_id": camera_id,
+                        "image_count": (
+                            updated_timelapse.get("image_count", 0)
+                            if updated_timelapse
+                            else 0
+                        ),
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
 
                 logger.info(f"Successfully captured and saved image: {message}")
             else:

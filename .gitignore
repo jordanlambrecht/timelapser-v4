@@ -231,3 +231,5 @@ _tests/
 !src/app/api/tests/**
 !src/app/api/tests/
 !src/app/api/tests
+
+.github/prompts

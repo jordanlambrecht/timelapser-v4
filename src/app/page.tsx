@@ -221,6 +221,23 @@ export default function Dashboard() {
                     : timelapse
                 )
               )
+              
+              // Force camera data refresh to get updated next_capture_at
+              setTimeout(() => {
+                fetch(`/api/cameras/${data.camera_id}`)
+                  .then(response => response.json())
+                  .then(updatedCamera => {
+                    setCameras(prev => 
+                      prev.map(camera => 
+                        camera.id === data.camera_id 
+                          ? { ...camera, ...updatedCamera }
+                          : camera
+                      )
+                    )
+                  })
+                  .catch(error => console.error('Failed to refresh camera data:', error))
+              }, 500) // Small delay to ensure database is updated
+              
               break
 
             case "connected":

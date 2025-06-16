@@ -22,6 +22,9 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { formatDuration, formatDate } from "@/lib/time-utils"
+import { useCaptureSettings } from "@/hooks/use-camera-countdown"
+import { toast } from "@/lib/toast"
 
 interface Video {
   id: number
@@ -53,6 +56,9 @@ export function TimelapseModal({
   const [loading, setLoading] = useState(true)
   const [editingVideoId, setEditingVideoId] = useState<number | null>(null)
   const [editName, setEditName] = useState("")
+
+  // Get timezone from settings
+  const { timezone } = useCaptureSettings()
 
   const fetchVideos = async () => {
     if (!isOpen || !cameraId) return
@@ -89,24 +95,6 @@ export function TimelapseModal({
     return `${mb.toFixed(1)} MB`
   }
 
-  const formatDuration = (duration?: number) => {
-    if (!duration) return "Unknown"
-    if (duration < 60) return `${duration}s`
-    const minutes = Math.floor(duration / 60)
-    const seconds = duration % 60
-    return `${minutes}m ${seconds}s`
-  }
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  }
-
   const handleDownload = async (video: Video) => {
     try {
       window.open(`/api/videos/${video.id}/download`, "_blank")
@@ -125,6 +113,14 @@ export function TimelapseModal({
   }
 
   const handleSaveEdit = async (videoId: number) => {
+    if (!editName.trim()) {
+      toast.warning("Please enter a valid video name", {
+        description: "Video name cannot be empty",
+        duration: 4000,
+      })
+      return
+    }
+
     try {
       const response = await fetch(`/api/videos/${videoId}`, {
         method: "PUT",
@@ -136,9 +132,22 @@ export function TimelapseModal({
         setEditingVideoId(null)
         setEditName("")
         fetchVideos() // Refresh the list
+
+        // Show success toast
+        toast.success("Video renamed successfully!", {
+          description: `Video has been renamed to "${editName}"`,
+          duration: 4000,
+        })
+      } else {
+        throw new Error("Failed to rename video")
       }
     } catch (error) {
       console.error("Error renaming video:", error)
+      toast.error("Failed to rename video", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+        duration: 6000,
+      })
     }
   }
 
@@ -165,9 +174,22 @@ export function TimelapseModal({
           )
         }
         fetchVideos() // Refresh the list
+
+        // Show success toast
+        toast.success("Video deleted successfully!", {
+          description: "The timelapse video has been removed",
+          duration: 4000,
+        })
+      } else {
+        throw new Error("Failed to delete video")
       }
     } catch (error) {
       console.error("Error deleting video:", error)
+      toast.error("Failed to delete video", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+        duration: 6000,
+      })
     }
   }
 
@@ -241,7 +263,9 @@ export function TimelapseModal({
                         <div className='flex items-center space-x-4 text-sm text-grey-light/70'>
                           <div className='flex items-center space-x-1'>
                             <Calendar className='w-4 h-4' />
-                            <span>{formatDate(selectedVideo.created_at)}</span>
+                            <span>
+                              {formatDate(selectedVideo.created_at, timezone)}
+                            </span>
                           </div>
                           <div className='flex items-center space-x-1'>
                             <Clock className='w-4 h-4' />
@@ -344,7 +368,9 @@ export function TimelapseModal({
                             )}
 
                             <div className='flex items-center space-x-3 text-xs text-grey-light/60'>
-                              <span>{formatDate(video.created_at)}</span>
+                              <span>
+                                {formatDate(video.created_at, timezone)}
+                              </span>
                               <span>•</span>
                               <span>{formatDuration(video.duration)}</span>
                               <span>•</span>

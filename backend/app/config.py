@@ -1,6 +1,6 @@
 # backend/app/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import Optional, Union
 
 
 class Settings(BaseSettings):
@@ -14,12 +14,19 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_reload: bool = False
 
-    # CORS
-    cors_origins: list[str] = [
+    # CORS - use Union to handle both string and list inputs
+    cors_origins: Union[str, list[str]] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
     ]
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Convert cors_origins to a list of strings"""
+        if isinstance(self.cors_origins, str):
+            return [origin.strip() for origin in self.cors_origins.split(",")]
+        return self.cors_origins
 
     # Frontend URL for SSE events
     frontend_url: str = "http://localhost:3000"

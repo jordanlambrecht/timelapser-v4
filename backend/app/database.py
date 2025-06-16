@@ -3,7 +3,7 @@
 import asyncio
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import List, Dict, Optional, Any, cast
 from loguru import logger
 import json
@@ -515,6 +515,64 @@ class AsyncDatabase:
 
                 await cur.execute(query, params)
                 return cast(List[Dict[str, Any]], await cur.fetchall())
+
+    # Settings methods
+    async def get_settings(self) -> List[Dict[str, Any]]:
+        """Get all settings"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT id, key, value, created_at, updated_at FROM settings ORDER BY key"
+                )
+                return cast(List[Dict[str, Any]], await cur.fetchall())
+
+    async def get_settings_dict(self) -> Dict[str, str]:
+        """Get all settings as a key-value dictionary"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT key, value FROM settings")
+                rows = cast(List[Dict[str, Any]], await cur.fetchall())
+                return {row["key"]: row["value"] for row in rows}
+
+    async def get_setting_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get a specific setting by key"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT id, key, value, created_at, updated_at FROM settings WHERE key = %s",
+                    (key,),
+                )
+                result = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], result)
+
+    async def create_or_update_setting(
+        self, key: str, value: str
+    ) -> Optional[Dict[str, Any]]:
+        """Create or update a setting"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Use UPSERT to create or update
+                await cur.execute(
+                    """
+                    INSERT INTO settings (key, value) 
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) 
+                    DO UPDATE SET 
+                        value = EXCLUDED.value,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING id, key, value, created_at, updated_at
+                    """,
+                    (key, value),
+                )
+                result = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], result)
+
+    async def delete_setting(self, key: str) -> bool:
+        """Delete a setting by key"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM settings WHERE key = %s", (key,))
+                return cur.rowcount > 0
 
     def broadcast_event(self, event_data: Dict[str, Any]) -> None:
         """Broadcast event via SSE to connected frontend clients"""
@@ -1091,6 +1149,151 @@ class SyncDatabase:
             event_data["health_status"] = health_status
 
         self.broadcast_event(event_data)
+
+    def update_next_capture_time(self, camera_id: int, next_capture_at: str) -> bool:
+        """Update the next_capture_at field for a camera"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET next_capture_at = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """,
+                        (next_capture_at, camera_id),
+                    )
+
+                    if cur.rowcount > 0:
+                        logger.debug(
+                            f"Updated next_capture_at for camera {camera_id}: {next_capture_at}"
+                        )
+                        return True
+                    else:
+                        logger.warning(
+                            f"No camera found with ID {camera_id} for next_capture_at update"
+                        )
+                        return False
+
+        except Exception as e:
+            logger.error(
+                f"Failed to update next_capture_at for camera {camera_id}: {e}"
+            )
+            return False
+
+    def calculate_and_update_next_capture(
+        self, camera_id: int, capture_interval: int
+    ) -> bool:
+        """Calculate and update next capture time based on time windows and interval"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get camera settings
+                    cur.execute(
+                        """
+                        SELECT use_time_window, time_window_start, time_window_end
+                        FROM cameras WHERE id = %s
+                    """,
+                        (camera_id,),
+                    )
+                    camera_settings_row = cur.fetchone()
+
+                    if not camera_settings_row:
+                        logger.error(
+                            f"Camera {camera_id} not found for next capture calculation"
+                        )
+                        return False
+
+                    # Cast to dictionary for type checking
+                    camera_settings = cast(Dict[str, Any], camera_settings_row)
+
+                    from datetime import datetime, timedelta, time as dt_time
+
+                    # Calculate base next capture time (now + interval)
+                    now = datetime.now(timezone.utc)
+                    next_capture = now + timedelta(seconds=capture_interval)
+
+                    # Adjust for time window if enabled
+                    if (
+                        camera_settings["use_time_window"]
+                        and camera_settings["time_window_start"]
+                    ):
+                        try:
+                            start_time_str = camera_settings["time_window_start"]
+                            end_time_str = camera_settings["time_window_end"]
+
+                            # Parse time window
+                            start_time = datetime.strptime(
+                                start_time_str, "%H:%M:%S"
+                            ).time()
+                            end_time = datetime.strptime(
+                                end_time_str, "%H:%M:%S"
+                            ).time()
+
+                            # Check if next capture is within window
+                            next_capture_time = next_capture.time()
+
+                            # Handle overnight windows
+                            if start_time <= end_time:
+                                # Normal window (e.g., 06:00 - 18:00)
+                                in_window = start_time <= next_capture_time <= end_time
+                            else:
+                                # Overnight window (e.g., 22:00 - 06:00)
+                                in_window = (
+                                    next_capture_time >= start_time
+                                    or next_capture_time <= end_time
+                                )
+
+                            # If outside window, move to next window start
+                            if not in_window:
+                                # Find next window start
+                                window_start = next_capture.replace(
+                                    hour=start_time.hour,
+                                    minute=start_time.minute,
+                                    second=start_time.second,
+                                    microsecond=0,
+                                )
+
+                                # If start time is in the past, move to tomorrow
+                                if window_start <= now:
+                                    window_start += timedelta(days=1)
+
+                                next_capture = window_start
+
+                        except Exception as e:
+                            logger.warning(
+                                f"Error parsing time window for camera {camera_id}: {e}"
+                            )
+                            # Continue with original next_capture time
+
+                    # Update database - remove timezone info for PostgreSQL timestamp without time zone
+                    next_capture_iso = next_capture.replace(tzinfo=None).isoformat()
+                    return self.update_next_capture_time(camera_id, next_capture_iso)
+
+        except Exception as e:
+            logger.error(
+                f"Failed to calculate next capture for camera {camera_id}: {e}"
+            )
+            return False
+
+    def get_capture_interval_setting(self) -> int:
+        """Get the capture interval from settings"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT value FROM settings WHERE key = 'capture_interval'
+                    """
+                    )
+                    result_row = cur.fetchone()
+                    if result_row:
+                        result = cast(Dict[str, Any], result_row)
+                        return int(result["value"])
+                    return 300  # Default 5 minutes
+        except Exception as e:
+            logger.error(f"Failed to get capture interval setting: {e}")
+            return 300
 
 
 # Global instances

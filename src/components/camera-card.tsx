@@ -22,12 +22,19 @@ import {
   Image as ImageIcon,
   Pause,
   Timer,
+  CircleStop,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import Image from "next/image"
 import { useState, useEffect } from "react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
+import {
+  useCameraCountdown,
+  useCaptureSettings,
+} from "@/hooks/use-camera-countdown"
+import { isWithinTimeWindow } from "@/lib/time-utils"
+import { TimestampWithWarning } from "@/components/suspicious-timestamp-warning"
 
 interface CameraCardProps {
   camera: {
@@ -86,13 +93,25 @@ export function CameraCard({
   const [imageError, setImageError] = useState(false)
   const [imageLoading, setImageLoading] = useState(true)
   const [imageKey, setImageKey] = useState(Date.now()) // Force image reload
-  const [nextCaptureCountdown, setNextCaptureCountdown] = useState<string>("")
-  const [captureInterval, setCaptureInterval] = useState(300) // Default fallback
   const [actualImageCount, setActualImageCount] = useState<number | null>(null)
   const [timelapseModalOpen, setTimelapseModalOpen] = useState(false)
   const [videoNameModalOpen, setVideoNameModalOpen] = useState(false)
   const [videoProgressModalOpen, setVideoProgressModalOpen] = useState(false)
   const [currentVideoName, setCurrentVideoName] = useState("")
+
+  // Use the new capture settings hook for consistent interval data
+  const {
+    captureInterval,
+    timezone,
+    loading: settingsLoading,
+  } = useCaptureSettings()
+
+  // Use the new countdown hook for all time formatting
+  const { countdown, lastCaptureText, lastCaptureAbsolute, nextCaptureAbsolute, isNow } = useCameraCountdown({
+    camera,
+    timelapse,
+    captureInterval: captureInterval,
+  })
 
   // Server-Sent Events for real-time updates with reconnection
   useEffect(() => {
@@ -237,203 +256,11 @@ export function CameraCard({
     return () => clearInterval(interval)
   }, [timelapse?.id])
 
-  // Fetch settings on component mount
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const response = await fetch("/api/settings")
-        if (response.ok) {
-          const settings = await response.json()
-          const interval = parseInt(settings.capture_interval || "300")
-          setCaptureInterval(interval)
-        }
-      } catch (error) {
-        console.error("Failed to fetch settings:", error)
-      }
-    }
-
-    fetchSettings()
-  }, [])
-
-  const isWithinTimeWindow = (camera: any): boolean => {
-    if (
-      !camera.use_time_window ||
-      !camera.time_window_start ||
-      !camera.time_window_end
-    ) {
-      return true // No time window restrictions
-    }
-
-    const now = new Date()
-    const currentTime = now.getHours() * 60 + now.getMinutes() // Convert to minutes since midnight
-
-    const [startHour, startMin] = camera.time_window_start
-      .split(":")
-      .map(Number)
-    const [endHour, endMin] = camera.time_window_end.split(":").map(Number)
-
-    const startTime = startHour * 60 + startMin
-    const endTime = endHour * 60 + endMin
-
-    if (startTime <= endTime) {
-      // Normal time window (e.g., 06:00 - 20:00)
-      return currentTime >= startTime && currentTime <= endTime
-    } else {
-      // Overnight time window (e.g., 22:00 - 06:00)
-      return currentTime >= startTime || currentTime <= endTime
-    }
-  }
-
-  const formatTimeAgo = (timestamp?: string) => {
-    if (!timestamp) return "Never"
-    const time = new Date(timestamp)
-    if (isNaN(time.getTime())) return "Invalid time"
-
-    const now = new Date()
-    const diffInSeconds = Math.floor((now.getTime() - time.getTime()) / 1000)
-
-    if (diffInSeconds < 0) {
-      // Timestamp is in the future
-      const futureSeconds = Math.abs(diffInSeconds)
-      const mins = Math.floor(futureSeconds / 60)
-      const secs = futureSeconds % 60
-      if (mins > 0) {
-        return `In ${mins}m ${secs}s (future)`
-      }
-      return `In ${secs}s (future)`
-    }
-
-    if (diffInSeconds < 5) return "Just now" // 0-4 seconds ago
-    if (diffInSeconds < 60) return `${diffInSeconds}s ago` // 5-59 seconds ago
-
-    const diffInMinutes = Math.floor(diffInSeconds / 60)
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago` // 1-59 minutes ago
-
-    const diffInHours = Math.floor(diffInMinutes / 60)
-    if (diffInHours < 24) return `${diffInHours}h ago` // 1-23 hours ago
-
-    const diffInDays = Math.floor(diffInHours / 24)
-    return `${diffInDays}d ago` // 1+ days ago
-  }
-
-  const formatCountdown = (seconds: number): string => {
-    if (seconds <= 0) return "Due now"
-
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-
-    if (mins > 0) {
-      return `${mins}m ${secs}s`
-    }
-    return `${secs}s`
-  }
-
   // Define these variables before the useEffect that uses them
   const completedVideos = videos.filter((v) => v.status === "completed")
   const completedTimelapses = videos.length // Total timelapses (completed videos)
   const isTimelapseRunning = timelapse?.status === "running"
   const isTimelapsePaused = timelapse?.status === "paused"
-
-  // Real-time countdown for next capture
-  useEffect(() => {
-    const updateCountdown = () => {
-      if (!isTimelapseRunning) {
-        setNextCaptureCountdown("")
-        return
-      }
-
-      // Check if we're within the time window
-      if (!isWithinTimeWindow(camera)) {
-        const now = new Date()
-        const tomorrow = new Date(now)
-        tomorrow.setDate(tomorrow.getDate() + 1)
-
-        // Calculate next window start time
-        const [startHour, startMin] = (camera.time_window_start || "06:00:00")
-          .split(":")
-          .map(Number)
-        let nextWindowStart = new Date(now)
-        nextWindowStart.setHours(startHour, startMin, 0, 0)
-
-        // If start time has passed today, use tomorrow
-        if (nextWindowStart <= now) {
-          nextWindowStart = new Date(tomorrow)
-          nextWindowStart.setHours(startHour, startMin, 0, 0)
-        }
-
-        const timeUntilWindow = Math.floor(
-          (nextWindowStart.getTime() - now.getTime()) / 1000
-        )
-        const hours = Math.floor(timeUntilWindow / 3600)
-        const mins = Math.floor((timeUntilWindow % 3600) / 60)
-
-        if (hours > 0) {
-          setNextCaptureCountdown(`Window opens in ${hours}h ${mins}m`)
-        } else {
-          setNextCaptureCountdown(`Window opens in ${mins}m`)
-        }
-        return
-      }
-
-      const lastCaptureTime =
-        camera.last_image?.captured_at ||
-        camera.last_capture_at ||
-        timelapse?.last_capture_at
-
-      if (!lastCaptureTime) {
-        setNextCaptureCountdown("First capture due")
-        return
-      }
-
-      const lastCapture = new Date(lastCaptureTime)
-      if (isNaN(lastCapture.getTime())) {
-        setNextCaptureCountdown("Invalid timestamp")
-        return
-      }
-
-      const nextCaptureTime = new Date(
-        lastCapture.getTime() + captureInterval * 1000
-      )
-      const now = new Date()
-      const secondsUntilNext = Math.floor(
-        (nextCaptureTime.getTime() - now.getTime()) / 1000
-      )
-
-      // Debug logging (remove this later)
-      if (secondsUntilNext > 3600) {
-        // More than 1 hour seems wrong
-        console.log("Countdown Debug:", {
-          lastCaptureTime,
-          lastCapture: lastCapture.toISOString(),
-          captureInterval,
-          nextCaptureTime: nextCaptureTime.toISOString(),
-          now: now.toISOString(),
-          secondsUntilNext,
-          minutesUntilNext: Math.floor(secondsUntilNext / 60),
-        })
-      }
-
-      if (secondsUntilNext <= 0) {
-        setNextCaptureCountdown("Due now")
-      } else {
-        setNextCaptureCountdown(formatCountdown(secondsUntilNext))
-      }
-    }
-
-    updateCountdown()
-    const interval = setInterval(updateCountdown, 1000)
-
-    return () => clearInterval(interval)
-  }, [
-    camera.last_image?.captured_at,
-    camera.last_capture_at,
-    timelapse?.last_capture_at,
-    captureInterval,
-    isTimelapseRunning,
-    camera.use_time_window,
-    camera.time_window_start,
-    camera.time_window_end,
-  ])
 
   const handlePauseResume = () => {
     if (isTimelapsePaused && onResumeTimelapse) {
@@ -500,7 +327,7 @@ export function CameraCard({
   }
 
   return (
-    <Card className='relative overflow-hidden glass hover-lift hover:glow group'>
+    <Card className='relative flex flex-col justify-between overflow-hidden glass hover-lift hover:glow group'>
       {/* Animated corner accent */}
       <div className='absolute top-0 right-0 w-24 h-24 opacity-50 bg-gradient-to-bl from-pink/20 to-transparent rounded-bl-3xl' />
 
@@ -583,7 +410,7 @@ export function CameraCard({
       {/* Camera Image Preview */}
       <div className='px-6 pb-4'>
         <div className='relative overflow-hidden border aspect-video rounded-xl bg-gray-900/50 border-gray-700/50 backdrop-blur-sm'>
-          {imageLoading && (
+          {camera.last_image && imageLoading && (
             <div className='absolute inset-0 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm'>
               <div className='flex flex-col items-center space-y-3'>
                 <div className='w-8 h-8 border-2 rounded-full border-cyan/30 border-t-cyan animate-spin' />
@@ -639,7 +466,7 @@ export function CameraCard({
                 </div>
                 <span className='font-medium'>Latest frame</span>
               </div>
-              <div
+              {/* <div
                 className={cn(
                   "px-2 py-1 rounded-full text-xs font-medium backdrop-blur-sm border",
                   camera.health_status === "online"
@@ -649,12 +476,12 @@ export function CameraCard({
                     : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
                 )}
               >
-                {formatTimeAgo(
+                {formatRelativeTime(
                   camera.last_image?.captured_at ||
                     camera.last_capture_at ||
                     timelapse?.last_capture_at
                 )}
-              </div>
+              </div> */}
             </div>
           </div>
 
@@ -677,20 +504,47 @@ export function CameraCard({
       <CardContent className='space-y-6'>
         {/* Stats Grid with visual enhancement */}
         <div className='grid grid-cols-2 gap-4'>
-          <div className='p-3 border bg-black/20 rounded-xl border-purple-muted/20'>
+          <div
+            className={cn(
+              "p-3 border bg-black/20 rounded-xl border-purple-muted/20 transition-all duration-300",
+              isNow && "border-cyan/50 bg-cyan/10 animate-pulse"
+            )}
+          >
             <div className='flex items-center mb-1 space-x-2'>
-              <Clock className='w-4 h-4 text-cyan/70' />
+              <Clock
+                className={cn(
+                  "w-4 h-4 text-cyan/70",
+                  isNow && "text-cyan animate-pulse"
+                )}
+              />
               <p className='text-xs font-medium text-grey-light/60'>
                 Last Capture
               </p>
             </div>
-            <p className='font-bold text-white'>
-              {formatTimeAgo(
-                camera.last_image?.captured_at ||
+            <div className='flex items-center space-x-2'>
+              <span
+                className={cn(
+                  "font-bold text-white",
+                  isNow && "text-cyan animate-pulse"
+                )}
+              >
+                {lastCaptureText}
+              </span>
+              <TimestampWithWarning
+                timestamp={
+                  camera.last_image?.captured_at ||
                   camera.last_capture_at ||
                   timelapse?.last_capture_at
-              )}
-            </p>
+                }
+                type='last_capture'
+              />
+            </div>
+            {/* Show absolute time underneath if available */}
+            {lastCaptureAbsolute && !isNow && (
+              <p className='mt-1 text-xs text-yellow-400'>
+                {lastCaptureAbsolute}
+              </p>
+            )}
             {camera.consecutive_failures > 0 && (
               <p className='mt-1 text-xs text-failure'>
                 {camera.consecutive_failures} failures
@@ -698,21 +552,38 @@ export function CameraCard({
             )}
           </div>
 
-          <div className='p-3 border bg-black/20 rounded-xl border-purple-muted/20'>
+          <div
+            className={cn(
+              "p-3 border bg-black/20 rounded-xl border-purple-muted/20 transition-all duration-300",
+              isNow && "border-cyan/50 bg-cyan/10 animate-pulse"
+            )}
+          >
             <div className='flex items-center mb-1 space-x-2'>
-              <Timer className='w-4 h-4 text-green-400/70' />
+              <Timer
+                className={cn(
+                  "w-4 h-4 text-green-400/70",
+                  isNow && "text-cyan animate-pulse"
+                )}
+              />
               <p className='text-xs font-medium text-grey-light/60'>
                 Next Capture
               </p>
             </div>
-            <p className='font-bold text-white'>
-              {isTimelapseRunning
-                ? nextCaptureCountdown || "Calculating..."
-                : isTimelapsePaused
-                ? "Paused"
-                : "Stopped"}
+            <p
+              className={cn(
+                "font-bold text-white",
+                isNow && "text-cyan animate-pulse"
+              )}
+            >
+              {countdown}
             </p>
-            {isTimelapsePaused && (
+            {/* Show absolute time underneath if available */}
+            {nextCaptureAbsolute && !isNow && !isTimelapsePaused && (
+              <p className='mt-1 text-xs text-yellow-400'>
+                {nextCaptureAbsolute}
+              </p>
+            )}
+            {isTimelapsePaused && !isNow && (
               <p className='mt-1 text-xs text-yellow-400'>Paused</p>
             )}
           </div>
@@ -770,7 +641,11 @@ export function CameraCard({
             className={cn(
               "flex items-center space-x-2 px-3 py-2 rounded-full text-sm font-medium border",
               isTimelapseRunning
-                ? isWithinTimeWindow(camera)
+                ? isWithinTimeWindow({
+                    start: camera.time_window_start || "06:00",
+                    end: camera.time_window_end || "18:00",
+                    enabled: camera.use_time_window,
+                  })
                   ? "bg-success/20 text-success border-success/30"
                   : "bg-purple/20 text-purple-light border-purple/30"
                 : isTimelapsePaused
@@ -779,7 +654,11 @@ export function CameraCard({
             )}
           >
             {isTimelapseRunning ? (
-              isWithinTimeWindow(camera) ? (
+              isWithinTimeWindow({
+                start: camera.time_window_start || "06:00",
+                end: camera.time_window_end || "18:00",
+                enabled: camera.use_time_window,
+              }) ? (
                 <>
                   <div className='w-2 h-2 rounded-full bg-success animate-pulse' />
                   <span>Recording</span>
@@ -804,19 +683,6 @@ export function CameraCard({
           </div>
 
           <div className='flex items-center space-x-2'>
-            {/* Details button */}
-            <Button
-              asChild
-              size='sm'
-              variant='outline'
-              className='border-purple-muted/30 text-white hover:bg-purple/20 hover:border-purple/50 min-w-[80px]'
-            >
-              <Link href={`/cameras/${camera.id}`}>
-                <Eye className='w-4 h-4 mr-1' />
-                Details
-              </Link>
-            </Button>
-
             {/* Pause/Resume button - only show when running or paused */}
             {(isTimelapseRunning || isTimelapsePaused) && (
               <Button
@@ -854,7 +720,7 @@ export function CameraCard({
             >
               {isTimelapseRunning || isTimelapsePaused ? (
                 <>
-                  <Square className='w-4 h-4 mr-1' />
+                  <CircleStop className='w-4 h-4 mr-1' />
                   Stop
                 </>
               ) : (
@@ -865,6 +731,20 @@ export function CameraCard({
               )}
             </Button>
           </div>
+        </div>
+        <div className='w-full'>
+          {/* Details button */}
+          <Button
+            asChild
+            size='default'
+            variant='outline'
+            className='w-full border-purple-muted/30 text-white hover:bg-purple/20 hover:border-purple/50 min-w-[80px]'
+          >
+            <Link href={`/cameras/${camera.id}`}>
+              <Eye className='w-4 h-4 mr-1' />
+              Details
+            </Link>
+          </Button>
         </div>
       </CardContent>
 
