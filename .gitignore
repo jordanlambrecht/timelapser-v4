@@ -227,3 +227,7 @@ _local-docs/
 _tests
 _tests/**
 _tests/
+
+!src/app/api/tests/**
+!src/app/api/tests/
+!src/app/api/tests
