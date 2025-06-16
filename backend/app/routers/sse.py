@@ -6,6 +6,7 @@ import json
 from loguru import logger
 
 from ..database import async_db
+from ..models.camera import transform_camera_with_image_row
 
 router = APIRouter()
 
@@ -51,7 +52,11 @@ async def camera_status_stream() -> AsyncGenerator[str, None]:
     """Generate camera status updates via SSE"""
     try:
         # Send initial data
-        cameras = await async_db.get_cameras()
+        cameras_data = await async_db.get_cameras_with_images()
+        cameras = [
+            transform_camera_with_image_row(camera).model_dump()
+            for camera in cameras_data
+        ]
         yield f"data: {json.dumps({'type': 'cameras', 'data': cameras})}\n\n"
 
         # Keep connection alive and send periodic updates
@@ -59,7 +64,11 @@ async def camera_status_stream() -> AsyncGenerator[str, None]:
             await asyncio.sleep(5)  # Update every 5 seconds
 
             try:
-                cameras = await async_db.get_cameras()
+                cameras_data = await async_db.get_cameras_with_images()
+                cameras = [
+                    transform_camera_with_image_row(camera).model_dump()
+                    for camera in cameras_data
+                ]
                 yield f"data: {json.dumps({'type': 'cameras', 'data': cameras})}\n\n"
             except Exception as e:
                 logger.error(f"Error in SSE stream: {e}")
