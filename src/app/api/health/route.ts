@@ -2,10 +2,15 @@ import { NextResponse } from "next/server"
 
 export async function GET() {
   try {
-    // Test database connectivity through FastAPI
+    // Test database connectivity through FastAPI with timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
     const fastApiResponse = await fetch("http://localhost:8000/health", {
-      timeout: 5000,
+      signal: controller.signal,
     })
+
+    clearTimeout(timeoutId)
 
     const isNextjsHealthy = true // Next.js is running if we reach this point
     const isFastApiHealthy = fastApiResponse.ok
@@ -15,7 +20,7 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        status: overallHealthy ? "healthy" : "degraded", 
+        status: overallHealthy ? "healthy" : "degraded",
         timestamp: new Date().toISOString(),
         services: {
           nextjs: {
