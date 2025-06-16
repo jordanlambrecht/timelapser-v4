@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Updated Timelapser Worker with FastAPI Integration
-Uses connection pooling and modern database patterns
+Uses asyncio and async database connections
 """
 
 import os
@@ -9,26 +9,28 @@ import sys
 import signal
 import asyncio
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 # Import from the same backend directory
-from app.database import sync_db
+from app.database import async_db, sync_db
 from app.config import settings
 from rtsp_capture import RTSPCapture
 from video_generator import VideoGenerator
 
 
-class ModernTimelapseWorker:
-    """Modern timelapse worker with connection pooling and FastAPI integration"""
+class AsyncTimelapseWorker:
+    """Async timelapse worker with FastAPI integration"""
 
     def __init__(self):
         # Initialize components
-        self.capture = RTSPCapture(base_data_dir="./data")
+        # Use absolute path to project root data directory
+        project_root = Path(__file__).parent.parent
+        data_dir = project_root / "data"
+        self.capture = RTSPCapture(base_data_dir=str(data_dir))
         self.video_generator = VideoGenerator(sync_db)
-        self.scheduler = BlockingScheduler()
+        self.scheduler = AsyncIOScheduler()
         self.running = False
         self.current_interval = settings.capture_interval
         self.max_workers = settings.max_concurrent_captures
@@ -37,17 +39,28 @@ class ModernTimelapseWorker:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Initialize database connection pool
+        # Initialize sync database for worker
         sync_db.initialize()
-        logger.info("Worker initialized with connection pooling")
+        logger.info("Async worker initialized with sync database")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.running = False
-        self.scheduler.shutdown(wait=False)
-        sync_db.close()
-        sys.exit(0)
+        # Don't shut down scheduler here - let the main loop handle it
+
+    async def _async_shutdown(self):
+        """Async shutdown cleanup"""
+        try:
+            logger.info("Starting async shutdown...")
+            if self.scheduler.running:
+                self.scheduler.shutdown(wait=False)
+            # Close sync database connections
+            sync_db.close()
+            logger.info("Database connections closed")
+        except Exception as e:
+            logger.error(f"Error during async shutdown: {e}")
+        # Don't call sys.exit(0) here - let the main loop handle the exit
 
     def _is_within_time_window(self, camera) -> bool:
         """Check if current time is within camera's capture window"""
@@ -79,7 +92,7 @@ class ModernTimelapseWorker:
             logger.warning(f"Error parsing time window for camera {camera['id']}: {e}")
             return True
 
-    def capture_from_camera(self, camera_info):
+    async def capture_from_camera(self, camera_info):
         """Capture image from a single camera with improved error handling"""
         camera_id = camera_info["id"]
         camera_name = camera_info["name"]
@@ -92,7 +105,10 @@ class ModernTimelapseWorker:
                 return
 
             # Get active timelapse for this camera
-            timelapse = sync_db.get_active_timelapse_for_camera(camera_id)
+            loop = asyncio.get_event_loop()
+            timelapse = await loop.run_in_executor(
+                None, sync_db.get_active_timelapse_for_camera, camera_id
+            )
             if not timelapse:
                 logger.debug(f"No active timelapse for camera {camera_name}")
                 return
@@ -100,29 +116,52 @@ class ModernTimelapseWorker:
             logger.info(f"Starting capture for camera {camera_id} ({camera_name})")
 
             # Capture image - RTSPCapture handles directory creation and database recording
-            success, message, saved_file_path = self.capture.capture_image(
-                camera_id=camera_id,
-                camera_name=camera_name,
-                rtsp_url=rtsp_url,
-                database=sync_db,
-                timelapse_id=timelapse["id"],
+            # Note: RTSPCapture still uses sync database, so we run in executor
+            loop = asyncio.get_event_loop()
+            success, message, saved_file_path = await loop.run_in_executor(
+                None,
+                self.capture.capture_image,
+                camera_id,
+                camera_name,
+                rtsp_url,
+                sync_db,  # RTSPCapture still uses sync_db
+                timelapse["id"],
             )
 
             if success:
-                sync_db.update_camera_health(camera_id, True)
+                await loop.run_in_executor(
+                    None, sync_db.update_camera_health, camera_id, "online", True
+                )
+
+                # Get updated timelapse info for accurate image count
+                updated_timelapse = await loop.run_in_executor(
+                    None, sync_db.get_active_timelapse_for_camera, camera_id
+                )
+                if updated_timelapse:
+                    logger.info(
+                        f"Image captured, count: {updated_timelapse.get('image_count', 0)}"
+                    )
+
                 logger.info(f"Successfully captured and saved image: {message}")
             else:
-                sync_db.update_camera_health(camera_id, False)
+                await loop.run_in_executor(
+                    None, sync_db.update_camera_health, camera_id, "offline", False
+                )
                 logger.error(f"Failed to capture from camera {camera_name}: {message}")
 
         except Exception as e:
-            sync_db.update_camera_health(camera_id, False)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, sync_db.update_camera_health, camera_id, "offline", False
+            )
             logger.error(f"Unexpected error capturing from camera {camera_name}: {e}")
 
-    def capture_all_running_cameras(self):
+    async def capture_all_running_cameras(self):
         """Capture images from all running cameras concurrently"""
         try:
-            cameras = sync_db.get_running_timelapses()
+            # Run sync database query in executor
+            loop = asyncio.get_event_loop()
+            cameras = await loop.run_in_executor(None, sync_db.get_running_timelapses)
 
             if not cameras:
                 logger.debug("No running cameras found")
@@ -130,30 +169,19 @@ class ModernTimelapseWorker:
 
             logger.info(f"Capturing from {len(cameras)} running cameras")
 
-            # Use ThreadPoolExecutor for concurrent captures
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                future_to_camera = {
-                    executor.submit(self.capture_from_camera, camera): camera
-                    for camera in cameras
-                }
-
-                for future in as_completed(future_to_camera):
-                    camera = future_to_camera[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(
-                            f"Error in capture thread for camera {camera['name']}: {e}"
-                        )
+            # Use asyncio.gather for concurrent async captures
+            tasks = [self.capture_from_camera(camera) for camera in cameras]
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         except Exception as e:
             logger.error(f"Error in capture_all_running_cameras: {e}")
 
-    def check_camera_health(self):
+    async def check_camera_health(self):
         """Check and update camera health status based on RTSP connectivity"""
         try:
             # Get all active cameras (not just running timelapses)
-            cameras = sync_db.get_active_cameras()
+            loop = asyncio.get_event_loop()
+            cameras = await loop.run_in_executor(None, sync_db.get_active_cameras)
 
             if not cameras:
                 logger.debug("No active cameras found for health check")
@@ -168,27 +196,35 @@ class ModernTimelapseWorker:
                 rtsp_url = camera["rtsp_url"]
 
                 try:
-                    # Test RTSP connectivity (not full capture)
-                    success, message = self.capture.test_rtsp_connection(rtsp_url)
+                    # Test RTSP connectivity (not full capture) - run in executor since it's sync
+                    success, message = await loop.run_in_executor(
+                        None, self.capture.test_rtsp_connection, rtsp_url
+                    )
 
                     if success:
                         # Camera is reachable
-                        sync_db.update_camera_connectivity(camera_id, True)
+                        await loop.run_in_executor(
+                            None, sync_db.update_camera_connectivity, camera_id, True
+                        )
                         logger.debug(f"Camera {camera_name} is online: {message}")
                     else:
                         # Camera is unreachable
-                        sync_db.update_camera_connectivity(camera_id, False)
+                        await loop.run_in_executor(
+                            None, sync_db.update_camera_connectivity, camera_id, False
+                        )
                         logger.warning(f"Camera {camera_name} is offline: {message}")
 
                 except Exception as e:
                     # Connection test failed
-                    sync_db.update_camera_connectivity(camera_id, False)
+                    await loop.run_in_executor(
+                        None, sync_db.update_camera_connectivity, camera_id, False
+                    )
                     logger.error(f"Health check failed for camera {camera_name}: {e}")
 
         except Exception as e:
             logger.error(f"Error in check_camera_health: {e}")
 
-    def check_for_video_generation_requests(self):
+    async def check_for_video_generation_requests(self):
         """Check for pending video generation requests"""
         try:
             # This would need to be implemented in the database layer
@@ -197,7 +233,7 @@ class ModernTimelapseWorker:
         except Exception as e:
             logger.error(f"Error checking video generation requests: {e}")
 
-    def update_scheduler_interval(self):
+    async def update_scheduler_interval(self):
         """Update scheduler interval if settings changed"""
         try:
             # In a full implementation, this would check for setting changes
@@ -206,9 +242,9 @@ class ModernTimelapseWorker:
         except Exception as e:
             logger.error(f"Error updating scheduler interval: {e}")
 
-    def start(self):
-        """Start the worker with scheduled jobs"""
-        logger.info("Starting Timelapse Worker")
+    async def start(self):
+        """Start the async worker with scheduled jobs"""
+        logger.info("Starting Async Timelapse Worker")
 
         # Schedule image capture job
         self.scheduler.add_job(
@@ -251,22 +287,27 @@ class ModernTimelapseWorker:
         )
 
         self.running = True
-        logger.info("Worker started successfully")
+        logger.info("Async worker started successfully")
 
         try:
             self.scheduler.start()
+            # Keep the event loop running
+            while self.running:
+                await asyncio.sleep(1)
         except KeyboardInterrupt:
             logger.info("Worker stopped by user")
         except Exception as e:
             logger.error(f"Worker error: {e}")
         finally:
-            sync_db.close()
+            logger.info("Worker shutting down...")
+            await self._async_shutdown()
 
 
-if __name__ == "__main__":
+async def main():
+    """Main async function"""
     # Ensure data directory exists
     os.makedirs(settings.data_directory, exist_ok=True)
-    
+
     # Setup logging
     log_path = os.path.join(settings.data_directory, "worker.log")
     logger.add(
@@ -276,6 +317,24 @@ if __name__ == "__main__":
         level=settings.log_level,
     )
 
-    # Create and start worker
-    worker = ModernTimelapseWorker()
-    worker.start()
+    # Create and start async worker
+    worker = AsyncTimelapseWorker()
+    try:
+        await worker.start()
+    except KeyboardInterrupt:
+        logger.info("Main: Worker interrupted by user")
+    except Exception as e:
+        logger.error(f"Main: Worker error: {e}")
+    finally:
+        logger.info("Main: Worker finished")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Application interrupted by user")
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+    finally:
+        logger.info("Application exiting")
