@@ -296,9 +296,9 @@ class AsyncDatabase:
                 return cast(List[Dict[str, Any]], await cur.fetchall())
 
     async def create_or_update_timelapse(
-        self, camera_id: int, status: str
+        self, camera_id: int, status: str, config: Optional[Dict[str, Any]] = None
     ) -> Optional[int]:
-        """Create or update timelapse for camera"""
+        """Create or update timelapse for camera with optional configuration"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
                 # Check if timelapse exists
@@ -314,14 +314,38 @@ class AsyncDatabase:
                     timelapse_id = cast(int, existing_dict["id"])
                     # If changing from stopped/paused to running, update start_date
                     if existing_dict["status"] != "running" and status == "running":
-                        await cur.execute(
-                            """
-                            UPDATE timelapses 
-                            SET status = %s, start_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = %s
-                        """,
-                            (status, timelapse_id),
-                        )
+                        # Update with optional config fields
+                        if config:
+                            await cur.execute(
+                                """
+                                UPDATE timelapses 
+                                SET status = %s, start_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP,
+                                    name = COALESCE(%s, name),
+                                    auto_stop_at = %s,
+                                    time_window_start = %s,
+                                    time_window_end = %s,
+                                    use_custom_time_window = %s
+                                WHERE id = %s
+                            """,
+                                (
+                                    status, 
+                                    config.get("name"),
+                                    config.get("auto_stop_at"),
+                                    config.get("time_window_start"),
+                                    config.get("time_window_end"),
+                                    config.get("use_custom_time_window", False),
+                                    timelapse_id
+                                ),
+                            )
+                        else:
+                            await cur.execute(
+                                """
+                                UPDATE timelapses 
+                                SET status = %s, start_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """,
+                                (status, timelapse_id),
+                            )
                     else:
                         await cur.execute(
                             """
@@ -332,15 +356,34 @@ class AsyncDatabase:
                             (status, timelapse_id),
                         )
                 else:
-                    # Create new timelapse
-                    await cur.execute(
-                        """
-                        INSERT INTO timelapses (camera_id, status, start_date)
-                        VALUES (%s, %s, CURRENT_DATE)
-                        RETURNING id
-                    """,
-                        (camera_id, status),
-                    )
+                    # Create new timelapse with config
+                    if config:
+                        await cur.execute(
+                            """
+                            INSERT INTO timelapses (camera_id, status, start_date, name, auto_stop_at,
+                                                  time_window_start, time_window_end, use_custom_time_window)
+                            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s)
+                            RETURNING id
+                        """,
+                            (
+                                camera_id, 
+                                status, 
+                                config.get("name"),
+                                config.get("auto_stop_at"),
+                                config.get("time_window_start"),
+                                config.get("time_window_end"),
+                                config.get("use_custom_time_window", False)
+                            ),
+                        )
+                    else:
+                        await cur.execute(
+                            """
+                            INSERT INTO timelapses (camera_id, status, start_date)
+                            VALUES (%s, %s, CURRENT_DATE)
+                            RETURNING id
+                        """,
+                            (camera_id, status),
+                        )
                     result_row_new = await cur.fetchone()
                     result_dict_new = cast(Optional[Dict[str, Any]], result_row_new)
                     timelapse_id = result_dict_new["id"] if result_dict_new else None

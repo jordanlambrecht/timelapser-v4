@@ -230,3 +230,49 @@ async def get_camera_with_stats(camera_id: int):
     except Exception as e:
         logger.error(f"Error fetching camera {camera_id} with stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch camera with stats")
+
+
+@router.post("/{camera_id}/capture-now", response_model=dict)
+async def capture_now(camera_id: int):
+    """Trigger an immediate capture for a camera"""
+    try:
+        # Check if camera exists and is online
+        camera = await async_db.get_camera_by_id(camera_id)
+        if not camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        
+        if camera.get("health_status") != "online":
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Camera is {camera.get('health_status', 'unknown')} and cannot capture images"
+            )
+
+        # Get active timelapse for this camera
+        timelapses = await async_db.get_timelapses(camera_id=camera_id)
+        active_timelapse = next((t for t in timelapses if t["status"] == "running"), None)
+        
+        if not active_timelapse:
+            raise HTTPException(
+                status_code=400, 
+                detail="No active timelapse found for this camera. Start a timelapse first."
+            )
+
+        # Broadcast capture request event - the worker will handle the actual capture
+        async_db.broadcast_event({
+            "type": "capture_now_requested",
+            "camera_id": camera_id,
+            "timelapse_id": active_timelapse["id"],
+            "timestamp": datetime.now().isoformat(),
+        })
+
+        logger.info(f"Capture now requested for camera {camera_id}")
+        return {
+            "message": "Capture request sent",
+            "camera_id": camera_id,
+            "timelapse_id": active_timelapse["id"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering capture for camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to trigger capture")

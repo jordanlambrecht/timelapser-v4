@@ -26,16 +26,33 @@ async def get_timelapses(
 async def create_or_update_timelapse(timelapse_data: TimelapseCreate):
     """Create or update a timelapse for a camera"""
     try:
+        # Extract config from timelapse_data if provided
+        config = None
+        if (timelapse_data.name or timelapse_data.auto_stop_at or 
+            timelapse_data.time_window_start or timelapse_data.use_custom_time_window):
+            config = {
+                "name": timelapse_data.name,
+                "auto_stop_at": timelapse_data.auto_stop_at,
+                "time_window_start": timelapse_data.time_window_start,
+                "time_window_end": timelapse_data.time_window_end,
+                "use_custom_time_window": timelapse_data.use_custom_time_window
+            }
+
         timelapse_id = await async_db.create_or_update_timelapse(
-            timelapse_data.camera_id, timelapse_data.status
+            timelapse_data.camera_id, timelapse_data.status, config
         )
         if not timelapse_id:
             raise HTTPException(
                 status_code=500, detail="Failed to create/update timelapse"
             )
 
+        # Broadcast status change event
+        async_db.notify_timelapse_status_changed(
+            timelapse_data.camera_id, timelapse_id, timelapse_data.status
+        )
+
         logger.info(
-            f"Created/updated timelapse {timelapse_id} for camera {timelapse_data.camera_id}"
+            f"Created/updated timelapse {timelapse_id} for camera {timelapse_data.camera_id} with status {timelapse_data.status}"
         )
         return {"timelapse_id": timelapse_id, "status": timelapse_data.status}
     except Exception as e:
@@ -51,10 +68,15 @@ async def update_timelapse_status(camera_id: int, update_data: TimelapseUpdate):
             raise HTTPException(status_code=400, detail="Status is required")
 
         timelapse_id = await async_db.create_or_update_timelapse(
-            camera_id, update_data.status
+            camera_id, update_data.status, None  # No config for simple status updates
         )
         if not timelapse_id:
             raise HTTPException(status_code=500, detail="Failed to update timelapse")
+
+        # Broadcast status change event
+        async_db.notify_timelapse_status_changed(
+            camera_id, timelapse_id, update_data.status
+        )
 
         logger.info(
             f"Updated timelapse status for camera {camera_id} to {update_data.status}"

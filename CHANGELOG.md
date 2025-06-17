@@ -9,6 +9,197 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2025.12.16] - Dashboard Refactoring & Enhanced Timelapse Control 🎯
+
+### Major Dashboard Improvements
+
+#### 🎨 **Complete Camera Card UI Overhaul**
+
+- **MAJOR FEATURE**: Comprehensive dashboard camera card refactoring with enhanced user experience
+- **Refactored**: CombinedStatusBadge from complex `cva` patterns to clean Next.js conditional logic
+- **Enhanced**: Start button changed to "Start A New Timelapse" with configuration dialog
+- **Improved**: Bulk operations simplified to intelligent "Resume" with conditional enable state
+- **Added**: Visual progress border overlay showing capture progress in real-time
+- **Impact**: More intuitive, powerful, and visually appealing timelapse management
+
+#### ⚡ **Advanced Timelapse Configuration System**
+
+- **NEW FEATURE**: Comprehensive timelapse creation dialog with advanced options
+- **Added**: Custom timelapse naming with intelligent auto-generated defaults
+- **Added**: Per-timelapse time window overrides (independent of camera defaults)
+- **Added**: Auto-stop functionality with date/time scheduling and timezone awareness
+- **Enhanced**: Form validation with comprehensive error handling and user feedback
+- **Impact**: Full control over timelapse parameters without requiring camera setting changes
+
+#### 📸 **Instant Capture Control**
+
+- **NEW FEATURE**: "Capture Now" functionality for immediate image capture
+- **Added**: Hamburger menu integration with conditional visibility (online camera + active timelapse)
+- **Implemented**: Backend API endpoint `/api/cameras/{id}/capture-now` with validation
+- **Enhanced**: Real-time feedback via SSE events and toast notifications
+- **Impact**: Immediate capture capability for testing and critical moments
+
+#### 🎨 **Visual Progress & Feedback Enhancements**
+
+- **NEW FEATURE**: Animated progress border overlay on Next Capture boxes
+- **Implemented**: SVG-based "egg timer" effect showing capture interval progress (0-100%)
+- **Added**: Smooth transitions with glow effects when approaching capture time
+- **Enhanced**: Visual coordination with existing "Now" state pulsing effects
+- **Impact**: Rich visual feedback for capture timing and system state
+
+### Database Schema Enhancements
+
+#### 🗄️ **Auto-Stop & Enhanced Configuration**
+
+- **Added**: `auto_stop_at TIMESTAMP WITH TIME ZONE` - Scheduled timelapse termination
+- **Added**: `name VARCHAR(255)` - Custom timelapse naming
+- **Added**: `time_window_start TIME` - Per-timelapse time window override
+- **Added**: `time_window_end TIME` - Per-timelapse time window override  
+- **Added**: `use_custom_time_window BOOLEAN` - Enable per-timelapse time windows
+- **Migration**: Database migration applied and documented
+
+### Backend Changes
+
+#### API & Database Enhancements
+
+- **Enhanced**: `create_or_update_timelapse()` method with configuration parameter support
+- **Added**: Auto-stop time handling with proper timezone awareness
+- **Added**: Custom time window processing independent of camera settings
+- **Implemented**: `/api/cameras/{id}/capture-now` endpoint with camera validation
+- **Enhanced**: Timelapse API endpoints to handle new configuration fields
+- **Improved**: Type safety between Pydantic models and database schema
+
+#### Event Broadcasting
+
+- **Added**: "capture_now_requested" SSE event type for immediate capture requests
+- **Enhanced**: Real-time event broadcasting for new timelapse configuration changes
+- **Improved**: Event validation and error handling for capture requests
+
+### Frontend Changes
+
+#### New Components
+
+- **Added**: `/src/components/new-timelapse-dialog.tsx` - Advanced timelapse configuration dialog
+  - Custom naming with auto-generated intelligent defaults
+  - Time window override controls with validation
+  - Auto-stop date/time picker with timezone support
+  - Comprehensive form validation and error handling
+- **Added**: `/src/components/ui/progress-border.tsx` - Animated SVG progress visualization
+  - Smooth path animation following rounded rectangle border
+  - Configurable colors and stroke width
+  - Glow effects at high progress percentages
+
+#### Enhanced Existing Components
+
+- **Refactored**: `/src/components/ui/combined-status-badge.tsx` to use clean Next.js patterns
+  - Removed complex `cva` abstraction layers
+  - Implemented direct conditional logic with switch statements
+  - Improved maintainability and debugging capability
+- **Enhanced**: `/src/components/camera-card.tsx` with multiple improvements
+  - Progress border integration with real-time capture progress
+  - Capture Now menu item with conditional visibility
+  - Enhanced status display logic for inactive timelapses
+  - Improved button layout and expanded "Start A New Timelapse" text
+- **Updated**: `/src/app/page.tsx` (dashboard) with intelligent bulk operations
+  - Smart "Resume" button with conditional enable state
+  - Tooltip feedback when no cameras can be resumed
+  - Enhanced bulk operation logic and user feedback
+
+#### Data Flow & State Management
+
+- **Enhanced**: `/src/hooks/use-camera-countdown.ts` with progress calculation support
+  - Added `captureProgress` return value (0-100 percentage)
+  - Real-time progress calculation based on capture intervals
+  - Integration with existing countdown timer infrastructure
+
+### User Experience Improvements
+
+#### Before Dashboard Refactoring
+
+- Generic "Start" button with immediate execution
+- Bulk "Start/Resume All" options without intelligence
+- No visual progress indication for capture timing
+- Basic status badges with maintenance complexity
+- No immediate capture capability
+- Limited timelapse configuration options
+
+#### After Dashboard Refactoring
+
+- ✅ **Intelligent Timelapse Creation**: Configuration dialog with naming, time windows, auto-stop
+- ✅ **Smart Bulk Operations**: Conditional "Resume" button with helpful tooltips
+- ✅ **Visual Progress Feedback**: Animated borders showing real-time capture progress
+- ✅ **Simplified Architecture**: Cleaner status badge logic with better maintainability
+- ✅ **Immediate Control**: Capture Now functionality for instant image capture
+- ✅ **Enhanced Configurability**: Per-timelapse settings independent of camera defaults
+- ✅ **Professional UX**: Comprehensive validation, error handling, and user feedback
+
+### Technical Improvements
+
+#### Code Quality & Maintainability
+
+- **Simplified**: Status badge logic from complex abstractions to clear conditional patterns
+- **Enhanced**: Form validation with timezone-aware date/time handling
+- **Improved**: Component reusability with proper TypeScript interfaces
+- **Optimized**: Progress calculation using existing countdown timer infrastructure
+
+#### Integration & Compatibility
+
+- **Maintains**: All existing timezone-aware time system functionality
+- **Preserves**: SSE real-time update architecture and event broadcasting
+- **Uses**: Established toast notification patterns for user feedback
+- **Respects**: Database query optimization patterns (LATERAL joins)
+- **Follows**: Existing TypeScript/Pydantic model synchronization
+
+### Migration Notes
+
+#### For Developers
+
+- **Database Schema**: New timelapse fields are optional and backward compatible
+- **API Changes**: Enhanced endpoints maintain backward compatibility
+- **Component Updates**: CombinedStatusBadge simplified but interface unchanged
+- **New Features**: Progress borders and capture now are additive enhancements
+
+#### For Users
+
+- **Seamless**: All existing functionality preserved and enhanced
+- **Enhanced**: More powerful timelapse creation with better defaults
+- **Improved**: Visual feedback and progress indication
+- **Added**: New capture control options without complexity
+
+### Benefits Achieved
+
+#### User Experience
+
+- ✅ **Intuitive Controls**: Clear separation between creation and management actions
+- ✅ **Visual Feedback**: Real-time progress indication and state visualization
+- ✅ **Flexible Configuration**: Per-timelapse settings without global camera changes
+- ✅ **Professional Interface**: Comprehensive validation and error handling
+
+#### Technical Excellence
+
+- ✅ **Maintainable Code**: Simplified patterns with better debugging capability
+- ✅ **Performance Optimized**: Leverages existing infrastructure without duplication
+- ✅ **Type Safety**: End-to-end TypeScript/Pydantic model synchronization
+- ✅ **Future Ready**: Extensible architecture for additional dashboard features
+
+### Testing & Validation
+
+#### UI/UX Testing
+
+- ✅ **Configuration Dialog**: All form fields validate correctly with timezone awareness
+- ✅ **Progress Borders**: Smooth animation with accurate percentage calculations
+- ✅ **Bulk Operations**: Smart enable/disable logic with helpful user feedback
+- ✅ **Capture Now**: Immediate execution with proper error handling
+
+#### Technical Validation
+
+- ✅ **Database Schema**: All new fields created successfully with proper types
+- ✅ **API Endpoints**: Enhanced timelapse creation and capture now functionality working
+- ✅ **Real-time Updates**: SSE events broadcasting correctly for new features
+- ✅ **Cross-browser**: Progress animations and dialog functionality tested across modern browsers
+
+---
+
 ## [2025.06.16] - Timezone System & Backend Startup Fixes 🌍
 
 ### Major Improvements
