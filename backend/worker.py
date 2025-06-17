@@ -46,7 +46,7 @@ from video_generator import VideoGenerator
 class AsyncTimelapseWorker:
     """
     Asynchronous timelapse worker for concurrent camera management.
-    
+
     This class orchestrates the entire timelapse capture process with support for:
     - Multiple concurrent RTSP camera streams
     - Scheduled image capture with configurable intervals
@@ -55,12 +55,12 @@ class AsyncTimelapseWorker:
     - Database integration for timelapse tracking
     - Graceful shutdown with signal handling
     - Real-time event broadcasting for UI updates
-    
+
     The worker runs as a continuous background service using AsyncIOScheduler
     for job management and asyncio for concurrent operations. It maintains
     both sync and async database connections to support legacy components
     while providing modern async performance.
-    
+
     Attributes:
         capture (RTSPCapture): RTSP capture handler for image acquisition
         video_generator (VideoGenerator): Video generation service
@@ -73,14 +73,14 @@ class AsyncTimelapseWorker:
     def __init__(self):
         """
         Initialize the async timelapse worker.
-        
+
         Sets up all necessary components including:
         - RTSP capture system with data directory configuration
         - Video generator with sync database connection
         - AsyncIO scheduler for periodic jobs
         - Signal handlers for graceful shutdown
         - Database initialization for worker operations
-        
+
         The worker is configured from settings but remains flexible for
         runtime configuration changes.
         """
@@ -155,7 +155,7 @@ class AsyncTimelapseWorker:
     async def capture_from_camera(self, camera_info):
         """
         Capture image from a single camera with comprehensive error handling.
-        
+
         This method handles the complete image capture workflow for a single camera:
         1. Validates time window restrictions
         2. Retrieves active timelapse configuration
@@ -163,17 +163,17 @@ class AsyncTimelapseWorker:
         4. Updates camera health status
         5. Calculates next capture timing
         6. Broadcasts capture events for real-time UI updates
-        
+
         Args:
             camera_info (dict): Camera configuration containing:
                 - id: Camera database ID
-                - name: Human-readable camera name  
+                - name: Human-readable camera name
                 - rtsp_url: RTSP stream URL
                 - time_window settings (if applicable)
-                
+
         The method runs sync database operations in a thread executor to
         maintain async compatibility while supporting legacy sync components.
-        
+
         Raises:
             Exception: Logs but doesn't re-raise exceptions to prevent
                       individual camera failures from stopping other captures
@@ -290,20 +290,20 @@ class AsyncTimelapseWorker:
     async def check_camera_health(self):
         """
         Check and update camera health status based on RTSP connectivity.
-        
+
         This method performs comprehensive health monitoring for all active cameras:
         1. Retrieves all active cameras from database (not just running timelapses)
         2. Tests RTSP connectivity without full image capture
         3. Updates database connectivity status for each camera
         4. Logs connectivity issues for monitoring and debugging
-        
+
         The health check runs independently of image capture to provide
         accurate connectivity status even when timelapses are not active.
         This enables proper camera status reporting in the UI.
-        
+
         Connection tests are performed in thread executor to maintain
         async compatibility with the sync RTSP testing methods.
-        
+
         Frequency: Typically scheduled to run every minute
         """
         try:
@@ -373,22 +373,22 @@ class AsyncTimelapseWorker:
     async def start(self):
         """
         Start the async worker with comprehensive scheduled job management.
-        
+
         This method initializes and starts the complete worker system with
         multiple scheduled jobs:
-        
+
         Jobs Configured:
         1. Image Capture Job - Captures from all running cameras at configured interval
-        2. Health Monitoring Job - Tests camera connectivity every minute  
+        2. Health Monitoring Job - Tests camera connectivity every minute
         3. Interval Update Job - Checks for configuration changes every 5 minutes
-        
+
         The worker runs continuously until interrupted by signal or error.
         All jobs are configured with max_instances=1 to prevent overlapping
         executions that could cause resource conflicts.
-        
+
         Job scheduling uses AsyncIOScheduler for true async operation while
         database operations are executed in thread pools for sync compatibility.
-        
+
         Raises:
             KeyboardInterrupt: Handled gracefully for user-initiated shutdown
             Exception: Logged and triggers graceful shutdown process
@@ -455,16 +455,16 @@ class AsyncTimelapseWorker:
 async def main():
     """
     Main async entry point for the timelapse worker application.
-    
+
     This function handles the complete worker lifecycle:
     1. Ensures data directory structure exists
-    2. Configures rotating log files with size and retention limits  
+    2. Configures rotating log files with size and retention limits
     3. Creates and initializes the AsyncTimelapseWorker
     4. Manages graceful shutdown on interruption or error
-    
+
     The worker runs indefinitely until terminated by signal or exception.
     All exceptions are caught and logged to ensure clean shutdown.
-    
+
     Logging Configuration:
     - 10MB file rotation to prevent disk space issues
     - 30-day retention for debugging and monitoring

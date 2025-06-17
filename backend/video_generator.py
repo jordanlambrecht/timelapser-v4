@@ -12,6 +12,7 @@ from typing import Tuple, Optional, Union
 import glob
 from datetime import datetime, date
 from app.database import SyncDatabase
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class VideoGenerator:
     """
     Advanced video generator for timelapse creation with overlay support.
-    
+
     This class handles the generation of MP4 videos from sequences of images,
     with support for:
     - Dynamic day overlays using FFmpeg drawtext and subtitle systems
@@ -28,10 +29,10 @@ class VideoGenerator:
     - Database integration for timelapse tracking
     - RTSP capture integration
     - ASS subtitle format for precise overlay timing
-    
+
     The generator supports both simple static overlays and complex dynamic
     overlays that change per frame based on capture metadata.
-    
+
     Attributes:
         default_framerate (int): Default video framerate (30 fps)
         default_quality (str): Default quality setting ('medium')
@@ -39,15 +40,15 @@ class VideoGenerator:
         db (Optional[SyncDatabase]): Database connection for timelapse data
         default_overlay_settings (dict): Default overlay configuration
     """
-    
+
     def __init__(self, db: Optional[SyncDatabase] = None):
         """
         Initialize the VideoGenerator with optional database connection.
-        
+
         Args:
             db (Optional[SyncDatabase]): Database instance for timelapse data.
                                        If None, database-dependent features will be disabled.
-        
+
         Sets up default video generation parameters and overlay settings including:
         - 30fps default framerate
         - Medium quality preset
@@ -75,13 +76,13 @@ class VideoGenerator:
     ) -> Tuple[str, str]:
         """
         Convert position name to FFmpeg x,y coordinates.
-        
+
         Args:
-            position (str): Position name (top-left, top-right, bottom-left, 
+            position (str): Position name (top-left, top-right, bottom-left,
                           bottom-right, center)
             font_size (int): Font size for text positioning calculations
             padding (int): Padding in pixels from screen edges
-            
+
         Returns:
             Tuple[str, str]: FFmpeg x,y coordinate strings for text positioning
         """
@@ -167,22 +168,22 @@ class VideoGenerator:
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Create dynamic day overlay that changes per frame using ASS subtitles.
-        
+
         This method generates a temporary ASS subtitle file where each frame
         can display different text based on the image metadata. This allows
         for precise day numbering that changes throughout the video.
-        
+
         Args:
             images (list): List of image dictionaries containing day_number
                           and capture metadata
             overlay_settings (Optional[dict]): Overlay configuration settings.
                                              Uses default_overlay_settings if None.
-        
+
         Returns:
-            Tuple[Optional[str], Optional[str]]: 
+            Tuple[Optional[str], Optional[str]]:
                 - Path to temporary subtitle file (or None if disabled)
                 - FFmpeg subtitle filter string (or None if disabled)
-                
+
         Note:
             The temporary subtitle file must be cleaned up by the caller
             after video generation is complete.
@@ -261,13 +262,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _get_ass_alignment(self, position: str) -> int:
         """
         Convert position name to ASS subtitle alignment number.
-        
+
         ASS subtitles use numeric alignment values (1-9) corresponding to
         a 3x3 grid, where 1 is bottom-left and 9 is top-right.
-        
+
         Args:
             position (str): Position name (e.g., 'bottom-right', 'center')
-            
+
         Returns:
             int: ASS alignment number (1-9), defaults to 3 (bottom-right)
         """
@@ -287,13 +288,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _seconds_to_ass_time(self, seconds: float) -> str:
         """
         Convert seconds to ASS time format (H:MM:SS.cc).
-        
+
         ASS subtitle format requires time in H:MM:SS.cc format where
         cc represents centiseconds (hundredths of a second).
-        
+
         Args:
             seconds (float): Time in seconds
-            
+
         Returns:
             str: Time formatted as H:MM:SS.cc for ASS subtitles
         """
@@ -674,10 +675,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if overlay_settings and overlay_settings.get("enabled"):
                 logger.info(f"Overlay enabled: {overlay_settings}")
 
-            # Create temporary directory with sequential image files
-            import tempfile
-            import shutil
-
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
 
@@ -772,7 +769,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def main():
     """Test function for video generation"""
-    import sys
     from dotenv import load_dotenv
 
     # Load environment
