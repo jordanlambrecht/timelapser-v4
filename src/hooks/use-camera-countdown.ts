@@ -140,7 +140,7 @@ export function useCameraCountdown({
     // Update last capture text - pass timezone in options
     const lastCaptureTimestamp = timestampData.lastCapture
     const relativeTime = formatRelativeTime(lastCaptureTimestamp, {
-      includeAbsolute: true,
+      includeAbsolute: false,
       includeSeconds: true,
       timezone: timestampData.timezone,
     })
@@ -223,7 +223,11 @@ export function useCameraCountdown({
 
   // Calculate capture progress (0-100)
   const captureProgress = useMemo(() => {
-    if (status !== "running" || !timestampData.lastCapture || !timestampData.nextCapture) {
+    if (
+      status !== "running" ||
+      !timestampData.lastCapture ||
+      !timestampData.nextCapture
+    ) {
       return 0
     }
 
@@ -237,7 +241,10 @@ export function useCameraCountdown({
 
       const totalInterval = nextTime - lastTime
       const elapsed = now - lastTime
-      const progress = Math.min(100, Math.max(0, (elapsed / totalInterval) * 100))
+      const progress = Math.min(
+        100,
+        Math.max(0, (elapsed / totalInterval) * 100)
+      )
 
       return Math.round(progress)
     } catch {
