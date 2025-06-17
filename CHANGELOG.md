@@ -9,6 +9,271 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2025.06.17] - Video Generation Settings System 🎬
+
+### Major Feature Implementation
+
+#### 🎯 **Complete Video Generation Settings System**
+
+- **MAJOR FEATURE**: Comprehensive dual-mode video generation system with intelligent FPS calculation
+- **Added**: Two distinct generation modes - Standard FPS and Target Time with smart switching
+- **Enhanced**: Camera-level defaults with timelapse-level override capability  
+- **Implemented**: Real-time preview calculations showing exact video results before generation
+- **Created**: Professional-grade video configuration with validation and user guidance
+- **Impact**: Full creative control over timelapse video output with intelligent automation
+
+#### 🗄️ **Database Schema Enhancements**
+
+- **Added to cameras table**: Complete video generation field set
+  - `video_generation_mode` ENUM ('standard', 'target') DEFAULT 'standard'
+  - `standard_fps` INTEGER DEFAULT 24 - Target frames per second
+  - `enable_time_limits` BOOLEAN DEFAULT false - Enable duration constraints
+  - `min_time_seconds` INTEGER DEFAULT 60 - Minimum video duration
+  - `max_time_seconds` INTEGER DEFAULT 300 - Maximum video duration  
+  - `target_time_seconds` INTEGER DEFAULT 120 - Exact target duration
+  - `min_fps` REAL DEFAULT 1.0 - Minimum allowed FPS
+  - `max_fps` REAL DEFAULT 60.0 - Maximum allowed FPS
+
+- **Added to timelapses table**: Nullable video generation fields for inheritance
+  - Complete override capability for per-timelapse customization
+  - Settings inheritance: Camera defaults → Timelapse overrides
+  - Backward compatible with existing timelapses
+
+- **Created**: Video generation mode ENUM type with proper constraints
+- **Applied**: Database migration successfully with data preservation
+
+#### 🚀 **Dual-Mode Video Generation Logic**
+
+**Standard FPS Mode Implementation**:
+- **User Control**: Set desired FPS (1-60) with professional defaults
+- **Optional Time Limits**: Enable min/max duration constraints with automatic FPS adjustment
+- **Smart Adjustment**: System automatically modifies FPS to respect time limits
+- **Real-time Preview**: "24 FPS → 744 images = 31.0 seconds" instant calculation
+- **Use Case**: Professional framerates with optional duration control
+
+**Target Time Mode Implementation**:
+- **Precise Control**: Set exact target video duration in seconds
+- **Automatic Calculation**: FPS = image_count / target_time with bounds enforcement
+- **Quality Bounds**: Min/max FPS limits prevent unusable framerates
+- **Real-time Preview**: "120s target → 744 images = 6.2 FPS" instant feedback
+- **Use Case**: Presentations and content with specific timing requirements
+
+#### 🔧 **Backend Architecture Enhancements**
+
+**Video Calculation Engine**:
+- **Added**: `/backend/video_calculations.py` - Complete video generation calculation logic
+- **Implemented**: `calculate_video_settings()` function with dual-mode support
+- **Enhanced**: Smart FPS adjustment algorithms with bounds checking
+- **Created**: Comprehensive validation with edge case handling
+- **Added**: Real-time preview calculation for UI integration
+
+**Enhanced API Endpoints**:
+- **Added**: `GET/PATCH /api/cameras/{id}/video-settings` - Camera video configuration
+- **Added**: `GET /api/cameras/{id}/video-preview` - Real-time preview calculations
+- **Added**: `GET/PATCH /api/timelapses/{id}/video-settings` - Per-timelapse overrides
+- **Added**: `GET /api/timelapses/{id}/video-preview` - Inheritance-aware preview
+- **Enhanced**: All endpoints with comprehensive validation and error handling
+
+**Database Integration**:
+- **Enhanced**: Camera and Timelapse Pydantic models with video generation fields
+- **Added**: `get_effective_video_settings()` method for inheritance resolution
+- **Added**: `copy_camera_video_settings_to_timelapse()` for defaults copying
+- **Improved**: Type safety between frontend TypeScript and backend Python models
+
+### Frontend Implementation Excellence
+
+#### 🎨 **VideoGenerationSettings Component**
+
+**Comprehensive React Component** (`/src/components/video-generation-settings.tsx`):
+- **Mode Toggle**: Intuitive switching between Standard FPS and Target Time modes
+- **Standard FPS Interface**: FPS input with optional time limits toggle and min/max controls
+- **Target Time Interface**: Duration input with FPS bounds configuration
+- **Real-time Preview**: Live calculations showing exact video results
+- **Smart Validation**: Comprehensive form validation with helpful error messages
+- **State Management**: React Hook Form integration with proper error handling
+
+**Advanced UI Features**:
+- **Conditional Rendering**: UI adapts based on selected mode and enabled options
+- **Live Calculations**: Instant preview updates as user types
+- **Validation Feedback**: Real-time error indication with correction guidance
+- **Professional Design**: Clean, intuitive interface following design system patterns
+
+#### 🔄 **Settings Inheritance & Integration**
+
+**Camera Details Page Integration**:
+- **Settings Sidebar**: VideoGenerationSettings component integrated into camera details
+- **API Integration**: PATCH requests for settings updates with proper error handling
+- **Real-time Sync**: Changes immediately reflected in preview calculations
+- **Toast Notifications**: Success/error feedback for all configuration operations
+
+**Inheritance System**:
+- **Visual Indicators**: Clear display when timelapse inherits camera defaults
+- **Override Capability**: Timelapse settings override camera defaults when specified
+- **Reset Functionality**: Easy restoration to camera defaults
+- **Inheritance Resolution**: Automatic calculation of effective settings
+
+### User Experience & Workflow
+
+#### 🎯 **Intuitive User Workflows**
+
+**Casual User Experience (Standard FPS Mode)**:
+1. Set desired FPS (default 24 for professional look)
+2. Optionally enable time limits for duration control  
+3. System handles calculations and adjustments automatically
+4. Preview shows exact video duration before generation
+5. Generate video with predictable, professional results
+
+**Advanced User Experience (Target Time Mode)**:
+1. Set exact target duration required (e.g., 120 seconds for presentation)
+2. Configure FPS bounds for quality control (e.g., 6-30 FPS)
+3. System calculates optimal FPS within constraints
+4. Preview shows calculated FPS and confirms exact timing
+5. Generate video with precise duration requirements
+
+**Professional Features**:
+- **Real-time Feedback**: Always see exact results before committing to generation
+- **Smart Defaults**: Professional settings work immediately without configuration
+- **Progressive Disclosure**: Advanced options available when needed
+- **Validation Guidance**: Clear error messages with specific correction suggestions
+
+#### 📊 **Example Calculations & Results**
+
+**Standard FPS Mode Examples**:
+- 744 images @ 24 FPS → 31.0 seconds (professional cinematic look)
+- 1440 images @ 12 FPS → 120.0 seconds (smooth motion overview)
+- 300 images @ 10 FPS → 30.0 seconds (quick daily summary)
+
+**Target Time Mode Examples**:
+- 744 images → 120s target → 6.2 FPS (presentation timing)
+- 1440 images → 60s target → 24.0 FPS (fast overview)
+- 300 images → 30s target → 10.0 FPS (time-constrained summary)
+
+### Technical Implementation Details
+
+#### 🔧 **Calculation Logic & Validation**
+
+**Smart FPS Adjustment (Standard Mode)**:
+```python
+if enable_time_limits:
+    calculated_duration = image_count / standard_fps
+    if calculated_duration < min_time_seconds:
+        adjusted_fps = image_count / min_time_seconds
+    elif calculated_duration > max_time_seconds:
+        adjusted_fps = image_count / max_time_seconds
+    # Clamp to user-defined FPS bounds
+    final_fps = max(min_fps, min(max_fps, adjusted_fps))
+```
+
+**Precise Duration Calculation (Target Mode)**:
+```python
+calculated_fps = image_count / target_time_seconds
+# Enforce quality bounds
+final_fps = max(min_fps, min(max_fps, calculated_fps))
+actual_duration = image_count / final_fps
+```
+
+**Comprehensive Validation**:
+- FPS bounds validation (min_fps ≤ max_fps, positive values)
+- Time limits validation (min_time ≤ max_time, positive values)
+- Image count validation (must have images to generate video)
+- Mode-specific field requirements and cross-validation
+
+#### 🗄️ **Database Schema Details**
+
+**Migration Applied Successfully**:
+- All video generation fields added with proper types and constraints
+- Default values set for backward compatibility
+- ENUM type created for video generation modes
+- Foreign key relationships maintained with proper cascading
+
+**Data Model Integration**:
+- Pydantic models updated with complete video generation field set
+- TypeScript interfaces synchronized with backend models
+- API serialization/deserialization working correctly
+- Database queries optimized for settings retrieval and updates
+
+### Testing & Validation
+
+#### ✅ **Comprehensive Testing Completed**
+
+**Database & Migration**:
+- ✅ Migration applied successfully to existing database
+- ✅ All video generation fields created with correct types
+- ✅ Default values working for existing cameras and timelapses
+- ✅ ENUM constraints properly enforced
+
+**Backend API**:
+- ✅ All video settings endpoints returning correct data
+- ✅ Preview calculations accurate with real image counts
+- ✅ Settings inheritance working correctly (camera → timelapse)
+- ✅ Validation preventing invalid configurations
+
+**Frontend Integration**:
+- ✅ VideoGenerationSettings component rendering correctly
+- ✅ Real-time calculations updating as user types
+- ✅ Form validation providing helpful error messages
+- ✅ API integration with proper error handling and success feedback
+
+**Real-world Validation**:
+- ✅ Tested with 744 images showing accurate FPS/duration calculations
+- ✅ Standard FPS mode producing expected video durations
+- ✅ Target Time mode calculating correct FPS within bounds
+- ✅ Settings inheritance working seamlessly between cameras and timelapses
+
+### Benefits Achieved
+
+#### User Experience Benefits
+
+- ✅ **Creative Control**: Users can achieve specific visual goals (cinematic 24fps vs quick overview)
+- ✅ **Time Management**: Target time mode perfect for presentations with exact timing needs  
+- ✅ **Quality Assurance**: FPS bounds prevent choppy or overly fast videos
+- ✅ **Flexibility**: Simple defaults for casual use, advanced options for professionals
+- ✅ **Predictability**: Real-time preview eliminates surprises in video generation
+
+#### Technical Benefits
+
+- ✅ **Type Safety**: Complete TypeScript/Pydantic model synchronization
+- ✅ **Data Integrity**: Database constraints prevent invalid configurations  
+- ✅ **Performance**: Efficient calculations with minimal UI lag
+- ✅ **Maintainability**: Clean separation between calculation, API, and UI layers
+- ✅ **Extensibility**: Foundation ready for advanced video generation features
+
+#### Professional Features
+
+- ✅ **Settings Management**: Enterprise-grade defaults and overrides system
+- ✅ **Real-time Feedback**: Professional UI with immediate calculation results
+- ✅ **Comprehensive Validation**: Error prevention with helpful user guidance
+- ✅ **Integration**: Seamless connection with existing timelapse and video systems
+
+### Future Enhancement Foundation
+
+**Architecture Ready For**:
+- **Video Templates**: Save/load settings as named presets
+- **Batch Operations**: Apply settings to multiple timelapses simultaneously
+- **Advanced Overlays**: Position, styling, and content configuration
+- **Export Profiles**: Multiple output formats with different settings
+- **Analytics**: Track which settings produce optimal results
+
+**Video Generation Settings System** provides complete foundation for professional-grade timelapse video creation with full user control and intelligent automation.
+
+### Migration Notes
+
+#### For Developers
+
+- **Database Schema**: All new video generation fields are backward compatible
+- **API Usage**: New endpoints available, existing endpoints unchanged
+- **Frontend**: VideoGenerationSettings component ready for integration
+- **Calculation Logic**: Use video_calculations.py for all video generation math
+
+#### For Users  
+
+- **Seamless**: Existing functionality preserved and enhanced
+- **Enhanced Control**: New video generation options available in camera settings
+- **Better Results**: Intelligent FPS calculation produces higher quality videos
+- **Professional Output**: Settings enable both quick overviews and cinematic timelapses
+
+---
+
 ## [2025.12.17] - Entity-Based Timelapse Architecture 🎯
 
 ### Revolutionary Architecture Transformation

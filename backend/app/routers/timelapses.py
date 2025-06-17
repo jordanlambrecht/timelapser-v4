@@ -5,6 +5,7 @@ from loguru import logger
 
 from ..database import async_db
 from ..models import Timelapse, TimelapseCreate, TimelapseUpdate, TimelapseWithDetails
+from ..video_calculations import preview_video_calculation, VideoGenerationSettings
 
 router = APIRouter()
 
@@ -172,3 +173,152 @@ async def update_timelapse_status(camera_id: int, update_data: TimelapseUpdate):
     except Exception as e:
         logger.error(f"Error updating timelapse for camera {camera_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update timelapse")
+
+
+@router.get("/{timelapse_id}/video-settings", response_model=dict)
+async def get_timelapse_video_settings(timelapse_id: int):
+    """Get video generation settings for a timelapse (with camera defaults as fallback)"""
+    try:
+        # Get timelapse details to find camera_id
+        timelapses = await async_db.get_timelapses()
+        timelapse = next((t for t in timelapses if t["id"] == timelapse_id), None)
+        
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        camera_id = timelapse["camera_id"]
+        
+        # Get effective settings
+        settings = await async_db.get_effective_video_settings(camera_id, timelapse_id)
+        
+        return {
+            "timelapse_id": timelapse_id,
+            "camera_id": camera_id,
+            "settings": settings
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching video settings for timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch video settings")
+
+
+@router.patch("/{timelapse_id}/video-settings", response_model=dict)
+async def update_timelapse_video_settings(timelapse_id: int, settings: dict):
+    """Update video generation settings for a timelapse"""
+    try:
+        # Validate timelapse exists
+        timelapses = await async_db.get_timelapses()
+        timelapse = next((t for t in timelapses if t["id"] == timelapse_id), None)
+        
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        # Update settings
+        success = await async_db.update_timelapse_video_settings(timelapse_id, settings)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update video settings")
+
+        logger.info(f"Updated video settings for timelapse {timelapse_id}")
+        return {
+            "timelapse_id": timelapse_id,
+            "message": "Video settings updated successfully"
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating video settings for timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update video settings")
+
+
+@router.post("/{timelapse_id}/copy-camera-settings", response_model=dict)
+async def copy_camera_video_settings_to_timelapse(timelapse_id: int):
+    """Copy video generation settings from camera to timelapse (reset to defaults)"""
+    try:
+        # Get timelapse details to find camera_id
+        timelapses = await async_db.get_timelapses()
+        timelapse = next((t for t in timelapses if t["id"] == timelapse_id), None)
+        
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        camera_id = timelapse["camera_id"]
+        
+        # Copy settings from camera
+        success = await async_db.copy_camera_video_settings_to_timelapse(camera_id, timelapse_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to copy camera settings")
+
+        logger.info(f"Copied camera video settings to timelapse {timelapse_id}")
+        return {
+            "timelapse_id": timelapse_id,
+            "camera_id": camera_id,
+            "message": "Camera video settings copied successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error copying camera settings to timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to copy camera settings")
+
+
+@router.post("/{timelapse_id}/video-preview", response_model=dict)
+async def preview_timelapse_video_generation(timelapse_id: int, settings: dict = None):
+    """Preview video generation calculation for a timelapse"""
+    try:
+        # Get timelapse details to find camera_id and image count
+        timelapses = await async_db.get_timelapses()
+        timelapse = next((t for t in timelapses if t["id"] == timelapse_id), None)
+        
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        camera_id = timelapse["camera_id"]
+        
+        # Get images for this timelapse
+        images = await async_db.get_timelapse_images(timelapse_id)
+        total_images = len(images)
+
+        # Use provided settings or get effective settings
+        if settings:
+            video_settings = VideoGenerationSettings(
+                video_generation_mode=settings.get("video_generation_mode", "standard"),
+                standard_fps=settings.get("standard_fps", 12),
+                enable_time_limits=settings.get("enable_time_limits", False),
+                min_time_seconds=settings.get("min_time_seconds"),
+                max_time_seconds=settings.get("max_time_seconds"),
+                target_time_seconds=settings.get("target_time_seconds"),
+                fps_bounds_min=settings.get("fps_bounds_min", 1),
+                fps_bounds_max=settings.get("fps_bounds_max", 60)
+            )
+        else:
+            # Get effective settings for this timelapse
+            effective_settings = await async_db.get_effective_video_settings(camera_id, timelapse_id)
+            video_settings = VideoGenerationSettings(
+                video_generation_mode=effective_settings.get("video_generation_mode", "standard"),
+                standard_fps=effective_settings.get("standard_fps", 12),
+                enable_time_limits=effective_settings.get("enable_time_limits", False),
+                min_time_seconds=effective_settings.get("min_time_seconds"),
+                max_time_seconds=effective_settings.get("max_time_seconds"),
+                target_time_seconds=effective_settings.get("target_time_seconds"),
+                fps_bounds_min=effective_settings.get("fps_bounds_min", 1),
+                fps_bounds_max=effective_settings.get("fps_bounds_max", 60)
+            )
+
+        # Generate preview
+        preview = preview_video_calculation(total_images, video_settings)
+        
+        return {
+            "timelapse_id": timelapse_id,
+            "camera_id": camera_id,
+            "preview": preview
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating video preview for timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate video preview")

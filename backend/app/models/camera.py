@@ -5,6 +5,20 @@ from typing import Optional, Literal, Dict, Any
 from datetime import datetime, time
 from loguru import logger
 import re
+from enum import Enum
+
+
+from pydantic import BaseModel, field_validator, Field, ConfigDict
+from typing import Optional, Literal, Dict, Any
+from datetime import datetime, time
+from loguru import logger
+import re
+from enum import Enum
+
+
+class VideoGenerationMode(str, Enum):
+    STANDARD = "standard"
+    TARGET = "target"
 
 
 class CameraBase(BaseModel):
@@ -21,6 +35,32 @@ class CameraBase(BaseModel):
     )
     use_time_window: bool = Field(
         default=False, description="Whether to use time windows"
+    )
+    
+    # Video generation settings
+    video_generation_mode: VideoGenerationMode = Field(
+        default=VideoGenerationMode.STANDARD, description="Video generation mode"
+    )
+    standard_fps: int = Field(
+        default=12, ge=1, le=120, description="Standard FPS for video generation"
+    )
+    enable_time_limits: bool = Field(
+        default=False, description="Enable time limits for standard FPS mode"
+    )
+    min_time_seconds: Optional[int] = Field(
+        None, ge=1, description="Minimum video duration in seconds"
+    )
+    max_time_seconds: Optional[int] = Field(
+        None, ge=1, description="Maximum video duration in seconds"
+    )
+    target_time_seconds: Optional[int] = Field(
+        None, ge=1, description="Target video duration in seconds"
+    )
+    fps_bounds_min: int = Field(
+        default=1, ge=1, le=60, description="Minimum FPS bound for target mode"
+    )
+    fps_bounds_max: int = Field(
+        default=60, ge=1, le=120, description="Maximum FPS bound for target mode"
     )
 
     @field_validator("rtsp_url")
@@ -54,6 +94,39 @@ class CameraBase(BaseModel):
             raise ValueError("Camera name cannot be empty or just whitespace")
         return v.strip()
 
+    @field_validator("min_time_seconds", "max_time_seconds")
+    @classmethod
+    def validate_time_bounds(cls, v: Optional[int]) -> Optional[int]:
+        """Validate time bounds are reasonable"""
+        if v is not None and v > 3600:  # 1 hour max
+            raise ValueError("Time limit cannot exceed 3600 seconds (1 hour)")
+        return v
+
+    @field_validator("fps_bounds_min", "fps_bounds_max")
+    @classmethod
+    def validate_fps_bounds(cls, v: int) -> int:
+        """Validate FPS bounds are reasonable"""
+        if v < 1 or v > 120:
+            raise ValueError("FPS bounds must be between 1 and 120")
+        return v
+
+    def validate_video_settings(self) -> None:
+        """Validate video generation settings consistency"""
+        # Validate time limits consistency
+        if (self.min_time_seconds is not None and 
+            self.max_time_seconds is not None and 
+            self.min_time_seconds >= self.max_time_seconds):
+            raise ValueError("Minimum time must be less than maximum time")
+        
+        # Validate FPS bounds consistency
+        if self.fps_bounds_min >= self.fps_bounds_max:
+            raise ValueError("Minimum FPS bound must be less than maximum FPS bound")
+        
+        # Validate target mode requirements
+        if (self.video_generation_mode == VideoGenerationMode.TARGET and 
+            self.target_time_seconds is None):
+            raise ValueError("Target time must be specified for target mode")
+
 
 class CameraCreate(CameraBase):
     """Model for creating a new camera"""
@@ -71,6 +144,16 @@ class CameraUpdate(BaseModel):
     time_window_end: Optional[time] = None
     use_time_window: Optional[bool] = None
     active_timelapse_id: Optional[int] = None
+    
+    # Video generation settings
+    video_generation_mode: Optional[VideoGenerationMode] = None
+    standard_fps: Optional[int] = Field(None, ge=1, le=120)
+    enable_time_limits: Optional[bool] = None
+    min_time_seconds: Optional[int] = Field(None, ge=1)
+    max_time_seconds: Optional[int] = Field(None, ge=1)
+    target_time_seconds: Optional[int] = Field(None, ge=1)
+    fps_bounds_min: Optional[int] = Field(None, ge=1, le=60)
+    fps_bounds_max: Optional[int] = Field(None, ge=1, le=120)
 
     @field_validator("rtsp_url")
     @classmethod

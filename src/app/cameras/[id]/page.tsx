@@ -9,6 +9,8 @@ import {
 } from "@/hooks/use-camera-countdown"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
+import { VideoGenerationSettings } from "@/components/video-generation-settings"
+import { Button } from "@/components/ui/button"
 
 interface Camera {
   id: number
@@ -21,6 +23,15 @@ interface Camera {
   use_time_window: boolean
   time_window_start: string | null
   time_window_end: string | null
+  // Video generation settings
+  video_generation_mode: "standard" | "target"
+  standard_fps: number
+  enable_time_limits: boolean
+  min_time_seconds?: number | null
+  max_time_seconds?: number | null
+  target_time_seconds?: number | null
+  fps_bounds_min: number
+  fps_bounds_max: number
   // Full image object instead of just ID
   last_image?: {
     id: number
@@ -325,16 +336,16 @@ export default function CameraDetailsPage() {
       case "error":
         return "bg-red-100 text-red-600"
       default:
-        return "bg-gray-100 text-gray-600"
+        return "bg-gray-100 text-primary"
     }
   }
 
   if (loading) {
     return (
-      <div className='flex items-center justify-center min-h-screen bg-gray-50'>
+      <div className='flex items-center justify-center min-h-screen glass'>
         <div className='text-center'>
           <div className='w-12 h-12 mx-auto border-b-2 border-blue-600 rounded-full animate-spin'></div>
-          <p className='mt-4 text-gray-600'>Loading camera details...</p>
+          <p className='mt-4 text-primary'>Loading camera details...</p>
         </div>
       </div>
     )
@@ -342,9 +353,9 @@ export default function CameraDetailsPage() {
 
   if (error || !camera) {
     return (
-      <div className='flex items-center justify-center min-h-screen bg-gray-50'>
+      <div className='flex items-center justify-center min-h-screen glass'>
         <div className='text-center'>
-          <p className='mb-4 text-lg text-red-600'>
+          <p className='mb-4 text-lg text-failure'>
             {error || "Camera not found"}
           </p>
           <Link href='/' className='text-blue-600 hover:text-blue-800'>
@@ -356,18 +367,16 @@ export default function CameraDetailsPage() {
   }
 
   return (
-    <div className='min-h-screen bg-gray-50'>
+    <div className='min-h-screen glass'>
       {/* Header */}
-      <div className='bg-white shadow-sm'>
+      <div className='glass-strong shadow-sm'>
         <div className='px-4 py-4 mx-auto max-w-7xl sm:px-6 lg:px-8'>
           <div className='flex items-center justify-between'>
             <div className='flex items-center gap-4'>
-              <Link href='/' className='text-blue-600 hover:text-blue-800'>
+              <Link href='/' className='text-blue-600 hover:text-blue'>
                 ← Dashboard
               </Link>
-              <h1 className='text-2xl font-bold text-gray-900'>
-                {camera.name}
-              </h1>
+              <h1 className='text-2xl font-bold text-white'>{camera.name}</h1>
               <div className='flex items-center gap-2'>
                 <span className='text-lg'>
                   {getHealthStatusIcon(camera.health_status)}
@@ -381,12 +390,12 @@ export default function CameraDetailsPage() {
                 </span>
               </div>
             </div>
-            <div className='flex items-center gap-2'>
+            {/* <div className='flex items-center gap-2'>
               {activeTimelapse?.status === "running" ? (
                 <button
                   onClick={() => handleTimelapseAction("stop")}
                   disabled={actionLoading === "stop"}
-                  className='px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50'
+                  className='px-4 py-2 text-white bg-failure rounded-lg hover:bg-failure/80 disabled:opacity-50'
                 >
                   {actionLoading === "stop" ? "Stopping..." : "Stop Timelapse"}
                 </button>
@@ -394,13 +403,57 @@ export default function CameraDetailsPage() {
                 <button
                   onClick={() => handleTimelapseAction("start")}
                   disabled={actionLoading === "start"}
-                  className='px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50'
+                  className='px-4 py-2 text-white bg-success rounded-lg hover:bg-success/80 disabled:opacity-50'
                 >
                   {actionLoading === "start"
                     ? "Starting..."
                     : "Start Timelapse"}
                 </button>
               )}
+            </div> */}
+            {/* Main Start/Stop button */}
+            <div>
+              <Button
+                onClick={() => {
+                  const isRunning = timelapse?.status === "running"
+                  const isPaused = timelapse?.status === "paused"
+
+                  if (isRunning || isPaused) {
+                    // Show confirmation dialog for stopping
+                    setConfirmStopOpen(true)
+                  } else {
+                    // Open new timelapse dialog instead of starting directly
+                    setNewTimelapseDialogOpen(true)
+                  }
+                }}
+                size='lg'
+                disabled={camera.health_status === "offline"}
+                className={cn(
+                  "font-medium transition-all duration-300 min-w-[140px] grow",
+                  camera.health_status === "offline"
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed opacity-50"
+                    : isTimelapseRunning || isTimelapsePaused
+                    ? "bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20"
+                    : "bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black hover:shadow-lg"
+                )}
+              >
+                {camera.health_status === "offline" ? (
+                  <>
+                    <Square className='w-4 h-4 mr-1' />
+                    Offline
+                  </>
+                ) : isTimelapseRunning || isTimelapsePaused ? (
+                  <>
+                    <CircleStop className='w-4 h-4 mr-1' />
+                    Stop
+                  </>
+                ) : (
+                  <>
+                    <Play className='w-4 h-4 mr-1' />
+                    Start A New Timelapse
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </div>
@@ -410,12 +463,12 @@ export default function CameraDetailsPage() {
         <div className='grid grid-cols-1 gap-8 lg:grid-cols-3'>
           {/* Main Content - Latest Image */}
           <div className='lg:col-span-2'>
-            <div className='overflow-hidden bg-white rounded-lg shadow-sm'>
+            <div className='overflow-hidden glass-strong rounded-lg shadow-sm'>
               <div className='p-6'>
-                <h2 className='mb-4 text-lg font-semibold text-gray-900'>
+                <h2 className='mb-4 text-lg font-semibold text-white'>
                   Latest Capture
                 </h2>
-                <div className='overflow-hidden bg-gray-100 rounded-lg aspect-video'>
+                <div className='overflow-hidden glass-strong rounded-lg aspect-video'>
                   {camera.last_image ? (
                     <img
                       src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
@@ -473,7 +526,7 @@ export default function CameraDetailsPage() {
                   )}
                 </div>
                 {camera.last_image && (
-                  <div className='grid grid-cols-2 gap-4 mt-4 text-sm text-gray-600'>
+                  <div className='grid grid-cols-2 gap-4 mt-4 text-sm text-primary'>
                     <div>
                       <span className='font-medium'>Captured:</span>{" "}
                       {lastImageCapturedText}
@@ -496,9 +549,9 @@ export default function CameraDetailsPage() {
             </div>
 
             {/* Recent Activity */}
-            <div className='mt-8 bg-white rounded-lg shadow-sm'>
+            <div className='mt-8 glass-strong rounded-lg shadow-sm'>
               <div className='p-6'>
-                <h3 className='mb-4 text-lg font-semibold text-gray-900'>
+                <h3 className='mb-4 text-lg font-semibold text-white'>
                   Recent Activity
                 </h3>
                 <div className='space-y-3'>
@@ -506,7 +559,7 @@ export default function CameraDetailsPage() {
                     recentLogs.map((log) => (
                       <div
                         key={log.id}
-                        className='flex items-start gap-3 p-3 rounded-lg bg-gray-50'
+                        className='flex items-start gap-3 p-3 rounded-lg glass'
                       >
                         <div
                           className={`px-2 py-1 text-xs rounded ${
@@ -520,7 +573,7 @@ export default function CameraDetailsPage() {
                           {log.level.toUpperCase()}
                         </div>
                         <div className='flex-1'>
-                          <p className='text-sm text-gray-900'>{log.message}</p>
+                          <p className='text-sm text-white'>{log.message}</p>
                           <p className='mt-1 text-xs text-gray-500'>
                             {formatRelativeTime(log.timestamp, { timezone })}
                           </p>
@@ -540,27 +593,27 @@ export default function CameraDetailsPage() {
           {/* Sidebar - Stats and Controls */}
           <div className='space-y-6'>
             {/* Stats */}
-            <div className='p-6 bg-white rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-gray-900'>
+            <div className='p-6 glass-strong rounded-lg shadow-sm'>
+              <h3 className='mb-4 text-lg font-semibold text-white'>
                 Statistics
               </h3>
               <div className='space-y-4'>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Current Timelapse</span>
+                  <span className='text-primary'>Current Timelapse</span>
                   <span className='font-semibold'>
                     {stats.currentTimelapseImages} images
                   </span>
                 </div>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Total Images</span>
+                  <span className='text-primary'>Total Images</span>
                   <span className='font-semibold'>{stats.totalImages}</span>
                 </div>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Videos Generated</span>
+                  <span className='text-primary'>Videos Generated</span>
                   <span className='font-semibold'>{stats.videoCount}</span>
                 </div>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Days Active</span>
+                  <span className='text-primary'>Days Active</span>
                   <span className='font-semibold'>
                     {stats.daysSinceFirstCapture}
                   </span>
@@ -569,26 +622,26 @@ export default function CameraDetailsPage() {
             </div>
 
             {/* Timelapse Status */}
-            <div className='p-6 bg-white rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-gray-900'>
+            <div className='p-6 glass-strong rounded-lg shadow-sm'>
+              <h3 className='mb-4 text-lg font-semibold text-white'>
                 Timelapse Status
               </h3>
               {activeTimelapse ? (
                 <div className='space-y-3'>
                   <div className='flex justify-between'>
-                    <span className='text-gray-600'>Status</span>
+                    <span className='text-primary'>Status</span>
                     <span
                       className={`px-2 py-1 text-xs rounded-full ${
                         activeTimelapse.status === "running"
                           ? "bg-green-100 text-green-600"
-                          : "bg-gray-100 text-gray-600"
+                          : "bg-gray-100 text-primary"
                       }`}
                     >
                       {activeTimelapse.status}
                     </span>
                   </div>
                   <div className='flex justify-between'>
-                    <span className='text-gray-600'>Started</span>
+                    <span className='text-primary'>Started</span>
                     <span className='text-sm'>
                       {new Date(activeTimelapse.start_date).toLocaleDateString(
                         "en-US",
@@ -597,14 +650,14 @@ export default function CameraDetailsPage() {
                     </span>
                   </div>
                   <div className='flex justify-between'>
-                    <span className='text-gray-600'>Images</span>
+                    <span className='text-primary'>Images</span>
                     <span className='text-sm'>
                       {activeTimelapse.image_count}
                     </span>
                   </div>
                   {activeTimelapse.last_capture_at && (
                     <div className='flex justify-between'>
-                      <span className='text-gray-600'>Last Capture</span>
+                      <span className='text-primary'>Last Capture</span>
                       <span className='text-sm'>
                         {formatRelativeTime(activeTimelapse.last_capture_at, {
                           timezone,
@@ -621,25 +674,25 @@ export default function CameraDetailsPage() {
             </div>
 
             {/* Camera Settings */}
-            <div className='p-6 bg-white rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-gray-900'>
+            <div className='p-6 glass-strong rounded-lg shadow-sm'>
+              <h3 className='mb-4 text-lg font-semibold text-white'>
                 Camera Settings
               </h3>
               <div className='space-y-3'>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Status</span>
+                  <span className='text-primary'>Status</span>
                   <span
                     className={`px-2 py-1 text-xs rounded-full ${
                       camera.status === "active"
                         ? "bg-green-100 text-green-600"
-                        : "bg-gray-100 text-gray-600"
+                        : "bg-gray-100 text-primary"
                     }`}
                   >
                     {camera.status}
                   </span>
                 </div>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Time Window</span>
+                  <span className='text-primary'>Time Window</span>
                   <span className='text-sm'>
                     {camera.use_time_window
                       ? `${camera.time_window_start} - ${camera.time_window_end}`
@@ -647,15 +700,66 @@ export default function CameraDetailsPage() {
                   </span>
                 </div>
                 <div className='flex justify-between'>
-                  <span className='text-gray-600'>Failures</span>
+                  <span className='text-primary'>Failures</span>
                   <span className='text-sm'>{camera.consecutive_failures}</span>
                 </div>
               </div>
             </div>
 
+            {/* Video Generation Settings */}
+            <VideoGenerationSettings
+              settings={{
+                video_generation_mode: camera.video_generation_mode,
+                standard_fps: camera.standard_fps,
+                enable_time_limits: camera.enable_time_limits,
+                min_time_seconds: camera.min_time_seconds,
+                max_time_seconds: camera.max_time_seconds,
+                target_time_seconds: camera.target_time_seconds,
+                fps_bounds_min: camera.fps_bounds_min,
+                fps_bounds_max: camera.fps_bounds_max,
+              }}
+              onChange={async (newSettings) => {
+                try {
+                  const response = await fetch(`/api/cameras/${camera.id}`, {
+                    method: "PATCH",
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(newSettings),
+                  })
+
+                  if (!response.ok) {
+                    throw new Error("Failed to update video settings")
+                  }
+
+                  // Update local camera state
+                  setCamera((prev) =>
+                    prev ? { ...prev, ...newSettings } : null
+                  )
+
+                  toast.success("Video generation settings updated", {
+                    description: "Settings will apply to new timelapses",
+                    duration: 4000,
+                  })
+                } catch (error) {
+                  console.error("Error updating video settings:", error)
+                  toast.error("Failed to update video settings", {
+                    description:
+                      error instanceof Error
+                        ? error.message
+                        : "Unknown error occurred",
+                    duration: 6000,
+                  })
+                }
+              }}
+              totalImages={stats.totalImages}
+              showPreview={true}
+              className='w-full'
+            />
+
             {/* Quick Actions */}
-            <div className='p-6 bg-white rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-gray-900'>
+            <div className='p-6 glass-strong rounded-lg shadow-sm'>
+              <h3 className='mb-4 text-lg font-semibold text-white'>
                 Quick Actions
               </h3>
               <div className='space-y-3'>
@@ -671,7 +775,7 @@ export default function CameraDetailsPage() {
                 >
                   View Videos
                 </Link>
-                <button className='w-full px-4 py-2 text-gray-600 rounded-lg bg-gray-50 hover:bg-gray-100'>
+                <button className='w-full px-4 py-2 text-primary rounded-lg glass hover:bg-gray-100'>
                   Test Connection
                 </button>
               </div>

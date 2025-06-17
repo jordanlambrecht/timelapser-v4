@@ -64,6 +64,13 @@ class Video(VideoBase):
     images_end_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
+    
+    # Video generation calculation metadata
+    calculated_fps: Optional[float] = None
+    target_duration: Optional[int] = None
+    actual_duration: Optional[float] = None
+    fps_was_adjusted: bool = False
+    adjustment_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

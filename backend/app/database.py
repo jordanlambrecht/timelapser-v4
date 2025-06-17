@@ -103,9 +103,15 @@ class AsyncDatabase:
                     """
                     INSERT INTO cameras (name, rtsp_url, status, time_window_start, 
                                        time_window_end, use_time_window, health_status,
-                                       consecutive_failures)
+                                       consecutive_failures, video_generation_mode, 
+                                       standard_fps, enable_time_limits, min_time_seconds,
+                                       max_time_seconds, target_time_seconds, fps_bounds_min,
+                                       fps_bounds_max)
                     VALUES (%(name)s, %(rtsp_url)s, %(status)s, %(time_window_start)s,
-                           %(time_window_end)s, %(use_time_window)s, 'unknown', 0)
+                           %(time_window_end)s, %(use_time_window)s, 'unknown', 0,
+                           %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,
+                           %(min_time_seconds)s, %(max_time_seconds)s, %(target_time_seconds)s,
+                           %(fps_bounds_min)s, %(fps_bounds_max)s)
                     RETURNING id
                 """,
                     camera_data,
@@ -131,6 +137,14 @@ class AsyncDatabase:
                         "time_window_end",
                         "use_time_window",
                         "active_timelapse_id",
+                        "video_generation_mode",
+                        "standard_fps",
+                        "enable_time_limits",
+                        "min_time_seconds",
+                        "max_time_seconds",
+                        "target_time_seconds",
+                        "fps_bounds_min",
+                        "fps_bounds_max",
                     ]:
                         fields.append(f"{field} = %({field})s")
                         values[field] = value
@@ -355,6 +369,134 @@ class AsyncDatabase:
                     )
 
                 return timelapse_id
+
+    async def copy_camera_video_settings_to_timelapse(self, camera_id: int, timelapse_id: int) -> bool:
+        """Copy video generation settings from camera to timelapse"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Get camera's video generation settings
+                await cur.execute(
+                    """
+                    SELECT video_generation_mode, standard_fps, enable_time_limits,
+                           min_time_seconds, max_time_seconds, target_time_seconds,
+                           fps_bounds_min, fps_bounds_max
+                    FROM cameras
+                    WHERE id = %s
+                    """,
+                    (camera_id,),
+                )
+                camera_settings_row = await cur.fetchone()
+                
+                if not camera_settings_row:
+                    logger.error(f"Camera {camera_id} not found for copying video settings")
+                    return False
+                
+                camera_settings = cast(Dict[str, Any], camera_settings_row)
+                
+                # Update timelapse with camera's settings
+                await cur.execute(
+                    """
+                    UPDATE timelapses 
+                    SET video_generation_mode = %s, standard_fps = %s, enable_time_limits = %s,
+                        min_time_seconds = %s, max_time_seconds = %s, target_time_seconds = %s,
+                        fps_bounds_min = %s, fps_bounds_max = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (
+                        camera_settings["video_generation_mode"],
+                        camera_settings["standard_fps"],
+                        camera_settings["enable_time_limits"],
+                        camera_settings["min_time_seconds"],
+                        camera_settings["max_time_seconds"],
+                        camera_settings["target_time_seconds"],
+                        camera_settings["fps_bounds_min"],
+                        camera_settings["fps_bounds_max"],
+                        timelapse_id,
+                    ),
+                )
+                
+                return cur.rowcount > 0
+
+    async def get_effective_video_settings(self, camera_id: int, timelapse_id: Optional[int] = None) -> Dict[str, Any]:
+        """Get effective video generation settings (timelapse overrides or camera defaults)"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Get camera defaults
+                await cur.execute(
+                    """
+                    SELECT video_generation_mode, standard_fps, enable_time_limits,
+                           min_time_seconds, max_time_seconds, target_time_seconds,
+                           fps_bounds_min, fps_bounds_max
+                    FROM cameras
+                    WHERE id = %s
+                    """,
+                    (camera_id,),
+                )
+                camera_row = await cur.fetchone()
+                
+                if not camera_row:
+                    raise ValueError(f"Camera {camera_id} not found")
+                
+                camera_settings = cast(Dict[str, Any], camera_row)
+                
+                if timelapse_id:
+                    # Get timelapse overrides
+                    await cur.execute(
+                        """
+                        SELECT video_generation_mode, standard_fps, enable_time_limits,
+                               min_time_seconds, max_time_seconds, target_time_seconds,
+                               fps_bounds_min, fps_bounds_max
+                        FROM timelapses
+                        WHERE id = %s
+                        """,
+                        (timelapse_id,),
+                    )
+                    timelapse_row = await cur.fetchone()
+                    
+                    if timelapse_row:
+                        timelapse_settings = cast(Dict[str, Any], timelapse_row)
+                        
+                        # Use timelapse settings where not null, fall back to camera settings
+                        effective_settings = {}
+                        for key in camera_settings.keys():
+                            timelapse_value = timelapse_settings.get(key)
+                            effective_settings[key] = timelapse_value if timelapse_value is not None else camera_settings[key]
+                        
+                        return effective_settings
+                
+                return camera_settings
+
+    async def update_timelapse_video_settings(self, timelapse_id: int, settings: Dict[str, Any]) -> bool:
+        """Update video generation settings for a timelapse"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Build dynamic update query for video settings
+                fields = []
+                values = {}
+
+                for field, value in settings.items():
+                    if field in [
+                        "video_generation_mode",
+                        "standard_fps",
+                        "enable_time_limits",
+                        "min_time_seconds",
+                        "max_time_seconds",
+                        "target_time_seconds",
+                        "fps_bounds_min",
+                        "fps_bounds_max",
+                    ]:
+                        fields.append(f"{field} = %({field})s")
+                        values[field] = value
+
+                if not fields:
+                    return False
+
+                values["timelapse_id"] = timelapse_id
+                fields.append("updated_at = CURRENT_TIMESTAMP")
+
+                query = f"UPDATE timelapses SET {', '.join(fields)} WHERE id = %(timelapse_id)s"
+                await cur.execute(query, values)
+                return cur.rowcount > 0
 
     async def update_timelapse_status(
         self, timelapse_id: int, status: str
@@ -642,6 +784,11 @@ class AsyncDatabase:
             "duration_seconds",
             "images_start_date",
             "images_end_date",
+            "calculated_fps",
+            "target_duration",
+            "actual_duration",
+            "fps_was_adjusted",
+            "adjustment_reason",
         ]
 
         updates = []
@@ -1098,6 +1245,11 @@ class SyncDatabase:
             "duration_seconds",
             "images_start_date",
             "images_end_date",
+            "calculated_fps",
+            "target_duration",
+            "actual_duration",
+            "fps_was_adjusted",
+            "adjustment_reason",
         ]
 
         updates = []

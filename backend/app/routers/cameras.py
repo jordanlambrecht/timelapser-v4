@@ -15,6 +15,7 @@ from ..models.camera import (
     transform_camera_with_image_row,
     transform_camera_with_stats_row,
 )
+from ..video_calculations import preview_video_calculation, VideoGenerationSettings
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ async def get_camera(camera_id: int):
         raise HTTPException(status_code=500, detail="Failed to fetch camera")
 
 
-@router.post("/", response_model=Camera)
+@router.post("/", response_model=CameraWithLastImage)
 async def create_camera(camera_data: CameraCreate):
     """Create a new camera"""
     try:
@@ -53,15 +54,15 @@ async def create_camera(camera_data: CameraCreate):
         if not camera_id:
             raise HTTPException(status_code=500, detail="Failed to create camera")
 
-        # Fetch the created camera
-        camera = await async_db.get_camera_by_id(camera_id)
+        # Fetch the created camera with images
+        camera = await async_db.get_camera_with_images_by_id(camera_id)
         if not camera:
             raise HTTPException(
                 status_code=500, detail="Camera created but could not be retrieved"
             )
 
         logger.info(f"Created camera {camera_id}: {camera_data.name}")
-        return camera
+        return transform_camera_with_image_row(camera)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -69,7 +70,7 @@ async def create_camera(camera_data: CameraCreate):
         raise HTTPException(status_code=500, detail="Failed to create camera")
 
 
-@router.put("/{camera_id}", response_model=Camera)
+@router.put("/{camera_id}", response_model=CameraWithLastImage)
 async def update_camera(camera_id: int, camera_data: CameraUpdate):
     """Update a camera"""
     try:
@@ -85,15 +86,15 @@ async def update_camera(camera_id: int, camera_data: CameraUpdate):
         if not success:
             raise HTTPException(status_code=500, detail="Failed to update camera")
 
-        # Fetch updated camera
-        updated_camera = await async_db.get_camera_by_id(camera_id)
+        # Fetch updated camera with images
+        updated_camera = await async_db.get_camera_with_images_by_id(camera_id)
         if not updated_camera:
             raise HTTPException(
                 status_code=500, detail="Camera updated but could not be retrieved"
             )
 
         logger.info(f"Updated camera {camera_id}")
-        return updated_camera
+        return transform_camera_with_image_row(updated_camera)
     except HTTPException:
         raise
     except ValueError as e:
@@ -232,7 +233,43 @@ async def get_camera_with_stats(camera_id: int):
         raise HTTPException(status_code=500, detail="Failed to fetch camera with stats")
 
 
-@router.get("/{camera_id}/timelapse-stats", response_model=dict)
+@router.get("/{camera_id}/debug", response_model=dict)
+async def debug_camera_transformation(camera_id: int):
+    """Debug endpoint to see what's happening during camera transformation"""
+    try:
+        # Get raw camera data
+        raw_camera = await async_db.get_camera_with_images_by_id(camera_id)
+        if not raw_camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+            
+        # Show the transformation steps
+        camera_data = {
+            k: v
+            for k, v in raw_camera.items()
+            if not k.startswith("last_image_") and not k.startswith("timelapse_")
+        }
+        
+        # Add timelapse fields manually
+        if "timelapse_status" in raw_camera:
+            camera_data["timelapse_status"] = raw_camera["timelapse_status"]
+        if "timelapse_id" in raw_camera:
+            camera_data["timelapse_id"] = raw_camera["timelapse_id"]
+            
+        return {
+            "raw_data": raw_camera,
+            "filtered_data": camera_data,
+            "has_video_fields": {
+                "video_generation_mode": "video_generation_mode" in camera_data,
+                "standard_fps": "standard_fps" in camera_data,
+                "enable_time_limits": "enable_time_limits" in camera_data,
+                "target_time_seconds": "target_time_seconds" in camera_data,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error debugging camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to debug camera")
 async def get_camera_timelapse_stats(camera_id: int):
     """Get timelapse statistics for a camera (total vs current timelapse images)"""
     try:
@@ -297,3 +334,75 @@ async def capture_now(camera_id: int):
     except Exception as e:
         logger.error(f"Error triggering capture for camera {camera_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to trigger capture")
+
+
+@router.get("/{camera_id}/video-settings", response_model=dict)
+async def get_effective_video_settings(camera_id: int, timelapse_id: int = None):
+    """Get effective video generation settings for a camera (with optional timelapse overrides)"""
+    try:
+        # Check if camera exists
+        camera = await async_db.get_camera_by_id(camera_id)
+        if not camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Get effective settings
+        settings = await async_db.get_effective_video_settings(camera_id, timelapse_id)
+        
+        return {
+            "camera_id": camera_id,
+            "timelapse_id": timelapse_id,
+            "settings": settings
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching video settings for camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch video settings")
+
+
+@router.post("/{camera_id}/video-preview", response_model=dict)
+async def preview_video_generation(camera_id: int, settings: dict, timelapse_id: int = None):
+    """Preview video generation calculation with given settings and current image count"""
+    try:
+        # Check if camera exists
+        camera = await async_db.get_camera_by_id(camera_id)
+        if not camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Get total images for calculation
+        if timelapse_id:
+            # Get images for specific timelapse
+            images = await async_db.get_timelapse_images(timelapse_id)
+            total_images = len(images)
+        else:
+            # Get total images for camera
+            stats = await async_db.get_camera_timelapse_stats(camera_id)
+            total_images = stats.get("total_images", 0)
+
+        # Convert settings dict to VideoGenerationSettings
+        video_settings = VideoGenerationSettings(
+            video_generation_mode=settings.get("video_generation_mode", "standard"),
+            standard_fps=settings.get("standard_fps", 12),
+            enable_time_limits=settings.get("enable_time_limits", False),
+            min_time_seconds=settings.get("min_time_seconds"),
+            max_time_seconds=settings.get("max_time_seconds"),
+            target_time_seconds=settings.get("target_time_seconds"),
+            fps_bounds_min=settings.get("fps_bounds_min", 1),
+            fps_bounds_max=settings.get("fps_bounds_max", 60)
+        )
+
+        # Generate preview
+        preview = preview_video_calculation(total_images, video_settings)
+        
+        return {
+            "camera_id": camera_id,
+            "timelapse_id": timelapse_id,
+            "preview": preview
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating video preview for camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate video preview")
