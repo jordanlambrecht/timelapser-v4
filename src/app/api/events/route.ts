@@ -12,6 +12,10 @@ const ALLOWED_EVENT_TYPES = [
   "camera_deleted",
   "video_generated",
   "video_status_changed",
+  "thumbnail_regeneration_progress",
+  "thumbnail_regeneration_complete",
+  "thumbnail_regeneration_cancelled",
+  "thumbnail_regeneration_error",
 ] as const
 
 type AllowedEventType = (typeof ALLOWED_EVENT_TYPES)[number]

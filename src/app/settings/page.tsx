@@ -13,15 +13,19 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import {
   Settings as SettingsIcon,
   Clock,
   Save,
   RefreshCw,
   Globe,
+  Image as ImageIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TimezoneSelector } from "@/components/timezone-selector-combobox"
+import { ThumbnailRegenerationModal } from "@/components/thumbnail-regeneration-modal"
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { toast } from "@/lib/toast"
 
 export default function Settings() {
@@ -30,6 +34,9 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [captureInterval, setCaptureInterval] = useState("")
   const [timezone, setTimezone] = useState("America/Chicago")
+  const [generateThumbnails, setGenerateThumbnails] = useState(true)
+  const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false)
+  const [thumbnailConfirmOpen, setThumbnailConfirmOpen] = useState(false)
 
   // Debug timezone changes
   const handleTimezoneChange = (newTimezone: string) => {
@@ -56,10 +63,12 @@ export default function Settings() {
       setSettings(data)
       setCaptureInterval(data.capture_interval || "300")
       setTimezone(data.timezone || "America/Chicago")
+      setGenerateThumbnails(data.generate_thumbnails !== "false") // Default true unless explicitly false
 
       console.log("✅ Settings state updated:", {
         captureInterval: data.capture_interval || "300",
         timezone: data.timezone || "America/Chicago",
+        generateThumbnails: data.generate_thumbnails !== "false",
       })
     } catch (error) {
       console.error("❌ Failed to fetch settings:", error)
@@ -72,13 +81,14 @@ export default function Settings() {
     e.preventDefault()
     setSaving(true)
 
-    console.log("💾 Saving settings:", { captureInterval, timezone })
+    console.log("💾 Saving settings:", { captureInterval, timezone, generateThumbnails })
 
     try {
-      // Save both capture interval and timezone
+      // Save capture interval, timezone, and thumbnail setting
       const updates = [
         { key: "capture_interval", value: captureInterval },
         { key: "timezone", value: timezone },
+        { key: "generate_thumbnails", value: generateThumbnails.toString() },
       ]
 
       console.log("🔄 Updates to save:", updates)
@@ -129,7 +139,7 @@ export default function Settings() {
 
       // Show success toast
       toast.success("Settings saved successfully!", {
-        description: "Your capture interval and timezone have been updated",
+        description: "Your capture interval, timezone, and thumbnail settings have been updated",
         duration: 4000,
       })
 
@@ -220,10 +230,10 @@ export default function Settings() {
             <CardHeader>
               <CardTitle className='flex items-center space-x-2'>
                 <Clock className='w-5 h-5 text-primary' />
-                <span>Capture Interval</span>
+                <span>Capture Settings</span>
               </CardTitle>
               <CardDescription>
-                How often images are captured from your cameras
+                Configure image capture intervals and thumbnail generation
               </CardDescription>
             </CardHeader>
             <CardContent className='space-y-6'>
@@ -250,6 +260,62 @@ export default function Settings() {
                   <p className='text-xs text-muted-foreground'>
                     Range: 1 second to 24 hours (86,400 seconds)
                   </p>
+                </div>
+
+                {/* Thumbnail Generation Toggle */}
+                <div className='space-y-3'>
+                  <div className='flex items-center justify-between'>
+                    <div className='space-y-1'>
+                      <Label htmlFor='thumbnails' className='text-sm font-medium flex items-center space-x-2'>
+                        <ImageIcon className='w-4 h-4 text-purple-light' />
+                        <span>Generate Thumbnails</span>
+                      </Label>
+                      <p className='text-xs text-muted-foreground'>
+                        Create small preview images for faster dashboard loading
+                      </p>
+                    </div>
+                    <Switch
+                      id='thumbnails'
+                      checked={generateThumbnails}
+                      onCheckedChange={setGenerateThumbnails}
+                    />
+                  </div>
+                  <div className='p-3 rounded-lg bg-background/30 border border-borderColor/30'>
+                    <div className='flex items-center space-x-2 text-xs text-muted-foreground'>
+                      <div className={cn(
+                        "w-2 h-2 rounded-full",
+                        generateThumbnails ? "bg-green-500" : "bg-gray-500"
+                      )} />
+                      <span>
+                        {generateThumbnails
+                          ? "Thumbnails will be generated for faster dashboard performance"
+                          : "Only full-size images will be saved (slower dashboard loading)"
+                        }
+                      </span>
+                    </div>
+                    {generateThumbnails && (
+                      <div className='mt-2 text-xs text-purple-light/70'>
+                        Creates: 200×150 thumbnails + 800×600 small images alongside full captures
+                      </div>
+                    )}
+                    {generateThumbnails && (
+                      <div className='mt-3 pt-3 border-t border-borderColor/20'>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={() => setThumbnailConfirmOpen(true)}
+                          className='text-xs border-cyan/30 text-cyan hover:bg-cyan/10'
+                        >
+                          <ImageIcon className='w-3 h-3 mr-2' />
+                          Regenerate All Now
+                        </Button>
+                        <p className='mt-2 text-xs text-gray-500'>
+                          Generate thumbnails for existing images that don't have them
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Quick Presets */}
@@ -443,6 +509,28 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Thumbnail Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={thumbnailConfirmOpen}
+        onClose={() => setThumbnailConfirmOpen(false)}
+        onConfirm={() => {
+          setThumbnailConfirmOpen(false)
+          setThumbnailModalOpen(true)
+        }}
+        title="Regenerate All Thumbnails"
+        description="Are you sure? This might take a while to process all existing images and generate thumbnails."
+        confirmLabel="Yes, Start Regeneration"
+        cancelLabel="Cancel"
+        variant="warning"
+        icon={<ImageIcon className='w-6 h-6' />}
+      />
+
+      {/* Thumbnail Regeneration Modal */}
+      <ThumbnailRegenerationModal
+        isOpen={thumbnailModalOpen}
+        onClose={() => setThumbnailModalOpen(false)}
+      />
     </div>
   )
 }

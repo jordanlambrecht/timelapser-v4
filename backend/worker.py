@@ -159,10 +159,11 @@ class AsyncTimelapseWorker:
         This method handles the complete image capture workflow for a single camera:
         1. Validates time window restrictions
         2. Retrieves active timelapse configuration
-        3. Executes RTSP capture via thread executor (sync compatibility)
-        4. Updates camera health status
-        5. Calculates next capture timing
-        6. Broadcasts capture events for real-time UI updates
+        3. Checks thumbnail generation setting
+        4. Executes RTSP capture via thread executor (sync compatibility)
+        5. Updates camera health status
+        6. Calculates next capture timing
+        7. Broadcasts capture events for real-time UI updates
 
         Args:
             camera_info (dict): Camera configuration containing:
@@ -197,11 +198,26 @@ class AsyncTimelapseWorker:
                 logger.debug(f"No active timelapse for camera {camera_name}")
                 return
 
-            logger.info(f"Starting capture for camera {camera_id} ({camera_name})")
+            # Check thumbnail generation setting
+            def get_thumbnail_setting():
+                try:
+                    with sync_db.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT value FROM settings WHERE key = 'generate_thumbnails'")
+                            result = cur.fetchone()
+                            if result:
+                                return result["value"].lower() == "true"
+                            return True  # Default to enabled if setting not found
+                except Exception as e:
+                    logger.warning(f"Failed to get thumbnail setting: {e}")
+                    return True  # Default to enabled on error
+
+            generate_thumbnails = await loop.run_in_executor(None, get_thumbnail_setting)
+
+            logger.info(f"Starting capture for camera {camera_id} ({camera_name}) [thumbnails: {'enabled' if generate_thumbnails else 'disabled'}]")
 
             # Capture image - RTSPCapture handles directory creation and database recording
             # Note: RTSPCapture still uses sync database, so we run in executor
-            loop = asyncio.get_event_loop()
             success, message, saved_file_path = await loop.run_in_executor(
                 None,
                 self.capture.capture_image,
@@ -210,6 +226,7 @@ class AsyncTimelapseWorker:
                 rtsp_url,
                 sync_db,  # RTSPCapture still uses sync_db
                 timelapse["id"],
+                generate_thumbnails,  # Pass thumbnail setting
             )
 
             if success:

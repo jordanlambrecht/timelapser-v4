@@ -130,6 +130,23 @@ async def delete_camera(camera_id: int):
 @router.get("/{camera_id}/latest-capture")
 async def get_latest_capture(camera_id: int):
     """Get the latest captured image for a camera"""
+    return await _serve_camera_image(camera_id, "full")
+
+
+@router.get("/{camera_id}/latest-thumbnail") 
+async def get_latest_thumbnail(camera_id: int):
+    """Get the latest thumbnail image for a camera"""
+    return await _serve_camera_image(camera_id, "thumbnail")
+
+
+@router.get("/{camera_id}/latest-small")
+async def get_latest_small(camera_id: int):
+    """Get the latest small image for a camera"""
+    return await _serve_camera_image(camera_id, "small")
+
+
+async def _serve_camera_image(camera_id: int, size: str = "full"):
+    """Serve camera image in specified size (full, thumbnail, small)"""
     try:
         # Get the latest image for this camera using the LATERAL join approach
         image_data = await async_db.get_latest_image_for_camera(camera_id)
@@ -139,8 +156,22 @@ async def get_latest_capture(camera_id: int):
                 status_code=404, detail="No images captured yet for this camera"
             )
 
-        # Get the image file path
-        file_path = image_data["file_path"]
+        # Select the appropriate file path based on size
+        if size == "thumbnail":
+            file_path = image_data.get("thumbnail_path")
+            if not file_path:
+                # Fall back to full image if thumbnail not available
+                file_path = image_data["file_path"]
+                logger.debug(f"No thumbnail available for camera {camera_id}, serving full image")
+        elif size == "small":
+            file_path = image_data.get("small_path")
+            if not file_path:
+                # Fall back to full image if small not available
+                file_path = image_data["file_path"]
+                logger.debug(f"No small image available for camera {camera_id}, serving full image")
+        else:
+            # Default to full image
+            file_path = image_data["file_path"]
 
         # Get project root regardless of path type for logging purposes
         current_file = os.path.abspath(__file__)
@@ -179,13 +210,19 @@ async def get_latest_capture(camera_id: int):
                     # If it's already a string, use it directly
                     last_modified = str(captured_at)
 
+            # Set cache control based on image size - thumbnails can be cached longer
+            if size in ["thumbnail", "small"]:
+                cache_control = "public, max-age=300"  # 5 minute cache for thumbnails
+            else:
+                cache_control = "no-cache, no-store, must-revalidate"  # No cache for full images
+
             return Response(
                 content=image_data_bytes,
                 media_type="image/jpeg",
                 headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0",
+                    "Cache-Control": cache_control,
+                    "Pragma": "no-cache" if size == "full" else "public",
+                    "Expires": "0" if size == "full" else "",
                     "Last-Modified": last_modified,
                     "Content-Length": str(len(image_data_bytes)),
                 },
@@ -196,8 +233,8 @@ async def get_latest_capture(camera_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching latest capture for camera {camera_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch latest capture")
+        logger.error(f"Error fetching latest {size} image for camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch latest {size} image")
 
 
 @router.get("/stats/", response_model=List[CameraWithStats])

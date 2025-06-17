@@ -5,8 +5,18 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict
 import time
+import sys
+import os
+from pathlib import Path
+
+# Add the app directory to Python path for imports
+current_dir = Path(__file__).parent
+app_dir = current_dir / "app"
+sys.path.insert(0, str(app_dir))
+
+from thumbnail_processor import create_thumbnail_processor
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +27,9 @@ class RTSPCapture:
         self.timeout_seconds = 10
         self.retry_attempts = 3
         self.retry_delay = 2  # seconds between retries
+        
+        # Initialize optimized thumbnail processor
+        self.thumbnail_processor = create_thumbnail_processor()
 
     def ensure_timelapse_directory(self, camera_id: int, timelapse_id: int) -> Path:
         """Create and return timelapse-specific directory structure (entity-based)"""
@@ -29,6 +42,41 @@ class RTSPCapture:
         )
         frames_dir.mkdir(parents=True, exist_ok=True)
         return frames_dir
+
+    def ensure_camera_directories(self, camera_id: int) -> Dict[str, Path]:
+        """Create and return camera-specific directory structure with separate folders for different sizes"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        base_dir = self.base_data_dir / "cameras" / f"camera-{camera_id}"
+        
+        directories = {
+            'images': base_dir / "images" / today,
+            'thumbnails': base_dir / "thumbnails" / today,
+            'small': base_dir / "small" / today
+        }
+        
+        # Create all directories
+        for dir_path in directories.values():
+            dir_path.mkdir(parents=True, exist_ok=True)
+            
+        return directories
+
+    def save_frame_with_quality(self, frame, filepath: Path, quality: int = 85) -> Tuple[bool, int]:
+        """Save frame to disk with specified JPEG quality. Returns (success, file_size)"""
+        try:
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+            success = cv2.imwrite(str(filepath), frame, encode_params)
+
+            if success:
+                file_size = filepath.stat().st_size
+                logger.debug(f"Saved image: {filepath} ({file_size} bytes)")
+                return True, file_size
+            else:
+                logger.error(f"Failed to save image: {filepath}")
+                return False, 0
+
+        except Exception as e:
+            logger.error(f"Exception saving frame: {e}")
+            return False, 0
 
     def generate_entity_filename(self, day_number: int) -> str:
         """Generate day-based filename for entity-based structure"""
@@ -45,7 +93,7 @@ class RTSPCapture:
         return camera_dir
 
     def generate_filename(self, camera_id: int) -> str:
-        """Generate timestamped filename for captured image (LEGACY - for backward compatibility)"""
+        """Generate timestamped filename for captured image"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"capture_{timestamp}.jpg"
 
@@ -89,24 +137,9 @@ class RTSPCapture:
                 cap.release()
 
     def save_frame(self, frame, filepath: Path) -> bool:
-        """Save frame to disk with JPEG compression"""
-        try:
-            # Use moderate compression (quality 85/100)
-            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-            success = cv2.imwrite(str(filepath), frame, encode_params)
-
-            if success:
-                # Log file size
-                file_size = filepath.stat().st_size
-                logger.debug(f"Saved image: {filepath} ({file_size} bytes)")
-                return True
-            else:
-                logger.error(f"Failed to save image: {filepath}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Exception saving frame: {e}")
-            return False
+        """Save frame to disk with JPEG compression (legacy method for compatibility)"""
+        success, _ = self.save_frame_with_quality(frame, filepath, quality=85)
+        return success
 
     def capture_image(
         self,
@@ -115,10 +148,12 @@ class RTSPCapture:
         rtsp_url: str,
         database=None,
         timelapse_id: Optional[int] = None,
+        generate_thumbnails: bool = True,
     ) -> Tuple[bool, str, Optional[str]]:
         """
         Capture image from camera with retry logic and database tracking
         Uses entity-based file structure when timelapse_id is provided
+        Generates thumbnails when enabled
         Returns (success: bool, message: str, filepath: Optional[str])
         """
         logger.info(f"Starting capture for camera {camera_id} ({camera_name})")
@@ -174,50 +209,112 @@ class RTSPCapture:
                         # Store relative path for database (entity-based)
                         relative_db_path = f"data/cameras/camera-{camera_id}/timelapse-{timelapse_id}/frames/{filename}"
 
-                    except Exception as e:
-                        logger.error(f"Error setting up entity-based path: {e}")
-                        continue
-                else:
-                    # Use legacy date-based structure
-                    camera_dir = self.ensure_camera_directory(camera_id)
-                    filename = self.generate_filename(camera_id)
-                    filepath = camera_dir / filename
+                        # Entity-based structure doesn't use thumbnails yet - would need separate implementation
+                        # For now, just save the main image
+                        if self.save_frame(frame, filepath):
+                            file_size = filepath.stat().st_size
 
-                    # Store relative path for database (legacy)
-                    relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
-
-                # Save frame
-                if self.save_frame(frame, filepath):
-                    # Get file size for database
-                    file_size = filepath.stat().st_size
-
-                    # Record in database if provided
-                    image_id = None
-                    if database:
-                        if use_entity_structure:
-                            # Use entity-based database recording with day number
+                            # Record in database
                             image_id = database.record_captured_image(
                                 camera_id=camera_id,
                                 timelapse_id=timelapse_id,
                                 file_path=relative_db_path,
                                 file_size=file_size,
                             )
-                        else:
-                            # Legacy recording (would need to be updated to use active timelapse)
-                            logger.warning(
-                                "Legacy capture mode - consider updating to entity-based"
-                            )
 
-                        if image_id:
-                            logger.info(f"Recorded image {image_id} in database")
+                            if image_id:
+                                logger.info(f"Recorded image {image_id} in database")
+
+                            message = f"Successfully captured and saved image: {filename}"
+                            logger.info(message)
+                            return True, message, str(filepath)
+
+                    except Exception as e:
+                        logger.error(f"Error setting up entity-based path: {e}")
+                        continue
+                else:
+                    # Use legacy date-based structure with thumbnail support
+                    directories = self.ensure_camera_directories(camera_id)
+                    filename = self.generate_filename(camera_id)
+                    filepath = directories['images'] / filename
+
+                    # Store relative path for database (legacy)
+                    relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
+
+                    # Save main image
+                    success, file_size = self.save_frame_with_quality(frame, filepath, quality=85)
+                    if not success:
+                        continue
+
+                    # Generate thumbnails if enabled
+                    thumbnail_paths = {'thumbnail': None, 'small': None}
+                    if generate_thumbnails:
+                        # Use optimized Pillow-based thumbnail processor
+                        thumbnail_results = self.thumbnail_processor.generate_thumbnails_from_opencv(
+                            frame, filename, directories
+                        )
+                        
+                        # Extract paths and sizes
+                        if thumbnail_results['thumbnail']:
+                            thumbnail_paths['thumbnail'] = thumbnail_results['thumbnail']
+                            
+                        if thumbnail_results['small']:
+                            thumbnail_paths['small'] = thumbnail_results['small']
+
+                    # Record in database if provided
+                    image_id = None
+                    if database:
+                        # Prepare thumbnail data for database
+                        thumbnail_path = thumbnail_paths['thumbnail'][0] if thumbnail_paths['thumbnail'] else None
+                        thumbnail_size = thumbnail_paths['thumbnail'][1] if thumbnail_paths['thumbnail'] else None
+                        small_path = thumbnail_paths['small'][0] if thumbnail_paths['small'] else None
+                        small_size = thumbnail_paths['small'][1] if thumbnail_paths['small'] else None
+
+                        # This is the legacy path - need to find active timelapse for this camera
+                        try:
+                            with database.get_connection() as conn:
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        """
+                                        SELECT t.id 
+                                        FROM cameras c
+                                        INNER JOIN timelapses t ON c.active_timelapse_id = t.id
+                                        WHERE c.id = %s AND t.status = 'running'
+                                        """,
+                                        (camera_id,)
+                                    )
+                                    active_timelapse_row = cur.fetchone()
+                                    
+                            if active_timelapse_row:
+                                active_timelapse_id = active_timelapse_row["id"]
+                                
+                                # Call the enhanced database method with thumbnail data
+                                image_id = database.record_captured_image(
+                                    camera_id=camera_id,
+                                    timelapse_id=active_timelapse_id,
+                                    file_path=relative_db_path,
+                                    file_size=file_size,
+                                    thumbnail_path=thumbnail_path,
+                                    thumbnail_size=thumbnail_size,
+                                    small_path=small_path,
+                                    small_size=small_size,
+                                )
+                                
+                                if image_id:
+                                    logger.info(f"Recorded image {image_id} in database with thumbnails")
+                            else:
+                                logger.warning(f"No active timelapse found for camera {camera_id} - legacy capture mode")
+                                
+                        except Exception as e:
+                            logger.error(f"Error recording image with thumbnails for camera {camera_id}: {e}")
 
                     message = f"Successfully captured and saved image: {filename}"
+                    if generate_thumbnails:
+                        thumbnail_count = sum(1 for x in thumbnail_paths.values() if x is not None)
+                        message += f" (+ {thumbnail_count} thumbnails)"
+                    
                     logger.info(message)
                     return True, message, str(filepath)
-                else:
-                    message = f"Failed to save captured frame"
-                    logger.error(message)
-                    continue
 
             except Exception as e:
                 message = f"Capture attempt {attempt + 1} failed: {str(e)}"

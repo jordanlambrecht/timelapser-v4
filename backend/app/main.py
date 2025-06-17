@@ -18,6 +18,7 @@ from .routers import (
     images,
     health,
     dashboard,
+    thumbnails,
 )
 
 
@@ -83,6 +84,7 @@ app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(thumbnails.router, prefix="/api/thumbnails", tags=["thumbnails"])
 
 
 # Health check endpoint

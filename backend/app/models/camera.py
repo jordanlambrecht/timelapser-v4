@@ -245,6 +245,10 @@ class ImageForCamera(BaseModel):
     file_path: str
     file_size: Optional[int] = None
     day_number: int
+    thumbnail_path: Optional[str] = None
+    thumbnail_size: Optional[int] = None
+    small_path: Optional[str] = None
+    small_size: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -281,6 +285,10 @@ def transform_camera_with_image_row(row: Dict[str, Any]) -> CameraWithLastImage:
             file_path=row["last_image_file_path"],
             file_size=row.get("last_image_file_size"),
             day_number=row["last_image_day_number"],
+            thumbnail_path=row.get("last_image_thumbnail_path"),
+            thumbnail_size=row.get("last_image_thumbnail_size"),
+            small_path=row.get("last_image_small_path"),
+            small_size=row.get("last_image_small_size"),
         )
 
     return camera

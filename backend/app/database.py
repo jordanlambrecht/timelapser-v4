@@ -184,11 +184,16 @@ class AsyncDatabase:
                         i.captured_at as last_image_captured_at,
                         i.file_path as last_image_file_path,
                         i.file_size as last_image_file_size,
-                        i.day_number as last_image_day_number
+                        i.day_number as last_image_day_number,
+                        i.thumbnail_path as last_image_thumbnail_path,
+                        i.thumbnail_size as last_image_thumbnail_size,
+                        i.small_path as last_image_small_path,
+                        i.small_size as last_image_small_size
                     FROM cameras c 
                     LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
                     LEFT JOIN LATERAL (
-                        SELECT id, captured_at, file_path, file_size, day_number
+                        SELECT id, captured_at, file_path, file_size, day_number,
+                               thumbnail_path, thumbnail_size, small_path, small_size
                         FROM images 
                         WHERE camera_id = c.id 
                         ORDER BY captured_at DESC 
@@ -216,11 +221,16 @@ class AsyncDatabase:
                         i.captured_at as last_image_captured_at,
                         i.file_path as last_image_file_path,
                         i.file_size as last_image_file_size,
-                        i.day_number as last_image_day_number
+                        i.day_number as last_image_day_number,
+                        i.thumbnail_path as last_image_thumbnail_path,
+                        i.thumbnail_size as last_image_thumbnail_size,
+                        i.small_path as last_image_small_path,
+                        i.small_size as last_image_small_size
                     FROM cameras c 
                     LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
                     LEFT JOIN LATERAL (
-                        SELECT id, captured_at, file_path, file_size, day_number
+                        SELECT id, captured_at, file_path, file_size, day_number,
+                               thumbnail_path, thumbnail_size, small_path, small_size
                         FROM images 
                         WHERE camera_id = c.id 
                         ORDER BY captured_at DESC 
@@ -842,7 +852,9 @@ class AsyncDatabase:
                         c.name as camera_name
                     FROM cameras c
                     LEFT JOIN LATERAL (
-                        SELECT *
+                        SELECT id, captured_at, file_path, file_size, day_number,
+                               thumbnail_path, thumbnail_size, small_path, small_size,
+                               camera_id, timelapse_id, created_at, date_directory, file_name
                         FROM images 
                         WHERE camera_id = c.id 
                         ORDER BY captured_at DESC 
@@ -1064,7 +1076,9 @@ class SyncDatabase:
                         c.name as camera_name
                     FROM cameras c
                     LEFT JOIN LATERAL (
-                        SELECT *
+                        SELECT id, captured_at, file_path, file_size, day_number,
+                               thumbnail_path, thumbnail_size, small_path, small_size,
+                               camera_id, timelapse_id, created_at, date_directory, file_name
                         FROM images 
                         WHERE camera_id = c.id 
                         ORDER BY captured_at DESC 
@@ -1100,9 +1114,11 @@ class SyncDatabase:
                 return cast(List[Dict[str, Any]], cur.fetchall())
 
     def record_captured_image(
-        self, camera_id: int, timelapse_id: int, file_path: str, file_size: int
+        self, camera_id: int, timelapse_id: int, file_path: str, file_size: int,
+        thumbnail_path: Optional[str] = None, thumbnail_size: Optional[int] = None,
+        small_path: Optional[str] = None, small_size: Optional[int] = None
     ) -> Optional[int]:
-        """Record a captured image in the database"""
+        """Record a captured image in the database with optional thumbnail data"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # Get timelapse start date to calculate day number
@@ -1123,14 +1139,16 @@ class SyncDatabase:
                 current_date = date.today()
                 day_number = (current_date - start_date).days + 1
 
-                # Insert image record
+                # Insert image record with thumbnail data
                 cur.execute(
                     """
-                    INSERT INTO images (camera_id, timelapse_id, file_path, captured_at, day_number, file_size)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s)
+                    INSERT INTO images (camera_id, timelapse_id, file_path, captured_at, day_number, file_size,
+                                       thumbnail_path, thumbnail_size, small_path, small_size)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
-                    (camera_id, timelapse_id, file_path, day_number, file_size),
+                    (camera_id, timelapse_id, file_path, day_number, file_size,
+                     thumbnail_path, thumbnail_size, small_path, small_size),
                 )
 
                 image_row = cur.fetchone()

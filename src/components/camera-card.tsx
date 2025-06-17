@@ -14,6 +14,7 @@ import { VideoNameModal } from "@/components/video-name-modal"
 import { VideoProgressModal } from "@/components/video-progress-modal"
 import { NewTimelapseDialog } from "@/components/new-timelapse-dialog"
 import { StopTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
+import { CameraImageWithFallback } from "@/components/camera-image-with-fallback"
 import {
   MoreVertical,
   Play,
@@ -94,8 +95,6 @@ export function CameraCard({
   onDeleteCamera,
   onGenerateVideo,
 }: CameraCardProps) {
-  const [imageError, setImageError] = useState(false)
-  const [imageLoading, setImageLoading] = useState(true)
   const [imageKey, setImageKey] = useState(Date.now()) // Force image reload
   const [actualImageCount, setActualImageCount] = useState<number | null>(null)
   const [timelapseStats, setTimelapseStats] = useState<{
@@ -165,8 +164,6 @@ export function CameraCard({
                   console.log(`New image captured for camera ${camera.id}`)
                   // Only refresh image if this camera now has captures
                   setImageKey(Date.now()) // Force image reload
-                  setImageError(false) // Reset error state
-                  setImageLoading(true) // Show loading state
 
                   // Update image count if provided
                   if (data.image_count !== undefined) {
@@ -202,8 +199,6 @@ export function CameraCard({
                   )
                   // Force image refresh when timelapse status changes
                   setImageKey(Date.now())
-                  setImageError(false)
-                  setImageLoading(true)
                   
                   // If a new timelapse was started, reset counters immediately
                   if (data.status === "running" && data.timelapse_id) {
@@ -646,17 +641,6 @@ export function CameraCard({
       {/* Camera Image Preview */}
       <div className='px-6 pb-4'>
         <div className='relative overflow-hidden border aspect-video rounded-xl bg-gray-900/50 border-gray-700/50 backdrop-blur-sm'>
-          {camera.last_image && imageLoading && (
-            <div className='absolute inset-0 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm'>
-              <div className='flex flex-col items-center space-y-3'>
-                <div className='w-8 h-8 border-2 rounded-full border-cyan/30 border-t-cyan animate-spin' />
-                <p className='text-xs font-medium text-gray-400'>
-                  Loading preview...
-                </p>
-              </div>
-            </div>
-          )}
-
           {!camera.last_image &&
           !camera.last_capture_at &&
           !timelapse?.last_capture_at ? (
@@ -668,28 +652,12 @@ export function CameraCard({
               className='object-cover opacity-60'
               priority
             />
-          ) : imageError ? (
-            // API call failed - show placeholder
-            <Image
-              src='/assets/placeholder-camera.jpg'
-              alt={`${camera.name} placeholder`}
-              fill
-              className='object-cover opacity-60'
-              priority
-            />
           ) : (
-            <img
-              src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
-              alt={`Last capture from ${camera.name}`}
-              className={cn(
-                "absolute inset-0 w-full h-full object-cover transition-all duration-500",
-                imageLoading ? "opacity-0 scale-105" : "opacity-100 scale-100"
-              )}
-              onLoad={() => setImageLoading(false)}
-              onError={() => {
-                setImageError(true)
-                setImageLoading(false)
-              }}
+            // Has captures - use smart fallback component
+            <CameraImageWithFallback
+              cameraId={camera.id}
+              cameraName={camera.name}
+              imageKey={imageKey}
             />
           )}
 
@@ -702,22 +670,6 @@ export function CameraCard({
                 </div>
                 <span className='font-medium'>Latest frame</span>
               </div>
-              {/* <div
-                className={cn(
-                  "px-2 py-1 rounded-full text-xs font-medium backdrop-blur-sm border",
-                  camera.health_status === "online"
-                    ? "bg-green-500/20 text-green-300 border-green-500/30"
-                    : camera.health_status === "offline"
-                    ? "bg-red-500/20 text-red-300 border-red-500/30"
-                    : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                )}
-              >
-                {formatRelativeTime(
-                  camera.last_image?.captured_at ||
-                    camera.last_capture_at ||
-                    timelapse?.last_capture_at
-                )}
-              </div> */}
             </div>
           </div>
 
