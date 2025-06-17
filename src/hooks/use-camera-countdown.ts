@@ -42,6 +42,7 @@ interface CountdownState {
   isWithinWindow: boolean
   isNow: boolean
   refreshInterval: number
+  captureProgress: number // 0-100 percentage of capture interval completed
 }
 
 export function useCameraCountdown({
@@ -220,6 +221,30 @@ export function useCameraCountdown({
     return isNowState(timestampData, status)
   }, [timestampData, status])
 
+  // Calculate capture progress (0-100)
+  const captureProgress = useMemo(() => {
+    if (status !== "running" || !timestampData.lastCapture || !timestampData.nextCapture) {
+      return 0
+    }
+
+    try {
+      const lastTime = new Date(timestampData.lastCapture).getTime()
+      const nextTime = new Date(timestampData.nextCapture).getTime()
+      const now = Date.now()
+
+      if (now <= lastTime) return 0
+      if (now >= nextTime) return 100
+
+      const totalInterval = nextTime - lastTime
+      const elapsed = now - lastTime
+      const progress = Math.min(100, Math.max(0, (elapsed / totalInterval) * 100))
+
+      return Math.round(progress)
+    } catch {
+      return 0
+    }
+  }, [timestampData.lastCapture, timestampData.nextCapture, status])
+
   return {
     countdown,
     lastCaptureText,
@@ -229,6 +254,7 @@ export function useCameraCountdown({
     isWithinWindow,
     isNow,
     refreshInterval,
+    captureProgress,
   }
 }
 
