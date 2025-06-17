@@ -7,7 +7,7 @@ from datetime import datetime, date
 
 class TimelapseBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
-    status: Literal["running", "stopped", "paused"] = Field(
+    status: Literal["running", "stopped", "paused", "completed", "archived"] = Field(
         default="stopped", description="Timelapse status"
     )
 
@@ -25,7 +25,7 @@ class TimelapseCreate(TimelapseBase):
 class TimelapseUpdate(BaseModel):
     """Model for updating a timelapse"""
 
-    status: Optional[Literal["running", "stopped", "paused"]] = None
+    status: Optional[Literal["running", "stopped", "paused", "completed", "archived"]] = None
 
 
 class Timelapse(TimelapseBase):

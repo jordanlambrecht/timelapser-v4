@@ -70,6 +70,7 @@ class CameraUpdate(BaseModel):
     time_window_start: Optional[time] = None
     time_window_end: Optional[time] = None
     use_time_window: Optional[bool] = None
+    active_timelapse_id: Optional[int] = None
 
     @field_validator("rtsp_url")
     @classmethod
@@ -101,6 +102,7 @@ class Camera(CameraBase):
     last_capture_success: Optional[bool] = None
     consecutive_failures: int = 0
     next_capture_at: Optional[datetime] = None  # When next capture is scheduled
+    active_timelapse_id: Optional[int] = None  # Currently active timelapse
     created_at: datetime
     updated_at: datetime
 

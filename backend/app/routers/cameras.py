@@ -232,6 +232,27 @@ async def get_camera_with_stats(camera_id: int):
         raise HTTPException(status_code=500, detail="Failed to fetch camera with stats")
 
 
+@router.get("/{camera_id}/timelapse-stats", response_model=dict)
+async def get_camera_timelapse_stats(camera_id: int):
+    """Get timelapse statistics for a camera (total vs current timelapse images)"""
+    try:
+        # Check if camera exists
+        camera = await async_db.get_camera_by_id(camera_id)
+        if not camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Get timelapse statistics
+        stats = await async_db.get_camera_timelapse_stats(camera_id)
+        
+        logger.debug(f"Fetched timelapse stats for camera {camera_id}: {stats}")
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching timelapse stats for camera {camera_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch timelapse stats")
+
+
 @router.post("/{camera_id}/capture-now", response_model=dict)
 async def capture_now(camera_id: int):
     """Trigger an immediate capture for a camera"""

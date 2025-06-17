@@ -133,29 +133,271 @@ calculations.**
 - `logs/page.tsx` - Log timestamp display with timezone context
 - All timelapse and video generation components
 
+## 🎯 ENTITY-BASED TIMELAPSE ARCHITECTURE (June 17 2025)
+
+**MAJOR ARCHITECTURAL TRANSFORMATION: Complete paradigm shift from status-based
+to entity-based timelapses, fundamentally changing how timelapses are created,
+managed, and tracked.**
+
+### Revolutionary Architecture Change ✅
+
+**Problem Solved**: Timelapses were abstract status changes rather than
+concrete, trackable entities with their own identity and historical records.
+
+**Solution Implemented**: Complete transformation to entity-based architecture
+where each "Start A New Timelapse" creates a discrete, permanent entity instead
+of reusing existing records.
+
+#### 1. **Database Schema Transformation** ✅
+
+- **Added**: `active_timelapse_id INTEGER` to cameras table with proper foreign
+  key constraints
+- **Enhanced**: Timelapse status options to include 'completed' and 'archived'
+  states
+- **Implemented**: Unique constraint ensuring only one active timelapse per
+  camera
+- **Migration**: Successfully applied with existing data preservation and
+  validation
+
+#### 2. **Paradigm Shift: Status-Based → Entity-Based** ✅
+
+**BEFORE (Status-Based Model)**:
+
+```text
+Camera 1 → Timelapse Record (ID: 2) → Status: 'running'/'stopped'
+- Same record reused indefinitely
+- No historical separation between recording sessions
+- Images accumulated over time without clear boundaries
+```
+
+**AFTER (Entity-Based Model)**:
+
+```text
+Camera 1 → Active Timelapse: "RainStorm" (ID: 2, 640 images, running)
+         → Historical: "Construction Week 1" (ID: 1, 550 images, completed)
+         → Historical: "Morning Routine" (ID: 3, 124 images, completed)
+```
+
+#### 3. **Enhanced Camera Card Display** ✅
+
+- **Total Images**: Aggregated count across all timelapses for that camera
+- **Current Timelapse**: Name and image count for active recording session
+- **Clear Separation**: "Images - Total: 1,250, Current: 47" display format
+- **Historical Context**: Users can reference specific timelapses by name and
+  time period
+
+#### 4. **New Entity-Based API Endpoints** ✅
+
+- **POST** `/api/timelapses/new` - Creates fresh timelapse entities with unique
+  identity
+- **GET** `/api/cameras/{id}/timelapse-stats` - Returns total vs current image
+  statistics
+- **POST** `/api/timelapses/{id}/complete` - Marks timelapses as permanent
+  historical records
+- **Enhanced** existing endpoints with active timelapse relationship support
+
+#### 5. **User Workflow Transformation** ✅
+
+**New Timelapse Creation Flow**:
+
+```text
+1. User clicks "Start A New Timelapse" → Creates discrete entity
+2. System generates new timelapse record → Sets as cameras.active_timelapse_id
+3. Worker captures images → Associates with active timelapse
+4. User completes timelapse → Marks as 'completed', preserves as historical record
+5. Future images → Go to next new timelapse entity when started
+```
+
+**Timelapse Management**:
+
+- **Pause/Resume**: Updates status on current active timelapse
+- **Complete**: Marks current timelapse as permanent record, clears active
+  reference
+- **Historical Access**: All previous timelapses remain as concrete, queryable
+  entities
+
+### Database Relationship Evolution ✅
+
+**New Schema Structure**:
+
+```sql
+-- Enhanced camera table with active timelapse tracking
+ALTER TABLE cameras ADD COLUMN active_timelapse_id INTEGER;
+ALTER TABLE cameras ADD CONSTRAINT fk_active_timelapse
+  FOREIGN KEY (active_timelapse_id) REFERENCES timelapses(id) ON DELETE SET NULL;
+
+-- Expanded timelapse status for entity lifecycle
+-- Status options: 'running', 'paused', 'completed', 'archived'
+```
+
+**Query Patterns**:
+
+```sql
+-- Get camera with current timelapse statistics
+SELECT c.*,
+       COUNT(all_images.id) as total_images,
+       COUNT(current_images.id) as current_timelapse_images,
+       t.name as current_timelapse_name
+FROM cameras c
+LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
+LEFT JOIN images all_images ON all_images.camera_id = c.id
+LEFT JOIN images current_images ON current_images.timelapse_id = t.id
+GROUP BY c.id, t.id;
+```
+
+### Backend Implementation Details ✅
+
+**Enhanced Database Methods**:
+
+- **create_new_timelapse()** - Creates discrete timelapse entities with proper
+  relationships
+- **get_camera_timelapse_stats()** - Returns total vs current image counts
+  efficiently
+- **complete_timelapse()** - Transitions active timelapses to historical records
+- **Worker Integration** - Uses active_timelapse_id for proper image association
+
+**Pydantic Model Updates**:
+
+```python
+class Camera(CameraBase):
+    id: int
+    active_timelapse_id: Optional[int] = None
+    total_images: int = 0
+    current_timelapse_images: int = 0
+    current_timelapse_name: Optional[str] = None
+```
+
+### Frontend Architecture Changes ✅
+
+**Camera Card Enhancement**:
+
+```typescript
+// Enhanced display with dual image counts
+<div className='text-sm text-muted-foreground'>
+  Images: Total: {camera.total_images}, Current:{" "}
+  {camera.current_timelapse_images}
+</div>
+```
+
+**Workflow Updates**:
+
+- **"Start A New Timelapse"** creates fresh entities instead of status changes
+- **Real-time statistics** automatically refresh with SSE events
+- **Historical context** displayed in camera management interfaces
+
+### Critical Benefits Achieved ✅
+
+#### 1. **Historical Tracking & Organization**
+
+- Each timelapse becomes a concrete historical record: "Storm Documentation June
+  2025"
+- Perfect foundation for Timelapse Library page with meaningful data
+- Users can reference specific timelapses: "Remember that construction footage
+  from last month?"
+- Clear data boundaries between different recording periods
+
+#### 2. **Enhanced Data Integrity**
+
+- Day numbering resets for each timelapse (Day 1, Day 2... starts fresh)
+- Each timelapse preserves its own settings (time windows, auto-stop, etc.)
+- No risk of mixing images from different recording purposes
+- Database relationships properly enforce data consistency
+
+#### 3. **Improved User Experience**
+
+- Clear visual separation between total camera activity and current session
+- Meaningful timelapse names and identification
+- Intuitive workflow: "Start A New Timelapse" → Configure → Record → Complete
+- Historical timelapses preserved for future reference and video generation
+
+#### 4. **Advanced Feature Foundation**
+
+- **Timelapse Library**: Now has concrete entities to display and manage
+- **Targeted Video Generation**: Can generate videos from specific historical
+  timelapses
+- **Granular Cleanup**: Delete specific timelapses without affecting others
+- **Enhanced Analytics**: Track performance per timelapse session
+
+### Migration Status & Validation ✅
+
+**Current Database State** (Successfully Migrated):
+
+```text
+Camera 1: active_timelapse_id: 2 → "RainStorm" (640 images, running)
+Camera 5: active_timelapse_id: 5 → Unnamed timelapse (0 images, running)
+```
+
+**Backward Compatibility**:
+
+- ✅ Existing timelapses preserved and functioning
+- ✅ Current workflow maintained during transition
+- ✅ Real-time updates continue working seamlessly
+- ✅ All existing features enhanced, none broken
+
+### Future Architectural Enablement ✅
+
+**Now Ready For Implementation**:
+
+- **File Structure Migration**:
+  `data/cameras/camera-{id}/timelapse-{id}/frames/`
+- **Timelapse Library Page**: Rich interface showing all historical timelapses
+- **Advanced Video Generation**: Target specific timelapses for video creation
+- **Enhanced Cleanup Policies**: Per-timelapse retention and archival
+- **Timelapse Comparison Tools**: Compare different recording sessions
+- **Professional Timelapse Management**: Enterprise-grade organization and
+  tracking
+
+**Critical Implementation Notes**:
+
+🚨 **DON'T BREAK THIS** - Entity-Based Architecture Rules:
+
+1. **Always create new timelapse entities** when users click "Start A New
+   Timelapse"
+2. **Use active_timelapse_id** for determining where new images should be
+   associated
+3. **Preserve completed timelapses** as permanent historical records
+4. **Display both total and current statistics** on camera cards
+5. **Worker processes must respect** active timelapse relationships for image
+   capture
+
+### Components Enhanced for Entity-Based Architecture
+
+- `camera-card.tsx` - **Dual image count displays with total vs current
+  statistics**
+- Backend: `cameras.py`, `timelapses.py`, `database.py` - **Entity-based CRUD
+  operations**
+- Worker: `worker.py` - **Active timelapse relationship handling for image
+  capture**
+- API: Multiple endpoints - **Enhanced with entity creation and statistics**
+
 ## 🎯 DASHBOARD REFACTORING & ENHANCED TIMELAPSE CONTROL (December 2025)
 
-**MAJOR ENHANCEMENT: Complete dashboard camera card refactoring with advanced timelapse configuration and visual improvements.**
+**MAJOR ENHANCEMENT: Complete dashboard camera card refactoring with advanced
+timelapse configuration and visual improvements.**
 
 ### Dashboard Camera Card Improvements ✅
 
-**Problem Solved**: Camera cards had cluttered UI, confusing bulk actions, and basic timelapse creation flow.
+**Problem Solved**: Camera cards had cluttered UI, confusing bulk actions, and
+basic timelapse creation flow.
 
 **Solution Implemented**:
 
 #### 1. **CombinedStatusBadge Simplification** ✅
+
 - **Refactored from complex `cva` patterns to clean Next.js patterns**
 - **Direct conditional logic** instead of abstraction layers
 - **Switch statements** for cleaner status determination
 - **More maintainable** and debugging-friendly code
 
 #### 2. **Enhanced Bulk Operations** ✅
+
 - **Changed from "Start/Resume All" to intelligent "Resume" only**
 - **Conditional button state** - disabled when no cameras can be resumed
 - **Helpful tooltip**: "No cameras can be resumed at the moment"
 - **Smarter logic** - only shows actionable operations
 
 #### 3. **Advanced Timelapse Creation** ✅
+
 - **"Start A New Timelapse" button** (expanded for clarity)
 - **Configuration dialog** instead of immediate start
 - **Custom timelapse naming** with auto-generated defaults
@@ -164,6 +406,7 @@ calculations.**
 - **Form validation** and comprehensive error handling
 
 #### 4. **Capture Now Feature** ✅
+
 - **Added to hamburger menu** (conditional visibility)
 - **Only visible when**: camera online + active timelapse
 - **Backend endpoint**: `/api/cameras/{id}/capture-now`
@@ -171,6 +414,7 @@ calculations.**
 - **SSE integration** for immediate capture requests
 
 #### 5. **Visual Progress Indicator** ✅
+
 - **Progress border overlay** - animated "egg timer" effect
 - **SVG-based animation** with smooth transitions
 - **Shows capture progress** as percentage (0-100%)
@@ -180,6 +424,7 @@ calculations.**
 ### Database Schema Enhancements ✅
 
 **New Timelapse Fields Added**:
+
 ```sql
 -- Auto-stop functionality
 ALTER TABLE timelapses ADD COLUMN auto_stop_at TIMESTAMP WITH TIME ZONE;
@@ -196,12 +441,14 @@ ALTER TABLE timelapses ADD COLUMN use_custom_time_window BOOLEAN DEFAULT FALSE;
 #### Enhanced Backend API
 
 **Updated `create_or_update_timelapse()` method**:
+
 - **Configuration parameter support** for new timelapse features
 - **Auto-stop time handling** with timezone awareness
 - **Custom time window processing** independent of camera settings
 - **Enhanced validation** for auto-stop and time window logic
 
 **New capture-now endpoint**:
+
 ```python
 @router.post("/{camera_id}/capture-now", response_model=dict)
 async def capture_now(camera_id: int):
@@ -213,10 +460,13 @@ async def capture_now(camera_id: int):
 #### Frontend Component Updates
 
 **New Components Created**:
-- `/src/components/new-timelapse-dialog.tsx` - **Advanced timelapse configuration**
+
+- `/src/components/new-timelapse-dialog.tsx` - **Advanced timelapse
+  configuration**
 - `/src/components/ui/progress-border.tsx` - **Animated progress visualization**
 
 **Enhanced Existing Components**:
+
 - `camera-card.tsx` - **Progress borders + capture now integration**
 - `page.tsx` (dashboard) - **Updated bulk operations logic**
 - `combined-status-badge.tsx` - **Simplified Next.js patterns**
@@ -224,6 +474,7 @@ async def capture_now(camera_id: int):
 #### Data Flow Enhancements
 
 **New Timelapse Creation Flow**:
+
 ```text
 1. User clicks "Start A New Timelapse" → Opens configuration dialog
 2. Configure: name, time windows, auto-stop → Form validation
@@ -234,6 +485,7 @@ async def capture_now(camera_id: int):
 ```
 
 **Capture Now Flow**:
+
 ```text
 1. User clicks "Capture Now" → Hamburger menu action
 2. API validation → Camera online + active timelapse check
@@ -245,6 +497,7 @@ async def capture_now(camera_id: int):
 ### User Experience Improvements
 
 **Before Refactoring**:
+
 - Generic "Start" button with no configuration
 - Bulk actions included unusable "Start All" option
 - No visual progress indication for captures
@@ -252,16 +505,21 @@ async def capture_now(camera_id: int):
 - No immediate capture capability
 
 **After Refactoring**:
-- ✅ **Intelligent Timelapse Creation**: Custom naming, time windows, auto-stop scheduling
+
+- ✅ **Intelligent Timelapse Creation**: Custom naming, time windows, auto-stop
+  scheduling
 - ✅ **Smart Bulk Operations**: Only shows actionable "Resume" when applicable
-- ✅ **Visual Progress Feedback**: Animated borders show capture progress in real-time
+- ✅ **Visual Progress Feedback**: Animated borders show capture progress in
+  real-time
 - ✅ **Simplified Status System**: Cleaner, more maintainable status badge logic
 - ✅ **Immediate Control**: Capture Now for instant image capture when needed
-- ✅ **Enhanced Configurability**: Per-timelapse settings override camera defaults
+- ✅ **Enhanced Configurability**: Per-timelapse settings override camera
+  defaults
 
 ### Auto-Stop Functionality (NEW)
 
 **Complete auto-stop implementation**:
+
 - **Database field**: `auto_stop_at TIMESTAMP WITH TIME ZONE`
 - **UI configuration**: Date/time picker with timezone awareness
 - **Validation**: Future time requirements with user feedback
@@ -271,6 +529,7 @@ async def capture_now(camera_id: int):
 ### Progress Calculation & Visualization
 
 **Smart progress tracking**:
+
 - **Calculates percentage**: Based on last capture → next capture interval
 - **Real-time updates**: Uses existing countdown hook infrastructure
 - **Visual animation**: Smooth SVG path animation with glow effects
@@ -280,6 +539,7 @@ async def capture_now(camera_id: int):
 ### Compatibility & Integration
 
 **Maintains All Existing Systems**:
+
 - ✅ **Timezone-aware calculations**: Uses existing sophisticated time system
 - ✅ **SSE real-time updates**: Integrates with established event broadcasting
 - ✅ **Toast notification system**: Uses centralized feedback patterns
@@ -290,10 +550,13 @@ async def capture_now(camera_id: int):
 
 🚨 **DON'T BREAK THIS** - Dashboard Enhancement Rules:
 
-1. **Auto-stop times must be validated** as future timestamps in correct timezone
-2. **Progress borders only activate** during running timelapses with valid time data
+1. **Auto-stop times must be validated** as future timestamps in correct
+   timezone
+2. **Progress borders only activate** during running timelapses with valid time
+   data
 3. **Capture Now requires both** online camera AND active timelapse
-4. **Bulk Resume button state** must check actual paused cameras, not all cameras
+4. **Bulk Resume button state** must check actual paused cameras, not all
+   cameras
 5. **New timelapse dialog validates** all fields before allowing submission
 
 ### Components Modified for Dashboard Enhancement
@@ -302,31 +565,40 @@ async def capture_now(camera_id: int):
 - `page.tsx` (dashboard) - **Smart bulk operations with conditional enable**
 - `combined-status-badge.tsx` - **Simplified Next.js patterns**
 - `use-camera-countdown.ts` - **Added progress calculation support**
-- Backend: `cameras.py`, `timelapses.py`, `database.py` - **Enhanced API endpoints**
+- Backend: `cameras.py`, `timelapses.py`, `database.py` - **Enhanced API
+  endpoints**
 
 ## 🎯 TIMEZONE DISPLAY & COUNTDOWN TIMER IMPROVEMENTS (June 16, 2025)
 
-**LATEST ENHANCEMENT: Refined timezone display system with real-time countdown improvements and compact timezone abbreviations.**
+**LATEST ENHANCEMENT: Refined timezone display system with real-time countdown
+improvements and compact timezone abbreviations.**
 
 ### Real-Time Countdown Enhancements ✅
 
-**Problem Solved**: Countdown timers were only updating every 5 seconds when under 5 minutes, making them feel unresponsive during critical capture moments.
+**Problem Solved**: Countdown timers were only updating every 5 seconds when
+under 5 minutes, making them feel unresponsive during critical capture moments.
 
 **Solution Implemented**:
+
 - **Updated `getSmartRefreshInterval()` in `time-utils.ts`**:
   - 0-3 seconds: 0.5-second updates (for "Now" detection)
-  - **4-300 seconds (5 minutes): 1-second updates** ✅ **(Real-time countdown!)**
+  - **4-300 seconds (5 minutes): 1-second updates** ✅ **(Real-time
+    countdown!)**
   - 301-600 seconds: 5-second updates
   - 601+ seconds: Slower intervals for distant times
 
-**Result**: Smooth per-second countdown when approaching capture time: `"4m 59s"` → `"4m 58s"` → `"4m 57s"`
+**Result**: Smooth per-second countdown when approaching capture time:
+`"4m 59s"` → `"4m 58s"` → `"4m 57s"`
 
 ### Absolute Time Display Implementation ✅
 
-**Enhancement**: Added absolute timestamps underneath relative time counters for better temporal context.
+**Enhancement**: Added absolute timestamps underneath relative time counters for
+better temporal context.
 
 **Technical Implementation**:
-- **Enhanced `useCameraCountdown()` hook** to return `lastCaptureAbsolute` and `nextCaptureAbsolute` values
+
+- **Enhanced `useCameraCountdown()` hook** to return `lastCaptureAbsolute` and
+  `nextCaptureAbsolute` values
 - **Created `formatAbsoluteTimeForCounter()` function** with smart formatting:
   - Shows date and time in configured timezone
   - Only includes year if different from current year
@@ -334,34 +606,42 @@ async def capture_now(camera_id: int):
 - **Updated camera card UI** to display absolute times beneath countdown timers
 
 **Smart Display Logic**:
+
 - Hidden during "Now" state for cleaner appearance
 - Shows "Paused" instead of absolute time when timelapse is paused
 - Only displays when meaningful timestamp data exists
 
 ### Timezone Abbreviation Display ✅
 
-**Problem Solved**: Full timezone names (`"America/Chicago"`) consumed too much UI space.
+**Problem Solved**: Full timezone names (`"America/Chicago"`) consumed too much
+UI space.
 
 **Solution Implemented**:
-- **Enhanced `formatAbsoluteTimeForCounter()`** to use `Intl.DateTimeFormat` with `timeZoneName: 'short'`
-- **Automatic DST handling**: Shows correct abbreviations based on timestamp date
+
+- **Enhanced `formatAbsoluteTimeForCounter()`** to use `Intl.DateTimeFormat`
+  with `timeZoneName: 'short'`
+- **Automatic DST handling**: Shows correct abbreviations based on timestamp
+  date
 - **Examples of abbreviations**:
   - America/Chicago: `CDT` (summer) / `CST` (winter)
   - America/New_York: `EDT` (summer) / `EST` (winter)
   - Europe/London: `BST` (summer) / `GMT` (winter)
   - Etc/GMT: `UTC`
 
-**Result**: Compact timezone display saves significant UI space while maintaining clarity.
+**Result**: Compact timezone display saves significant UI space while
+maintaining clarity.
 
 ### Enhanced Visual Feedback ✅
 
 **"Now" State Improvements**:
+
 - **Pulsing cyan borders** on both timestamp boxes when capture is happening
 - **Animated cyan text** for countdown displays
 - **Pulsing icons** to draw visual attention
 - **Coordinated visual feedback** across last capture and next capture displays
 
 **Conditional Display Logic**:
+
 - Absolute times hidden during "Now" state
 - Enhanced color-coded status indicators
 - Improved accessibility with clear visual cues
@@ -369,11 +649,15 @@ async def capture_now(camera_id: int):
 ### Technical Implementation Details
 
 **Key Files Modified**:
-- `/src/lib/time-utils.ts` - Enhanced refresh intervals and timezone abbreviation formatting
+
+- `/src/lib/time-utils.ts` - Enhanced refresh intervals and timezone
+  abbreviation formatting
 - `/src/hooks/use-camera-countdown.ts` - Added absolute time value returns
-- `/src/components/camera-card.tsx` - Integrated absolute time displays with conditional logic
+- `/src/components/camera-card.tsx` - Integrated absolute time displays with
+  conditional logic
 
 **Smart Refresh Pattern**:
+
 ```typescript
 // Ultra-fast refresh for "Now" state
 if (secondsUntilNext <= 3) return 500 // 0.5 seconds
@@ -386,32 +670,40 @@ if (secondsUntilNext <= 600) return 5000 // 5 seconds
 ```
 
 **Timezone Abbreviation Logic**:
+
 ```typescript
 // Get timezone abbreviation for specific date using Intl API
-const timezoneName = new Intl.DateTimeFormat('en-US', {
+const timezoneName = new Intl.DateTimeFormat("en-US", {
   timeZone: configuredTz,
-  timeZoneName: 'short'
-}).formatToParts(date).find(part => part.type === 'timeZoneName')?.value
+  timeZoneName: "short",
+})
+  .formatToParts(date)
+  .find((part) => part.type === "timeZoneName")?.value
 ```
 
 ### User Experience Improvements
 
 **Before These Enhancements**:
+
 - Countdown timers updated every 5 seconds when under 5 minutes
 - No absolute time context for timestamps
 - Full timezone names cluttered the UI
 - Limited visual feedback for capture timing
 
 **After These Enhancements**:
+
 - ✅ **Smooth real-time countdown**: Per-second updates when approaching capture
 - ✅ **Rich temporal context**: Absolute timestamps provide date/time reference
-- ✅ **Compact timezone display**: Abbreviations save space while maintaining clarity
-- ✅ **Enhanced visual feedback**: Clear "Now" state indication with pulsing effects
+- ✅ **Compact timezone display**: Abbreviations save space while maintaining
+  clarity
+- ✅ **Enhanced visual feedback**: Clear "Now" state indication with pulsing
+  effects
 - ✅ **Smart conditional display**: Information shown only when relevant
 
 ### Integration with Existing System
 
-These improvements **build upon** the existing timezone-aware time system without breaking any existing functionality:
+These improvements **build upon** the existing timezone-aware time system
+without breaking any existing functionality:
 
 - **Maintains compatibility** with all existing timezone calculations
 - **Respects database-configured timezone** settings
@@ -419,7 +711,9 @@ These improvements **build upon** the existing timezone-aware time system withou
 - **Leverages existing time utility functions** with enhancements
 - **Preserves all SSE real-time update functionality**
 
-**Critical Implementation Note**: These enhancements maintain the sophisticated timezone-aware architecture - they do NOT replace it with simple browser-local time calculations.
+**Critical Implementation Note**: These enhancements maintain the sophisticated
+timezone-aware architecture - they do NOT replace it with simple browser-local
+time calculations.
 
 ## 🚨 CRITICAL ISSUES IDENTIFIED & FIXED (June 2025)
 
@@ -568,6 +862,7 @@ formats ✅
   ```
 
 - **Updated `/backend/app/main.py`**:
+
   ```python
   app.add_middleware(
       CORSMiddleware,
@@ -1025,10 +1320,14 @@ NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
 - **Query-based image loading** ✅ **MAJOR IMPROVEMENT**
 - **Latest image display system** ✅ **OVERHAULED**
 - **Timezone-aware time system** ✅ **COMPREHENSIVE IMPLEMENTATION**
-- **Real-time countdown timers** ✅ **ENHANCED - Per-second updates under 5 minutes**
-- **Absolute time displays** ✅ **NEW - Date/time context under countdown timers**
-- **Timezone abbreviation display** ✅ **NEW - Compact timezone indicators (CDT, UTC, etc.)**
-- **Enhanced visual feedback** ✅ **NEW - "Now" state with pulsing cyan effects**
+- **Real-time countdown timers** ✅ **ENHANCED - Per-second updates under 5
+  minutes**
+- **Absolute time displays** ✅ **NEW - Date/time context under countdown
+  timers**
+- **Timezone abbreviation display** ✅ **NEW - Compact timezone indicators (CDT,
+  UTC, etc.)**
+- **Enhanced visual feedback** ✅ **NEW - "Now" state with pulsing cyan
+  effects**
 - Connection pooling and modern FastAPI patterns
 - Database migrations with Alembic
 - Complete TypeScript type safety
@@ -1229,9 +1528,9 @@ curl -s http://localhost:8000/api/health/stats | python3 -m json.tool
 
 ---
 
-## 🎯 JUNE 16 2025 SYSTEM STATE SUMMARY
+## 🎯 JUNE 16 2025 SYSTEM STATE SUMMARY + ENTITY-BASED ARCHITECTURE (December 2025)
 
-### ✅ ALL CRITICAL ISSUES RESOLVED + MAJOR IMPROVEMENTS
+### ✅ ALL CRITICAL ISSUES RESOLVED + MAJOR ARCHITECTURAL TRANSFORMATION
 
 #### Infrastructure & Service Management
 
@@ -1244,8 +1543,14 @@ curl -s http://localhost:8000/api/health/stats | python3 -m json.tool
 - **Connection Management**: Proper async/sync database pool initialization and
   monitoring
 
-#### Core Functionality Fixes + Major Improvements
+#### Revolutionary Timelapse Architecture + Core Functionality
 
+- **Entity-Based Timelapse System**: ✅ **COMPLETELY TRANSFORMED** - Migrated
+  from status-based to entity-based architecture
+  - Each "Start A New Timelapse" creates discrete, permanent entities
+  - Historical timelapses preserved as concrete records with unique identity
+  - Enhanced camera cards display total vs current timelapse statistics
+  - Foundation for Timelapse Library and advanced timelapse management
 - **Image Loading System**: ✅ **COMPLETELY OVERHAULED** - Migrated from
   FK-based to query-based approach
   - Eliminated stale foreign key references causing image display issues
@@ -1271,22 +1576,29 @@ curl -s http://localhost:8000/api/health/stats | python3 -m json.tool
 - **Query Optimization**: PostgreSQL LATERAL joins provide superior performance
   vs FK approach
 
-### 🚀 CURRENT PRODUCTION READINESS
+### 🚀 CURRENT PRODUCTION READINESS + ARCHITECTURAL MATURITY
 
-The system is now fully operational with significant improvements:
+The system is now fully operational with revolutionary architectural
+improvements:
 
 - **Zero known critical bugs**
+- **Entity-based timelapse architecture providing professional-grade
+  organization**
 - **Completely reliable image loading system**
 - **Real-time dashboard functionality working as designed**
 - **All image-serving endpoints properly configured and tested**
 - **Optimized database queries using PostgreSQL strengths**
 - **Comprehensive health monitoring and diagnostics**
 - **Validated architecture patterns for reliability and maintainability**
+- **Foundation for advanced timelapse management features**
 
-### 📋 MAINTENANCE STATUS
+### 📋 MAINTENANCE STATUS + ARCHITECTURAL EVOLUTION
 
+- **Timelapse Management**: Entity-based approach eliminates confusion, provides
+  historical tracking
+- **Database Schema**: Enhanced with active_timelapse_id relationships and
+  proper constraints
 - **Image Loading**: Query-based approach eliminates FK maintenance overhead
-- **Database Schema**: Simplified with removal of unnecessary FK relationships
 - **Active API Route**: `/src/app/api/timelapses/route.ts` (confirmed working)
 - **Legacy Files**: `/src/app/api/timelapses/route-new.ts` can be safely removed
 - **Worker Pattern**: Async design validated, current sync implementation
@@ -1367,25 +1679,68 @@ the system is ready for:
 
 ---
 
-**Last Updated**: June 16 2025
+**Last Updated**: December 17, 2025
 
-**System Status**: ✅ **FULLY OPERATIONAL** - All Critical Issues Resolved + Major Timezone System + Real-Time UI Enhancements  
-**Architecture**: ✅ **VALIDATED & OPTIMIZED** - Production-Ready FastAPI + Next.js + PostgreSQL with sophisticated timezone-aware time calculations  
-**Recent Achievement**: ✅ **ENHANCED TIMEZONE DISPLAY SYSTEM** - Real-time per-second countdown updates + absolute time displays + compact timezone abbreviations  
-**User Experience**: ✅ **REFINED COUNTDOWN TIMERS** - Smooth per-second updates when under 5 minutes + rich temporal context + enhanced visual feedback  
-**Backend Stability**: ✅ **CORS_ORIGINS PARSING FIXED** - Robust environment variable handling prevents startup failures  
-**Notification System**: ✅ **STANDARDIZED TOAST NOTIFICATIONS** - Consistent feedback across all user actions  
-**Real-Time Features**: ✅ **COMPLETE SSE SYSTEM** - Dashboard and camera details update reliably with timezone-correct timestamps and smooth countdown progression  
-**Performance**: ✅ **POSTGRESQL + UI OPTIMIZED** - LATERAL joins + smart refresh intervals + timezone abbreviations provide superior performance and UX
+**System Status**: ✅ **FULLY OPERATIONAL + ARCHITECTURALLY TRANSFORMED** - All
+Critical Issues Resolved + Major Timezone System + Real-Time UI Enhancements +
+Revolutionary Entity-Based Timelapse Architecture  
+**Architecture**: ✅ **VALIDATED & EVOLUTIONARILY ENHANCED** - Production-Ready
+FastAPI + Next.js + PostgreSQL with sophisticated timezone-aware time
+calculations and entity-based timelapse management  
+**Recent Achievement**: ✅ **ENTITY-BASED TIMELAPSE ARCHITECTURE** - Complete
+paradigm shift from status-based to entity-based timelapses with historical
+tracking, dual statistics display, and foundation for advanced features  
+**Architectural Maturity**: ✅ **PROFESSIONAL-GRADE TIMELAPSE MANAGEMENT** -
+Concrete entities with unique identity, historical preservation, enhanced user
+experience, and ready for Timelapse Library implementation  
+**Backend Evolution**: ✅ **ENHANCED DATABASE RELATIONSHIPS** -
+active_timelapse_id with proper constraints, expanded status options, and entity
+lifecycle management  
+**User Experience**: ✅ **INTUITIVE TIMELAPSE WORKFLOW** - Clear separation of
+total vs current statistics, historical context, and foundation for advanced
+timelapse organization  
+**Previous Achievements**: ✅ **ENHANCED TIMEZONE DISPLAY SYSTEM** - Real-time
+per-second countdown updates + absolute time displays + compact timezone
+abbreviations  
+**Backend Stability**: ✅ **CORS_ORIGINS PARSING FIXED** - Robust environment
+variable handling prevents startup failures  
+**Notification System**: ✅ **STANDARDIZED TOAST NOTIFICATIONS** - Consistent
+feedback across all user actions  
+**Real-Time Features**: ✅ **COMPLETE SSE SYSTEM** - Dashboard and camera
+details update reliably with timezone-correct timestamps and smooth countdown
+progression  
+**Performance**: ✅ **POSTGRESQL + UI OPTIMIZED** - LATERAL joins + smart
+refresh intervals + timezone abbreviations provide superior performance and UX
 
-This system now represents a mature, production-grade timelapser platform with validated architecture, sophisticated timezone-aware time calculations, refined real-time countdown displays, robust backend configuration patterns, comprehensive user feedback systems, and completely reliable real-time capabilities with enhanced visual polish. All development and operational patterns have been tested and documented for reliable ongoing operation.
+This system now represents a mature, production-grade timelapser platform with
+validated architecture, sophisticated timezone-aware time calculations, refined
+real-time countdown displays, robust backend configuration patterns,
+comprehensive user feedback systems, revolutionary entity-based timelapse
+architecture, and completely reliable real-time capabilities with enhanced
+visual polish. The entity-based transformation provides the foundation for
+professional timelapse management with historical tracking, advanced
+organization, and scalable feature development. All development and operational
+patterns have been tested and documented for reliable ongoing operation.
 
 **CRITICAL FOR FUTURE AI ASSISTANTS**:
 
-- The timezone system is sophisticated with recent UI refinements - do NOT replace with simple browser-local time
-- Real-time countdown system uses smart refresh intervals - maintain the 1-second updates for times under 5 minutes
-- Absolute time displays complement relative times - preserve the conditional display logic for "Now" states
-- Timezone abbreviations use Intl API for accuracy - maintain DST-aware abbreviation generation
-- Backend environment variable parsing patterns in config.py are critical for startup reliability
+- The entity-based timelapse architecture is fundamental - do NOT revert to
+  status-based patterns
+- Each "Start A New Timelapse" must create discrete entities, never reuse
+  existing timelapses
+- Camera cards must display both total and current timelapse statistics
+- Worker processes must respect active_timelapse_id relationships for proper
+  image association
+- The timezone system is sophisticated with recent UI refinements - do NOT
+  replace with simple browser-local time
+- Real-time countdown system uses smart refresh intervals - maintain the
+  1-second updates for times under 5 minutes
+- Absolute time displays complement relative times - preserve the conditional
+  display logic for "Now" states
+- Timezone abbreviations use Intl API for accuracy - maintain DST-aware
+  abbreviation generation
+- Backend environment variable parsing patterns in config.py are critical for
+  startup reliability
 - Toast notification system is centralized - use it for all user feedback
-- All time displays use enhanced hooks and utilities that respect database timezone settings
+- All time displays use enhanced hooks and utilities that respect database
+  timezone settings

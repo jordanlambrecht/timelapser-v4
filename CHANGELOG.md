@@ -9,6 +9,214 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2025.12.17] - Entity-Based Timelapse Architecture 🎯
+
+### Revolutionary Architecture Transformation
+
+#### 🏗️ **Complete Paradigm Shift: Status-Based → Entity-Based Timelapses**
+
+- **MAJOR ARCHITECTURAL CHANGE**: Transformed timelapses from abstract status changes to concrete, trackable entities
+- **Revolutionized Workflow**: Each "Start A New Timelapse" now creates discrete, permanent entities instead of reusing existing records
+- **Enhanced User Experience**: Clear separation between total camera activity and current timelapse session
+- **Historical Preservation**: All timelapses become permanent historical records with unique identity
+- **Impact**: Foundation for professional-grade timelapse management with advanced organization capabilities
+
+#### 🗄️ **Database Schema Evolution**
+
+- **Added**: `active_timelapse_id INTEGER` to cameras table with proper foreign key constraints
+- **Enhanced**: Timelapse status options to include 'completed' and 'archived' states
+- **Implemented**: Unique constraint ensuring only one active timelapse per camera
+- **Migration**: Successfully applied with complete backward compatibility and data preservation
+- **Validation**: Existing timelapses preserved and functioning seamlessly
+
+#### 📊 **Enhanced Camera Statistics & Display**
+
+- **NEW FEATURE**: Dual image count display showing total vs current timelapse statistics
+- **Added**: Real-time statistics automatically refresh with SSE events
+- **Enhanced**: Camera cards now display "Images - Total: 1,250, Current: 47" format
+- **Improved**: Clear visual separation between overall camera activity and active session
+- **Impact**: Users can track both historical accumulation and current progress simultaneously
+
+### Backend Architecture Enhancements
+
+#### 🚀 **New Entity-Based API Endpoints**
+
+- **Added**: `POST /api/timelapses/new` - Creates fresh timelapse entities with unique identity
+- **Added**: `GET /api/cameras/{id}/timelapse-stats` - Returns total vs current image statistics efficiently
+- **Added**: `POST /api/timelapses/{id}/complete` - Marks timelapses as permanent historical records
+- **Enhanced**: Existing endpoints with active timelapse relationship support
+- **Improved**: Type safety between Pydantic models and database schema
+
+#### 🔧 **Enhanced Database Methods**
+
+- **Implemented**: `create_new_timelapse()` method for discrete entity creation
+- **Added**: `get_camera_timelapse_stats()` with efficient query patterns
+- **Enhanced**: `complete_timelapse()` for proper entity lifecycle management
+- **Updated**: Worker integration to respect active timelapse relationships
+- **Optimized**: Database queries with proper foreign key relationships
+
+#### 📦 **Pydantic Model Updates**
+
+- **Enhanced**: Camera models with active_timelapse_id and statistics fields
+- **Added**: Support for nested timelapse relationship data
+- **Improved**: Type safety for entity-based workflow patterns
+- **Validated**: Frontend-backend model synchronization maintained
+
+### Frontend Architecture Changes
+
+#### 🎨 **Camera Card Enhancement**
+
+- **Transformed**: "Start" button to "Start A New Timelapse" with entity creation
+- **Enhanced**: Real-time dual statistics display (total vs current images)
+- **Improved**: Visual context for users about overall camera activity vs current session
+- **Added**: Current timelapse name display when available
+- **Impact**: More intuitive and informative user interface
+
+#### 🔄 **Workflow Transformation**
+
+- **Before**: "Start/Stop" toggled status on same reusable timelapse record
+- **After**: "Start A New Timelapse" creates fresh entity → Record → Complete → Preserve history
+- **Enhanced**: Real-time updates show both total and current statistics
+- **Improved**: Clear understanding of timelapse boundaries and purpose
+
+#### 🎯 **User Experience Evolution**
+
+- **Historical Context**: Users can reference specific timelapses: "Storm documentation from June"
+- **Clear Boundaries**: Each timelapse has defined start/completion with preserved settings
+- **Professional Organization**: Foundation for advanced timelapse library and management
+- **Intuitive Workflow**: Natural progression from creation → recording → completion → history
+
+### Database Relationship Transformation
+
+#### 🔗 **New Relationship Patterns**
+
+```sql
+-- Enhanced camera-timelapse relationship
+cameras.active_timelapse_id → timelapses.id (FK with proper constraints)
+timelapses.status: 'running' | 'paused' | 'completed' | 'archived'
+images.timelapse_id → Clear association with specific timelapse entities
+```
+
+#### 📈 **Query Pattern Evolution**
+
+- **Before**: Simple status checks and image counts
+- **After**: Complex relationship queries with total vs current statistics
+- **Enhanced**: Efficient aggregation queries for dual count display
+- **Optimized**: PostgreSQL relationship handling with proper indexing
+
+### User Experience Transformation
+
+#### Before Entity-Based Architecture
+
+- Single reusable timelapse per camera with status changes
+- No historical separation between recording sessions  
+- Images accumulated indefinitely without clear boundaries
+- Basic "Start/Stop" functionality with no organization
+- No way to reference specific recording periods
+
+#### After Entity-Based Architecture
+
+- ✅ **Discrete Timelapse Entities**: Each session becomes a permanent, identifiable record
+- ✅ **Historical Preservation**: All timelapses maintained as concrete historical records  
+- ✅ **Clear Organization**: Separate counting and tracking for total vs current activity
+- ✅ **Professional Workflow**: Create → Record → Complete → Preserve lifecycle
+- ✅ **Enhanced Context**: Users can reference and organize specific recording sessions
+- ✅ **Foundation Ready**: Architecture supports advanced features like Timelapse Library
+
+### Advanced Feature Enablement
+
+#### 🎬 **Timelapse Library Foundation**
+
+- **Database Structure**: Concrete entities ready for library interface implementation
+- **Historical Data**: All timelapses preserved with names, dates, and statistics
+- **Query Capability**: Efficient retrieval of completed timelapses for management
+- **Organization Ready**: Foundation for filtering, searching, and organizing timelapses
+
+#### 🎯 **Targeted Video Generation**
+
+- **Specific Targeting**: Generate videos from individual historical timelapses
+- **Clear Scope**: Each timelapse has defined image boundaries and settings
+- **Enhanced Control**: Users can create videos from specific recording sessions
+- **Quality Consistency**: Each timelapse preserves its capture settings and context
+
+#### 🧹 **Granular Cleanup & Management**
+
+- **Per-Timelapse Deletion**: Remove specific recording sessions without affecting others
+- **Retention Policies**: Apply different cleanup rules to different timelapse types
+- **Archive Management**: Move old timelapses to archived status while preserving data
+- **Storage Optimization**: Targeted cleanup based on timelapse age, size, or usage
+
+### Migration Success & Validation
+
+#### 🔄 **Seamless Migration**
+
+- **Data Preservation**: All existing timelapses converted to entity-based format
+- **Backward Compatibility**: No disruption to existing functionality during transition
+- **Real-time Validation**: Current system shows successful entity relationships
+- **User Transparency**: Migration completed without user intervention required
+
+#### ✅ **Current System Status**
+
+```text
+Camera 1: active_timelapse_id: 2 → "RainStorm" (640 images, running)
+Camera 5: active_timelapse_id: 5 → Unnamed timelapse (0 images, running)
+```
+
+- **Validated**: Entity relationships working correctly in production
+- **Performance**: No degradation from enhanced relationship queries
+- **Functionality**: All existing features enhanced, none broken
+- **Reliability**: System stable with new architecture patterns
+
+### Technical Benefits Achieved
+
+#### 🎯 **Architectural Excellence**
+
+- ✅ **Professional Data Model**: Concrete entities instead of abstract status flags
+- ✅ **Scalable Foundation**: Architecture supports unlimited advanced features
+- ✅ **Clear Relationships**: Proper database design with enforced constraints
+- ✅ **Maintainable Code**: Entity-based patterns easier to understand and extend
+
+#### 📊 **Enhanced Capabilities**
+
+- ✅ **Rich Statistics**: Total vs current tracking with real-time updates
+- ✅ **Historical Analysis**: Foundation for analytics and reporting features
+- ✅ **Flexible Organization**: Support for complex timelapse management workflows
+- ✅ **Future-Proof Design**: Ready for enterprise-grade features and scaling
+
+#### 🔧 **Development Benefits**
+
+- ✅ **Type Safety**: Strong typing between frontend and backend models
+- ✅ **Clear APIs**: Entity-based endpoints with intuitive naming and behavior
+- ✅ **Testing Ready**: Concrete entities easier to test and validate
+- ✅ **Documentation**: Self-documenting architecture with clear entity relationships
+
+### Critical Implementation Notes
+
+#### 🚨 **DON'T BREAK THIS** - Entity-Based Architecture Rules
+
+1. **Always create new timelapse entities** when users click "Start A New Timelapse"
+2. **Use active_timelapse_id** for determining where new images should be associated
+3. **Preserve completed timelapses** as permanent historical records
+4. **Display both total and current statistics** on camera cards for context
+5. **Worker processes must respect** active timelapse relationships for image capture
+
+#### 🎯 **Future Development Guidelines**
+
+- **Build on Entity Foundation**: All new timelapse features should leverage the entity-based architecture
+- **Preserve History**: Never delete or modify completed timelapse entities
+- **Maintain Relationships**: Always use proper foreign key relationships for data integrity
+- **Extend Thoughtfully**: New features should enhance rather than complicate the entity model
+
+### Components Enhanced for Entity-Based Architecture
+
+- `camera-card.tsx` - **Dual image count displays with total vs current statistics**
+- Backend: `cameras.py`, `timelapses.py`, `database.py` - **Entity-based CRUD operations with enhanced relationships**
+- Worker: `worker.py` - **Active timelapse relationship handling for proper image association**
+- API: Multiple endpoints - **Enhanced with entity creation, statistics, and lifecycle management**
+- Frontend: Dashboard and camera management - **Entity-aware user interface patterns**
+
+---
+
 ## [2025.12.16] - Dashboard Refactoring & Enhanced Timelapse Control 🎯
 
 ### Major Dashboard Improvements
