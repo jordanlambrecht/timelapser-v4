@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import { NavigationLinks } from "@/components/navigation-links"
 import { SpirographLogo } from "@/components/spirograph-logo"
 import { Toaster } from "sonner"
+import Footer from "@/components/footer"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -95,6 +96,7 @@ export default function RootLayout({
             {children}
           </div>
         </main>
+        <Footer />
 
         {/* Floating elements */}
         <div className='fixed pointer-events-none bottom-8 right-8'>
