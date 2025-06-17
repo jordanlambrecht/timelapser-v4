@@ -18,8 +18,25 @@ class RTSPCapture:
         self.retry_attempts = 3
         self.retry_delay = 2  # seconds between retries
 
+    def ensure_timelapse_directory(self, camera_id: int, timelapse_id: int) -> Path:
+        """Create and return timelapse-specific directory structure (entity-based)"""
+        frames_dir = (
+            self.base_data_dir
+            / "cameras"
+            / f"camera-{camera_id}"
+            / f"timelapse-{timelapse_id}"
+            / "frames"
+        )
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        return frames_dir
+
+    def generate_entity_filename(self, day_number: int) -> str:
+        """Generate day-based filename for entity-based structure"""
+        timestamp = datetime.now().strftime("%H%M%S")
+        return f"day{day_number:03d}_{timestamp}.jpg"
+
     def ensure_camera_directory(self, camera_id: int) -> Path:
-        """Create and return camera-specific directory structure"""
+        """Create and return camera-specific directory structure (LEGACY - for backward compatibility)"""
         today = datetime.now().strftime("%Y-%m-%d")
         camera_dir = (
             self.base_data_dir / "cameras" / f"camera-{camera_id}" / "images" / today
@@ -28,7 +45,7 @@ class RTSPCapture:
         return camera_dir
 
     def generate_filename(self, camera_id: int) -> str:
-        """Generate timestamped filename for captured image"""
+        """Generate timestamped filename for captured image (LEGACY - for backward compatibility)"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"capture_{timestamp}.jpg"
 
@@ -101,9 +118,13 @@ class RTSPCapture:
     ) -> Tuple[bool, str, Optional[str]]:
         """
         Capture image from camera with retry logic and database tracking
+        Uses entity-based file structure when timelapse_id is provided
         Returns (success: bool, message: str, filepath: Optional[str])
         """
         logger.info(f"Starting capture for camera {camera_id} ({camera_name})")
+
+        # Determine if we're using entity-based structure
+        use_entity_structure = timelapse_id is not None
 
         for attempt in range(self.retry_attempts):
             try:
@@ -116,32 +137,77 @@ class RTSPCapture:
                 if frame is None:
                     continue
 
-                # Prepare file path
-                camera_dir = self.ensure_camera_directory(camera_id)
-                filename = self.generate_filename(camera_id)
-                filepath = camera_dir / filename
+                # Prepare file path based on structure type
+                if use_entity_structure and database:
+                    # Get timelapse info to calculate day number
+                    try:
+                        # Get timelapse start date from database
+                        query_result = database.get_connection()
+                        with query_result as conn:
+                            with conn.cursor() as cur:
+                                cur.execute(
+                                    "SELECT start_date FROM timelapses WHERE id = %s",
+                                    (timelapse_id,),
+                                )
+                                timelapse_row = cur.fetchone()
+
+                        if not timelapse_row or not timelapse_row.get("start_date"):
+                            logger.error(
+                                f"Timelapse {timelapse_id} not found or missing start_date"
+                            )
+                            continue
+
+                        # Calculate day number (1-based)
+                        from datetime import date
+
+                        start_date = timelapse_row["start_date"]
+                        current_date = date.today()
+                        day_number = (current_date - start_date).days + 1
+
+                        # Use entity-based structure
+                        frames_dir = self.ensure_timelapse_directory(
+                            camera_id, timelapse_id
+                        )
+                        filename = self.generate_entity_filename(day_number)
+                        filepath = frames_dir / filename
+
+                        # Store relative path for database (entity-based)
+                        relative_db_path = f"data/cameras/camera-{camera_id}/timelapse-{timelapse_id}/frames/{filename}"
+
+                    except Exception as e:
+                        logger.error(f"Error setting up entity-based path: {e}")
+                        continue
+                else:
+                    # Use legacy date-based structure
+                    camera_dir = self.ensure_camera_directory(camera_id)
+                    filename = self.generate_filename(camera_id)
+                    filepath = camera_dir / filename
+
+                    # Store relative path for database (legacy)
+                    relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
 
                 # Save frame
                 if self.save_frame(frame, filepath):
                     # Get file size for database
                     file_size = filepath.stat().st_size
 
-                    # Update camera's last image path for UI display
-                    # Database update is handled by record_captured_image method
-                    logger.debug(
-                        f"Image captured and will be recorded in database for camera {camera_id}"
-                    )
+                    # Record in database if provided
+                    image_id = None
+                    if database:
+                        if use_entity_structure:
+                            # Use entity-based database recording with day number
+                            image_id = database.record_captured_image(
+                                camera_id=camera_id,
+                                timelapse_id=timelapse_id,
+                                file_path=relative_db_path,
+                                file_size=file_size,
+                            )
+                        else:
+                            # Legacy recording (would need to be updated to use active timelapse)
+                            logger.warning(
+                                "Legacy capture mode - consider updating to entity-based"
+                            )
 
-                    # Record in database if provided and timelapse is active
-                    if database and timelapse_id:
-                        # Store relative path from project root
-                        relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
-                        image_id = database.record_captured_image(
-                            camera_id=camera_id,
-                            timelapse_id=timelapse_id,
-                            file_path=relative_db_path,
-                            file_size=file_size,
-                        )
                         if image_id:
                             logger.info(f"Recorded image {image_id} in database")
 
