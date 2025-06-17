@@ -140,7 +140,12 @@ export function TimelapseModal({
         fetchVideos() // Refresh the list
 
         // Show enhanced success toast
-        const oldName = videos.find(v => v.id === videoId)?.file_path?.split("/").pop()?.replace(".mp4", "") || "Unknown"
+        const oldName =
+          videos
+            .find((v) => v.id === videoId)
+            ?.file_path?.split("/")
+            .pop()
+            ?.replace(".mp4", "") || "Unknown"
         toast.timelapseRenamed(oldName, editName)
       } else {
         throw new Error("Failed to rename video")
@@ -181,19 +186,22 @@ export function TimelapseModal({
           // Note: Video undo is complex since we'd need to regenerate
           // For now, just show a message that undo isn't available for videos
           toast.info("Video undo not available", {
-            description: "Videos cannot be restored once deleted. You can regenerate them from captured images.",
+            description:
+              "Videos cannot be restored once deleted. You can regenerate them from captured images.",
             duration: 6000,
           })
         })
 
         // If we deleted the selected video, select another one
         if (selectedVideo?.id === videoToDelete.id) {
-          const remainingVideos = videos.filter((v) => v.id !== videoToDelete.id)
+          const remainingVideos = videos.filter(
+            (v) => v.id !== videoToDelete.id
+          )
           setSelectedVideo(
             remainingVideos.length > 0 ? remainingVideos[0] : null
           )
         }
-        
+
         fetchVideos() // Refresh the list
         setConfirmDeleteOpen(false)
         setVideoToDelete(null)
@@ -459,7 +467,9 @@ export function TimelapseModal({
           setVideoToDelete(null)
         }}
         onConfirm={confirmDeleteVideo}
-        timelapseVideoName={videoToDelete ? getVideoDisplayName(videoToDelete) : "Unknown Video"}
+        timelapseVideoName={
+          videoToDelete ? getVideoDisplayName(videoToDelete) : "Unknown Video"
+        }
         isLoading={deleteLoading}
       />
     </Dialog>

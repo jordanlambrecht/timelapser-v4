@@ -133,6 +133,177 @@ calculations.**
 - `logs/page.tsx` - Log timestamp display with timezone context
 - All timelapse and video generation components
 
+## 🎯 DASHBOARD REFACTORING & ENHANCED TIMELAPSE CONTROL (December 2025)
+
+**MAJOR ENHANCEMENT: Complete dashboard camera card refactoring with advanced timelapse configuration and visual improvements.**
+
+### Dashboard Camera Card Improvements ✅
+
+**Problem Solved**: Camera cards had cluttered UI, confusing bulk actions, and basic timelapse creation flow.
+
+**Solution Implemented**:
+
+#### 1. **CombinedStatusBadge Simplification** ✅
+- **Refactored from complex `cva` patterns to clean Next.js patterns**
+- **Direct conditional logic** instead of abstraction layers
+- **Switch statements** for cleaner status determination
+- **More maintainable** and debugging-friendly code
+
+#### 2. **Enhanced Bulk Operations** ✅
+- **Changed from "Start/Resume All" to intelligent "Resume" only**
+- **Conditional button state** - disabled when no cameras can be resumed
+- **Helpful tooltip**: "No cameras can be resumed at the moment"
+- **Smarter logic** - only shows actionable operations
+
+#### 3. **Advanced Timelapse Creation** ✅
+- **"Start A New Timelapse" button** (expanded for clarity)
+- **Configuration dialog** instead of immediate start
+- **Custom timelapse naming** with auto-generated defaults
+- **Time window overrides** (independent of camera defaults)
+- **Auto-stop functionality** - NEW database-backed feature
+- **Form validation** and comprehensive error handling
+
+#### 4. **Capture Now Feature** ✅
+- **Added to hamburger menu** (conditional visibility)
+- **Only visible when**: camera online + active timelapse
+- **Backend endpoint**: `/api/cameras/{id}/capture-now`
+- **Real-time feedback** via toast notifications
+- **SSE integration** for immediate capture requests
+
+#### 5. **Visual Progress Indicator** ✅
+- **Progress border overlay** - animated "egg timer" effect
+- **SVG-based animation** with smooth transitions
+- **Shows capture progress** as percentage (0-100%)
+- **Glow effects** when approaching capture time
+- **Only active during running timelapses**
+
+### Database Schema Enhancements ✅
+
+**New Timelapse Fields Added**:
+```sql
+-- Auto-stop functionality
+ALTER TABLE timelapses ADD COLUMN auto_stop_at TIMESTAMP WITH TIME ZONE;
+
+-- Enhanced configuration
+ALTER TABLE timelapses ADD COLUMN name VARCHAR(255);
+ALTER TABLE timelapses ADD COLUMN time_window_start TIME;
+ALTER TABLE timelapses ADD COLUMN time_window_end TIME;
+ALTER TABLE timelapses ADD COLUMN use_custom_time_window BOOLEAN DEFAULT FALSE;
+```
+
+### Technical Implementation Details
+
+#### Enhanced Backend API
+
+**Updated `create_or_update_timelapse()` method**:
+- **Configuration parameter support** for new timelapse features
+- **Auto-stop time handling** with timezone awareness
+- **Custom time window processing** independent of camera settings
+- **Enhanced validation** for auto-stop and time window logic
+
+**New capture-now endpoint**:
+```python
+@router.post("/{camera_id}/capture-now", response_model=dict)
+async def capture_now(camera_id: int):
+    # Validates camera online + active timelapse
+    # Broadcasts capture request via SSE
+    # Returns immediate feedback
+```
+
+#### Frontend Component Updates
+
+**New Components Created**:
+- `/src/components/new-timelapse-dialog.tsx` - **Advanced timelapse configuration**
+- `/src/components/ui/progress-border.tsx` - **Animated progress visualization**
+
+**Enhanced Existing Components**:
+- `camera-card.tsx` - **Progress borders + capture now integration**
+- `page.tsx` (dashboard) - **Updated bulk operations logic**
+- `combined-status-badge.tsx` - **Simplified Next.js patterns**
+
+#### Data Flow Enhancements
+
+**New Timelapse Creation Flow**:
+```text
+1. User clicks "Start A New Timelapse" → Opens configuration dialog
+2. Configure: name, time windows, auto-stop → Form validation
+3. Submit configuration → API call with full config object
+4. Backend creates timelapse with config → Database update
+5. SSE event broadcast → Real-time UI update
+6. Progress border activates → Visual feedback starts
+```
+
+**Capture Now Flow**:
+```text
+1. User clicks "Capture Now" → Hamburger menu action
+2. API validation → Camera online + active timelapse check
+3. SSE event broadcast → "capture_now_requested"
+4. Worker process responds → Immediate capture execution
+5. Success/failure feedback → Toast notification
+```
+
+### User Experience Improvements
+
+**Before Refactoring**:
+- Generic "Start" button with no configuration
+- Bulk actions included unusable "Start All" option
+- No visual progress indication for captures
+- Basic status badges with complex maintenance
+- No immediate capture capability
+
+**After Refactoring**:
+- ✅ **Intelligent Timelapse Creation**: Custom naming, time windows, auto-stop scheduling
+- ✅ **Smart Bulk Operations**: Only shows actionable "Resume" when applicable
+- ✅ **Visual Progress Feedback**: Animated borders show capture progress in real-time
+- ✅ **Simplified Status System**: Cleaner, more maintainable status badge logic
+- ✅ **Immediate Control**: Capture Now for instant image capture when needed
+- ✅ **Enhanced Configurability**: Per-timelapse settings override camera defaults
+
+### Auto-Stop Functionality (NEW)
+
+**Complete auto-stop implementation**:
+- **Database field**: `auto_stop_at TIMESTAMP WITH TIME ZONE`
+- **UI configuration**: Date/time picker with timezone awareness
+- **Validation**: Future time requirements with user feedback
+- **Worker integration ready**: Database field prepared for worker monitoring
+- **Form handling**: Comprehensive validation and error messaging
+
+### Progress Calculation & Visualization
+
+**Smart progress tracking**:
+- **Calculates percentage**: Based on last capture → next capture interval
+- **Real-time updates**: Uses existing countdown hook infrastructure
+- **Visual animation**: Smooth SVG path animation with glow effects
+- **Conditional display**: Only shows during active timelapses
+- **Performance optimized**: Leverages existing timer system
+
+### Compatibility & Integration
+
+**Maintains All Existing Systems**:
+- ✅ **Timezone-aware calculations**: Uses existing sophisticated time system
+- ✅ **SSE real-time updates**: Integrates with established event broadcasting
+- ✅ **Toast notification system**: Uses centralized feedback patterns
+- ✅ **Database query patterns**: Maintains LATERAL join optimizations
+- ✅ **TypeScript type safety**: Matches Pydantic models exactly
+
+**Critical Implementation Notes**:
+
+🚨 **DON'T BREAK THIS** - Dashboard Enhancement Rules:
+
+1. **Auto-stop times must be validated** as future timestamps in correct timezone
+2. **Progress borders only activate** during running timelapses with valid time data
+3. **Capture Now requires both** online camera AND active timelapse
+4. **Bulk Resume button state** must check actual paused cameras, not all cameras
+5. **New timelapse dialog validates** all fields before allowing submission
+
+### Components Modified for Dashboard Enhancement
+
+- `camera-card.tsx` - **Progress borders, capture now, improved status logic**
+- `page.tsx` (dashboard) - **Smart bulk operations with conditional enable**
+- `combined-status-badge.tsx` - **Simplified Next.js patterns**
+- `use-camera-countdown.ts` - **Added progress calculation support**
+- Backend: `cameras.py`, `timelapses.py`, `database.py` - **Enhanced API endpoints**
+
 ## 🎯 TIMEZONE DISPLAY & COUNTDOWN TIMER IMPROVEMENTS (June 16, 2025)
 
 **LATEST ENHANCEMENT: Refined timezone display system with real-time countdown improvements and compact timezone abbreviations.**

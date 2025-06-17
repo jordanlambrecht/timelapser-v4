@@ -132,13 +132,18 @@ export const toast = {
   },
 
   // Specialized toast functions for common use cases
-  
+
   /**
    * Show a success toast with undo action
    */
   successWithUndo: (message: string, options: UndoToastOptions) => {
-    const { undoAction, undoLabel = "Undo", undoTimeout = 5000, ...restOptions } = options
-    
+    const {
+      undoAction,
+      undoLabel = "Undo",
+      undoTimeout = 5000,
+      ...restOptions
+    } = options
+
     return sonnerToast.success(message, {
       ...defaultOptions,
       duration: undoTimeout,
@@ -166,7 +171,7 @@ export const toast = {
   },
 
   // Specific application toasts
-  
+
   /**
    * Toast for when an image is captured
    */
@@ -181,7 +186,10 @@ export const toast = {
   /**
    * Toast for when a camera is deleted (with undo)
    */
-  cameraDeleted: (cameraName: string, undoAction: () => void | Promise<void>) => {
+  cameraDeleted: (
+    cameraName: string,
+    undoAction: () => void | Promise<void>
+  ) => {
     return toast.successWithUndo(`Camera "${cameraName}" deleted`, {
       description: "Camera and all its data have been removed",
       undoAction,
@@ -192,7 +200,10 @@ export const toast = {
   /**
    * Toast for when a timelapse video is deleted (with undo)
    */
-  timelapseDeleted: (videoName: string, undoAction: () => void | Promise<void>) => {
+  timelapseDeleted: (
+    videoName: string,
+    undoAction: () => void | Promise<void>
+  ) => {
     return toast.successWithUndo(`Timelapse "${videoName}" deleted`, {
       description: "Video file has been removed",
       undoAction,
@@ -203,7 +214,11 @@ export const toast = {
   /**
    * Toast for when a camera is renamed
    */
-  cameraRenamed: (oldName: string, newName: string, options: ToastOptions = {}) => {
+  cameraRenamed: (
+    oldName: string,
+    newName: string,
+    options: ToastOptions = {}
+  ) => {
     return toast.success(`Camera renamed to "${newName}"`, {
       description: `Previously known as "${oldName}"`,
       duration: 4000,
@@ -236,7 +251,10 @@ export const toast = {
   /**
    * Toast for when a timelapse is stopped (with undo)
    */
-  timelapseStopped: (cameraName: string, undoAction: () => void | Promise<void>) => {
+  timelapseStopped: (
+    cameraName: string,
+    undoAction: () => void | Promise<void>
+  ) => {
     return toast.successWithUndo(`⏹️ Timelapse stopped for ${cameraName}`, {
       description: "Recording session has ended",
       undoAction,
@@ -259,7 +277,11 @@ export const toast = {
   /**
    * Toast for when a timelapse video is renamed
    */
-  timelapseRenamed: (oldName: string, newName: string, options: ToastOptions = {}) => {
+  timelapseRenamed: (
+    oldName: string,
+    newName: string,
+    options: ToastOptions = {}
+  ) => {
     return toast.success(`Video renamed to "${newName}"`, {
       description: `Previously known as "${oldName}"`,
       duration: 4000,
@@ -272,7 +294,8 @@ export const toast = {
    */
   timelapseStarted: (cameraName: string, options: ToastOptions = {}) => {
     return toast.success(`🎬 Timelapse started for ${cameraName}`, {
-      description: "Recording has begun - images will be captured automatically",
+      description:
+        "Recording has begun - images will be captured automatically",
       duration: 5000,
       ...options,
     })
@@ -283,7 +306,8 @@ export const toast = {
    */
   videoGenerating: (videoName: string, options: ToastOptions = {}) => {
     return toast.loading(`🎬 Generating video "${videoName}"...`, {
-      description: "This may take a few minutes depending on the number of images",
+      description:
+        "This may take a few minutes depending on the number of images",
       ...options,
     })
   },
