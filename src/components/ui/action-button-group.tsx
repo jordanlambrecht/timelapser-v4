@@ -2,7 +2,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -29,10 +29,10 @@ interface ActionButtonGroupProps {
 
 export function ActionButtonGroup({
   actions,
-  size = "sm", 
+  size = "sm",
   variant = "mixed",
   className,
-  primaryActions = 2
+  primaryActions = 2,
 }: ActionButtonGroupProps) {
   if (actions.length === 0) return null
 
@@ -42,16 +42,28 @@ export function ActionButtonGroup({
 
   const getButtonClassName = (actionVariant?: string) => {
     const baseClasses = "h-8 w-8 p-0"
-    
+
     switch (actionVariant) {
       case "destructive":
-        return cn(baseClasses, "hover:bg-failure/20 text-failure/70 hover:text-failure")
+        return cn(
+          baseClasses,
+          "hover:bg-failure/20 text-failure/70 hover:text-failure"
+        )
       case "success":
-        return cn(baseClasses, "hover:bg-success/20 text-success/70 hover:text-success")
+        return cn(
+          baseClasses,
+          "hover:bg-success/20 text-success/70 hover:text-success"
+        )
       case "warning":
-        return cn(baseClasses, "hover:bg-yellow/20 text-yellow/70 hover:text-yellow")
+        return cn(
+          baseClasses,
+          "hover:bg-yellow/20 text-yellow/70 hover:text-yellow"
+        )
       default:
-        return cn(baseClasses, "hover:bg-purple/20 text-purple-light/70 hover:text-purple-light")
+        return cn(
+          baseClasses,
+          "hover:bg-purple/20 text-purple-light/70 hover:text-purple-light"
+        )
     }
   }
 
@@ -59,7 +71,7 @@ export function ActionButtonGroup({
     switch (actionVariant) {
       case "destructive":
         return "text-failure hover:bg-failure/20"
-      case "success":  
+      case "success":
         return "text-success hover:bg-success/20"
       case "warning":
         return "text-yellow hover:bg-yellow/20"
@@ -82,7 +94,7 @@ export function ActionButtonGroup({
               disabled={action.disabled}
               className={getButtonClassName(action.variant)}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className='w-4 h-4' />
             </Button>
           )
         })}
@@ -96,15 +108,15 @@ export function ActionButtonGroup({
         <DropdownMenuTrigger asChild>
           <Button
             size={size}
-            variant="ghost"
-            className="h-8 w-8 p-0 hover:bg-purple/20 text-purple-light/70 hover:text-purple-light"
+            variant='ghost'
+            className='h-8 w-8 p-0 hover:bg-purple/20 text-purple-light/70 hover:text-purple-light'
           >
-            <MoreVertical className="w-4 h-4" />
+            <MoreVertical className='w-4 h-4' />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent 
-          align="end" 
-          className="glass-strong border-purple-muted/50"
+        <DropdownMenuContent
+          align='end'
+          className='glass-strong border-purple-muted/50'
         >
           {actions.map((action, index) => {
             const Icon = action.icon
@@ -115,7 +127,7 @@ export function ActionButtonGroup({
                 disabled={action.disabled}
                 className={getDropdownClassName(action.variant)}
               >
-                <Icon className="w-4 h-4 mr-2" />
+                <Icon className='w-4 h-4 mr-2' />
                 {action.label}
               </DropdownMenuItem>
             )
@@ -143,7 +155,7 @@ export function ActionButtonGroup({
             disabled={action.disabled}
             className={getButtonClassName(action.variant)}
           >
-            <Icon className="w-4 h-4" />
+            <Icon className='w-4 h-4' />
           </Button>
         )
       })}
@@ -154,15 +166,15 @@ export function ActionButtonGroup({
           <DropdownMenuTrigger asChild>
             <Button
               size={size}
-              variant="ghost"
-              className="h-8 w-8 p-0 hover:bg-purple/20 text-purple-light/70 hover:text-purple-light"
+              variant='ghost'
+              className='h-8 w-8 p-0 hover:bg-purple/20 text-purple-light/70 hover:text-purple-light'
             >
-              <MoreVertical className="w-4 h-4" />
+              <MoreVertical className='w-4 h-4' />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent 
-            align="end" 
-            className="glass-strong border-purple-muted/50"
+          <DropdownMenuContent
+            align='end'
+            className='glass-strong border-purple-muted/50'
           >
             {secondaryActions.map((action, index) => {
               const Icon = action.icon
@@ -173,7 +185,7 @@ export function ActionButtonGroup({
                   disabled={action.disabled}
                   className={getDropdownClassName(action.variant)}
                 >
-                  <Icon className="w-4 h-4 mr-2" />
+                  <Icon className='w-4 h-4 mr-2' />
                   {action.label}
                 </DropdownMenuItem>
               )

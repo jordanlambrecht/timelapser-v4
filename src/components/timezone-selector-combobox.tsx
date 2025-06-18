@@ -63,7 +63,6 @@ export function TimezoneSelector({
   }, [value, selectedTimezone])
 
   const handleTimezoneChange = (timezoneValue: string) => {
-    console.log("🌍 Timezone changed to:", timezoneValue)
 
     if (!timezoneValue) {
       console.warn("⚠️ Empty timezone value received")
@@ -72,7 +71,6 @@ export function TimezoneSelector({
 
     setSelectedTimezone(timezoneValue)
     onChange(timezoneValue)
-    console.log("✅ Timezone state updated and onChange called")
   }
 
   const handleUseDetected = () => {

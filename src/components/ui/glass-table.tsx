@@ -36,67 +36,74 @@ interface GlassTableCellProps {
   align?: "left" | "center" | "right"
 }
 
-interface SelectableRowProps extends Omit<GlassTableRowProps, 'isSelected'> {
+interface SelectableRowProps extends Omit<GlassTableRowProps, "isSelected"> {
   isSelected: boolean
   onSelectionChange: (selected: boolean) => void
   selectionDisabled?: boolean
 }
 
-export function GlassTable({ children, className, variant = "default" }: GlassTableProps) {
+export function GlassTable({
+  children,
+  className,
+  variant = "default",
+}: GlassTableProps) {
   const variantClasses = {
     default: "text-sm",
     compact: "text-xs",
-    comfortable: "text-base"
+    comfortable: "text-base",
   }
 
   return (
-    <div className={cn(
-      "overflow-hidden rounded-xl glass border border-purple-muted/30", 
-      variantClasses[variant],
-      className
-    )}>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          {children}
-        </table>
+    <div
+      className={cn(
+        "overflow-hidden rounded-xl glass border border-purple-muted/30",
+        variantClasses[variant],
+        className
+      )}
+    >
+      <div className='overflow-x-auto'>
+        <table className='w-full'>{children}</table>
       </div>
     </div>
   )
 }
 
-export function GlassTableHeader({ children, className, sticky = false }: GlassTableHeaderProps) {
+export function GlassTableHeader({
+  children,
+  className,
+  sticky = false,
+}: GlassTableHeaderProps) {
   return (
-    <thead className={cn(
-      "bg-black/20 border-b border-purple-muted/20",
-      sticky && "sticky top-0 z-10",
-      className
-    )}>
+    <thead
+      className={cn(
+        "bg-black/20 border-b border-purple-muted/20",
+        sticky && "sticky top-0 z-10",
+        className
+      )}
+    >
       {children}
     </thead>
   )
 }
 
 export function GlassTableBody({ children, className }: GlassTableBodyProps) {
-  return (
-    <tbody className={className}>
-      {children}
-    </tbody>
-  )
+  return <tbody className={className}>{children}</tbody>
 }
 
-export function GlassTableRow({ 
-  children, 
-  className, 
-  onClick, 
-  isSelected = false, 
+export function GlassTableRow({
+  children,
+  className,
+  onClick,
+  isSelected = false,
   isHoverable = true,
-  variant = "default"
+  variant = "default",
 }: GlassTableRowProps) {
   return (
     <tr
       className={cn(
         "border-b border-purple-muted/10 transition-all duration-200",
-        isHoverable && "hover:bg-purple/5 hover:shadow-lg hover:shadow-purple/10",
+        isHoverable &&
+          "hover:bg-purple/5 hover:shadow-lg hover:shadow-purple/10",
         onClick && "cursor-pointer",
         isSelected && "bg-purple/10 border-purple/30",
         className
@@ -116,7 +123,7 @@ export function SelectableTableRow({
   onSelectionChange,
   selectionDisabled = false,
   isHoverable = true,
-  variant = "default"
+  variant = "default",
 }: SelectableRowProps) {
   const handleRowClick = (e: React.MouseEvent) => {
     if (e.shiftKey && !selectionDisabled) {
@@ -137,19 +144,20 @@ export function SelectableTableRow({
     <tr
       className={cn(
         "border-b border-purple-muted/10 transition-all duration-200",
-        isHoverable && "hover:bg-purple/5 hover:shadow-lg hover:shadow-purple/10",
+        isHoverable &&
+          "hover:bg-purple/5 hover:shadow-lg hover:shadow-purple/10",
         (onClick || !selectionDisabled) && "cursor-pointer",
         isSelected && "bg-cyan/10 border-cyan/30",
         className
       )}
       onClick={handleRowClick}
     >
-      <td className="px-3 py-2 w-10">
+      <td className='px-3 py-2 w-10'>
         <Checkbox
           checked={isSelected}
           onCheckedChange={handleCheckboxChange}
           disabled={selectionDisabled}
-          className="border-cyan/50 data-[state=checked]:bg-cyan data-[state=checked]:border-cyan"
+          className='border-cyan/50 data-[state=checked]:bg-cyan data-[state=checked]:border-cyan'
           onClick={(e) => e.stopPropagation()}
         />
       </td>
@@ -158,16 +166,16 @@ export function SelectableTableRow({
   )
 }
 
-export function GlassTableCell({ 
-  children, 
-  className, 
+export function GlassTableCell({
+  children,
+  className,
   isHeader = false,
-  align = "left"
+  align = "left",
 }: GlassTableCellProps) {
   const alignClasses = {
     left: "text-left",
-    center: "text-center", 
-    right: "text-right"
+    center: "text-center",
+    right: "text-right",
   }
 
   return (
@@ -185,15 +193,15 @@ export function GlassTableCell({
 }
 
 // For header cells specifically
-export function GlassTableHeaderCell({ 
-  children, 
+export function GlassTableHeaderCell({
+  children,
   className,
-  align = "left"
+  align = "left",
 }: GlassTableCellProps) {
   const alignClasses = {
     left: "text-left",
     center: "text-center",
-    right: "text-right"
+    right: "text-right",
   }
 
   return (
