@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { CombinedStatusBadge } from "@/components/ui/combined-status-badge"
 import { ProgressBorder } from "@/components/ui/progress-border"
+import { AnimatedGradientButton } from "@/components/ui/animated-gradient-button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -148,7 +149,6 @@ export function CameraCard({
         eventSource = new EventSource("/api/events")
 
         eventSource.onopen = () => {
-          console.log(`SSE connected to camera events (camera ${camera.id})`)
           isConnected = true
           reconnectAttempts = 0 // Reset on successful connection
         }
@@ -161,8 +161,7 @@ export function CameraCard({
             switch (data.type) {
               case "image_captured":
                 if (data.camera_id === camera.id) {
-                  console.log(`New image captured for camera ${camera.id}`)
-                  // Only refresh image if this camera now has captures
+                  // Force image reload
                   setImageKey(Date.now()) // Force image reload
 
                   // Update image count if provided
@@ -173,7 +172,9 @@ export function CameraCard({
                   // Refresh timelapse stats to get updated counts
                   setTimeout(async () => {
                     try {
-                      const statsResponse = await fetch(`/api/cameras/${camera.id}/timelapse-stats`)
+                      const statsResponse = await fetch(
+                        `/api/cameras/${camera.id}/timelapse-stats`
+                      )
                       if (statsResponse.ok) {
                         const stats = await statsResponse.json()
                         setTimelapseStats(stats)
@@ -186,48 +187,46 @@ export function CameraCard({
                 break
               case "camera_status_changed":
                 if (data.camera_id === camera.id) {
-                  console.log(
-                    `Camera ${camera.id} status changed to ${data.status}`
-                  )
                   // Let the parent component handle status updates via normal refresh
                 }
                 break
               case "timelapse_status_changed":
                 if (data.camera_id === camera.id) {
-                  console.log(
-                    `Timelapse status changed for camera ${camera.id} to ${data.status}`
-                  )
                   // Force image refresh when timelapse status changes
                   setImageKey(Date.now())
-                  
+
                   // If a new timelapse was started, reset counters immediately
                   if (data.status === "running" && data.timelapse_id) {
-                    console.log(`New timelapse ${data.timelapse_id} started, resetting counters`)
+                    // Reset counters for new timelapse
                     setActualImageCount(0)
-                    
+
                     // Refresh stats after a short delay to get the new timelapse data
                     setTimeout(async () => {
                       try {
-                        const statsResponse = await fetch(`/api/cameras/${camera.id}/timelapse-stats`)
+                        const statsResponse = await fetch(
+                          `/api/cameras/${camera.id}/timelapse-stats`
+                        )
                         if (statsResponse.ok) {
                           const stats = await statsResponse.json()
                           setTimelapseStats(stats)
                         }
                       } catch (error) {
-                        console.error("Failed to refresh timelapse stats after status change:", error)
+                        console.error(
+                          "Failed to refresh timelapse stats after status change:",
+                          error
+                        )
                       }
                     }, 1000)
                   }
                 }
                 break
               case "connected":
-                console.log("SSE connection established")
                 break
               case "heartbeat":
                 // Keep connection alive
                 break
               default:
-                console.log("Unknown SSE event:", data.type)
+              // Handle unknown SSE event types
             }
           } catch (error) {
             console.error("Error parsing SSE event:", error)
@@ -246,11 +245,7 @@ export function CameraCard({
           // Attempt reconnection with exponential backoff
           if (reconnectAttempts < maxReconnectAttempts) {
             const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
-            console.log(
-              `Attempting SSE reconnection in ${delay}ms (attempt ${
-                reconnectAttempts + 1
-              }/${maxReconnectAttempts})`
-            )
+            // Exponential backoff for reconnection
 
             reconnectTimer = setTimeout(() => {
               reconnectAttempts++
@@ -285,13 +280,24 @@ export function CameraCard({
   useEffect(() => {
     const fetchTimelapseStats = async () => {
       try {
-        const response = await fetch(`/api/cameras/${camera.id}/timelapse-stats`)
+        // Fetch timelapse stats
+        const response = await fetch(
+          `/api/cameras/${camera.id}/timelapse-stats`
+        )
         if (response.ok) {
           const stats = await response.json()
+          // Update timelapse stats
           setTimelapseStats(stats)
+        } else {
+          console.error(
+            `[Camera ${camera.id}] Failed to fetch stats: ${response.status}`
+          )
         }
       } catch (error) {
-        console.error("Failed to fetch timelapse stats:", error)
+        console.error(
+          `[Camera ${camera.id}] Failed to fetch timelapse stats:`,
+          error
+        )
       }
     }
 
@@ -449,7 +455,7 @@ export function CameraCard({
           ...timelapseStats,
           current_timelapse_images: 0,
           current_timelapse_name: config.name,
-          current_timelapse_status: "running"
+          current_timelapse_status: "running",
         })
       }
 
@@ -465,24 +471,29 @@ export function CameraCard({
       if (response.ok) {
         toast.timelapseStarted(camera.name)
         setNewTimelapseDialogOpen(false)
-        
+
         // Reset image-related state for new timelapse
         setActualImageCount(0)
-        
+
         // Fetch fresh stats multiple times to ensure we get updated data
         const refreshStats = async (attempt = 1, maxAttempts = 3) => {
           try {
-            const statsResponse = await fetch(`/api/cameras/${camera.id}/timelapse-stats`)
+            const statsResponse = await fetch(
+              `/api/cameras/${camera.id}/timelapse-stats`
+            )
             if (statsResponse.ok) {
               const stats = await statsResponse.json()
               setTimelapseStats(stats)
-              
+
               // If current timelapse images is still not 0 and we haven't hit max attempts, try again
               if (stats.current_timelapse_images > 0 && attempt < maxAttempts) {
                 setTimeout(() => refreshStats(attempt + 1, maxAttempts), 1000)
               }
             } else {
-              console.error("Failed to fetch timelapse stats:", statsResponse.status)
+              console.error(
+                "Failed to fetch timelapse stats:",
+                statsResponse.status
+              )
             }
           } catch (error) {
             console.error("Failed to refresh timelapse stats:", error)
@@ -492,25 +503,29 @@ export function CameraCard({
             }
           }
         }
-        
+
         // Start refreshing stats with delays to ensure database is updated
-        setTimeout(() => refreshStats(), 500)  // First attempt after 500ms
-        
+        setTimeout(() => refreshStats(), 500) // First attempt after 500ms
       } else {
         // Reset stats back to original values if creation failed
         const fetchStats = async () => {
           try {
-            const statsResponse = await fetch(`/api/cameras/${camera.id}/timelapse-stats`)
+            const statsResponse = await fetch(
+              `/api/cameras/${camera.id}/timelapse-stats`
+            )
             if (statsResponse.ok) {
               const stats = await statsResponse.json()
               setTimelapseStats(stats)
             }
           } catch (error) {
-            console.error("Failed to refresh timelapse stats after error:", error)
+            console.error(
+              "Failed to refresh timelapse stats after error:",
+              error
+            )
           }
         }
         fetchStats()
-        
+
         throw new Error(result.detail || "Failed to start timelapse")
       }
     } catch (error) {
@@ -622,8 +637,8 @@ export function CameraCard({
         </div>
       </CardHeader>
 
-      {/* Active Timelapse Name */}
-      {timelapseStats?.current_timelapse_name && timelapseStats?.current_timelapse_status === "running" && (
+      {/* Active Timelapse Recording Badge */}
+      {timelapseStats?.current_timelapse_status === "running" && (
         <div className='px-6 pb-2'>
           <div className='flex items-center space-x-2 p-2 bg-gradient-to-r from-cyan/10 to-purple/10 rounded-lg border border-cyan/20'>
             <div className='flex items-center space-x-2'>
@@ -632,7 +647,7 @@ export function CameraCard({
               <span className='text-sm font-medium text-cyan'>Recording:</span>
             </div>
             <span className='text-sm font-bold text-white truncate'>
-              {timelapseStats.current_timelapse_name}
+              {timelapseStats.current_timelapse_name || "Unnamed Timelapse"}
             </span>
           </div>
         </div>
@@ -800,6 +815,10 @@ export function CameraCard({
               <Zap className='w-4 h-4 text-yellow/70' />
               <p className='text-xs font-medium text-grey-light/60'>Images</p>
             </div>
+            {(() => {
+              // Debug info available for stats rendering
+              return null // Don't interfere with the condition
+            })()}
             {timelapseStats ? (
               <div className='space-y-1'>
                 <p className='font-bold text-white'>
@@ -876,47 +895,35 @@ export function CameraCard({
             )}
 
           {/* Main Start/Stop button */}
-          <Button
-            onClick={() => {
-              const isRunning = timelapse?.status === "running"
-              const isPaused = timelapse?.status === "paused"
-
-              if (isRunning || isPaused) {
-                // Show confirmation dialog for stopping
-                setConfirmStopOpen(true)
-              } else {
-                // Open new timelapse dialog instead of starting directly
-                setNewTimelapseDialogOpen(true)
-              }
-            }}
-            size='lg'
-            disabled={camera.health_status === "offline"}
-            className={cn(
-              "font-medium transition-all duration-300 min-w-[140px] grow",
-              camera.health_status === "offline"
-                ? "bg-gray-600 text-gray-400 cursor-not-allowed opacity-50"
-                : isTimelapseRunning || isTimelapsePaused
-                ? "bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20"
-                : "bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black hover:shadow-lg"
-            )}
-          >
-            {camera.health_status === "offline" ? (
-              <>
-                <Square className='w-4 h-4 mr-1' />
-                Offline
-              </>
-            ) : isTimelapseRunning || isTimelapsePaused ? (
-              <>
-                <CircleStop className='w-4 h-4 mr-1' />
-                Stop
-              </>
-            ) : (
-              <>
-                <Play className='w-4 h-4 mr-1' />
-                Start A New Timelapse
-              </>
-            )}
-          </Button>
+          {camera.health_status === "offline" ? (
+            <Button
+              onClick={() => {}}
+              size='lg'
+              disabled={true}
+              className='bg-gray-600 text-gray-400 cursor-not-allowed opacity-50 font-medium transition-all duration-300 min-w-[140px] grow'
+            >
+              <Square className='w-4 h-4 mr-1' />
+              Offline
+            </Button>
+          ) : isTimelapseRunning || isTimelapsePaused ? (
+            <Button
+              onClick={() => setConfirmStopOpen(true)}
+              size='lg'
+              className='bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20 font-medium transition-all duration-300 min-w-[140px] grow'
+            >
+              <CircleStop className='w-4 h-4 mr-1' />
+              Stop
+            </Button>
+          ) : (
+            <AnimatedGradientButton
+              onClick={() => setNewTimelapseDialogOpen(true)}
+              size='lg'
+              className='font-medium min-w-[140px] grow'
+            >
+              <Play className='w-4 h-4 mr-1' />
+              Start A New Timelapse
+            </AnimatedGradientButton>
+          )}
         </div>
 
         <div className='w-full'>
