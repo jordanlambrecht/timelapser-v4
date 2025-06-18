@@ -125,14 +125,13 @@ async def regenerate_all_thumbnails_background():
         regeneration_state["errors"] = 0
         regeneration_state["completed"] = 0
         
-        # Get all images that don't have thumbnails
+        # Get all images for regeneration (not just missing thumbnails)
         with sync_db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT id, file_path, camera_id
                     FROM images 
-                    WHERE thumbnail_path IS NULL OR small_path IS NULL
                     ORDER BY captured_at DESC
                     """
                 )
