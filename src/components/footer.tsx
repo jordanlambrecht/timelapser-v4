@@ -1,6 +1,7 @@
 import { Heart, Coffee } from "lucide-react"
 import { Button } from "./ui/button"
 import Link from "next/link"
+import { AcknowledgementsModal } from "./acknowledgements-modal"
 
 const Footer = () => {
   return (
@@ -40,7 +41,10 @@ const Footer = () => {
                   CC BY-NC 4.0
                 </Link>
               </Button>{" "}
-              – Free for personal use, commercial licensing available
+              – Free for personal use. Non-Commercial.
+            </div>
+            <div className='text-sm text-grey-light/60'>
+              <AcknowledgementsModal />
             </div>
           </div>
 
