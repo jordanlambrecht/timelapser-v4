@@ -81,7 +81,11 @@ export default function Settings() {
     e.preventDefault()
     setSaving(true)
 
-    console.log("💾 Saving settings:", { captureInterval, timezone, generateThumbnails })
+    console.log("💾 Saving settings:", {
+      captureInterval,
+      timezone,
+      generateThumbnails,
+    })
 
     try {
       // Save capture interval, timezone, and thumbnail setting
@@ -139,7 +143,8 @@ export default function Settings() {
 
       // Show success toast
       toast.success("Settings saved successfully!", {
-        description: "Your capture interval, timezone, and thumbnail settings have been updated",
+        description:
+          "Your capture interval, timezone, and thumbnail settings have been updated",
         duration: 4000,
       })
 
@@ -266,7 +271,10 @@ export default function Settings() {
                 <div className='space-y-3'>
                   <div className='flex items-center justify-between'>
                     <div className='space-y-1'>
-                      <Label htmlFor='thumbnails' className='text-sm font-medium flex items-center space-x-2'>
+                      <Label
+                        htmlFor='thumbnails'
+                        className='text-sm font-medium flex items-center space-x-2'
+                      >
                         <ImageIcon className='w-4 h-4 text-purple-light' />
                         <span>Generate Thumbnails</span>
                       </Label>
@@ -282,20 +290,22 @@ export default function Settings() {
                   </div>
                   <div className='p-3 rounded-lg bg-background/30 border border-borderColor/30'>
                     <div className='flex items-center space-x-2 text-xs text-muted-foreground'>
-                      <div className={cn(
-                        "w-2 h-2 rounded-full",
-                        generateThumbnails ? "bg-green-500" : "bg-gray-500"
-                      )} />
+                      <div
+                        className={cn(
+                          "w-2 h-2 rounded-full",
+                          generateThumbnails ? "bg-green-500" : "bg-gray-500"
+                        )}
+                      />
                       <span>
                         {generateThumbnails
                           ? "Thumbnails will be generated for faster dashboard performance"
-                          : "Only full-size images will be saved (slower dashboard loading)"
-                        }
+                          : "Only full-size images will be saved (slower dashboard loading)"}
                       </span>
                     </div>
                     {generateThumbnails && (
                       <div className='mt-2 text-xs text-purple-light/70'>
-                        Creates: 200×150 thumbnails + 800×600 small images alongside full captures
+                        Creates: 200×150 thumbnails + 800×600 small images
+                        alongside full captures
                       </div>
                     )}
                     {generateThumbnails && (
@@ -311,7 +321,8 @@ export default function Settings() {
                           Regenerate All Now
                         </Button>
                         <p className='mt-2 text-xs text-gray-500'>
-                          Generate thumbnails for existing images that don't have them
+                          Generate thumbnails for existing images that don't
+                          have them
                         </p>
                       </div>
                     )}
@@ -518,11 +529,11 @@ export default function Settings() {
           setThumbnailConfirmOpen(false)
           setThumbnailModalOpen(true)
         }}
-        title="Regenerate All Thumbnails"
-        description="Are you sure? This might take a while to process all existing images and generate thumbnails."
-        confirmLabel="Yes, Start Regeneration"
-        cancelLabel="Cancel"
-        variant="warning"
+        title='Regenerate All Thumbnails'
+        description='Are you sure? This might take a while to process all existing images and generate thumbnails.'
+        confirmLabel='Yes, Start Regeneration'
+        cancelLabel='Cancel'
+        variant='warning'
         icon={<ImageIcon className='w-6 h-6' />}
       />
 
