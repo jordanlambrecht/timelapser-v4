@@ -67,47 +67,15 @@ export default function RootLayout({
 
               {/* Navigation with icons and active states */}
               <NavigationLinks />
-
-              {/* Status indicator */}
-              <div className='flex items-center space-x-2'>
-                <div className='w-2 h-2 rounded-full bg-success pulse-glow' />
-                <span className='text-xs text-grey-light/70'>
-                  System Online
-                </span>
-              </div>
             </div>
           </div>
         </nav>
 
         {/* Main content */}
         <main className='relative z-10'>
-          <div className='px-6 py-8 mx-auto max-w-7xl'>
-            {/* Decorative elements */}
-            <div className='absolute w-32 h-32 border rounded-full top-8 right-8 border-purple-muted/20 floating opacity-30' />
-            <div
-              className='absolute w-4 h-4 rounded-full top-32 left-8 bg-cyan/40 floating'
-              style={{ animationDelay: "1s" }}
-            />
-            <div
-              className='absolute w-6 h-6 top-64 right-1/4 bg-pink/30 rounded-square floating'
-              style={{ animationDelay: "3s" }}
-            />
-
-            {children}
-          </div>
+          <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
         </main>
         <Footer />
-
-        {/* Floating elements */}
-        <div className='fixed pointer-events-none bottom-8 right-8'>
-          <div className='w-3 h-3 rounded-full bg-yellow/60 floating' />
-        </div>
-        <div className='fixed pointer-events-none bottom-32 left-12'>
-          <div
-            className='w-2 h-8 rounded-full bg-purple/40 floating'
-            style={{ animationDelay: "2s" }}
-          />
-        </div>
 
         {/* Toast notifications */}
         <Toaster position='bottom-right' richColors closeButton theme='dark' />
