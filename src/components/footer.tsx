@@ -13,7 +13,11 @@ const Footer = () => {
               <span className='text-grey-light/80'>
                 © {new Date().getFullYear()} – Jordy.
               </span>
-              <Button asChild variant={"link"} className='text-cyan hover:text-cyan-dark p-0'>
+              <Button
+                asChild
+                variant={"link"}
+                className='text-cyan hover:text-cyan-dark p-0'
+              >
                 <Link
                   href={"https://github.com/jordanlambrecht/timelapser-v4"}
                   target='_blank'
@@ -24,7 +28,11 @@ const Footer = () => {
             </div>
             <div className='text-sm text-grey-light/60'>
               Licensed under{" "}
-              <Button asChild variant={"link"} className='text-purple hover:text-purple-light p-0 h-auto'>
+              <Button
+                asChild
+                variant={"link"}
+                className='text- hover:text-purple-light p-0 h-auto'
+              >
                 <Link
                   href={"https://creativecommons.org/licenses/by-nc/4.0/"}
                   target='_blank'
@@ -35,14 +43,14 @@ const Footer = () => {
               – Free for personal use, commercial licensing available
             </div>
           </div>
-          
+
           {/* Support section */}
           <div className='flex flex-col items-center space-y-3'>
             <div className='flex items-center space-x-2 text-grey-light/70'>
               <Heart className='w-4 h-4 text-pink' />
               <span>Dig this app? You can support me by</span>
             </div>
-            <Button asChild className='bg-gradient-to-r from-pink to-purple hover:from-pink-dark hover:to-purple-dark text-white font-medium'>
+            <Button asChild className='bg-yellow text-blue font-medium'>
               <Link href='https://buymeacoffee.com/jordyjordy' target='_blank'>
                 <Coffee className='w-4 h-4 mr-2' />
                 Buying Me A Coffee
