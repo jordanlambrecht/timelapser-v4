@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 import re
 import os
 from pathlib import Path
+from datetime import datetime
 
 from ..database import async_db, sync_db
 from ..models import Video, VideoCreate, VideoUpdate, VideoWithDetails
@@ -123,10 +124,40 @@ async def download_video(video_id: int):
         if not resolved_path.exists():
             raise HTTPException(status_code=404, detail="Video file not found on disk")
 
+        # Generate filename with timestamp
+        video_name = video.get("name", f"video_{video_id}")
+        
+        # Clean video name for filename
+        safe_video_name = "".join(c for c in video_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_video_name = safe_video_name.replace(' ', '_')
+        
+        # Add timestamp to filename
+        if video.get("created_at"):
+            try:
+                created_at = video["created_at"]
+                if isinstance(created_at, str):
+                    # Handle different timestamp formats
+                    if created_at.endswith('Z'):
+                        created_at = created_at.replace('Z', '+00:00')
+                    timestamp = datetime.fromisoformat(created_at)
+                elif hasattr(created_at, 'strftime'):  # datetime object
+                    timestamp = created_at
+                else:
+                    timestamp = datetime.now()
+                
+                filename = f"{safe_video_name}_{timestamp.strftime('%Y%m%d_%H%M%S')}.mp4"
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Error parsing timestamp for video {video_id}: {e}")
+                # Fallback to current timestamp
+                filename = f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        else:
+            # No timestamp available, use current time
+            filename = f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+
         # Return file for download
         return FileResponse(
             path=str(resolved_path),
-            filename=f"{video['name']}.mp4",
+            filename=filename,
             media_type="video/mp4",
         )
 
