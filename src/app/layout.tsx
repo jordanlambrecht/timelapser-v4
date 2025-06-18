@@ -78,7 +78,13 @@ export default function RootLayout({
         <Footer />
 
         {/* Toast notifications */}
-        <Toaster position='bottom-right' richColors closeButton theme='dark' />
+        <Toaster
+          position='bottom-right'
+          richColors
+          closeButton
+          theme='dark'
+          expand={true}
+        />
       </body>
     </html>
   )

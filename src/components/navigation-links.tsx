@@ -4,7 +4,7 @@
 import { usePathname } from "next/navigation"
 import { LayoutDashboard, Settings, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
-
+import Link from "next/link"
 export function NavigationLinks() {
   const pathname = usePathname()
 
@@ -34,7 +34,7 @@ export function NavigationLinks() {
       {links.map((link) => {
         const Icon = link.icon
         return (
-          <a
+          <Link
             key={link.href}
             href={link.href}
             className={cn(
@@ -46,7 +46,7 @@ export function NavigationLinks() {
           >
             <Icon className='w-4 h-4' />
             <span>{link.label}</span>
-          </a>
+          </Link>
         )
       })}
     </div>

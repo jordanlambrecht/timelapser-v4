@@ -25,9 +25,10 @@ const PasswordInput = forwardRef<HTMLInputElement, InputProps>(
           type='button'
           variant='ghost'
           size='sm'
-          className='absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent'
+          className='absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent z-10'
           onClick={() => setShowPassword((prev) => !prev)}
           disabled={disabled}
+          aria-label={showPassword ? "Hide password" : "Show password"}
         >
           {showPassword ? (
             <EyeOffIcon className='h-4 w-4' aria-hidden='true' />
