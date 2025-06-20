@@ -292,4 +292,12 @@ export const ImageThumbnail = memo(function ImageThumbnail({
       </Dialog>
     </>
   )
+}, (prevProps, nextProps) => {
+  // Only re-render if essential props change
+  return (
+    prevProps.imageId === nextProps.imageId &&
+    prevProps.src === nextProps.src &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.showActions === nextProps.showActions
+  )
 })
