@@ -50,6 +50,7 @@ interface Timelapse {
   id: number
   camera_id: number
   status: string
+  name?: string
   image_count: number
   last_capture_at?: string
 }
@@ -104,13 +105,13 @@ export default function Dashboard() {
 
       // Log performance metadata
       if (dashboardData.metadata) {
-        console.log("Dashboard loaded:", dashboardData.metadata)
+        // Dashboard loaded successfully
       }
     } catch (error) {
       console.error("Error fetching dashboard data:", error)
 
       // Fallback to individual API calls if aggregated endpoint fails
-      console.log("Falling back to individual API calls...")
+      // Falling back to individual API calls
       try {
         const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
           fetch("/api/cameras"),
@@ -147,11 +148,10 @@ export default function Dashboard() {
         eventSource.close()
       }
 
-      console.log(`Connecting to SSE... (attempt ${reconnectAttempts + 1})`)
+      // Connecting to SSE
       eventSource = new EventSource("/api/events")
 
       eventSource.onopen = () => {
-        console.log("✅ SSE connected successfully")
         setSseConnected(true)
         reconnectAttempts = 0 // Reset attempts on successful connection
       }
@@ -161,7 +161,7 @@ export default function Dashboard() {
           const data = JSON.parse(event.data)
           setLastEventTime(Date.now()) // Track when we last received an event
 
-          console.log("Dashboard SSE event:", data.type, data)
+          // Process SSE event
 
           switch (data.type) {
             case "camera_added":
@@ -191,7 +191,7 @@ export default function Dashboard() {
               break
 
             case "timelapse_status_changed":
-              console.log("🔄 Processing timelapse status change:", data)
+              // Process timelapse status change
               setTimelapses((prev) => {
                 const updated = prev.map((timelapse) =>
                   timelapse.camera_id === data.camera_id
@@ -274,7 +274,6 @@ export default function Dashboard() {
               break
 
             case "connected":
-              console.log("Connected to dashboard events")
               break
 
             case "heartbeat":
@@ -282,7 +281,7 @@ export default function Dashboard() {
               break
 
             default:
-              console.log("Unknown dashboard event:", data.type)
+            // Handle unknown dashboard event types
           }
         } catch (error) {
           console.error("Error parsing dashboard SSE event:", error)
@@ -296,11 +295,7 @@ export default function Dashboard() {
         // Attempt to reconnect with exponential backoff
         if (reconnectAttempts < maxReconnectAttempts) {
           const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
-          console.log(
-            `Attempting to reconnect SSE in ${delay}ms... (${
-              reconnectAttempts + 1
-            }/${maxReconnectAttempts})`
-          )
+          // Attempting to reconnect with exponential backoff
 
           reconnectAttempts++
           reconnectTimer = setTimeout(() => {
@@ -360,7 +355,7 @@ export default function Dashboard() {
 
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
-          console.log("⚠️ SSE not reliable, refreshing data manually")
+          // SSE not reliable, refreshing data manually
           setTimeout(() => fetchData(), 1000) // Refresh after 1 second
         }
       } else {
@@ -384,27 +379,39 @@ export default function Dashboard() {
   ) => {
     try {
       const camera = cameras.find((c) => c.id === cameraId)
-      const newStatus = currentStatus === "running" ? "stopped" : "running"
-      const response = await fetch("/api/timelapses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ camera_id: cameraId, status: newStatus }),
+      const timelapse = timelapses.find((t) => t.camera_id === cameraId)
+
+      console.log("handleToggleTimelapse called:", {
+        cameraId,
+        currentStatus,
+        timelapse: timelapse
+          ? { id: timelapse.id, status: timelapse.status }
+          : null,
       })
 
-      if (response.ok && camera) {
-        if (newStatus === "running") {
-          toast.timelapseStarted(camera.name)
-        } else {
-          // Show stopped toast with undo functionality
+      if (currentStatus === "running" && timelapse) {
+        // Complete the current timelapse
+        console.log("Attempting to complete timelapse:", timelapse.id)
+        const response = await fetch(
+          `/api/timelapses/${timelapse.id}/complete?camera_id=${cameraId}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+
+        if (response.ok && camera) {
+          console.log("Timelapse completed successfully")
           toast.timelapseStopped(camera.name, async () => {
-            // Undo action - restart the timelapse
+            // Undo action - restart a new timelapse
             try {
-              const restartResponse = await fetch("/api/timelapses", {
+              const restartResponse = await fetch("/api/timelapses/new", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   camera_id: cameraId,
                   status: "running",
+                  name: timelapse.name || `${camera.name} Timelapse`,
                 }),
               })
 
@@ -421,13 +428,39 @@ export default function Dashboard() {
               })
             }
           })
+        } else {
+          console.error(
+            "Failed to complete timelapse:",
+            response.status,
+            response.statusText
+          )
+          const errorText = await response.text()
+          console.error("Response:", errorText)
+          throw new Error(`Failed to stop timelapse: ${response.status}`)
+        }
+      } else {
+        console.warn("Stop condition not met:", {
+          currentStatus,
+          hasTimelapse: !!timelapse,
+          timelapseId: timelapse?.id,
+          timelapseStatus: timelapse?.status,
+        })
+
+        if (!timelapse) {
+          toast.error("No active timelapse found to stop")
+          return
         }
 
-        // If SSE is not connected or hasn't received events recently, refresh data
-        if (!sseConnected || Date.now() - lastEventTime > 10000) {
-          console.log("⚠️ SSE not reliable, refreshing data manually")
-          setTimeout(() => fetchData(), 1000) // Refresh after 1 second
+        if (currentStatus !== "running") {
+          toast.error("Timelapse is not currently running")
+          return
         }
+      }
+
+      // If SSE is not connected or hasn't received events recently, refresh data
+      if (!sseConnected || Date.now() - lastEventTime > 10000) {
+        // SSE not reliable, refreshing data manually
+        setTimeout(() => fetchData(), 1000) // Refresh after 1 second
       }
     } catch (error) {
       console.error("Error toggling timelapse:", error)
@@ -440,10 +473,17 @@ export default function Dashboard() {
   const handlePauseTimelapse = async (cameraId: number) => {
     try {
       const camera = cameras.find((c) => c.id === cameraId)
-      const response = await fetch("/api/timelapses", {
-        method: "POST",
+      const timelapse = timelapses.find((t) => t.camera_id === cameraId)
+
+      if (!timelapse) {
+        toast.error("No active timelapse found to pause")
+        return
+      }
+
+      const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ camera_id: cameraId, status: "paused" }),
+        body: JSON.stringify({ status: "paused" }),
       })
 
       if (response.ok && camera) {
@@ -451,7 +491,7 @@ export default function Dashboard() {
 
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
-          console.log("⚠️ SSE not reliable, refreshing data manually")
+          // SSE not reliable, refreshing data manually
           setTimeout(() => fetchData(), 1000) // Refresh after 1 second
         }
       }
@@ -466,10 +506,17 @@ export default function Dashboard() {
   const handleResumeTimelapse = async (cameraId: number) => {
     try {
       const camera = cameras.find((c) => c.id === cameraId)
-      const response = await fetch("/api/timelapses", {
-        method: "POST",
+      const timelapse = timelapses.find((t) => t.camera_id === cameraId)
+
+      if (!timelapse) {
+        toast.error("No timelapse found to resume")
+        return
+      }
+
+      const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ camera_id: cameraId, status: "running" }),
+        body: JSON.stringify({ status: "running" }),
       })
 
       if (response.ok && camera) {
@@ -477,7 +524,7 @@ export default function Dashboard() {
 
         // If SSE is not connected or hasn't received events recently, refresh data
         if (!sseConnected || Date.now() - lastEventTime > 10000) {
-          console.log("⚠️ SSE not reliable, refreshing data manually")
+          // SSE not reliable, refreshing data manually
           setTimeout(() => fetchData(), 1000) // Refresh after 1 second
         }
       }
@@ -568,7 +615,7 @@ export default function Dashboard() {
     }
   }
 
-  // Bulk timelapse control functions - updated to only handle Resume
+  // Bulk timelapse control functions - updated to use new entity-based endpoints
   const handleBulkResume = async () => {
     setBulkOperationLoading("resume")
 
@@ -592,13 +639,19 @@ export default function Dashboard() {
     let successCount = 0
     let failCount = 0
 
-    // Process cameras in parallel
+    // Process cameras in parallel using entity-based endpoints
     const promises = pausedCameras.map(async (camera) => {
       try {
-        const response = await fetch("/api/timelapses", {
-          method: "POST",
+        const timelapse = timelapses.find((t) => t.camera_id === camera.id)
+        if (!timelapse) {
+          failCount++
+          return
+        }
+
+        const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ camera_id: camera.id, status: "running" }),
+          body: JSON.stringify({ status: "running" }),
         })
 
         if (response.ok) {
@@ -659,13 +712,19 @@ export default function Dashboard() {
     let successCount = 0
     let failCount = 0
 
-    // Process cameras in parallel
+    // Process cameras in parallel using entity-based endpoints
     const promises = runningCameras.map(async (camera) => {
       try {
-        const response = await fetch("/api/timelapses", {
-          method: "POST",
+        const timelapse = timelapses.find((t) => t.camera_id === camera.id)
+        if (!timelapse) {
+          failCount++
+          return
+        }
+
+        const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ camera_id: camera.id, status: "paused" }),
+          body: JSON.stringify({ status: "paused" }),
         })
 
         if (response.ok) {
@@ -727,14 +786,23 @@ export default function Dashboard() {
     let failCount = 0
     const stoppedCameras: Camera[] = []
 
-    // Process cameras in parallel
+    // Process cameras in parallel using entity-based endpoints
     const promises = activeCameras.map(async (camera) => {
       try {
-        const response = await fetch("/api/timelapses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ camera_id: camera.id, status: "stopped" }),
-        })
+        const timelapse = timelapses.find((t) => t.camera_id === camera.id)
+        if (!timelapse) {
+          failCount++
+          return
+        }
+
+        // Complete the timelapse (entity-based approach)
+        const response = await fetch(
+          `/api/timelapses/${timelapse.id}/complete?camera_id=${camera.id}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        )
 
         if (response.ok) {
           successCount++
@@ -762,15 +830,16 @@ export default function Dashboard() {
               ? `${failCount} failed to stop`
               : "All active recordings have been stopped",
           undoAction: async () => {
-            // Restart all stopped cameras
+            // Restart all stopped cameras with new timelapses
             const restartPromises = stoppedCameras.map(async (camera) => {
               try {
-                await fetch("/api/timelapses", {
+                await fetch("/api/timelapses/new", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     camera_id: camera.id,
                     status: "running",
+                    name: `${camera.name} Timelapse`,
                   }),
                 })
               } catch (error) {
@@ -857,10 +926,10 @@ export default function Dashboard() {
     <div className='relative space-y-12'>
       {/* Hero Section with Asymmetric Layout */}
       <div className='relative'>
-        {/* Floating accent elements */}
-        <div className='absolute w-2 h-2 rounded-full -top-4 right-1/4 bg-yellow/60 floating' />
+        {/* animate-float accent elements */}
+        <div className='absolute w-2 h-2 rounded-full -top-4 right-1/4 bg-yellow/60 animate-float' />
         <div
-          className='absolute w-1 h-12 rounded-full top-8 left-1/3 bg-purple/30 floating'
+          className='absolute w-1 h-12 rounded-full top-8 left-1/3 bg-purple/30 animate-float'
           style={{ animationDelay: "1s" }}
         />
 
@@ -1070,9 +1139,9 @@ export default function Dashboard() {
           <div className='relative py-16 text-center'>
             {/* Empty state with creative design */}
             <div className='relative max-w-md mx-auto'>
-              <div className='absolute w-4 h-4 rounded-full -top-8 -left-8 bg-pink/40 floating' />
+              <div className='absolute w-4 h-4 rounded-full -top-8 -left-8 bg-pink/40 animate-float' />
               <div
-                className='absolute w-2 h-2 rounded-full -top-4 -right-6 bg-cyan/60 floating'
+                className='absolute w-2 h-2 rounded-full -top-4 -right-6 bg-cyan/60 animate-float'
                 style={{ animationDelay: "1s" }}
               />
 
