@@ -8,11 +8,15 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, List
 import glob
+import tempfile
+import sys
+import subprocess
+import logging
+import os
 from datetime import datetime, date
 from app.database import SyncDatabase
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +76,7 @@ class VideoGenerator:
         }
 
     def get_overlay_position(
-        self, position: str, font_size: int, padding: int
+        self, position: str, _font_size: int, padding: int
     ) -> Tuple[str, str]:
         """
         Convert position name to FFmpeg x,y coordinates.
@@ -143,7 +147,6 @@ class VideoGenerator:
             else:
                 # Multiple days - use frame-based calculation
                 # This is a simplified approach; more sophisticated mapping will be added
-                total_days = max_day - min_day + 1
                 display_text = f"Day {min_day}-{max_day}"
         else:
             display_text = "Day 1"
@@ -188,8 +191,6 @@ class VideoGenerator:
             The temporary subtitle file must be cleaned up by the caller
             after video generation is complete.
         """
-        import tempfile
-
         if not overlay_settings:
             overlay_settings = self.default_overlay_settings.copy()
 
@@ -197,12 +198,12 @@ class VideoGenerator:
             return None, None
 
         # Create temporary subtitle file for dynamic text
-        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".ass", delete=False)
-
         try:
-            # Write ASS subtitle format header
-            temp_file.write(
-                """[Script Info]
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".ass", delete=False
+            ) as temp_file:
+                temp_file.write(
+                    """[Script Info]
 Title: Day Overlay
 ScriptType: v4.00+
 
@@ -213,50 +214,45 @@ Style: Default,Arial,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """.format(
-                    font_size=overlay_settings.get("font_size", 48),
-                    alignment=self._get_ass_alignment(
-                        overlay_settings.get("position", "bottom-right")
-                    ),
-                )
-            )
-
-            # Calculate frame duration in seconds
-            framerate = 30  # We'll get this from the actual generation call
-            frame_duration = 1.0 / framerate
-
-            # Write subtitle entries for each frame/image
-            for i, image in enumerate(images):
-                start_time = i * frame_duration
-                end_time = (i + 1) * frame_duration
-                day_number = image.get("day_number", 1)
-
-                # Format time as HH:MM:SS.cc
-                start_str = self._seconds_to_ass_time(start_time)
-                end_str = self._seconds_to_ass_time(end_time)
-
-                # Format text
-                text_format = overlay_settings.get("format", "Day {day}")
-                display_text = text_format.format(day=day_number)
-
-                # Write subtitle line
-                temp_file.write(
-                    f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{display_text}\n"
+                        font_size=overlay_settings.get("font_size", 48),
+                        alignment=self._get_ass_alignment(
+                            overlay_settings.get("position", "bottom-right")
+                        ),
+                    )
                 )
 
-            temp_file.close()
+                # Calculate frame duration in seconds
+                framerate = 30  # We'll get this from the actual generation call
+                frame_duration = 1.0 / framerate
+
+                # Write subtitle entries for each frame/image
+                for i, image in enumerate(images):
+                    start_time = i * frame_duration
+                    end_time = (i + 1) * frame_duration
+                    day_number = image.get("day_number", 1)
+
+                    # Format time as HH:MM:SS.cc
+                    start_str = self._seconds_to_ass_time(start_time)
+                    end_str = self._seconds_to_ass_time(end_time)
+
+                    # Format text
+                    text_format = overlay_settings.get("format", "Day {day}")
+                    display_text = text_format.format(day=day_number)
+
+                    # Write subtitle line
+                    temp_file.write(
+                        f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{display_text}\n"
+                    )
+
+                temp_file_name = temp_file.name
 
             # Create subtitle filter
-            subtitle_filter = f"subtitles={temp_file.name}"
+            subtitle_filter = f"subtitles={temp_file_name}"
 
-            return temp_file.name, subtitle_filter
+            return temp_file_name, subtitle_filter
 
         except Exception as e:
-            logger.error(f"Failed to create dynamic overlay: {e}")
-            temp_file.close()
-            try:
-                os.unlink(temp_file.name)
-            except:
-                pass
+            logger.error("Failed to create dynamic overlay: %s", e)
             return None, None
 
     def _get_ass_alignment(self, position: str) -> int:
@@ -359,7 +355,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if date_dir.is_dir() and re.match(
                     r"\d{4}-\d{2}-\d{2}", date_dir.name
                 ):  # YYYY-MM-DD format
-                    logger.info(f"Searching for images in date directory: {date_dir}")
+                    logger.info("Searching for images in date directory: %s", date_dir)
                     for ext in self.supported_formats:
                         pattern = str(date_dir / f"*{ext}")
                         files = glob.glob(pattern)
@@ -374,8 +370,141 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Sort by filename (which includes timestamp)
         image_files.sort()
 
-        logger.info(f"Found {len(image_files)} image files in {directory}")
+        logger.info("Found %d image files in %s", len(image_files), directory)
         return image_files
+
+    def _prepare_video_filters(
+        self,
+        quality_settings: dict,
+        overlay_settings: Optional[dict],
+        day_overlay_data: Optional[list],
+    ) -> Tuple[List[str], Optional[str]]:
+        """
+        Prepare video filters including scaling and overlays
+        Returns (filters_list, subtitle_file_path)
+        """
+        filters = []
+        subtitle_file = None
+
+        # Add scaling if specified
+        if quality_settings["scale"]:
+            filters.append(f"scale={quality_settings['scale']}")
+
+        # Add day overlay if enabled
+        try:
+            if (
+                overlay_settings
+                and overlay_settings.get("enabled", True)
+                and day_overlay_data
+            ):
+                logger.info("Adding day overlay to video")
+
+                # Create dynamic overlay with subtitle file
+                subtitle_file, subtitle_filter = self.create_dynamic_day_overlay(
+                    day_overlay_data, overlay_settings
+                )
+
+                if subtitle_filter:
+                    filters.append(subtitle_filter)
+                    logger.info("Added overlay filter: %s", subtitle_filter)
+                else:
+                    # Fallback to simple static overlay
+                    static_overlay = self.create_day_overlay_filter(
+                        day_overlay_data, overlay_settings
+                    )
+                    if static_overlay:
+                        filters.append(static_overlay)
+                        logger.info("Added static overlay: %s", static_overlay)
+
+            elif overlay_settings and overlay_settings.get("enabled", True):
+                # Use default overlay even without day data
+                logger.info("Adding default day overlay")
+                default_overlay = self.create_day_overlay_filter([], overlay_settings)
+                if default_overlay:
+                    filters.append(default_overlay)
+
+        except Exception as e:
+            logger.warning("Failed to add overlay, continuing without: %s", e)
+
+        return filters, subtitle_file
+
+    def _build_ffmpeg_command(
+        self,
+        images_dir: Path,
+        framerate: int,
+        quality_settings: dict,
+        filters: List[str],
+        output_path: Path,
+    ) -> List[str]:
+        """Build the FFmpeg command with all parameters"""
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output file
+            "-framerate",
+            str(framerate),
+            "-pattern_type",
+            "glob",
+            "-i",
+            str(images_dir / "*.jpg"),  # Input pattern
+            "-c:v",
+            "libx264",  # Video codec
+            "-pix_fmt",
+            "yuv420p",  # Pixel format for compatibility
+            "-crf",
+            str(quality_settings["crf"]),  # Quality
+            "-preset",
+            quality_settings["preset"],  # Encoding speed
+        ]
+
+        # Apply filters if any
+        if filters:
+            cmd.extend(["-vf", ",".join(filters)])
+            logger.info("Applied video filters: %s", filters)
+
+        # Add output path
+        cmd.append(str(output_path))
+
+        return cmd
+
+    def _execute_ffmpeg_command(
+        self, cmd: List[str], images_dir: Path, output_path: Path
+    ) -> Tuple[bool, str]:
+        """Execute FFmpeg command and return success status and message"""
+        # Log the command (without full paths for readability)
+        cmd_str = " ".join(cmd).replace(str(images_dir.parent), "...")
+        logger.info("FFmpeg command: %s", cmd_str)
+
+        # Execute FFmpeg
+        start_time = datetime.now()
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,  # 5 minute timeout
+        )
+
+        duration = (datetime.now() - start_time).total_seconds()
+
+        if result.returncode != 0:
+            error_msg = f"FFmpeg failed: {result.stderr}"
+            logger.error(error_msg)
+            return False, error_msg
+
+        # Check if output file was created
+        if not output_path.exists():
+            return False, "Output video file was not created"
+
+        file_size = output_path.stat().st_size
+        file_size_mb = file_size / (1024 * 1024)
+
+        success_msg = (
+            f"Video generated successfully in {duration:.1f}s. "
+            f"File size: {file_size_mb:.1f}MB"
+        )
+        logger.info(success_msg)
+
+        return True, success_msg
 
     def generate_video(
         self,
@@ -392,6 +521,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         Returns:
             (success: bool, message: str)
         """
+        subtitle_file = None
+
         try:
             images_dir = Path(images_directory)
             if not images_dir.exists():
@@ -414,122 +545,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            logger.info(f"Generating video from {len(image_files)} images")
-            logger.info(f"Output: {output_path}")
-            logger.info(f"Settings: {framerate}fps, quality={quality}")
+            logger.info("Generating video from %d images", len(image_files))
+            logger.info("Output: %s", output_path)
+            logger.info("Settings: %dfps, quality=%s", framerate, quality)
+
+            # Prepare video filters
+            filters, subtitle_file = self._prepare_video_filters(
+                quality_settings, overlay_settings, day_overlay_data
+            )
 
             # Build FFmpeg command
-            cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite output file
-                "-framerate",
-                str(framerate),
-                "-pattern_type",
-                "glob",
-                "-i",
-                str(images_dir / "*.jpg"),  # Input pattern
-                "-c:v",
-                "libx264",  # Video codec
-                "-pix_fmt",
-                "yuv420p",  # Pixel format for compatibility
-                "-crf",
-                str(quality_settings["crf"]),  # Quality
-                "-preset",
-                quality_settings["preset"],  # Encoding speed
-            ]
-
-            # Build video filters
-            filters = []
-
-            # Add scaling if specified
-            if quality_settings["scale"]:
-                filters.append(f"scale={quality_settings['scale']}")
-
-            # Add day overlay if enabled
-            subtitle_file = None
-            try:
-                if (
-                    overlay_settings
-                    and overlay_settings.get("enabled", True)
-                    and day_overlay_data
-                ):
-                    logger.info("Adding day overlay to video")
-
-                    # Create dynamic overlay with subtitle file
-                    subtitle_file, subtitle_filter = self.create_dynamic_day_overlay(
-                        day_overlay_data, overlay_settings
-                    )
-
-                    if subtitle_filter:
-                        filters.append(subtitle_filter)
-                        logger.info(f"Added overlay filter: {subtitle_filter}")
-                    else:
-                        # Fallback to simple static overlay
-                        static_overlay = self.create_day_overlay_filter(
-                            day_overlay_data, overlay_settings
-                        )
-                        if static_overlay:
-                            filters.append(static_overlay)
-                            logger.info(f"Added static overlay: {static_overlay}")
-
-                elif overlay_settings and overlay_settings.get("enabled", True):
-                    # Use default overlay even without day data
-                    logger.info("Adding default day overlay")
-                    default_overlay = self.create_day_overlay_filter(
-                        [], overlay_settings
-                    )
-                    if default_overlay:
-                        filters.append(default_overlay)
-
-            except Exception as e:
-                logger.warning(f"Failed to add overlay, continuing without: {e}")
-
-            # Apply filters if any
-            if filters:
-                cmd.extend(["-vf", ",".join(filters)])
-                logger.info(f"Applied video filters: {filters}")
-
-            # Add output path
-            cmd.append(str(output_path))
-
-            # Log the command (without full paths for readability)
-            cmd_str = " ".join(cmd).replace(str(images_dir.parent), "...")
-            logger.info(f"FFmpeg command: {cmd_str}")
-
-            # Execute FFmpeg
-            start_time = datetime.now()
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=300  # 5 minute timeout
+            cmd = self._build_ffmpeg_command(
+                images_dir, framerate, quality_settings, filters, output_path
             )
 
-            duration = (datetime.now() - start_time).total_seconds()
-
-            # Cleanup subtitle file if created
-            if subtitle_file:
-                try:
-                    os.unlink(subtitle_file)
-                except:
-                    pass
-
-            if result.returncode != 0:
-                error_msg = f"FFmpeg failed: {result.stderr}"
-                logger.error(error_msg)
-                return False, error_msg
-
-            # Check if output file was created
-            if not output_path.exists():
-                return False, "Output video file was not created"
-
-            file_size = output_path.stat().st_size
-            file_size_mb = file_size / (1024 * 1024)
-
-            success_msg = (
-                f"Video generated successfully in {duration:.1f}s. "
-                f"File size: {file_size_mb:.1f}MB"
+            # Execute FFmpeg command
+            success, message = self._execute_ffmpeg_command(
+                cmd, images_dir, output_path
             )
-            logger.info(success_msg)
 
-            return True, success_msg
+            return success, message
 
         except subprocess.TimeoutExpired:
             return False, "Video generation timed out (5 minutes)"
@@ -537,25 +572,234 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             error_msg = f"Video generation failed: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
+        finally:
+            # Cleanup subtitle file if created
+            if subtitle_file:
+                try:
+                    os.unlink(subtitle_file)
+                except OSError:
+                    pass
 
     def test_ffmpeg_available(self) -> Tuple[bool, str]:
         """Test if FFmpeg is available on the system"""
         try:
             result = subprocess.run(
-                ["ffmpeg", "-version"], capture_output=True, text=True, timeout=10
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
 
             if result.returncode == 0:
                 # Extract version info
                 version_line = result.stdout.split("\n")[0]
                 return True, f"FFmpeg available: {version_line}"
-            else:
-                return False, "FFmpeg command failed"
+
+            return False, "FFmpeg command failed"
 
         except FileNotFoundError:
             return False, "FFmpeg not found. Please install FFmpeg."
         except Exception as e:
             return False, f"Error testing FFmpeg: {str(e)}"
+
+    def _validate_timelapse_requirements(self, timelapse_id: int) -> Tuple[bool, str]:
+        """Validate basic requirements for timelapse video generation"""
+        if not self.db:
+            return False, "Database connection required for timelapse video generation"
+        return True, ""
+
+    def _get_timelapse_images_and_stats(
+        self, timelapse_id: int, day_start: Optional[int], day_end: Optional[int]
+    ) -> Tuple[bool, str, List, Optional[dict]]:
+        """Get timelapse images and day statistics"""
+        # Type assertion since we've validated db is not None
+        db = self.db
+        assert db is not None
+
+        # Get timelapse images from database
+        images = db.get_timelapse_images(timelapse_id, day_start, day_end)
+
+        if len(images) < 2:
+            return (
+                False,
+                f"Need at least 2 images for video, found {len(images)} for timelapse {timelapse_id}",
+                [],
+                None,
+            )
+
+        # Get day range statistics
+        day_stats = db.get_timelapse_day_range(timelapse_id)
+        return True, "", images, day_stats
+
+    def _prepare_video_metadata(
+        self,
+        images: List,
+        video_name: Optional[str],
+        day_start: Optional[int],
+        day_end: Optional[int],
+        overlay_settings: Optional[dict],
+    ) -> Tuple[str, int, str]:
+        """Prepare video name and metadata"""
+        if not images:
+            raise ValueError("No images provided for metadata preparation")
+
+        # Get camera info (for naming)
+        camera_id = images[0]["camera_id"]
+
+        # Get camera name
+        if self.db:
+            cameras = self.db.get_active_cameras()
+            camera = next((c for c in cameras if c["id"] == camera_id), None)
+            camera_name = camera["name"] if camera else f"Camera-{camera_id}"
+        else:
+            camera_name = f"Camera-{camera_id}"
+
+        # Get day range statistics for naming
+        max_day = 0
+        if self.db:
+            day_stats = self.db.get_timelapse_day_range(
+                images[0].get("timelapse_id", 0)
+            )
+            max_day = day_stats["max_day"]
+        else:
+            # If no database connection, try to extract max day from image data
+            max_day = max((img.get("day_number", 0) for img in images), default=0)
+
+        # Generate video name if not provided
+        if not video_name:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            day_range = (
+                f"_days{day_start}-{day_end}"
+                if day_start or day_end
+                else f"_day1-{max_day}"
+            )
+            overlay_suffix = (
+                "_overlay"
+                if overlay_settings and overlay_settings.get("enabled")
+                else ""
+            )
+            video_name = (
+                f"{camera_name}_timelapse{day_range}{overlay_suffix}_{timestamp}"
+            )
+
+        return video_name, camera_id, camera_name
+
+    def _create_and_setup_video_record(
+        self,
+        camera_id: int,
+        video_name: str,
+        timelapse_id: int,
+        framerate: int,
+        quality: str,
+        day_start: Optional[int],
+        day_end: Optional[int],
+        output_directory: str,
+        overlay_settings: Optional[dict],
+    ) -> Optional[int]:
+        """Create video record in database and return video_id"""
+        settings = {
+            "framerate": framerate,
+            "quality": quality,
+            "timelapse_id": timelapse_id,
+            "day_start": day_start,
+            "day_end": day_end,
+            "output_directory": str(output_directory),
+            "overlay_settings": overlay_settings,
+        }
+
+        # Ensure db is not None before attempting to create a record
+        if self.db is None:
+            logger.warning(
+                "Database connection is not available, skipping video record creation"
+            )
+            return None
+
+        video_id = self.db.create_video_record(
+            camera_id=camera_id, name=video_name, settings=settings
+        )
+
+        if video_id:
+            logger.info(
+                "Created video record %d for timelapse %d", video_id, timelapse_id
+            )
+
+        return video_id
+
+    def _prepare_images_for_processing(
+        self, images: List, temp_path: Path
+    ) -> Tuple[bool, str, int]:
+        """Copy images to temporary directory with sequential naming"""
+        # Copy images to temp directory with sequential naming for FFmpeg
+        for i, image in enumerate(images):
+            src_path = Path(image["file_path"])
+            if not src_path.exists():
+                logger.warning("Image file not found: %s", src_path)
+                continue
+
+            # Use sequential naming: frame_000001.jpg, frame_000002.jpg, etc.
+            ext = src_path.suffix
+            dst_path = temp_path / f"frame_{i+1:06d}{ext}"
+            shutil.copy2(src_path, dst_path)
+
+        # Count actual copied files
+        copied_files = list(temp_path.glob("frame_*"))
+        if len(copied_files) < 2:
+            return (
+                False,
+                f"Only {len(copied_files)} valid image files found",
+                0,
+            )
+
+        logger.info("Copied %d images to temporary directory", len(copied_files))
+        return True, "", len(copied_files)
+
+    def _update_video_record_with_results(
+        self,
+        video_id: int,
+        success: bool,
+        message: str,
+        images: List,
+        copied_files_count: int,
+        framerate: int,
+        output_path: Path,
+    ) -> None:
+        """Update video record with processing results"""
+        # Check if database connection is available
+        if self.db is None:
+            logger.warning(
+                "Database connection is not available, skipping video record update"
+            )
+            return
+
+        if success:
+            # Get file size
+            file_size = output_path.stat().st_size if output_path.exists() else 0
+
+            # Calculate duration (images / framerate)
+            duration_seconds = copied_files_count / framerate
+
+            # Get date range from first and last images
+            start_date = datetime.fromisoformat(str(images[0]["captured_at"])).date()
+            end_date = datetime.fromisoformat(str(images[-1]["captured_at"])).date()
+
+            # Update record with success
+            self.db.update_video_record(
+                video_id,
+                status="completed",
+                file_path=str(output_path),
+                file_size=file_size,
+                duration_seconds=duration_seconds,
+                image_count=copied_files_count,
+                images_start_date=start_date,
+                images_end_date=end_date,
+            )
+
+            logger.info("Video %d completed successfully", video_id)
+        else:
+            # Update record with failure
+            self.db.update_video_record(video_id, status="failed")
+            logger.error("Video %d generation failed: %s", video_id, message)
 
     def generate_video_from_timelapse_with_overlays(
         self,
@@ -587,61 +831,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         video_id = None
 
         try:
-            # Ensure database is available
-            if not self.db:
-                return (
-                    False,
-                    "Database connection required for timelapse video generation",
-                    None,
-                )
-
-            # Type assertion for the rest of the method
-            db = self.db
+            # Validate requirements
+            valid, error_msg = self._validate_timelapse_requirements(timelapse_id)
+            if not valid:
+                return False, error_msg, None
 
             # Set defaults
             framerate = framerate or self.default_framerate
             quality = quality or self.default_quality
 
-            # Get timelapse images from database
-            images = db.get_timelapse_images(timelapse_id, day_start, day_end)
+            # Get timelapse images and statistics
+            success, message, images, day_stats = self._get_timelapse_images_and_stats(
+                timelapse_id, day_start, day_end
+            )
+            if not success:
+                return False, message, None
 
-            if len(images) < 2:
-                return (
-                    False,
-                    f"Need at least 2 images for video, found {len(images)} for timelapse {timelapse_id}",
-                    None,
-                )
-
-            # Get day range statistics
-            day_stats = db.get_timelapse_day_range(timelapse_id)
-            max_day = day_stats["max_day"]
-
-            # Get camera info (for naming)
-            camera_id = images[0]["camera_id"] if images else None
-            if not camera_id:
-                return False, "No camera ID found for timelapse", None
-
-            # Get camera name
-            cameras = db.get_active_cameras()
-            camera = next((c for c in cameras if c["id"] == camera_id), None)
-            camera_name = camera["name"] if camera else f"Camera-{camera_id}"
-
-            # Generate video name if not provided
-            if not video_name:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                day_range = (
-                    f"_days{day_start}-{day_end}"
-                    if day_start or day_end
-                    else f"_day1-{max_day}"
-                )
-                overlay_suffix = (
-                    "_overlay"
-                    if overlay_settings and overlay_settings.get("enabled")
-                    else ""
-                )
-                video_name = (
-                    f"{camera_name}_timelapse{day_range}{overlay_suffix}_{timestamp}"
-                )
+            # Prepare video metadata
+            video_name, camera_id, camera_name = self._prepare_video_metadata(
+                images, video_name, day_start, day_end, overlay_settings
+            )
 
             # Prepare output path
             output_dir = Path(output_directory)
@@ -649,71 +858,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             output_path = output_dir / f"{video_name}.mp4"
 
             # Create video record in database
-            settings = {
-                "framerate": framerate,
-                "quality": quality,
-                "timelapse_id": timelapse_id,
-                "day_start": day_start,
-                "day_end": day_end,
-                "output_directory": str(output_directory),
-                "overlay_settings": overlay_settings,  # Store overlay settings
-            }
-
-            video_id = db.create_video_record(
-                camera_id=camera_id, name=video_name, settings=settings
+            video_id = self._create_and_setup_video_record(
+                camera_id,
+                video_name,
+                timelapse_id,
+                framerate,
+                quality,
+                day_start,
+                day_end,
+                str(output_directory),
+                overlay_settings,
             )
 
             if not video_id:
                 return False, "Failed to create video record in database", None
 
-            logger.info(f"Created video record {video_id} for timelapse {timelapse_id}")
+            # Log processing information
+            max_day = day_stats["max_day"] if day_stats else "unknown"
             logger.info(
                 f"Processing {len(images)} images from days {day_start or 1} to {day_end or max_day}"
             )
 
             # Log overlay settings
             if overlay_settings and overlay_settings.get("enabled"):
-                logger.info(f"Overlay enabled: {overlay_settings}")
+                logger.info("Overlay enabled: %s", overlay_settings)
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
 
-                # Copy images to temp directory with sequential naming for FFmpeg
-                for i, image in enumerate(images):
-                    src_path = Path(image["file_path"])
-                    if not src_path.exists():
-                        logger.warning(f"Image file not found: {src_path}")
-                        continue
-
-                    # Use sequential naming: frame_000001.jpg, frame_000002.jpg, etc.
-                    ext = src_path.suffix
-                    dst_path = temp_path / f"frame_{i+1:06d}{ext}"
-                    shutil.copy2(src_path, dst_path)
-
-                # Count actual copied files
-                copied_files = list(temp_path.glob("frame_*"))
-                if len(copied_files) < 2:
-                    return (
-                        False,
-                        f"Only {len(copied_files)} valid image files found",
-                        video_id,
-                    )
-
-                logger.info(f"Copied {len(copied_files)} images to temporary directory")
-
-                # Get date range from first and last images
-                start_date = datetime.fromisoformat(
-                    str(images[0]["captured_at"])
-                ).date()
-                end_date = datetime.fromisoformat(str(images[-1]["captured_at"])).date()
-
-                # Update record with initial metadata
-                db.update_video_record(
-                    video_id,
-                    image_count=len(copied_files),
-                    images_start_date=start_date,
-                    images_end_date=end_date,
+                # Prepare images for processing
+                success, error_msg, copied_files_count = (
+                    self._prepare_images_for_processing(images, temp_path)
                 )
+                if not success:
+                    return False, error_msg, video_id
 
                 # Generate the video using the temporary directory with overlays
                 success, message = self.generate_video(
@@ -725,32 +903,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     day_overlay_data=images,  # Pass the image data with day numbers
                 )
 
+                # Update video record with results
+                self._update_video_record_with_results(
+                    video_id,
+                    success,
+                    message,
+                    images,
+                    copied_files_count,
+                    framerate,
+                    output_path,
+                )
+
                 if success:
-                    # Get file size
-                    file_size = (
-                        output_path.stat().st_size if output_path.exists() else 0
-                    )
-
-                    # Calculate duration (images / framerate)
-                    duration_seconds = len(copied_files) / framerate
-
-                    # Update record with success
-                    db.update_video_record(
-                        video_id,
-                        status="completed",
-                        file_path=str(output_path),
-                        file_size=file_size,
-                        duration_seconds=duration_seconds,
-                    )
-
-                    success_msg = f"Timelapse video with overlays generated: {video_name}.mp4 ({len(copied_files)} images, {duration_seconds:.1f}s)"
-                    logger.info(f"Video {video_id} completed: {success_msg}")
+                    success_msg = f"Timelapse video with overlays generated: {video_name}.mp4 ({copied_files_count} images, {copied_files_count/framerate:.1f}s)"
                     return True, success_msg, video_id
-
                 else:
-                    # Update record with failure
-                    db.update_video_record(video_id, status="failed")
-                    logger.error(f"Video {video_id} generation failed: {message}")
                     return False, f"Video generation failed: {message}", video_id
 
         except Exception as e:
@@ -769,10 +936,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def main():
     """Test function for video generation"""
-    from dotenv import load_dotenv
-
     # Load environment
-    load_dotenv("../.env.local")
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv("../.env.local")
+    except ImportError:
+        pass  # dotenv not available, continue without it
 
     # Setup logging
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

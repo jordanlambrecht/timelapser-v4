@@ -1,4 +1,46 @@
-# backend/app/database.py
+"""
+Database Layer for Timelapser v4
+
+This module provides a comprehensive database abstraction layer for the Timelapser application,
+managing PostgreSQL connections and operations for both async (FastAPI) and sync (worker) contexts.
+
+The module implements two main database classes:
+- AsyncDatabase: For use with FastAPI endpoints requiring async operations
+- SyncDatabase: For use with worker processes requiring synchronous operations
+
+Features:
+- Connection pooling with configurable pool sizes
+- Automatic transaction management with rollback on errors
+- Comprehensive CRUD operations for all entities (cameras, timelapses, images, videos, settings)
+- Real-time event broadcasting via Server-Sent Events (SSE)
+- Health monitoring and statistics collection
+- Time window and scheduling management
+- Video generation settings and metadata handling
+- Thumbnail and image size variant management
+
+Database Schema Entities:
+- cameras: Camera configuration and status
+- timelapses: Timelapse sessions and metadata
+- images: Captured image records with thumbnails
+- videos: Generated video files and settings
+- settings: Application configuration key-value pairs
+- logs: System and camera event logs
+
+Connection Management:
+- Uses psycopg3 with connection pooling for performance
+- Configurable pool sizes via settings
+- Automatic connection health checks and recovery
+- Context managers for safe connection handling
+
+Event System:
+- Broadcasts real-time updates to frontend via SSE
+- Supports camera status changes, image captures, and timelapse events
+- Integrates with Next.js frontend for live dashboard updates
+
+Authors: Timelapser Development Team
+Version: 4.0
+License: Private
+"""
 
 import asyncio
 from psycopg.rows import dict_row
@@ -14,13 +56,51 @@ from .config import settings
 
 
 class AsyncDatabase:
-    """Async database interface for FastAPI"""
+    """
+    Asynchronous database interface for FastAPI endpoints.
+
+    This class provides async database operations optimized for web requests.
+    It manages connection pooling, transaction handling, and provides comprehensive
+    CRUD operations for all application entities.
+
+    Features:
+    - Async connection pooling with automatic lifecycle management
+    - Transaction safety with automatic rollback on errors
+    - Real-time event broadcasting via SSE
+    - Comprehensive statistics and health monitoring
+    - Support for complex queries with relationships and aggregations
+
+    Attributes:
+        _pool: AsyncConnectionPool instance for managing database connections
+
+    Usage:
+        async_db = AsyncDatabase()
+        await async_db.initialize()
+
+        # Use in FastAPI endpoints
+        cameras = await async_db.get_cameras()
+
+        # Clean shutdown
+        await async_db.close()
+    """
 
     def __init__(self):
+        """Initialize the AsyncDatabase instance with empty connection pool."""
         self._pool: Optional[AsyncConnectionPool] = None
 
     async def initialize(self):
-        """Initialize the async connection pool"""
+        """
+        Initialize the async connection pool.
+
+        Creates and opens an AsyncConnectionPool with configuration from settings.
+        This method must be called before using any database operations.
+
+        Raises:
+            Exception: If connection pool initialization fails
+
+        Note:
+            This is typically called during FastAPI application startup.
+        """
         try:
             self._pool = AsyncConnectionPool(
                 settings.database_url,
@@ -37,14 +117,37 @@ class AsyncDatabase:
             raise
 
     async def close(self):
-        """Close the connection pool"""
+        """
+        Close the connection pool and cleanup resources.
+
+        This should be called during application shutdown to ensure
+        all database connections are properly closed.
+        """
         if self._pool:
             await self._pool.close()
             logger.info("Async database pool closed")
 
     @asynccontextmanager
     async def get_connection(self):
-        """Get an async database connection from the pool"""
+        """
+        Get an async database connection from the pool with automatic transaction management.
+
+        This context manager provides a database connection with automatic
+        rollback on exceptions and proper connection cleanup.
+
+        Yields:
+            AsyncConnection: Database connection from the pool
+
+        Raises:
+            RuntimeError: If database pool is not initialized
+            Exception: Database errors are logged and re-raised after rollback
+
+        Usage:
+            async with db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT * FROM cameras")
+                    return await cur.fetchall()
+        """
         if not self._pool:
             raise RuntimeError("Database pool not initialized")
 
@@ -58,7 +161,27 @@ class AsyncDatabase:
 
     # Camera methods
     async def get_cameras(self) -> List[Dict[str, Any]]:
-        """Get all cameras with active timelapse info"""
+        """
+        Get all cameras with active timelapse information.
+
+        Retrieves all cameras from the database along with their associated
+        active timelapse details using a LEFT JOIN to include cameras without
+        active timelapses.
+
+        Returns:
+            List[Dict[str, Any]]: List of camera dictionaries containing:
+                - All camera fields (id, name, rtsp_url, status, etc.)
+                - timelapse_status: Status of active timelapse (if any)
+                - timelapse_id: ID of active timelapse (if any)
+                - timelapse_name: Name of active timelapse (if any)
+
+        Example:
+            cameras = await db.get_cameras()
+            for camera in cameras:
+                print(f"Camera {camera['name']}: {camera['status']}")
+                if camera['timelapse_status']:
+                    print(f"  Active timelapse: {camera['timelapse_name']}")
+        """
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -349,7 +472,30 @@ class AsyncDatabase:
     async def create_new_timelapse(
         self, camera_id: int, config: Dict[str, Any]
     ) -> Optional[int]:
-        """Create a new timelapse entity (entity-based model)"""
+        """
+        Create a new timelapse entity using the entity-based model.
+
+        This method implements the entity-based timelapse system where each
+        timelapse is a separate entity that can be managed independently.
+        It automatically completes any existing active timelapses for the camera
+        before creating the new one.
+
+        Args:
+            camera_id: ID of the camera to create the timelapse for
+            config: Configuration dictionary containing:
+                - name: Optional name for the timelapse
+                - auto_stop_at: Optional automatic stop timestamp
+                - time_window_start: Optional custom time window start (HH:MM:SS)
+                - time_window_end: Optional custom time window end (HH:MM:SS)
+                - use_custom_time_window: Boolean for custom time window usage
+
+        Returns:
+            Optional[int]: ID of the created timelapse, or None if creation failed
+
+        Note:
+            This method automatically sets the new timelapse as the camera's
+            active_timelapse_id and marks any existing timelapses as completed.
+        """
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
                 # First, complete any existing active timelapse
@@ -625,9 +771,7 @@ class AsyncDatabase:
 
     # Video methods
     async def get_videos(
-        self, 
-        camera_id: Optional[int] = None, 
-        timelapse_id: Optional[int] = None
+        self, camera_id: Optional[int] = None, timelapse_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Get videos, optionally filtered by camera or timelapse"""
         async with self.get_connection() as conn:
@@ -885,7 +1029,7 @@ class AsyncDatabase:
                     SELECT * FROM images 
                     WHERE timelapse_id = %s
                 """
-                params = [timelapse_id]
+                params: List[Any] = [timelapse_id]
 
                 if search:
                     query += " AND file_path ILIKE %s"
@@ -969,7 +1113,28 @@ class AsyncDatabase:
                 return cur.rowcount > 0
 
     def broadcast_event(self, event_data: Dict[str, Any]) -> None:
-        """Broadcast event via SSE to connected frontend clients"""
+        """
+        Broadcast real-time events via Server-Sent Events (SSE) to connected frontend clients.
+
+        This method sends events to the Next.js frontend via HTTP POST to the SSE endpoint.
+        The frontend maintains persistent connections and broadcasts these events to all
+        connected dashboard clients for real-time updates.
+
+        Args:
+            event_data: Dictionary containing event information:
+                - type: Event type (e.g., 'image_captured', 'camera_status_changed')
+                - Additional fields specific to event type
+                - timestamp: ISO formatted timestamp (added automatically if not present)
+
+        Event Types:
+            - image_captured: New image was captured for a camera/timelapse
+            - camera_status_changed: Camera online/offline status changed
+            - timelapse_status_changed: Timelapse started/stopped/paused
+
+        Note:
+            This method handles network failures gracefully and logs errors without
+            raising exceptions to avoid disrupting database operations.
+        """
         try:
             # Send event to Next.js SSE endpoint (POST method for broadcasting)
             sse_url = f"{settings.frontend_url}/api/events"
@@ -1043,13 +1208,53 @@ class AsyncDatabase:
 
 # Sync database wrapper for non-async operations
 class SyncDatabase:
-    """Synchronous database interface for worker processes"""
+    """
+    Synchronous database interface for worker processes and background tasks.
+
+    This class provides synchronous database operations optimized for worker processes,
+    background tasks, and other non-async contexts. It mirrors the functionality of
+    AsyncDatabase but uses synchronous psycopg connections.
+
+    Features:
+    - Synchronous connection pooling for worker processes
+    - Image capture recording with thumbnail management
+    - Camera health monitoring and status updates
+    - Video generation record management
+    - System health statistics and monitoring
+    - Real-time event broadcasting to frontend
+    - Time window calculation and scheduling
+
+    Attributes:
+        _pool: ConnectionPool instance for managing synchronous database connections
+
+    Usage:
+        sync_db = SyncDatabase()
+        sync_db.initialize()
+
+        # Use in worker processes
+        cameras = sync_db.get_running_timelapses()
+
+        # Clean shutdown
+        sync_db.close()
+    """
 
     def __init__(self):
+        """Initialize the SyncDatabase instance with empty connection pool."""
         self._pool: Optional[ConnectionPool] = None
 
     def initialize(self):
-        """Initialize the sync connection pool"""
+        """
+        Initialize the synchronous connection pool.
+
+        Creates and opens a ConnectionPool with configuration from settings.
+        This method must be called before using any database operations.
+
+        Raises:
+            Exception: If connection pool initialization fails
+
+        Note:
+            This is typically called during worker process startup.
+        """
         try:
             self._pool = ConnectionPool(
                 settings.database_url,
@@ -1139,7 +1344,36 @@ class SyncDatabase:
         small_path: Optional[str] = None,
         small_size: Optional[int] = None,
     ) -> Optional[int]:
-        """Record a captured image in the database with optional thumbnail data"""
+        """
+        Record a captured image in the database with optional thumbnail and size variant data.
+
+        This method is the primary interface for recording new images captured by
+        the worker processes. It handles day number calculation, thumbnail metadata,
+        and updates related camera and timelapse statistics.
+
+        Args:
+            camera_id: ID of the camera that captured the image
+            timelapse_id: ID of the timelapse this image belongs to
+            file_path: Full file system path to the captured image
+            file_size: Size of the image file in bytes
+            thumbnail_path: Optional path to thumbnail image
+            thumbnail_size: Optional size of thumbnail file in bytes
+            small_path: Optional path to small size variant
+            small_size: Optional size of small variant file in bytes
+
+        Returns:
+            Optional[int]: ID of the created image record, or None if creation failed
+
+        Side Effects:
+            - Increments timelapse image_count
+            - Updates timelapse last_capture_at timestamp
+            - Updates camera last_capture_at and next_capture_at times
+            - Logs image creation details
+
+        Note:
+            Day numbers are calculated as 1-based offsets from the timelapse start_date.
+            The method assumes 5-minute capture intervals for next_capture_at calculation.
+        """
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # Get timelapse start date to calculate day number
@@ -1634,7 +1868,7 @@ class SyncDatabase:
                     # Cast to dictionary for type checking
                     camera_settings = cast(Dict[str, Any], camera_settings_row)
 
-                    from datetime import datetime, timedelta, time as dt_time
+                    from datetime import datetime, timedelta
 
                     # Calculate base next capture time (now + interval)
                     now = datetime.now(timezone.utc)
@@ -1723,6 +1957,41 @@ class SyncDatabase:
             return 300
 
 
-# Global instances
+# Global Database Instances
+# These pre-configured instances are used throughout the application
+
 async_db = AsyncDatabase()
+"""
+Global AsyncDatabase instance for FastAPI endpoints.
+
+This instance should be initialized during FastAPI application startup
+and used for all async database operations in API endpoints.
+
+Usage:
+    # In FastAPI startup
+    await async_db.initialize()
+    
+    # In endpoints  
+    cameras = await async_db.get_cameras()
+    
+    # In shutdown
+    await async_db.close()
+"""
+
 sync_db = SyncDatabase()
+"""
+Global SyncDatabase instance for worker processes and background tasks.
+
+This instance should be initialized during worker startup and used
+for all synchronous database operations in background processes.
+
+Usage:
+    # In worker startup
+    sync_db.initialize()
+    
+    # In worker processes
+    timelapses = sync_db.get_running_timelapses()
+    
+    # In shutdown
+    sync_db.close()
+"""

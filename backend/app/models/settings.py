@@ -1,6 +1,5 @@
 # backend/app/models/settings.py
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
 from datetime import datetime
 
 
@@ -11,8 +10,6 @@ class SettingBase(BaseModel):
 
 class SettingCreate(SettingBase):
     """Model for creating a new setting"""
-
-    pass
 
 
 class SettingUpdate(BaseModel):

@@ -1,6 +1,5 @@
 # backend/app/utils.py
 import hashlib
-from typing import Optional
 
 
 def hash_api_key(api_key: str) -> str:

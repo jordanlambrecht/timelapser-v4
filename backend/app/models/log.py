@@ -15,8 +15,6 @@ class LogBase(BaseModel):
 class LogCreate(LogBase):
     """Model for creating a new log entry"""
 
-    pass
-
 
 class Log(LogBase):
     """Full log model with all database fields"""

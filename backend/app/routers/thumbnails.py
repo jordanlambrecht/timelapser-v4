@@ -1,8 +1,7 @@
 # backend/app/routers/thumbnails.py
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from typing import Generator, Dict, Any, List
+from typing import Dict, Any
 from loguru import logger
 import asyncio
 import json

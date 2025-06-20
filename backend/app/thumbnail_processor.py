@@ -5,9 +5,9 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Any, Dict
-from PIL import Image, ImageOps
-import numpy as np
+from typing import Optional, Tuple, Dict
+from PIL import Image
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,6 @@ class ThumbnailProcessor:
         thumb_image.thumbnail(size, Image.Resampling.LANCZOS)
 
         # Save to bytes with optimized JPEG settings
-        from io import BytesIO
-
         output = BytesIO()
         thumb_image.save(
             output,
@@ -69,12 +67,65 @@ class ThumbnailProcessor:
                 f.write(thumbnail_bytes)
 
             file_size = filepath.stat().st_size
-            logger.debug(f"Saved thumbnail: {filepath} ({file_size} bytes)")
+            logger.debug("Saved thumbnail: %s (%d bytes)", filepath, file_size)
             return True, file_size
 
         except Exception as e:
-            logger.error(f"Failed to save thumbnail {filepath}: {e}")
+            logger.error("Failed to save thumbnail %s: %s", filepath, e)
             return False, 0
+
+    def _generate_single_thumbnail(
+        self,
+        pil_image,
+        filename: str,
+        camera_id: str,
+        today: str,
+        size_type: str,
+        size: tuple,
+        quality: int,
+    ) -> Optional[Tuple[str, int]]:
+        """Generate a single thumbnail (either thumbnail or small size)"""
+        try:
+            # Generate thumbnail bytes
+            thumbnail_bytes = self.generate_thumbnail_pil(pil_image, size, quality)
+
+            # Determine path based on size type
+            if size_type == "thumbnail":
+                directories = {
+                    "thumbnails": Path(
+                        f"data/cameras/camera-{camera_id}/thumbnails/{today}"
+                    )
+                }
+                directories["thumbnails"].mkdir(parents=True, exist_ok=True)
+                thumbnail_path = directories["thumbnails"] / filename
+                relative_path = (
+                    f"data/cameras/camera-{camera_id}/thumbnails/{today}/{filename}"
+                )
+            else:  # small
+                directories = {
+                    "small": Path(f"data/cameras/camera-{camera_id}/small/{today}")
+                }
+                directories["small"].mkdir(parents=True, exist_ok=True)
+                thumbnail_path = directories["small"] / filename
+                relative_path = (
+                    f"data/cameras/camera-{camera_id}/small/{today}/{filename}"
+                )
+
+            # Save thumbnail
+            success, file_size = self.save_thumbnail_to_file(
+                thumbnail_bytes, thumbnail_path
+            )
+
+            if success:
+                logger.debug("Generated optimized %s: %s", size_type, thumbnail_path)
+                return (relative_path, file_size)
+            else:
+                logger.warning("Failed to generate %s for %s", size_type, filename)
+                return None
+
+        except Exception as e:
+            logger.error("Exception during %s generation: %s", size_type, e)
+            return None
 
     def generate_thumbnails_from_opencv(
         self, cv_frame, base_filename: str, directories: Dict[str, Path]
@@ -97,43 +148,29 @@ class ThumbnailProcessor:
             today = datetime.now().strftime("%Y-%m-%d")
 
             # Generate thumbnail (200x150) with Pillow
-            thumbnail_bytes = self.generate_thumbnail_pil(
-                pil_image, self.thumbnail_size, self.qualities["thumbnail"]
+            results["thumbnail"] = self._generate_single_thumbnail(
+                pil_image,
+                base_filename,
+                camera_id,
+                today,
+                "thumbnail",
+                self.thumbnail_size,
+                self.qualities["thumbnail"],
             )
-
-            thumbnail_path = directories["thumbnails"] / base_filename
-            success, file_size = self.save_thumbnail_to_file(
-                thumbnail_bytes, thumbnail_path
-            )
-
-            if success:
-                # Store relative path for database
-                relative_path = f"data/cameras/camera-{camera_id}/thumbnails/{today}/{base_filename}"
-                results["thumbnail"] = (relative_path, file_size)
-                logger.debug(f"Generated optimized thumbnail: {thumbnail_path}")
-            else:
-                logger.warning(f"Failed to generate thumbnail for {base_filename}")
 
             # Generate small version (800x600) with Pillow
-            small_bytes = self.generate_thumbnail_pil(
-                pil_image, self.small_size, self.qualities["small"]
+            results["small"] = self._generate_single_thumbnail(
+                pil_image,
+                base_filename,
+                camera_id,
+                today,
+                "small",
+                self.small_size,
+                self.qualities["small"],
             )
 
-            small_path = directories["small"] / base_filename
-            success, file_size = self.save_thumbnail_to_file(small_bytes, small_path)
-
-            if success:
-                # Store relative path for database
-                relative_path = (
-                    f"data/cameras/camera-{camera_id}/small/{today}/{base_filename}"
-                )
-                results["small"] = (relative_path, file_size)
-                logger.debug(f"Generated optimized small image: {small_path}")
-            else:
-                logger.warning(f"Failed to generate small image for {base_filename}")
-
         except Exception as e:
-            logger.error(f"Exception during Pillow thumbnail generation: {e}")
+            logger.error("Exception during Pillow thumbnail generation: %s", e)
 
         return results
 
@@ -187,7 +224,9 @@ class ThumbnailProcessor:
                     results["small"] = (str(small_path), file_size)
 
         except Exception as e:
-            logger.error(f"Exception generating thumbnails from file {image_path}: {e}")
+            logger.error(
+                "Exception generating thumbnails from file %s: %s", image_path, e
+            )
 
         return results
 

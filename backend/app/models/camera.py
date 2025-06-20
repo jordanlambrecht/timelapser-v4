@@ -57,7 +57,7 @@ class CameraBase(BaseModel):
 
     @field_validator("rtsp_url")
     @classmethod
-    def validate_rtsp_url(cls, v: str) -> str:
+    def validate_rtsp_url(_cls, v: str) -> str:
         """Validate RTSP URL format and prevent injection"""
         if not v:
             raise ValueError("RTSP URL cannot be empty")
@@ -80,7 +80,7 @@ class CameraBase(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: str) -> str:
+    def validate_name(_cls, v: str) -> str:
         """Validate camera name"""
         if not v.strip():
             raise ValueError("Camera name cannot be empty or just whitespace")
@@ -88,7 +88,7 @@ class CameraBase(BaseModel):
 
     @field_validator("min_time_seconds", "max_time_seconds")
     @classmethod
-    def validate_time_bounds(cls, v: Optional[int]) -> Optional[int]:
+    def validate_time_bounds(_cls, v: Optional[int]) -> Optional[int]:
         """Validate time bounds are reasonable"""
         if v is not None and v > 3600:  # 1 hour max
             raise ValueError("Time limit cannot exceed 3600 seconds (1 hour)")
@@ -96,7 +96,7 @@ class CameraBase(BaseModel):
 
     @field_validator("fps_bounds_min", "fps_bounds_max")
     @classmethod
-    def validate_fps_bounds(cls, v: int) -> int:
+    def validate_fps_bounds(_cls, v: int) -> int:
         """Validate FPS bounds are reasonable"""
         if v < 1 or v > 120:
             raise ValueError("FPS bounds must be between 1 and 120")
@@ -104,7 +104,7 @@ class CameraBase(BaseModel):
 
     @field_validator("time_window_start", "time_window_end")
     @classmethod
-    def validate_time_window(cls, v: Optional[str]) -> Optional[str]:
+    def validate_time_window(_cls, v: Optional[str]) -> Optional[str]:
         """Validate time window format (HH:MM:SS)"""
         if v is None:
             return v
@@ -167,7 +167,7 @@ class CameraUpdate(BaseModel):
 
     @field_validator("rtsp_url")
     @classmethod
-    def validate_rtsp_url(cls, v: Optional[str]) -> Optional[str]:
+    def validate_rtsp_url(_cls, v: Optional[str]) -> Optional[str]:
         """Validate RTSP URL format and prevent injection"""
         if v is None:
             return v
@@ -177,7 +177,7 @@ class CameraUpdate(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(_cls, v: Optional[str]) -> Optional[str]:
         """Validate camera name"""
         if v is None:
             return v

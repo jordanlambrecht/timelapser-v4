@@ -30,7 +30,7 @@ async def get_settings():
         return settings_dict
     except Exception as e:
         logger.error(f"Error fetching settings: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch settings")
+        raise HTTPException(status_code=500, detail="Failed to fetch settings") from e
 
 
 @router.get("/list", response_model=List[Setting])
@@ -41,7 +41,7 @@ async def get_settings_list():
         return settings
     except Exception as e:
         logger.error(f"Error fetching settings: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch settings")
+        raise HTTPException(status_code=500, detail="Failed to fetch settings") from e
 
 
 @router.get("/{key}", response_model=Setting)
@@ -56,7 +56,7 @@ async def get_setting(key: str):
         raise
     except Exception as e:
         logger.error(f"Error fetching setting {key}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch setting")
+        raise HTTPException(status_code=500, detail="Failed to fetch setting") from e
 
 
 @router.post("/", response_model=Setting)
@@ -73,7 +73,7 @@ async def create_setting(setting_data: SettingCreate):
         return setting
     except Exception as e:
         logger.error(f"Error creating setting: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create setting")
+        raise HTTPException(status_code=500, detail="Failed to create setting") from e
 
 
 @router.put("/", response_model=Setting)
@@ -108,7 +108,7 @@ async def update_setting_body(setting_data: Dict[str, Any]):
         raise
     except Exception as e:
         logger.error(f"Error updating setting: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update setting")
+        raise HTTPException(status_code=500, detail="Failed to update setting") from e
 
 
 @router.put("/{key}", response_model=Setting)
@@ -134,7 +134,7 @@ async def update_setting(key: str, setting_data: SettingUpdate):
         return setting
     except Exception as e:
         logger.error(f"Error updating setting {key}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update setting")
+        raise HTTPException(status_code=500, detail="Failed to update setting") from e
 
 
 @router.delete("/{key}")
@@ -151,7 +151,7 @@ async def delete_setting(key: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting setting {key}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete setting")
+        raise HTTPException(status_code=500, detail="Failed to delete setting") from e
 
 
 @router.post("/verify-api-key")
@@ -188,4 +188,4 @@ async def verify_api_key_endpoint(request_data: Dict[str, Any]):
         raise
     except Exception as e:
         logger.error(f"Error verifying API key: {e}")
-        raise HTTPException(status_code=500, detail="Failed to verify API key")
+        raise HTTPException(status_code=500, detail="Failed to verify API key") from e

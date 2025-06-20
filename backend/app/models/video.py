@@ -14,7 +14,7 @@ class VideoBase(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: str) -> str:
+    def validate_name(_cls, v: str) -> str:
         """Validate video name"""
         if not v.strip():
             raise ValueError("Video name cannot be empty or just whitespace")
@@ -23,8 +23,6 @@ class VideoBase(BaseModel):
 
 class VideoCreate(VideoBase):
     """Model for creating a new video"""
-
-    pass
 
 
 class VideoUpdate(BaseModel):
@@ -42,7 +40,7 @@ class VideoUpdate(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(_cls, v: Optional[str]) -> Optional[str]:
         """Validate video name"""
         if v is None:
             return v
@@ -64,7 +62,7 @@ class Video(VideoBase):
     images_end_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
-    
+
     # Video generation calculation metadata
     calculated_fps: Optional[float] = None
     target_duration: Optional[int] = None

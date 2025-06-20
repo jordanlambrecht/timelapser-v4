@@ -7,8 +7,6 @@ Create Date: 2025-06-18 10:00:00.000000
 """
 
 from alembic import op
-import sqlalchemy as sa
-import hashlib
 
 # revision identifiers
 revision = "005_enhanced_settings"

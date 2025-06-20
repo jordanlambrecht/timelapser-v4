@@ -19,11 +19,13 @@ router = APIRouter()
 @router.get("/", response_model=List[VideoWithDetails])
 async def get_videos(
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
-    timelapse_id: Optional[int] = Query(None, description="Filter by timelapse ID")
+    timelapse_id: Optional[int] = Query(None, description="Filter by timelapse ID"),
 ):
     """Get all videos, optionally filtered by camera or timelapse"""
     try:
-        videos = await async_db.get_videos(camera_id=camera_id, timelapse_id=timelapse_id)
+        videos = await async_db.get_videos(
+            camera_id=camera_id, timelapse_id=timelapse_id
+        )
         return videos
     except Exception as e:
         logger.error(f"Error fetching videos: {e}")
@@ -127,33 +129,41 @@ async def download_video(video_id: int):
 
         # Generate filename with timestamp
         video_name = video.get("name", f"video_{video_id}")
-        
+
         # Clean video name for filename
-        safe_video_name = "".join(c for c in video_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_video_name = safe_video_name.replace(' ', '_')
-        
+        safe_video_name = "".join(
+            c for c in video_name if c.isalnum() or c in (" ", "-", "_")
+        ).rstrip()
+        safe_video_name = safe_video_name.replace(" ", "_")
+
         # Add timestamp to filename
         if video.get("created_at"):
             try:
                 created_at = video["created_at"]
                 if isinstance(created_at, str):
                     # Handle different timestamp formats
-                    if created_at.endswith('Z'):
-                        created_at = created_at.replace('Z', '+00:00')
+                    if created_at.endswith("Z"):
+                        created_at = created_at.replace("Z", "+00:00")
                     timestamp = datetime.fromisoformat(created_at)
-                elif hasattr(created_at, 'strftime'):  # datetime object
+                elif hasattr(created_at, "strftime"):  # datetime object
                     timestamp = created_at
                 else:
                     timestamp = datetime.now()
-                
-                filename = f"{safe_video_name}_{timestamp.strftime('%Y%m%d_%H%M%S')}.mp4"
+
+                filename = (
+                    f"{safe_video_name}_{timestamp.strftime('%Y%m%d_%H%M%S')}.mp4"
+                )
             except (ValueError, TypeError) as e:
                 logger.warning(f"Error parsing timestamp for video {video_id}: {e}")
                 # Fallback to current timestamp
-                filename = f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                filename = (
+                    f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                )
         else:
             # No timestamp available, use current time
-            filename = f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            filename = (
+                f"{safe_video_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            )
 
         # Return file for download
         return FileResponse(
@@ -179,7 +189,7 @@ class VideoGenerationRequest(BaseModel):
 
     @field_validator("video_name")
     @classmethod
-    def validate_video_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_video_name(_cls, v: Optional[str]) -> Optional[str]:
         """Validate video name to prevent injection attacks"""
         if v is None:
             return v

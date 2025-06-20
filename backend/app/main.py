@@ -22,7 +22,7 @@ from .routers import (
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """Handle application startup and shutdown"""
     # Startup
     logger.info("Starting FastAPI application")
@@ -61,13 +61,13 @@ app.add_middleware(
 
 # Exception handlers
 @app.exception_handler(ValueError)
-async def value_error_handler(request, exc):
+async def value_error_handler(_request, exc):
     """Handle validation errors"""
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
+async def general_exception_handler(_request, exc):
     """Handle general exceptions"""
     logger.error(f"Unhandled exception: {exc}")
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})

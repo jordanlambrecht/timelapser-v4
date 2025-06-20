@@ -17,8 +17,6 @@ class ImageBase(BaseModel):
 class ImageCreate(ImageBase):
     """Model for creating a new image record"""
 
-    pass
-
 
 class Image(ImageBase):
     """Full image model with all database fields"""

@@ -1,6 +1,6 @@
 # backend/app/routers/logs.py
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, List, Dict, Any, cast
+from typing import Optional, List, Dict, Any, cast, Tuple
 from loguru import logger
 from ..database import sync_db
 
@@ -8,6 +8,67 @@ router = APIRouter()
 
 
 @router.get("/")
+def _build_log_query_conditions(
+    level: Optional[str], camera_id: Optional[int], search: Optional[str]
+) -> Tuple[List[str], List[Any]]:
+    """Build WHERE conditions and parameters for log queries"""
+    conditions = []
+    params = []
+
+    if level and level != "all":
+        conditions.append("l.level = %s")
+        params.append(level)
+
+    if camera_id:
+        conditions.append("l.camera_id = %s")
+        params.append(camera_id)
+
+    if search:
+        conditions.append("l.message ILIKE %s")
+        params.append(f"%{search}%")
+
+    return conditions, params
+
+
+def _build_log_queries(conditions: List[str]) -> Tuple[str, str]:
+    """Build the main query and count query with conditions"""
+    base_query = """
+        SELECT 
+            l.id,
+            l.level,
+            l.message,
+            l.camera_id,
+            l.timestamp,
+            c.name as camera_name
+        FROM logs l
+        LEFT JOIN cameras c ON l.camera_id = c.id
+    """
+
+    count_query = "SELECT COUNT(*) as total FROM logs l"
+
+    if conditions:
+        where_clause = " WHERE " + " AND ".join(conditions)
+        base_query += where_clause
+        count_query += where_clause
+
+    return base_query, count_query
+
+
+def _format_log_results(logs_result: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Format raw log results for API response"""
+    return [
+        {
+            "id": row["id"],
+            "level": row["level"],
+            "message": row["message"],
+            "camera_id": row["camera_id"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+            "camera_name": row["camera_name"],
+        }
+        for row in logs_result
+    ]
+
+
 async def get_logs(
     level: Optional[str] = Query(None, description="Filter by log level"),
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
@@ -19,72 +80,30 @@ async def get_logs(
     try:
         offset = (page - 1) * limit
 
-        # Build base query
-        base_query = """
-            SELECT 
-                l.id,
-                l.level,
-                l.message,
-                l.camera_id,
-                l.timestamp,
-                c.name as camera_name
-            FROM logs l
-            LEFT JOIN cameras c ON l.camera_id = c.id
-        """
+        # Build query conditions
+        conditions, params = _build_log_query_conditions(level, camera_id, search)
 
-        count_query = "SELECT COUNT(*) as total FROM logs l"
+        # Build queries
+        base_query, count_query = _build_log_queries(conditions)
 
-        conditions = []
-        params = []
-
-        # Add filters
-        if level and level != "all":
-            conditions.append("l.level = %s")
-            params.append(level)
-
-        if camera_id:
-            conditions.append("l.camera_id = %s")
-            params.append(camera_id)
-
-        if search:
-            conditions.append("l.message ILIKE %s")
-            params.append(f"%{search}%")
-
-        # Add WHERE clause if we have conditions
-        if conditions:
-            where_clause = " WHERE " + " AND ".join(conditions)
-            base_query += where_clause
-            count_query += where_clause
-
-        # Add ordering and pagination
-        base_query += " ORDER BY l.timestamp DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
+        # Add ordering and pagination to base query
+        final_query = base_query + " ORDER BY l.timestamp DESC LIMIT %s OFFSET %s"
+        query_params = params + [limit, offset]
 
         # Execute queries
         with sync_db.get_connection() as conn:
             with conn.cursor() as cur:
                 # Get logs
-                cur.execute(base_query, params)
+                cur.execute(final_query, query_params)  # type: ignore
                 logs_result = cast(List[Dict[str, Any]], cur.fetchall())
 
-                # Get total count (reset params for count query)
-                count_params = params[:-2]  # Remove limit and offset
-                cur.execute(count_query, count_params)
+                # Get total count
+                cur.execute(count_query, params)  # type: ignore
                 count_result = cast(Optional[Dict[str, Any]], cur.fetchone())
                 total = count_result["total"] if count_result else 0
 
-        # Convert to list of dicts
-        logs = [
-            {
-                "id": row["id"],
-                "level": row["level"],
-                "message": row["message"],
-                "camera_id": row["camera_id"],
-                "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
-                "camera_name": row["camera_name"],
-            }
-            for row in logs_result
-        ]
+        # Format results
+        logs = _format_log_results(logs_result)
 
         return {
             "logs": logs,
@@ -97,8 +116,8 @@ async def get_logs(
         }
 
     except Exception as e:
-        logger.error(f"Failed to fetch logs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch logs")
+        logger.error("Failed to fetch logs: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch logs") from e
 
 
 @router.get("/stats")
