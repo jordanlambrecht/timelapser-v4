@@ -8,6 +8,10 @@ export interface ImageForCamera {
   thumbnail_size?: number
   small_path?: string
   small_size?: number
+  // Corruption detection fields
+  corruption_score: number
+  is_flagged: boolean
+  corruption_details?: object
 }
 
 export interface ImageFormatDialogsProps {

@@ -30,6 +30,13 @@ export interface CameraWithLastImage {
   fps_bounds_min: number
   fps_bounds_max: number
 
+  // Corruption detection fields
+  corruption_detection_heavy: boolean
+  lifetime_glitch_count: number
+  consecutive_corruption_failures: number
+  degraded_mode_active: boolean
+  last_degraded_at?: string
+
   last_image?: ImageForCamera
 }
 
