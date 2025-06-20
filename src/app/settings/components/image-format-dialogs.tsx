@@ -5,11 +5,7 @@ import { useState } from "react"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { ThumbnailRegenerationModal } from "@/components/thumbnail-regeneration-modal"
 import { Image as ImageIcon } from "lucide-react"
-
-interface ImageFormatDialogsProps {
-  imageCaptureType: "PNG" | "JPG"
-  onImageCaptureTypeChange: (newType: "PNG" | "JPG") => void
-}
+import { type ImageFormatDialogsProps } from "@/types"
 
 export function ImageFormatDialogs({
   imageCaptureType,
