@@ -38,7 +38,6 @@ export async function proxyToFastAPI(
     }
 
     const url = `${FASTAPI_BASE_URL}${endpoint}`
-    console.log(`Proxying ${method} ${url}`)
 
     const response = await fetch(url, fetchOptions)
 

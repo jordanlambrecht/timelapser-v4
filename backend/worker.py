@@ -203,18 +203,25 @@ class AsyncTimelapseWorker:
                 try:
                     with sync_db.get_connection() as conn:
                         with conn.cursor() as cur:
-                            cur.execute("SELECT value FROM settings WHERE key = 'generate_thumbnails'")
+                            cur.execute(
+                                "SELECT value FROM settings WHERE key = 'generate_thumbnails'"
+                            )
                             result = cur.fetchone()
                             if result:
-                                return result["value"].lower() == "true"
+                                # result is a tuple, so access by index
+                                return result[0].lower() == "true"
                             return True  # Default to enabled if setting not found
                 except Exception as e:
                     logger.warning(f"Failed to get thumbnail setting: {e}")
                     return True  # Default to enabled on error
 
-            generate_thumbnails = await loop.run_in_executor(None, get_thumbnail_setting)
+            generate_thumbnails = await loop.run_in_executor(
+                None, get_thumbnail_setting
+            )
 
-            logger.info(f"Starting capture for camera {camera_id} ({camera_name}) [thumbnails: {'enabled' if generate_thumbnails else 'disabled'}]")
+            logger.info(
+                f"Starting capture for camera {camera_id} ({camera_name}) [thumbnails: {'enabled' if generate_thumbnails else 'disabled'}]"
+            )
 
             # Capture image - RTSPCapture handles directory creation and database recording
             # Note: RTSPCapture still uses sync database, so we run in executor

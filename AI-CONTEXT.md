@@ -398,6 +398,43 @@ properly broadcasting events to Next.js SSE endpoint **Solution**: Fixed
 requests.post(url, json=data)  # NOT data=json.dumps(data)
 ```
 
+### API Endpoint 404 Debugging Pattern (June 20, 2025)
+
+**Problem**: Multiple 404 errors for timelapse endpoints and event structure
+violations **Root Cause**: Missing API endpoints and incorrect SSE event
+structure
+
+**Systematic Debugging Approach**:
+
+1. **Start with error message** - Identify the failing endpoint (e.g.,
+   `/api/timelapses/[id]/complete`)
+2. **Check frontend structure** - Verify Next.js API route exists at
+   `/src/app/api/`
+3. **Check backend structure** - Verify FastAPI endpoint exists at
+   `/backend/app/routers/`
+4. **Check database methods** - Verify required database methods exist in
+   `/backend/app/database.py`
+5. **Verify event structure** - Ensure all events follow
+   `{ type, data, timestamp }` format
+
+**Specific Issues Fixed**:
+
+- Missing `/api/timelapses/[id]/complete` endpoint (both frontend and backend
+  connectivity)
+- Missing `/api/timelapses/[id]` GET endpoint for single timelapse retrieval
+- Added `get_timelapse_by_id()` database method for single timelapse queries
+- Fixed SSE event structure violations (data directly on event object instead of
+  nested under `data`)
+- Updated invalid event types to use approved `ALLOWED_EVENT_TYPES`
+- Fixed Next.js 15 async params compatibility (params must be awaited)
+
+**Pattern Recognition**:
+
+- API development requires **complete chain**: Database method → Backend router
+  → Frontend proxy → UI
+- Missing any link in this chain causes 404 errors
+- Event structure violations break real-time updates silently
+
 ### Service Coordination Issues (Fixed)
 
 **Problem**: Services starting without dependency validation **Solution**:
@@ -1451,10 +1488,9 @@ AI-CONTEXT architectural rules and patterns.
 - Security measures and type validation implemented for all event types
 - Singleton pattern properly implemented with proper cleanup and error handling
 
-**✅ TypeScript/Python Type Synchronization**:
+**✅ Type Safety**:
 
-- Pydantic models and TypeScript interfaces maintained in sync
-- Video generation settings follow proper inheritance patterns
+- TypeScript models and interfaces updated to match Pydantic changes
 - All API endpoints use consistent type definitions
 
 **✅ Build System & Development Environment**:
@@ -1471,22 +1507,32 @@ AI-CONTEXT architectural rules and patterns.
 - Resolved all TypeScript and Python type errors
 - Enhanced error handling and user feedback systems
 
-### Architecture Compliance Status
+### API Development & Event System Rules
 
-| Component           | Compliance Status  | Notes                                  |
-| ------------------- | ------------------ | -------------------------------------- |
-| Database Access     | ✅ Fully Compliant | All queries use `dict_row` pattern     |
-| Time Calculations   | ✅ Fully Compliant | Consistent timezone-aware utilities    |
-| Entity Architecture | ✅ Fully Compliant | Proper entity-based workflows          |
-| Event System        | ✅ Fully Compliant | Refactored to shared secure module     |
-| Type Safety         | ✅ Fully Compliant | TypeScript/Python models synchronized  |
-| Build System        | ✅ Fully Compliant | Proper cache exclusion and compilation |
+1. **SSE Event Structure is SACRED** - All events MUST follow exact `SSEEvent`
+   interface: `{ type, data, timestamp }`
+   - **NEVER** put data directly on the event object (e.g.,
+     `{ type, camera_id, status }`)
+   - **ALWAYS** nest under data property:
+     `{ type, data: { camera_id, status }, timestamp }`
+   - Violating this breaks the entire real-time system
+2. **Event Types Must Be Pre-Approved** - Only use event types from
+   `ALLOWED_EVENT_TYPES` constant in event-emitter.ts
+   - Don't create new event types without adding them to the allowed list
+   - Use existing types like `"video_status_changed"` instead of custom ones
+     like `"video_failed"`
+3. **API Endpoint Completeness Pattern** - When adding new endpoints, BOTH
+   pieces are required:
+   - Backend FastAPI endpoint in `/backend/app/routers/`
+   - Frontend Next.js proxy route in `/src/app/api/`
+   - Missing either piece causes 404 errors that are hard to debug
+4. **Database Method Dependency** - Router endpoints that call database methods
+   require the method to exist
+   - Check `/backend/app/database.py` for required methods like
+     `get_timelapse_by_id()`
+   - Follow naming patterns: `get_*`, `create_*`, `update_*`, `complete_*`
+5. **Next.js 15 Async Params** - All dynamic route parameters are now Promises
+   - **ALWAYS** await params: `const { id } = await params`
+   - Route signature: `{ params }: { params: Promise<{ id: string }> }`
 
-**Validation Method**: Sequential thinking analysis combined with semantic
-search across all codebase patterns and recent file changes.
-
----
-
-**Last Updated**: June 18, 2025  
-**System Status**: ✅ Fully Operational - All Critical Features Working -
-Architecture Validated
+### System-Wide Constraints

@@ -13,7 +13,6 @@ from .routers import (
     timelapses,
     videos,
     settings as settings_router,
-    sse,
     logs,
     images,
     health,
@@ -79,7 +78,6 @@ app.include_router(cameras.router, prefix="/api/cameras", tags=["cameras"])
 app.include_router(timelapses.router, prefix="/api/timelapses", tags=["timelapses"])
 app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
-app.include_router(sse.router, prefix="/api/sse", tags=["real-time"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
