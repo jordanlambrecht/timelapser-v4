@@ -1067,7 +1067,7 @@ const ModalComponent = () => {
   useSSESubscription(
     (event) => event.type === "thumbnail_regeneration_progress",
     (event) => {
-      setProgress(event.data.progress)
+      setProgress(event.progress) // ✅ Data directly on event object
     },
     [isOpen] // Dependencies for subscription
   )

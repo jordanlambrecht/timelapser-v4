@@ -148,9 +148,7 @@ export default function Dashboard() {
       setTimelapses((prev) =>
         prev.filter((t) => t.camera_id !== data.camera_id)
       )
-      setVideos((prev) =>
-        prev.filter((v) => v.camera_id !== data.camera_id)
-      )
+      setVideos((prev) => prev.filter((v) => v.camera_id !== data.camera_id))
     },
     onVideoGenerated: (data) => {
       if (data.video) {
@@ -164,7 +162,10 @@ export default function Dashboard() {
 
   // Subscribe to specific dashboard events
   useSSESubscription(
-    (event) => ["camera_updated", "timelapse_status_changed", "image_captured"].includes(event.type),
+    (event) =>
+      ["camera_updated", "timelapse_status_changed", "image_captured"].includes(
+        event.type
+      ),
     (event) => {
       setLastEventTime(Date.now())
 
