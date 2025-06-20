@@ -542,6 +542,172 @@ class AsyncDatabase:
 
                 return timelapse_id
 
+    async def trigger_immediate_capture_for_timelapse(self, camera_id: int, timelapse_id: int) -> dict:
+        """
+        Trigger an immediate capture for a specific camera and timelapse.
+        This is used when starting a new timelapse to get the first image immediately.
+        
+        Args:
+            camera_id: ID of the camera to capture from
+            timelapse_id: ID of the timelapse to associate the image with
+            
+        Returns:
+            dict: Result containing success status and details
+        """
+        try:
+            # Import here to avoid circular imports
+            import asyncio
+            from pathlib import Path
+            from datetime import datetime
+            
+            # Get camera details
+            camera = await self.get_camera_by_id(camera_id)
+            if not camera:
+                return {"success": False, "error": "Camera not found"}
+                
+            if camera.get("health_status") != "online":
+                return {"success": False, "error": f"Camera is {camera.get('health_status', 'unknown')}"}
+                
+            # Get timelapse details
+            timelapse = await self.get_timelapse_by_id(timelapse_id)
+            if not timelapse:
+                return {"success": False, "error": "Timelapse not found"}
+                
+            if timelapse.get("status") != "running":
+                return {"success": False, "error": "Timelapse is not running"}
+                
+            # Check time window
+            if not self._is_camera_within_time_window(camera):
+                return {"success": False, "error": "Camera is outside time window"}
+                
+            # Import here to avoid circular imports
+            from rtsp_capture import RTSPCapture
+            
+            # Initialize capture system
+            project_root = Path(__file__).parent.parent.parent
+            data_dir = project_root / "data"
+            capture = RTSPCapture(base_data_dir=str(data_dir))
+            
+            # Get thumbnail generation setting
+            def get_thumbnail_setting():
+                try:
+                    # Access global sync_db instance
+                    import app.database
+                    sync_instance = app.database.sync_db
+                    with sync_instance.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT value FROM settings WHERE key = 'generate_thumbnails'")
+                            result = cur.fetchone()
+                            if result:
+                                return result[0].lower() == "true"
+                            return True
+                except Exception as e:
+                    logger.warning(f"Failed to get thumbnail setting: {e}")
+                    return True
+                    
+            # Get thumbnail setting
+            loop = asyncio.get_event_loop()
+            generate_thumbnails = await loop.run_in_executor(None, get_thumbnail_setting)
+            
+            # Access global sync_db instance for capture operations
+            import app.database
+            sync_instance = app.database.sync_db
+            
+            # Perform immediate capture
+            success, message, saved_file_path = await loop.run_in_executor(
+                None,
+                capture.capture_image,
+                camera_id,
+                camera["name"],
+                camera["rtsp_url"],
+                sync_instance,  # RTSPCapture still uses sync_db
+                timelapse_id,
+                generate_thumbnails
+            )
+            
+            if success:
+                # Update camera health
+                await loop.run_in_executor(
+                    None, sync_instance.update_camera_health, camera_id, "online", True
+                )
+                
+                # Calculate and update next capture time to reset the timer
+                capture_interval = await loop.run_in_executor(None, sync_instance.get_capture_interval_setting)
+                await loop.run_in_executor(
+                    None, sync_instance.calculate_and_update_next_capture, camera_id, capture_interval
+                )
+                
+                # Get updated timelapse info for accurate image count
+                updated_timelapse = await loop.run_in_executor(
+                    None, sync_instance.get_active_timelapse_for_camera, camera_id
+                )
+                
+                # Broadcast image captured event
+                await loop.run_in_executor(
+                    None,
+                    sync_instance.broadcast_event,
+                    {
+                        "type": "image_captured",
+                        "data": {
+                            "camera_id": camera_id,
+                            "timelapse_id": timelapse_id,
+                            "image_count": updated_timelapse.get("image_count", 0) if updated_timelapse else 0,
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+                
+                return {
+                    "success": True, 
+                    "message": message,
+                    "file_path": saved_file_path,
+                    "image_count": updated_timelapse.get("image_count", 0) if updated_timelapse else 0
+                }
+            else:
+                # Update camera health to offline
+                await loop.run_in_executor(
+                    None, sync_instance.update_camera_health, camera_id, "offline", False
+                )
+                return {"success": False, "error": message}
+                
+        except Exception as e:
+            logger.error(f"Error in immediate capture for camera {camera_id}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _is_camera_within_time_window(self, camera: dict) -> bool:
+        """
+        Check if camera is currently within its configured time window.
+        This is a helper method for immediate capture validation.
+        """
+        try:
+            if not camera.get("use_time_window") or not camera.get("time_window_start"):
+                return True  # No time window restrictions
+                
+            from datetime import datetime, time
+            
+            # Get current time in the configured timezone
+            # Note: This assumes the time window is in the database timezone
+            now = datetime.now()
+            current_time = now.time()
+            
+            start_time_str = camera["time_window_start"]
+            end_time_str = camera["time_window_end"]
+            
+            start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
+            end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
+            
+            # Handle overnight windows
+            if start_time <= end_time:
+                # Normal window (e.g., 06:00 - 18:00)
+                return start_time <= current_time <= end_time
+            else:
+                # Overnight window (e.g., 22:00 - 06:00)
+                return current_time >= start_time or current_time <= end_time
+                
+        except Exception as e:
+            logger.warning(f"Error checking time window for camera {camera.get('id')}: {e}")
+            return True  # Default to allowing capture if time window check fails
+
     async def copy_camera_video_settings_to_timelapse(
         self, camera_id: int, timelapse_id: int
     ) -> bool:
