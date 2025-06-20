@@ -38,6 +38,59 @@ async def get_timelapse(timelapse_id: int):
         raise HTTPException(status_code=500, detail="Failed to fetch timelapse")
 
 
+@router.patch("/{timelapse_id}", response_model=dict)
+async def update_timelapse(timelapse_id: int, update_data: dict):
+    """Update properties of an existing timelapse (name, auto_stop_at, etc.)"""
+    try:
+        # Validate timelapse exists
+        timelapse = await async_db.get_timelapse_by_id(timelapse_id)
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        # Update the timelapse
+        success = await async_db.update_timelapse(timelapse_id, update_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update timelapse")
+
+        logger.info(f"Updated timelapse {timelapse_id} with data: {update_data}")
+        return {
+            "timelapse_id": timelapse_id,
+            "message": "Timelapse updated successfully",
+            "updated_fields": list(update_data.keys()),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update timelapse")
+
+
+@router.delete("/{timelapse_id}", response_model=dict)
+async def delete_timelapse(timelapse_id: int):
+    """Delete a timelapse and all associated data"""
+    try:
+        # Validate timelapse exists
+        timelapse = await async_db.get_timelapse_by_id(timelapse_id)
+        if not timelapse:
+            raise HTTPException(status_code=404, detail="Timelapse not found")
+
+        # Delete the timelapse (this should cascade to delete images and videos)
+        success = await async_db.delete_timelapse(timelapse_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete timelapse")
+
+        logger.info(f"Deleted timelapse {timelapse_id}")
+        return {
+            "timelapse_id": timelapse_id,
+            "message": "Timelapse deleted successfully",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting timelapse {timelapse_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete timelapse")
+
+
 # NEW ENTITY-BASED ENDPOINTS
 
 
@@ -49,7 +102,7 @@ async def create_new_timelapse(timelapse_data: TimelapseCreate):
         camera = await async_db.get_camera_by_id(timelapse_data.camera_id)
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-        
+
         # Build config from timelapse_data
         config = {
             "name": timelapse_data.name,
@@ -68,8 +121,10 @@ async def create_new_timelapse(timelapse_data: TimelapseCreate):
                 status_code=500, detail="Failed to create new timelapse"
             )
 
-        logger.info(f"Created new timelapse {timelapse_id} for camera {timelapse_data.camera_id}")
-        
+        logger.info(
+            f"Created new timelapse {timelapse_id} for camera {timelapse_data.camera_id}"
+        )
+
         # Attempt immediate capture if camera is online
         immediate_capture_result = None
         if camera.get("health_status") == "online":
@@ -78,36 +133,44 @@ async def create_new_timelapse(timelapse_data: TimelapseCreate):
                 capture_result = await async_db.trigger_immediate_capture_for_timelapse(
                     timelapse_data.camera_id, timelapse_id
                 )
-                
+
                 if capture_result["success"]:
                     immediate_capture_result = {
                         "success": True,
                         "message": "First image captured successfully",
-                        "image_count": capture_result.get("image_count", 1)
+                        "image_count": capture_result.get("image_count", 1),
                     }
-                    logger.info(f"Immediate capture successful for new timelapse {timelapse_id}")
+                    logger.info(
+                        f"Immediate capture successful for new timelapse {timelapse_id}"
+                    )
                 else:
                     immediate_capture_result = {
                         "success": False,
                         "message": f"First image capture failed: {capture_result.get('error')}",
-                        "image_count": 0
+                        "image_count": 0,
                     }
-                    logger.warning(f"Immediate capture failed for new timelapse {timelapse_id}: {capture_result.get('error')}")
-                    
+                    logger.warning(
+                        f"Immediate capture failed for new timelapse {timelapse_id}: {capture_result.get('error')}"
+                    )
+
             except Exception as e:
                 immediate_capture_result = {
                     "success": False,
                     "message": f"First image capture error: {str(e)}",
-                    "image_count": 0
+                    "image_count": 0,
                 }
-                logger.error(f"Error during immediate capture for timelapse {timelapse_id}: {e}")
+                logger.error(
+                    f"Error during immediate capture for timelapse {timelapse_id}: {e}"
+                )
         else:
             immediate_capture_result = {
                 "success": False,
                 "message": f"Camera is {camera.get('health_status', 'unknown')}, skipping immediate capture",
-                "image_count": 0
+                "image_count": 0,
             }
-            logger.info(f"Skipping immediate capture for timelapse {timelapse_id} - camera is {camera.get('health_status')}")
+            logger.info(
+                f"Skipping immediate capture for timelapse {timelapse_id} - camera is {camera.get('health_status')}"
+            )
 
         # Broadcast status change event (always broadcast, regardless of capture result)
         async_db.notify_timelapse_status_changed(
@@ -120,12 +183,14 @@ async def create_new_timelapse(timelapse_data: TimelapseCreate):
             "status": "running",
             "camera_id": timelapse_data.camera_id,
             "immediate_capture": immediate_capture_result,
-            "message": "Timelapse created successfully" + (
-                " with first image captured" if immediate_capture_result and immediate_capture_result["success"]
+            "message": "Timelapse created successfully"
+            + (
+                " with first image captured"
+                if immediate_capture_result and immediate_capture_result["success"]
                 else " but first image capture was skipped or failed"
-            )
+            ),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -417,30 +482,32 @@ async def trigger_immediate_capture(timelapse_id: int):
         timelapse = await async_db.get_timelapse_by_id(timelapse_id)
         if not timelapse:
             raise HTTPException(status_code=404, detail="Timelapse not found")
-            
+
         camera_id = timelapse["camera_id"]
-        
+
         # Check if camera exists and is online
         camera = await async_db.get_camera_by_id(camera_id)
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-            
+
         if camera.get("health_status") != "online":
             raise HTTPException(
                 status_code=400,
-                detail=f"Camera is {camera.get('health_status', 'unknown')} and cannot capture images"
+                detail=f"Camera is {camera.get('health_status', 'unknown')} and cannot capture images",
             )
-            
+
         # Check if timelapse is running
         if timelapse.get("status") != "running":
             raise HTTPException(
                 status_code=400,
-                detail=f"Timelapse is {timelapse.get('status')} and cannot capture images"
+                detail=f"Timelapse is {timelapse.get('status')} and cannot capture images",
             )
-        
+
         # Trigger immediate capture
-        result = await async_db.trigger_immediate_capture_for_timelapse(camera_id, timelapse_id)
-        
+        result = await async_db.trigger_immediate_capture_for_timelapse(
+            camera_id, timelapse_id
+        )
+
         if result["success"]:
             logger.info(f"Immediate capture successful for timelapse {timelapse_id}")
             return {
@@ -448,17 +515,23 @@ async def trigger_immediate_capture(timelapse_id: int):
                 "message": "Immediate capture completed successfully",
                 "timelapse_id": timelapse_id,
                 "camera_id": camera_id,
-                "details": result
+                "details": result,
             }
         else:
-            logger.warning(f"Immediate capture failed for timelapse {timelapse_id}: {result.get('error')}")
+            logger.warning(
+                f"Immediate capture failed for timelapse {timelapse_id}: {result.get('error')}"
+            )
             raise HTTPException(
                 status_code=400,
-                detail=f"Immediate capture failed: {result.get('error')}"
+                detail=f"Immediate capture failed: {result.get('error')}",
             )
-            
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error triggering immediate capture for timelapse {timelapse_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to trigger immediate capture")
+        logger.error(
+            f"Error triggering immediate capture for timelapse {timelapse_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to trigger immediate capture"
+        )
