@@ -236,3 +236,7 @@ _tests/
 !src/app/api/tests
 
 .github/prompts
+
+_architecture
+_architecture/
+_architecture/**
