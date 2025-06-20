@@ -18,11 +18,12 @@ router = APIRouter()
 
 @router.get("/", response_model=List[VideoWithDetails])
 async def get_videos(
-    camera_id: Optional[int] = Query(None, description="Filter by camera ID")
+    camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
+    timelapse_id: Optional[int] = Query(None, description="Filter by timelapse ID")
 ):
-    """Get all videos, optionally filtered by camera"""
+    """Get all videos, optionally filtered by camera or timelapse"""
     try:
-        videos = await async_db.get_videos(camera_id=camera_id)
+        videos = await async_db.get_videos(camera_id=camera_id, timelapse_id=timelapse_id)
         return videos
     except Exception as e:
         logger.error(f"Error fetching videos: {e}")

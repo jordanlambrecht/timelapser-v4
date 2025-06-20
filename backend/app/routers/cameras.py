@@ -1,9 +1,10 @@
 # backend/app/routers/cameras.py
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse, Response
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 import os
+import asyncio
 from datetime import datetime
 from loguru import logger
 
@@ -12,12 +13,198 @@ from ..models import Camera, CameraCreate, CameraUpdate
 from ..models.camera import (
     CameraWithLastImage,
     CameraWithStats,
+    CameraDetailsResponse,
+    CameraDetailStats,
+    LogForCamera,
+    ImageForCamera,
     transform_camera_with_image_row,
     transform_camera_with_stats_row,
 )
 from ..video_calculations import preview_video_calculation, VideoGenerationSettings
 
 router = APIRouter()
+
+
+# 🎯 COMPREHENSIVE CAMERA DETAILS - Single endpoint for camera detail page
+@router.get("/{camera_id}/details", response_model=CameraDetailsResponse)
+async def get_camera_details(camera_id: int):
+    """
+    🎯 COMPREHENSIVE CAMERA DETAILS - Single endpoint for camera detail page
+
+    Replaces 6 separate API calls with one comprehensive response containing:
+    - Camera with latest image
+    - Active timelapse (if any)
+    - All timelapses for this camera
+    - Recent images (last 10)
+    - Videos for this camera
+    - Recent activity/logs (last 10)
+    - Comprehensive statistics
+    """
+    try:
+        # Parallel data fetching for optimal performance
+        (
+            camera_data,
+            timelapses_data,
+            videos_data,
+            timelapse_stats,
+            recent_images_data,
+            recent_logs_data,
+        ) = await asyncio.gather(
+            async_db.get_camera_with_images_by_id(camera_id),
+            async_db.get_timelapses(camera_id=camera_id),
+            async_db.get_videos(camera_id=camera_id),
+            async_db.get_camera_timelapse_stats(camera_id),
+            async_db.get_recent_images(camera_id, limit=10),
+            async_db.get_logs(camera_id=camera_id, limit=10),
+            return_exceptions=True,  # Graceful error handling
+        )
+
+        # Handle errors from parallel fetching
+        if isinstance(camera_data, Exception):
+            logger.error(f"Error fetching camera data: {camera_data}")
+            raise HTTPException(status_code=500, detail="Failed to fetch camera data")
+
+        if not camera_data:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        # Transform camera data
+        # Ensure camera_data is a dict before passing to transform function
+        if not isinstance(camera_data, dict):
+            raise HTTPException(status_code=500, detail="Invalid camera data format")
+
+        camera = transform_camera_with_image_row(camera_data)
+
+        # Handle timelapses data
+        timelapses = []
+        active_timelapse = None
+        if not isinstance(timelapses_data, Exception) and timelapses_data is not None:
+            # 🎯 FIXED: Convert time objects to strings before Pydantic validation
+            processed_timelapses = []
+            timelapses_list = (
+                timelapses_data if isinstance(timelapses_data, list) else []
+            )
+            for t in timelapses_list:
+                try:
+                    # Convert time objects to strings
+                    processed_t = dict(t)
+                    if processed_t.get("time_window_start") and hasattr(
+                        processed_t["time_window_start"], "strftime"
+                    ):
+                        processed_t["time_window_start"] = processed_t[
+                            "time_window_start"
+                        ].strftime("%H:%M:%S")
+                    if processed_t.get("time_window_end") and hasattr(
+                        processed_t["time_window_end"], "strftime"
+                    ):
+                        processed_t["time_window_end"] = processed_t[
+                            "time_window_end"
+                        ].strftime("%H:%M:%S")
+
+                    # Transform to Timelapse model instance
+                    from ..models.timelapse import Timelapse
+
+                    timelapse = Timelapse.model_validate(processed_t)
+                    processed_timelapses.append(timelapse)
+                except Exception as timelapse_error:
+                    logger.warning(
+                        f"Failed to transform timelapse data: {timelapse_error}"
+                    )
+                    continue
+
+            timelapses = processed_timelapses
+            # Find active timelapse (running or paused)
+            active_timelapse = next(
+                (t for t in timelapses if t.status in ["running", "paused"]), None
+            )
+
+        # Handle videos data
+        videos_list = []
+        if not isinstance(videos_data, Exception) and videos_data is not None:
+            raw_videos = videos_data if isinstance(videos_data, list) else []
+            # Transform raw video data to Video model instances
+            for video_dict in raw_videos:
+                try:
+                    # Import Video model here to avoid circular imports
+                    from ..models.video import Video
+
+                    video = Video.model_validate(video_dict)
+                    videos_list.append(video)
+                except Exception as video_error:
+                    logger.warning(f"Failed to transform video data: {video_error}")
+                    continue
+
+        # Handle stats data
+        stats_data = {}
+        if not isinstance(timelapse_stats, Exception) and timelapse_stats is not None:
+            stats_data = timelapse_stats if isinstance(timelapse_stats, dict) else {}
+
+        # Handle recent images data
+        recent_images = []
+        if (
+            not isinstance(recent_images_data, Exception)
+            and recent_images_data is not None
+        ):
+            if isinstance(recent_images_data, list):
+                recent_images = [
+                    ImageForCamera(
+                        id=img["id"],
+                        captured_at=img["captured_at"],
+                        file_path=img["file_path"],
+                        file_size=img.get("file_size"),
+                        day_number=img["day_number"],
+                        thumbnail_path=img.get("thumbnail_path"),
+                        thumbnail_size=img.get("thumbnail_size"),
+                        small_path=img.get("small_path"),
+                        small_size=img.get("small_size"),
+                    )
+                    for img in recent_images_data
+                ]
+
+        # Handle recent logs data
+        recent_activity = []
+        if not isinstance(recent_logs_data, Exception) and recent_logs_data is not None:
+            if isinstance(recent_logs_data, list):
+                recent_activity = [
+                    LogForCamera(
+                        id=log["id"],
+                        timestamp=log["timestamp"],
+                        level=log["level"],
+                        message=log["message"],
+                        camera_id=log.get("camera_id"),
+                    )
+                    for log in recent_logs_data
+                ]
+
+        # Create comprehensive statistics
+        stats = CameraDetailStats(
+            total_images=stats_data.get("total_images", 0),
+            current_timelapse_images=stats_data.get("current_timelapse_images", 0),
+            current_timelapse_name=stats_data.get("current_timelapse_name"),
+            total_videos=len(videos_list),
+            timelapse_count=len(timelapses),
+            days_since_first_capture=stats_data.get("days_since_first_capture"),
+            storage_used_mb=stats_data.get("storage_used_mb"),
+            last_24h_images=stats_data.get("last_24h_images", 0),
+            success_rate_percent=stats_data.get("success_rate_percent"),
+        )
+
+        return CameraDetailsResponse(
+            camera=camera,
+            active_timelapse=active_timelapse,
+            timelapses=timelapses,
+            recent_images=recent_images,
+            videos=videos_list,
+            recent_activity=recent_activity,
+            stats=stats,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error fetching comprehensive camera details for {camera_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to fetch camera details")
 
 
 @router.get("/", response_model=List[CameraWithLastImage])
@@ -133,7 +320,7 @@ async def get_latest_capture(camera_id: int):
     return await _serve_camera_image(camera_id, "full")
 
 
-@router.get("/{camera_id}/latest-thumbnail") 
+@router.get("/{camera_id}/latest-thumbnail")
 async def get_latest_thumbnail(camera_id: int):
     """Get the latest thumbnail image for a camera"""
     return await _serve_camera_image(camera_id, "thumbnail")
@@ -162,13 +349,17 @@ async def _serve_camera_image(camera_id: int, size: str = "full"):
             if not file_path:
                 # Fall back to full image if thumbnail not available
                 file_path = image_data["file_path"]
-                logger.debug(f"No thumbnail available for camera {camera_id}, serving full image")
+                logger.debug(
+                    f"No thumbnail available for camera {camera_id}, serving full image"
+                )
         elif size == "small":
             file_path = image_data.get("small_path")
             if not file_path:
                 # Fall back to full image if small not available
                 file_path = image_data["file_path"]
-                logger.debug(f"No small image available for camera {camera_id}, serving full image")
+                logger.debug(
+                    f"No small image available for camera {camera_id}, serving full image"
+                )
         else:
             # Default to full image
             file_path = image_data["file_path"]
@@ -214,7 +405,9 @@ async def _serve_camera_image(camera_id: int, size: str = "full"):
             if size in ["thumbnail", "small"]:
                 cache_control = "public, max-age=300"  # 5 minute cache for thumbnails
             else:
-                cache_control = "no-cache, no-store, must-revalidate"  # No cache for full images
+                cache_control = (
+                    "no-cache, no-store, must-revalidate"  # No cache for full images
+                )
 
             return Response(
                 content=image_data_bytes,
@@ -234,7 +427,9 @@ async def _serve_camera_image(camera_id: int, size: str = "full"):
         raise
     except Exception as e:
         logger.error(f"Error fetching latest {size} image for camera {camera_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch latest {size} image")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch latest {size} image"
+        )
 
 
 @router.get("/stats/", response_model=List[CameraWithStats])
@@ -278,20 +473,20 @@ async def debug_camera_transformation(camera_id: int):
         raw_camera = await async_db.get_camera_with_images_by_id(camera_id)
         if not raw_camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-            
+
         # Show the transformation steps
         camera_data = {
             k: v
             for k, v in raw_camera.items()
             if not k.startswith("last_image_") and not k.startswith("timelapse_")
         }
-        
+
         # Add timelapse fields manually
         if "timelapse_status" in raw_camera:
             camera_data["timelapse_status"] = raw_camera["timelapse_status"]
         if "timelapse_id" in raw_camera:
             camera_data["timelapse_id"] = raw_camera["timelapse_id"]
-            
+
         return {
             "raw_data": raw_camera,
             "filtered_data": camera_data,
@@ -300,31 +495,13 @@ async def debug_camera_transformation(camera_id: int):
                 "standard_fps": "standard_fps" in camera_data,
                 "enable_time_limits": "enable_time_limits" in camera_data,
                 "target_time_seconds": "target_time_seconds" in camera_data,
-            }
+            },
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error debugging camera {camera_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to debug camera")
-async def get_camera_timelapse_stats(camera_id: int):
-    """Get timelapse statistics for a camera (total vs current timelapse images)"""
-    try:
-        # Check if camera exists
-        camera = await async_db.get_camera_by_id(camera_id)
-        if not camera:
-            raise HTTPException(status_code=404, detail="Camera not found")
-
-        # Get timelapse statistics
-        stats = await async_db.get_camera_timelapse_stats(camera_id)
-        
-        logger.debug(f"Fetched timelapse stats for camera {camera_id}: {stats}")
-        return stats
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching timelapse stats for camera {camera_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch timelapse stats")
 
 
 @router.post("/{camera_id}/capture-now", response_model=dict)
@@ -335,36 +512,40 @@ async def capture_now(camera_id: int):
         camera = await async_db.get_camera_by_id(camera_id)
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
-        
+
         if camera.get("health_status") != "online":
             raise HTTPException(
-                status_code=400, 
-                detail=f"Camera is {camera.get('health_status', 'unknown')} and cannot capture images"
+                status_code=400,
+                detail=f"Camera is {camera.get('health_status', 'unknown')} and cannot capture images",
             )
 
         # Get active timelapse for this camera
         timelapses = await async_db.get_timelapses(camera_id=camera_id)
-        active_timelapse = next((t for t in timelapses if t["status"] == "running"), None)
-        
+        active_timelapse = next(
+            (t for t in timelapses if t["status"] == "running"), None
+        )
+
         if not active_timelapse:
             raise HTTPException(
-                status_code=400, 
-                detail="No active timelapse found for this camera. Start a timelapse first."
+                status_code=400,
+                detail="No active timelapse found for this camera. Start a timelapse first.",
             )
 
         # Broadcast capture request event - the worker will handle the actual capture
-        async_db.broadcast_event({
-            "type": "capture_now_requested",
-            "camera_id": camera_id,
-            "timelapse_id": active_timelapse["id"],
-            "timestamp": datetime.now().isoformat(),
-        })
+        async_db.broadcast_event(
+            {
+                "type": "capture_now_requested",
+                "camera_id": camera_id,
+                "timelapse_id": active_timelapse["id"],
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
         logger.info(f"Capture now requested for camera {camera_id}")
         return {
             "message": "Capture request sent",
             "camera_id": camera_id,
-            "timelapse_id": active_timelapse["id"]
+            "timelapse_id": active_timelapse["id"],
         }
     except HTTPException:
         raise
@@ -374,7 +555,9 @@ async def capture_now(camera_id: int):
 
 
 @router.get("/{camera_id}/video-settings", response_model=dict)
-async def get_effective_video_settings(camera_id: int, timelapse_id: int = None):
+async def get_effective_video_settings(
+    camera_id: int, timelapse_id: Optional[int] = None
+):
     """Get effective video generation settings for a camera (with optional timelapse overrides)"""
     try:
         # Check if camera exists
@@ -384,11 +567,11 @@ async def get_effective_video_settings(camera_id: int, timelapse_id: int = None)
 
         # Get effective settings
         settings = await async_db.get_effective_video_settings(camera_id, timelapse_id)
-        
+
         return {
             "camera_id": camera_id,
             "timelapse_id": timelapse_id,
-            "settings": settings
+            "settings": settings,
         }
     except HTTPException:
         raise
@@ -398,7 +581,9 @@ async def get_effective_video_settings(camera_id: int, timelapse_id: int = None)
 
 
 @router.post("/{camera_id}/video-preview", response_model=dict)
-async def preview_video_generation(camera_id: int, settings: dict, timelapse_id: int = None):
+async def preview_video_generation(
+    camera_id: int, settings: dict, timelapse_id: Optional[int] = None
+):
     """Preview video generation calculation with given settings and current image count"""
     try:
         # Check if camera exists
@@ -425,16 +610,16 @@ async def preview_video_generation(camera_id: int, settings: dict, timelapse_id:
             max_time_seconds=settings.get("max_time_seconds"),
             target_time_seconds=settings.get("target_time_seconds"),
             fps_bounds_min=settings.get("fps_bounds_min", 1),
-            fps_bounds_max=settings.get("fps_bounds_max", 60)
+            fps_bounds_max=settings.get("fps_bounds_max", 60),
         )
 
         # Generate preview
         preview = preview_video_calculation(total_images, video_settings)
-        
+
         return {
             "camera_id": camera_id,
             "timelapse_id": timelapse_id,
-            "preview": preview
+            "preview": preview,
         }
     except HTTPException:
         raise
@@ -443,3 +628,16 @@ async def preview_video_generation(camera_id: int, settings: dict, timelapse_id:
     except Exception as e:
         logger.error(f"Error generating video preview for camera {camera_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate video preview")
+
+
+@router.get("/{camera_id}/timelapse-stats")
+async def get_camera_timelapse_stats(camera_id: int):
+    """Get timelapse-specific statistics for a camera"""
+    try:
+        stats = await async_db.get_camera_timelapse_stats(camera_id)
+        return stats
+    except Exception as e:
+        logger.error(f"Error fetching timelapse stats for camera {camera_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch timelapse statistics"
+        )
