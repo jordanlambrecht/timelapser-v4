@@ -1,4 +1,4 @@
-# backend/thumbnail_processor.py
+# backend/app/thumbnail_processor.py
 
 import cv2
 import os
@@ -46,31 +46,10 @@ class ThumbnailProcessor:
         # This automatically handles aspect ratio and uses high-quality algorithms
         thumb_image.thumbnail(size, Image.Resampling.LANCZOS)
 
-        # Create a new image with exact target size and paste thumbnail centered
-        # This ensures consistent dimensions for all thumbnails
-        # final_image = Image.new("RGB", size, (0, 0, 0))  # Black background
-
-        # Calculate position to center the thumbnail
-        # thumb_width, thumb_height = thumb_image.size
-        # target_width, target_height = size
-
-        # x = (target_width - thumb_width) // 2
-        # y = (target_height - thumb_height) // 2
-
-        # final_image.paste(thumb_image, (x, y))
-
         # Save to bytes with optimized JPEG settings
         from io import BytesIO
 
         output = BytesIO()
-        # final_image.save(
-        #     output,
-        #     format="JPEG",
-        #     quality=quality,
-        #     optimize=True,  # Enable JPEG optimization
-        #     progressive=True,  # Progressive JPEG for better loading
-        # )
-
         thumb_image.save(
             output,
             format="JPEG",
@@ -104,11 +83,18 @@ class ThumbnailProcessor:
         Generate thumbnail and small versions using Pillow for better quality
         Takes OpenCV frame, converts to PIL, and generates optimized thumbnails
         """
-        results = {"thumbnail": None, "small": None}
+        results: Dict[str, Optional[Tuple[str, int]]] = {
+            "thumbnail": None,
+            "small": None,
+        }
 
         try:
             # Convert OpenCV frame to PIL Image
             pil_image = self.opencv_to_pil(cv_frame)
+
+            # Extract camera_id and today for later use
+            camera_id = str(directories["thumbnails"]).split("camera-")[1].split("/")[0]
+            today = datetime.now().strftime("%Y-%m-%d")
 
             # Generate thumbnail (200x150) with Pillow
             thumbnail_bytes = self.generate_thumbnail_pil(
@@ -122,10 +108,6 @@ class ThumbnailProcessor:
 
             if success:
                 # Store relative path for database
-                camera_id = (
-                    str(directories["thumbnails"]).split("camera-")[1].split("/")[0]
-                )
-                today = datetime.now().strftime("%Y-%m-%d")
                 relative_path = f"data/cameras/camera-{camera_id}/thumbnails/{today}/{base_filename}"
                 results["thumbnail"] = (relative_path, file_size)
                 logger.debug(f"Generated optimized thumbnail: {thumbnail_path}")
@@ -162,7 +144,10 @@ class ThumbnailProcessor:
         Generate thumbnails from existing image file (for regeneration)
         This is more efficient than the OpenCV conversion path
         """
-        results = {"thumbnail": None, "small": None}
+        results: Dict[str, Optional[Tuple[str, int]]] = {
+            "thumbnail": None,
+            "small": None,
+        }
 
         try:
             # Open image directly with Pillow (more efficient)

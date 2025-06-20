@@ -1,7 +1,7 @@
 // src/components/ui/image-thumbnail.tsx
 "use client"
 
-import { useState } from "react"
+import { useState, memo } from "react"
 import Image from "next/image"
 import {
   Tooltip,
@@ -35,7 +35,7 @@ interface ImageThumbnailProps {
   lazy?: boolean
 }
 
-export function ImageThumbnail({
+export const ImageThumbnail = memo(function ImageThumbnail({
   imageId,
   src,
   alt,
@@ -292,4 +292,4 @@ export function ImageThumbnail({
       </Dialog>
     </>
   )
-}
+})

@@ -12,7 +12,11 @@ interface CameraImageWithFallbackProps {
 }
 
 const IMAGE_ENDPOINTS = [
-  { name: "thumbnail", path: "latest-thumbnail", description: "200×150 thumbnail" },
+  {
+    name: "thumbnail",
+    path: "latest-thumbnail",
+    description: "200×150 thumbnail",
+  },
   { name: "small", path: "latest-small", description: "800×600 small" },
   { name: "full", path: "latest-capture", description: "Full resolution" },
 ] as const
@@ -53,18 +57,10 @@ export function CameraImageWithFallback({
 
     // Try the next endpoint if available
     if (currentEndpointIndex < IMAGE_ENDPOINTS.length - 1) {
-      console.log(
-        `📷 Camera ${cameraId}: ${currentEndpoint.name} failed, trying ${
-          IMAGE_ENDPOINTS[currentEndpointIndex + 1].name
-        }`
-      )
       setCurrentEndpointIndex(currentEndpointIndex + 1)
       setIsLoading(true)
     } else {
       // All endpoints failed
-      console.log(
-        `📷 Camera ${cameraId}: All image endpoints failed after ${newAttemptCount} attempts`
-      )
       setIsLoading(false)
       setHasError(true)
       if (onError) onError()
@@ -75,7 +71,7 @@ export function CameraImageWithFallback({
   if (hasError) {
     return (
       <Image
-        src="/assets/placeholder-camera.jpg"
+        src='/assets/placeholder-camera.jpg'
         alt={`${cameraName} placeholder`}
         fill
         className={cn("object-cover opacity-60", className)}
@@ -85,18 +81,18 @@ export function CameraImageWithFallback({
   }
 
   return (
-    <div className="relative w-full h-full">
+    <div className='relative w-full h-full'>
       {/* Loading state */}
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm z-10">
-          <div className="flex flex-col items-center space-y-3">
-            <div className="w-8 h-8 border-2 rounded-full border-cyan/30 border-t-cyan animate-spin" />
-            <div className="text-center">
-              <p className="text-xs font-medium text-gray-400">
+        <div className='absolute inset-0 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm z-10'>
+          <div className='flex flex-col items-center space-y-3'>
+            <div className='w-8 h-8 border-2 rounded-full border-cyan/30 border-t-cyan animate-spin' />
+            <div className='text-center'>
+              <p className='text-xs font-medium text-gray-400'>
                 Loading {currentEndpoint.description}...
               </p>
               {loadAttempts > 0 && (
-                <p className="text-xs text-gray-500 mt-1">
+                <p className='text-xs text-gray-500 mt-1'>
                   Attempt {loadAttempts + 1}/{IMAGE_ENDPOINTS.length}
                 </p>
               )}
@@ -120,7 +116,7 @@ export function CameraImageWithFallback({
 
       {/* Debug info in development */}
       {process.env.NODE_ENV === "development" && !isLoading && !hasError && (
-        <div className="absolute top-2 left-2 px-2 py-1 text-xs bg-black/70 text-green-400 rounded">
+        <div className='absolute top-2 left-2 px-2 py-1 text-xs bg-black/70 text-green-400 rounded'>
           {currentEndpoint.name}
         </div>
       )}

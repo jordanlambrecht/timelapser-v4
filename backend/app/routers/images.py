@@ -1,8 +1,11 @@
 # backend/app/routers/images.py
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Path
+from fastapi.responses import FileResponse
 from typing import Optional, Dict, Any, cast
 from loguru import logger
-from ..database import sync_db
+from pathlib import Path as PathlibPath
+from ..database import async_db, sync_db
+from ..config import settings
 
 router = APIRouter()
 
@@ -54,40 +57,138 @@ async def get_image_count(
 async def get_debug_images():
     """Get latest images for debugging"""
     try:
-        with sync_db.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Get latest images for debugging
-                cur.execute(
-                    """
-                    SELECT id, camera_id, file_path, captured_at
-                    FROM images
-                    ORDER BY captured_at DESC
-                    LIMIT 10
-                    """
-                )
-                images = cast(list, cur.fetchall())
-
-                # Get cameras with last image path
-                cur.execute(
-                    """
-                    SELECT c.id, c.name, c.last_image_id, i.file_path as last_image_path
-                    FROM cameras c
-                    LEFT JOIN images i ON c.last_image_id = i.id
-                    """
-                )
-                cameras = cast(list, cur.fetchall())
-
+        # Use async database for async endpoint
+        # Get all timelapses to find images
+        timelapses = await async_db.get_timelapses()
+        if not timelapses:
+            return {"error": "No timelapses found", "images": [], "cameras": []}
+        
+        # Get images from first timelapse
+        first_timelapse_id = timelapses[0]["id"]
+        images = await async_db.get_timelapse_images_paginated(first_timelapse_id, limit=10)
+        
         return {
-            "images": images,
-            "cameras": cameras,
-            "timestamp": "2024-01-01T00:00:00Z",
+            "images": images[:5],  # Just return first 5 for debugging
+            "timelapse_count": len(timelapses),
+            "first_timelapse_id": first_timelapse_id,
+            "total_images": len(images),
+            "sample_image": images[0] if images else None,
         }
 
     except Exception as e:
         logger.error(f"Failed to get debug images: {e}")
-        # Return empty data instead of error for compatibility
         return {
+            "error": str(e),
             "images": [],
             "cameras": [],
             "timestamp": "error",
         }
+
+
+# Individual image serving endpoints
+@router.get("/{image_id}/download")
+async def download_image(image_id: int = Path(..., description="Image ID")):
+    """Download full resolution image by ID"""
+    try:
+        # Get image details from database
+        image = await async_db.get_image_by_id(image_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Construct full file path - stored paths are relative to project root
+        project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
+        full_path = project_root / image["file_path"]
+
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="Image file not found")
+
+        return FileResponse(
+            path=str(full_path),
+            media_type="image/jpeg",
+            filename=full_path.name,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving image {image_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve image")
+
+
+@router.get("/{image_id}/thumbnail")
+async def get_image_thumbnail(image_id: int = Path(..., description="Image ID")):
+    """Get thumbnail version of image by ID"""
+    try:
+        # Get image details from database
+        image = await async_db.get_image_by_id(image_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Try thumbnail first, fall back to small, then full
+        project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
+        
+        if image.get("thumbnail_path"):
+            thumbnail_path = project_root / image["thumbnail_path"]
+            if thumbnail_path.exists():
+                return FileResponse(
+                    path=str(thumbnail_path),
+                    media_type="image/jpeg",
+                )
+
+        if image.get("small_path"):
+            small_path = project_root / image["small_path"]
+            if small_path.exists():
+                return FileResponse(
+                    path=str(small_path),
+                    media_type="image/jpeg",
+                )
+
+        # Fall back to full image
+        full_path = project_root / image["file_path"]
+        if full_path.exists():
+            return FileResponse(
+                path=str(full_path),
+                media_type="image/jpeg",
+            )
+
+        raise HTTPException(status_code=404, detail="Image file not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving thumbnail for image {image_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve thumbnail")
+
+
+@router.get("/{image_id}/small")
+async def get_image_small(image_id: int = Path(..., description="Image ID")):
+    """Get small version of image by ID"""
+    try:
+        # Get image details from database
+        image = await async_db.get_image_by_id(image_id)
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        # Try small first, fall back to full
+        project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
+        
+        if image.get("small_path"):
+            small_path = project_root / image["small_path"]
+            if small_path.exists():
+                return FileResponse(
+                    path=str(small_path),
+                    media_type="image/jpeg",
+                )
+
+        # Fall back to full image
+        full_path = project_root / image["file_path"]
+        if full_path.exists():
+            return FileResponse(
+                path=str(full_path),
+                media_type="image/jpeg",
+            )
+
+        raise HTTPException(status_code=404, detail="Image file not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving small image {image_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve small image")
