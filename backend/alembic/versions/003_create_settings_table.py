@@ -1,7 +1,7 @@
 """Create settings table
 
-Revision ID: 002_create_settings_table
-Revises: 2025_06_14_1532-9c9b5c2bbdbc_remove_redundant_last_image_path
+Revision ID: 003_create_settings_table
+Revises: 002_remove_redundant_last_image_path
 Create Date: 2025-06-16 09:30:00.000000
 
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "002_create_settings_table"
+revision = "003_create_settings_table"
 down_revision = "9c9b5c2bbdbc"
 branch_labels = None
 depends_on = None

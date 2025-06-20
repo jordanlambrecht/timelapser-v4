@@ -1,7 +1,7 @@
 """Add enhanced logging and API key settings
 
-Revision ID: 005_enhanced_settings
-Revises: 004_video_gen_settings
+Revision ID: 006_enhanced_settings
+Revises: 005_video_gen_settings
 Create Date: 2025-06-18 10:00:00.000000
 
 """
@@ -9,8 +9,8 @@ Create Date: 2025-06-18 10:00:00.000000
 from alembic import op
 
 # revision identifiers
-revision = "005_enhanced_settings"
-down_revision = "004_video_gen_settings"
+revision = "006_enhanced_settings"
+down_revision = "005_video_gen_settings"
 branch_labels = None
 depends_on = None
 
