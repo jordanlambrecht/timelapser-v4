@@ -7,6 +7,7 @@ import { NavigationLinks } from "@/components/navigation-links"
 import { SpirographLogo } from "@/components/spirograph-logo"
 import { Toaster } from "sonner"
 import Footer from "@/components/footer"
+import { SSEProvider } from "@/contexts/sse-context"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -72,9 +73,11 @@ export default function RootLayout({
         </nav>
 
         {/* Main content */}
-        <main className='relative z-10'>
-          <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
-        </main>
+        <SSEProvider>
+          <main className='relative z-10'>
+            <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
+          </main>
+        </SSEProvider>
         <Footer />
 
         {/* Toast notifications */}

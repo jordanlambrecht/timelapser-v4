@@ -12,12 +12,15 @@ pnpm (not npm)
 ```
 Next.js (3000) ↔ FastAPI (8000) ↔ PostgreSQL ↔ Python Worker
        ↕                                            ↕
-   SSE Events                                  RTSP Cameras
+SSEProvider (1 connection)                    RTSP Cameras
+       ↕
+All Components
 ```
 
 **Why This Architecture**:
 
-- **SSE Real-time Updates**: Frontend → FastAPI SSE avoids CORS issues
+- **Centralized SSE Real-time Updates**: Single SSE connection via React Context, shared across all components (prevents 79+ connection spam)
+- **SSE Proxy Pattern**: Frontend → Next.js API → FastAPI SSE avoids CORS issues
 - **Dual Database Pattern**: Async (FastAPI web requests) + Sync (Worker
   background tasks)
 - **Production Ready**: Single domain, unified auth layer, consistent error
@@ -76,6 +79,32 @@ Next.js (3000) ↔ FastAPI (8000) ↔ PostgreSQL ↔ Python Worker
 4. **Implement cascading fallbacks** - thumbnail → small → full → placeholder
 5. **Store relative paths in database** - Never store absolute paths
 
+### Real-time Event System Rules (CRITICAL - Performance Impact)
+
+1. **NEVER create individual EventSource connections** - Each component using `new EventSource("/api/events")` creates separate connections
+2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>` in app layout
+3. **Use specialized hooks for event subscriptions**:
+   - `useCameraSSE(cameraId, callbacks)` - Camera-specific events
+   - `useDashboardSSE(callbacks)` - Global dashboard events  
+   - `useSSESubscription(filter, callback)` - Custom event filtering
+4. **No console.log spam** - SSE connections should be silent after initial establishment
+5. **Connection sharing principle** - All components share one SSE connection, never create multiple
+6. **Event filtering at component level** - Filter by camera_id or event type in hooks, not in API
+7. **Proper cleanup** - Hooks handle subscription/unsubscription automatically
+
+**Why This Matters**: Multiple EventSource connections caused 79+ simultaneous connections with rapid cycling. Centralized system achieves 99% connection reduction while maintaining same real-time functionality.
+
+**Files in Centralized SSE System**:
+- `/src/contexts/sse-context.tsx` - Single connection management
+- `/src/hooks/use-camera-sse.ts` - Specialized event hooks
+- Components use hooks, never direct EventSource connections
+
+**SSE Event Structure (Important)**:
+- Event data is provided **directly on the event object**
+- ✅ Correct: `event.camera_id`, `event.image_count`, `event.status`
+- ❌ Wrong: `event.data.camera_id` (data property doesn't exist)
+- The SSE context parses raw events and passes data objects directly to subscribers
+
 ### System-Wide Constraints
 
 1. **psycopg3 connection pooling** - Both async/sync pools required
@@ -96,6 +125,7 @@ Next.js (3000) ↔ FastAPI (8000) ↔ PostgreSQL ↔ Python Worker
 - **Non-existent image endpoints** - Never reference
   `/api/images/{id}/thumbnail`
 - **Simple browser-local time calculations** - Always use timezone-aware system
+- **Individual EventSource connections** - Creates connection spam (79+ connections), use centralized SSE system only
 
 ## 🧠 WHY ARCHITECTURAL DECISIONS WERE MADE
 
@@ -515,6 +545,19 @@ Enhanced `start-services.sh` with health check retries and proper ordering
 - Different tools for different jobs - concurrency vs reliability
 - Connection pool separation prevents resource conflicts
 
+### 8. **"Each component should handle its own real-time events with EventSource"**
+
+❌ **Why This Causes Connection Spam**:
+
+- Creates 79+ simultaneous SSE connections (dashboard + each camera card + modals)
+- Rapid connection cycling every 500ms with aggressive reconnection timers
+- Massive performance impact and console spam
+- Server overload handling multiple connections from same client
+- Duplicates event handling logic across components
+- **Solution**: Centralized SSE via React Context with single shared connection
+
+**Real Example**: Camera dashboard with 10 cameras = 12+ connections (dashboard + 10 cards + modals). Fixed with SSEProvider pattern achieving 99% connection reduction.
+
 ## 🗄️ DATABASE SCHEMA
 
 **Core Relationships**:
@@ -775,6 +818,7 @@ useRealtimeCameras() → EventSource('/api/sse') → Live UI updates
 - **Camera Health Monitoring** - Real-time online/offline status
 - **Image Capture Events** - Watch capture counts update live
 - **Timelapse Status Changes** - Start/stop reflects immediately
+- **Centralized SSE System** - Single connection shared across all components (99% connection reduction)
 - **SSE Connection Health** - Visual indicator for live updates
 - **Error Broadcasting** - Failed captures show immediately
 
@@ -979,6 +1023,60 @@ const NewComponent = () => {
   // 3. Use toast notifications for feedback
   // 4. Follow timezone-aware time display patterns
 }
+```
+
+### Real-time Event Patterns (SSE)
+
+```typescript
+// Camera-specific real-time events
+import { useCameraSSE } from "@/hooks/use-camera-sse"
+
+const CameraComponent = ({ camera }) => {
+  useCameraSSE(camera.id, {
+    onImageCaptured: (data) => {
+      // Handle new image captured
+      setImageKey(Date.now()) // Force refresh
+    },
+    onStatusChanged: (data) => {
+      // Handle camera status change
+    },
+    onTimelapseStatusChanged: (data) => {
+      // Handle timelapse start/stop/pause
+    },
+  })
+}
+
+// Dashboard-wide events
+import { useDashboardSSE } from "@/hooks/use-camera-sse"
+
+const DashboardComponent = () => {
+  useDashboardSSE({
+    onCameraAdded: (data) => {
+      setCameras(prev => [data.camera, ...prev])
+    },
+    onVideoGenerated: (data) => {
+      setVideos(prev => [data.video, ...prev])
+    },
+  })
+}
+
+// Custom event filtering
+import { useSSESubscription } from "@/contexts/sse-context"
+
+const ModalComponent = () => {
+  useSSESubscription(
+    (event) => event.type === "thumbnail_regeneration_progress",
+    (event) => {
+      setProgress(event.data.progress)
+    },
+    [isOpen] // Dependencies for subscription
+  )
+}
+
+// NEVER do this (creates individual connections):
+// ❌ const eventSource = new EventSource("/api/events")
+// ❌ Multiple EventSource connections per component
+// ✅ Always use the centralized SSE hooks above
 ```
 
 ### Debugging Workflow

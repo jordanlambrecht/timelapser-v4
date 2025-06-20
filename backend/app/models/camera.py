@@ -280,10 +280,18 @@ def transform_camera_with_image_row(row: Dict[str, Any]) -> CameraWithLastImage:
     }
 
     # Convert time objects to strings for API serialization
-    if camera_data.get("time_window_start") and hasattr(camera_data["time_window_start"], "strftime"):
-        camera_data["time_window_start"] = camera_data["time_window_start"].strftime("%H:%M:%S")
-    if camera_data.get("time_window_end") and hasattr(camera_data["time_window_end"], "strftime"):
-        camera_data["time_window_end"] = camera_data["time_window_end"].strftime("%H:%M:%S")
+    if camera_data.get("time_window_start") and hasattr(
+        camera_data["time_window_start"], "strftime"
+    ):
+        camera_data["time_window_start"] = camera_data["time_window_start"].strftime(
+            "%H:%M:%S"
+        )
+    if camera_data.get("time_window_end") and hasattr(
+        camera_data["time_window_end"], "strftime"
+    ):
+        camera_data["time_window_end"] = camera_data["time_window_end"].strftime(
+            "%H:%M:%S"
+        )
 
     # Add timelapse fields manually
     if "timelapse_status" in row:

@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useEffect, useState } from "react"
+import { useSSESubscription } from "@/contexts/sse-context"
 import { toast } from "@/lib/toast"
 
 interface ThumbnailRegenerationModalProps {
@@ -50,92 +51,71 @@ export function ThumbnailRegenerationModal({
   const [isCancelling, setIsCancelling] = useState(false)
   const [isComplete, setIsComplete] = useState(false)
 
-  // SSE for real-time updates
-  useEffect(() => {
-    if (!isOpen) return
+  // SSE for real-time updates using centralized system
+  useSSESubscription(
+    (event) => event.type === "thumbnail_regeneration_progress",
+    (event) => {
+      setProgress({
+        active: true,
+        progress: event.progress,
+        total: event.total,
+        current_image: event.current_image,
+        completed: event.completed,
+        errors: event.errors,
+      })
+      setIsStarting(false)
+    },
+    [isOpen]
+  )
 
-    let eventSource: EventSource | null = null
+  useSSESubscription(
+    (event) => event.type === "thumbnail_regeneration_complete",
+    (event) => {
+      setProgress((prev) => ({
+        ...prev,
+        active: false,
+      }))
+      setIsComplete(true)
+      setIsStarting(false)
+      setIsCancelling(false)
+      
+      toast.success("Thumbnail regeneration completed!", {
+        description: `Successfully processed ${event.completed}/${event.total} images`,
+        duration: 5000,
+      })
+    },
+    [isOpen]
+  )
 
-    const connectSSE = () => {
-      try {
-        eventSource = new EventSource("/api/events")
+  useSSESubscription(
+    (event) => event.type === "thumbnail_regeneration_cancelled",
+    () => {
+      setProgress((prev) => ({
+        ...prev,
+        active: false,
+      }))
+      setIsCancelling(false)
+      toast.info("Thumbnail regeneration cancelled")
+    },
+    [isOpen]
+  )
 
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-
-            switch (data.type) {
-              case "thumbnail_regeneration_progress":
-                setProgress({
-                  active: true,
-                  progress: data.progress,
-                  total: data.total,
-                  current_image: data.current_image,
-                  completed: data.completed,
-                  errors: data.errors,
-                })
-                setIsStarting(false)
-                break
-
-              case "thumbnail_regeneration_complete":
-                setProgress((prev) => ({
-                  ...prev,
-                  active: false,
-                }))
-                setIsComplete(true)
-                setIsStarting(false)
-                setIsCancelling(false)
-                
-                toast.success("Thumbnail regeneration completed!", {
-                  description: `Successfully processed ${data.completed}/${data.total} images`,
-                  duration: 5000,
-                })
-                break
-
-              case "thumbnail_regeneration_cancelled":
-                setProgress((prev) => ({
-                  ...prev,
-                  active: false,
-                }))
-                setIsCancelling(false)
-                toast.info("Thumbnail regeneration cancelled")
-                break
-
-              case "thumbnail_regeneration_error":
-                setProgress((prev) => ({
-                  ...prev,
-                  active: false,
-                }))
-                setIsStarting(false)
-                setIsCancelling(false)
-                toast.error("Thumbnail regeneration failed", {
-                  description: data.error,
-                  duration: 7000,
-                })
-                break
-            }
-          } catch (error) {
-            console.error("Error parsing SSE event:", error)
-          }
-        }
-
-        eventSource.onerror = () => {
-          console.error("SSE connection error for thumbnail regeneration")
-        }
-      } catch (error) {
-        console.error("Failed to create SSE connection:", error)
-      }
-    }
-
-    connectSSE()
-
-    // Cleanup
-    return () => {
-      if (eventSource) {
-        eventSource.close()
-      }
-    }
-  }, [isOpen])
+  useSSESubscription(
+    (event) => event.type === "thumbnail_regeneration_error",
+    (event) => {
+      setProgress((prev) => ({
+        ...prev,
+        active: false,
+      }))
+      setIsStarting(false)
+      setIsCancelling(false)
+      toast.error("Thumbnail regeneration failed", {
+        description: event.error,
+        duration: 7000,
+      })
+    },
+    [isOpen]
+  )
 
   // Fetch initial status when modal opens
   useEffect(() => {

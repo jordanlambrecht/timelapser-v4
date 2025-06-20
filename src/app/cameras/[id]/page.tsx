@@ -9,6 +9,7 @@ import {
   useCameraCountdown,
 } from "@/hooks/use-camera-countdown"
 import { useCameraDetails } from "@/hooks/use-camera-details"
+import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
 import { VideoGenerationSettings } from "@/components/video-generation-settings"
@@ -155,72 +156,29 @@ export default function CameraDetailsPage() {
   // Extract progress for the animated border
   const { captureProgress } = countdownState
 
-  // 🎯 REFACTORED: Simplified SSE event handling with new hook
-  useEffect(() => {
-    let eventSource: EventSource | null = null
-
-    const connectSSE = () => {
-      try {
-        eventSource = new EventSource("/api/events")
-
-        eventSource.onopen = () => {
-          // SSE connection established
-        }
-
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-
-            // Only handle events for this camera
-            if (data.camera_id === cameraId) {
-              switch (data.type) {
-                case "image_captured":
-                  // Force image refresh with cache-busting
-                  setImageKey(Date.now())
-                  // Refetch comprehensive data to stay in sync
-                  refetch()
-                  break
-
-                case "timelapse_status_changed":
-                case "camera_status_changed":
-                case "timelapse_created":
-                  // For any significant state changes, refetch all data
-                  refetch()
-                  setImageKey(Date.now())
-                  break
-
-                default:
-                  // Handle unknown event types gracefully
-                  break
-              }
-            }
-          } catch (error) {
-            console.error("[❌ SSE] Error parsing event:", error)
-          }
-        }
-
-        eventSource.onerror = (error) => {
-          console.error(
-            `[❌ SSE] Connection error for camera ${cameraId}:`,
-            error
-          )
-          if (eventSource) {
-            eventSource.close()
-          }
-        }
-      } catch (error) {
-        console.error("[❌ SSE] Failed to establish connection:", error)
-      }
-    }
-
-    connectSSE()
-
-    return () => {
-      if (eventSource) {
-        eventSource.close()
-      }
-    }
-  }, [cameraId, refetch])
+  // 🎯 REFACTORED: Centralized SSE event handling
+  useCameraSSE(cameraId, {
+    onImageCaptured: () => {
+      // Force image refresh with cache-busting
+      setImageKey(Date.now())
+      // Refetch comprehensive data to stay in sync
+      refetch()
+    },
+    onStatusChanged: () => {
+      // For any significant state changes, refetch all data
+      refetch()
+      setImageKey(Date.now())
+    },
+    onTimelapseStatusChanged: () => {
+      // For any significant state changes, refetch all data
+      refetch()
+      setImageKey(Date.now())
+    },
+    onCameraUpdated: () => {
+      refetch()
+      setImageKey(Date.now())
+    },
+  })
 
   // 🎯 REMOVED: fetchAllCameraData function - replaced by useCameraDetails hook
 

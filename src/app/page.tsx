@@ -24,6 +24,8 @@ import {
   StopAllTimelapsesConfirmationDialog,
 } from "@/components/ui/confirmation-dialog"
 import { toast } from "@/lib/toast"
+import { useDashboardSSE } from "@/hooks/use-camera-sse"
+import { useSSE, useSSESubscription } from "@/contexts/sse-context"
 
 interface Camera {
   id: number
@@ -134,194 +136,127 @@ export default function Dashboard() {
     }
   }
 
-  // Real-time updates via Server-Sent Events with reconnection logic
-  useEffect(() => {
-    let eventSource: EventSource | null = null
-    let reconnectTimer: NodeJS.Timeout | null = null
-    let reconnectAttempts = 0
-    const maxReconnectAttempts = 5
-    const baseReconnectDelay = 1000 // Start with 1 second
-
-    const connectSSE = () => {
-      // Clean up existing connection
-      if (eventSource) {
-        eventSource.close()
+  // Real-time updates via centralized SSE
+  useDashboardSSE({
+    onCameraAdded: (data) => {
+      setCameras((prev) => [data.camera, ...prev])
+    },
+    onCameraDeleted: (data) => {
+      setCameras((prev) =>
+        prev.filter((camera) => camera.id !== data.camera_id)
+      )
+      setTimelapses((prev) =>
+        prev.filter((t) => t.camera_id !== data.camera_id)
+      )
+      setVideos((prev) =>
+        prev.filter((v) => v.camera_id !== data.camera_id)
+      )
+    },
+    onVideoGenerated: (data) => {
+      if (data.video) {
+        setVideos((prev) => [data.video, ...prev])
       }
+    },
+  })
 
-      // Connecting to SSE
-      eventSource = new EventSource("/api/events")
+  // Global SSE connection for dashboard-wide events
+  const { isConnected } = useSSE()
 
-      eventSource.onopen = () => {
-        setSseConnected(true)
-        reconnectAttempts = 0 // Reset attempts on successful connection
-      }
+  // Subscribe to specific dashboard events
+  useSSESubscription(
+    (event) => ["camera_updated", "timelapse_status_changed", "image_captured"].includes(event.type),
+    (event) => {
+      setLastEventTime(Date.now())
 
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          setLastEventTime(Date.now()) // Track when we last received an event
-
-          // Process SSE event
-
-          switch (data.type) {
-            case "camera_added":
-              setCameras((prev) => [data.camera, ...prev])
-              break
-
-            case "camera_updated":
-              setCameras((prev) =>
-                prev.map((camera) =>
-                  camera.id === data.camera.id
-                    ? { ...camera, ...data.camera }
-                    : camera
-                )
-              )
-              break
-
-            case "camera_deleted":
-              setCameras((prev) =>
-                prev.filter((camera) => camera.id !== data.camera_id)
-              )
-              setTimelapses((prev) =>
-                prev.filter((t) => t.camera_id !== data.camera_id)
-              )
-              setVideos((prev) =>
-                prev.filter((v) => v.camera_id !== data.camera_id)
-              )
-              break
-
-            case "timelapse_status_changed":
-              // Process timelapse status change
-              setTimelapses((prev) => {
-                const updated = prev.map((timelapse) =>
-                  timelapse.camera_id === data.camera_id
-                    ? {
-                        ...timelapse,
-                        status: data.status,
-                        id: data.timelapse_id || timelapse.id,
-                      }
-                    : timelapse
-                )
-
-                // If no existing timelapse for this camera, create one
-                const hasExisting = prev.some(
-                  (t) => t.camera_id === data.camera_id
-                )
-                if (!hasExisting && data.timelapse_id) {
-                  return [
-                    ...updated,
-                    {
-                      id: data.timelapse_id,
-                      camera_id: data.camera_id,
-                      status: data.status,
-                      image_count: 0,
-                      last_capture_at: undefined,
-                    },
-                  ]
-                }
-
-                return updated
-              })
-              break
-
-            case "video_completed":
-              if (data.video) {
-                setVideos((prev) => [data.video, ...prev])
-              }
-              break
-
-            case "video_failed":
-              console.error("Video generation failed:", data.error)
-              break
-
-            case "image_captured":
-              // Update image count for timelapse
-              setTimelapses((prev) =>
-                prev.map((timelapse) =>
-                  timelapse.camera_id === data.camera_id
-                    ? {
-                        ...timelapse,
-                        image_count: data.image_count || timelapse.image_count,
-                      }
-                    : timelapse
-                )
-              )
-
-              // Show toast notification for image capture
-              const camera = cameras.find((c) => c.id === data.camera_id)
-              if (camera) {
-                toast.imageCaptured(camera.name)
-              }
-
-              // Force camera data refresh to get updated next_capture_at
-              setTimeout(() => {
-                fetch(`/api/cameras/${data.camera_id}`)
-                  .then((response) => response.json())
-                  .then((updatedCamera) => {
-                    setCameras((prev) =>
-                      prev.map((camera) =>
-                        camera.id === data.camera_id
-                          ? { ...camera, ...updatedCamera }
-                          : camera
-                      )
-                    )
-                  })
-                  .catch((error) =>
-                    console.error("Failed to refresh camera data:", error)
-                  )
-              }, 500) // Small delay to ensure database is updated
-
-              break
-
-            case "connected":
-              break
-
-            case "heartbeat":
-              // Keep connection alive
-              break
-
-            default:
-            // Handle unknown dashboard event types
-          }
-        } catch (error) {
-          console.error("Error parsing dashboard SSE event:", error)
-        }
-      }
-
-      eventSource.onerror = (error) => {
-        console.error("Dashboard SSE connection error:", error)
-        setSseConnected(false)
-
-        // Attempt to reconnect with exponential backoff
-        if (reconnectAttempts < maxReconnectAttempts) {
-          const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
-          // Attempting to reconnect with exponential backoff
-
-          reconnectAttempts++
-          reconnectTimer = setTimeout(() => {
-            connectSSE()
-          }, delay)
-        } else {
-          console.error(
-            "Max SSE reconnection attempts reached. Please refresh the page."
+      switch (event.type) {
+        case "camera_updated":
+          setCameras((prev) =>
+            prev.map((camera) =>
+              camera.id === event.camera.id
+                ? { ...camera, ...event.camera }
+                : camera
+            )
           )
-        }
+          break
+
+        case "timelapse_status_changed":
+          setTimelapses((prev) => {
+            const updated = prev.map((timelapse) =>
+              timelapse.camera_id === event.camera_id
+                ? {
+                    ...timelapse,
+                    status: event.status,
+                    id: event.timelapse_id || timelapse.id,
+                  }
+                : timelapse
+            )
+
+            // If no existing timelapse for this camera, create one
+            const hasExisting = prev.some(
+              (t) => t.camera_id === event.camera_id
+            )
+            if (!hasExisting && event.timelapse_id) {
+              return [
+                ...updated,
+                {
+                  id: event.timelapse_id,
+                  camera_id: event.camera_id,
+                  status: event.status,
+                  image_count: 0,
+                  last_capture_at: undefined,
+                },
+              ]
+            }
+
+            return updated
+          })
+          break
+
+        case "image_captured":
+          // Update image count for timelapse
+          setTimelapses((prev) =>
+            prev.map((timelapse) =>
+              timelapse.camera_id === event.camera_id
+                ? {
+                    ...timelapse,
+                    image_count: event.image_count || timelapse.image_count,
+                  }
+                : timelapse
+            )
+          )
+
+          // Show toast notification for image capture
+          const camera = cameras.find((c) => c.id === event.camera_id)
+          if (camera) {
+            toast.imageCaptured(camera.name)
+          }
+
+          // Force camera data refresh to get updated next_capture_at
+          setTimeout(() => {
+            fetch(`/api/cameras/${event.camera_id}`)
+              .then((response) => response.json())
+              .then((updatedCamera) => {
+                setCameras((prev) =>
+                  prev.map((camera) =>
+                    camera.id === event.camera_id
+                      ? { ...camera, ...updatedCamera }
+                      : camera
+                  )
+                )
+              })
+              .catch((error) =>
+                console.error("Failed to refresh camera data:", error)
+              )
+          }, 500) // Small delay to ensure database is updated
+          break
       }
     }
+  )
 
-    // Initial connection
-    connectSSE()
-
-    // Cleanup on unmount
-    return () => {
-      if (eventSource) {
-        eventSource.close()
-      }
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-      }
-    }
-  }, [])
+  // Update SSE connection state
+  useEffect(() => {
+    setSseConnected(isConnected)
+  }, [isConnected])
 
   useEffect(() => {
     // Initial data fetch only - no more polling!

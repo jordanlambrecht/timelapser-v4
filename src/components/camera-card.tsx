@@ -39,6 +39,7 @@ import {
   useCameraCountdown,
   useCaptureSettings,
 } from "@/hooks/use-camera-countdown"
+import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { isWithinTimeWindow } from "@/lib/time-utils"
 import { TimestampWithWarning } from "@/components/suspicious-timestamp-warning"
 
@@ -136,146 +137,61 @@ export function CameraCard({
     captureInterval: captureInterval,
   })
 
-  // Server-Sent Events for real-time updates with reconnection
-  useEffect(() => {
-    let eventSource: EventSource | null = null
-    let reconnectTimer: NodeJS.Timeout | null = null
-    let reconnectAttempts = 0
-    const maxReconnectAttempts = 5
-    const baseReconnectDelay = 1000 // 1 second
-    let isConnected = false
+  // Server-Sent Events for real-time updates (centralized)
+  useCameraSSE(camera.id, {
+    onImageCaptured: (data) => {
+      // Force image reload
+      setImageKey(Date.now())
 
-    const connectSSE = () => {
-      try {
-        eventSource = new EventSource("/api/events")
+      // Update image count if provided
+      if (data.image_count !== undefined) {
+        setActualImageCount(data.image_count)
+      }
 
-        eventSource.onopen = () => {
-          isConnected = true
-          reconnectAttempts = 0 // Reset on successful connection
+      // Refresh timelapse stats to get updated counts
+      setTimeout(async () => {
+        try {
+          const statsResponse = await fetch(
+            `/api/cameras/${camera.id}/timelapse-stats`
+          )
+          if (statsResponse.ok) {
+            const stats = await statsResponse.json()
+            setTimelapseStats(stats)
+          }
+        } catch (error) {
+          console.error("Failed to refresh timelapse stats:", error)
         }
+      }, 500) // Small delay to ensure database is updated
+    },
+    onTimelapseStatusChanged: (data) => {
+      // Force image refresh when timelapse status changes
+      setImageKey(Date.now())
 
-        eventSource.onmessage = (event) => {
+      // If a new timelapse was started, reset counters immediately
+      if (data.status === "running" && data.timelapse_id) {
+        // Reset counters for new timelapse
+        setActualImageCount(0)
+
+        // Refresh stats after a short delay to get the new timelapse data
+        setTimeout(async () => {
           try {
-            const data = JSON.parse(event.data)
-
-            // Handle different event types
-            switch (data.type) {
-              case "image_captured":
-                if (data.camera_id === camera.id) {
-                  // Force image reload
-                  setImageKey(Date.now()) // Force image reload
-
-                  // Update image count if provided
-                  if (data.image_count !== undefined) {
-                    setActualImageCount(data.image_count)
-                  }
-
-                  // Refresh timelapse stats to get updated counts
-                  setTimeout(async () => {
-                    try {
-                      const statsResponse = await fetch(
-                        `/api/cameras/${camera.id}/timelapse-stats`
-                      )
-                      if (statsResponse.ok) {
-                        const stats = await statsResponse.json()
-                        setTimelapseStats(stats)
-                      }
-                    } catch (error) {
-                      console.error("Failed to refresh timelapse stats:", error)
-                    }
-                  }, 500) // Small delay to ensure database is updated
-                }
-                break
-              case "camera_status_changed":
-                if (data.camera_id === camera.id) {
-                  // Let the parent component handle status updates via normal refresh
-                }
-                break
-              case "timelapse_status_changed":
-                if (data.camera_id === camera.id) {
-                  // Force image refresh when timelapse status changes
-                  setImageKey(Date.now())
-
-                  // If a new timelapse was started, reset counters immediately
-                  if (data.status === "running" && data.timelapse_id) {
-                    // Reset counters for new timelapse
-                    setActualImageCount(0)
-
-                    // Refresh stats after a short delay to get the new timelapse data
-                    setTimeout(async () => {
-                      try {
-                        const statsResponse = await fetch(
-                          `/api/cameras/${camera.id}/timelapse-stats`
-                        )
-                        if (statsResponse.ok) {
-                          const stats = await statsResponse.json()
-                          setTimelapseStats(stats)
-                        }
-                      } catch (error) {
-                        console.error(
-                          "Failed to refresh timelapse stats after status change:",
-                          error
-                        )
-                      }
-                    }, 1000)
-                  }
-                }
-                break
-              case "connected":
-                break
-              case "heartbeat":
-                // Keep connection alive
-                break
-              default:
-              // Handle unknown SSE event types
+            const statsResponse = await fetch(
+              `/api/cameras/${camera.id}/timelapse-stats`
+            )
+            if (statsResponse.ok) {
+              const stats = await statsResponse.json()
+              setTimelapseStats(stats)
             }
           } catch (error) {
-            console.error("Error parsing SSE event:", error)
-          }
-        }
-
-        eventSource.onerror = (error) => {
-          console.error(`SSE connection error for camera ${camera.id}:`, error)
-          isConnected = false
-
-          // Close the current connection
-          if (eventSource) {
-            eventSource.close()
-          }
-
-          // Attempt reconnection with exponential backoff
-          if (reconnectAttempts < maxReconnectAttempts) {
-            const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts)
-            // Exponential backoff for reconnection
-
-            reconnectTimer = setTimeout(() => {
-              reconnectAttempts++
-              connectSSE()
-            }, delay)
-          } else {
             console.error(
-              `Max SSE reconnection attempts reached for camera ${camera.id}`
+              "Failed to refresh timelapse stats after status change:",
+              error
             )
           }
-        }
-      } catch (error) {
-        console.error("Failed to create SSE connection:", error)
+        }, 1000)
       }
-    }
-
-    // Initial connection
-    connectSSE()
-
-    // Cleanup on unmount
-    return () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
-    }
-  }, [camera.id])
+    },
+  })
 
   // Fetch timelapse statistics (total vs current images)
   useEffect(() => {
