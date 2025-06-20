@@ -1,5 +1,6 @@
 from .camera import (
-    Camera, CameraCreate, CameraUpdate, CameraWithTimelapse
+    Camera, CameraCreate, CameraUpdate, CameraWithTimelapse,
+    CameraWithLastImage, CameraDetailStats, CameraDetailsResponse, LogForCamera
 )
 from .timelapse import (
     Timelapse, TimelapseCreate, TimelapseUpdate, TimelapseWithDetails
@@ -19,6 +20,7 @@ from .log import (
 
 __all__ = [
     "Camera", "CameraCreate", "CameraUpdate", "CameraWithTimelapse",
+    "CameraWithLastImage", "CameraDetailStats", "CameraDetailsResponse", "LogForCamera",
     "Timelapse", "TimelapseCreate", "TimelapseUpdate", "TimelapseWithDetails", 
     "Video", "VideoCreate", "VideoUpdate", "VideoWithDetails",
     "Image", "ImageCreate", "ImageWithDetails",
