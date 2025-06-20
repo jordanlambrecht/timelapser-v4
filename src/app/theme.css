@@ -1,0 +1,60 @@
+@theme {
+  --color-pink: oklch(91.1% 0.046 18deg);
+  --color-pink-light: oklch(95.6% 0.0218 17.5deg);
+  --color-pink-dark: oklch(70.6% 0.141 14.8deg);
+  --color-primary: var(--color-pink);
+  --color-foreground: var(--color-pink);
+
+  --color-cyan: oklch(86.3% 0.0728 207deg);
+
+  --color-yellow: oklch(97.3% 0.147 110deg);
+
+  --color-purple-muted: oklch(46.1% 0.0708 275deg);
+  --color-purple-light: oklch(79% 0.107 275deg);
+  --color-purple: oklch(51.2% 0.242 280deg);
+  --color-purple-dark: oklch(30.7% 0.0793 273deg);
+
+  --color-blue: oklch(20.1% 0.0741 271deg);
+  --color-background: var(--color-blue);
+
+  --color-black: oklch(23.4% 0.0065 258deg);
+  --color-grey-light: oklch(92.2% 0.0232 278deg);
+  --color-white: oklch(99.1% 0.00426 17.2deg);
+
+  --color-success: oklch(80% 0.182 152deg);
+  --color-failure: oklch(66.8% 0.22 19.6deg);
+  --color-warn: oklch(84.2% 0.128 71.8deg);
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-fade-in-scale: fade-in-scale 0.3s ease-out;
+  --animate-pulse-glow: pulse-glow 4s ease-in-out infinite;
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0px) rotate(0deg);
+    }
+    50% {
+      transform: translateY(-12px) rotate(2deg);
+    }
+  }
+  @keyframes fade-in-scale {
+    0% {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 20px (var(--color-pink) / 20%);
+    }
+    50% {
+      box-shadow: 0 0 40px (var(--color-pink) / 40%),
+        0 0 60px (var(--color-cyan) / 20%);
+    }
+  }
+}
