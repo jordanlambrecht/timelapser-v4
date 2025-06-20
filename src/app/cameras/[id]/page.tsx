@@ -6,69 +6,71 @@ import Link from "next/link"
 import {
   useRelativeTime,
   useCaptureSettings,
+  useCameraCountdown,
 } from "@/hooks/use-camera-countdown"
+import { useCameraDetails } from "@/hooks/use-camera-details"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
 import { VideoGenerationSettings } from "@/components/video-generation-settings"
+import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
+import { TimelapseDetailsModal } from "@/components/timelapse-details-modal"
+import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
+import { AnimatedGradientButton } from "@/components/ui/animated-gradient-button"
+// import { AnimatedCountdownBorder } from "@/components/animated-countdown-border"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  ArrowLeft,
+  Camera,
+  Video,
+  Clock,
+  Zap,
+  Play,
+  Square,
+  Settings,
+  Eye,
+  Plus,
+  MoreVertical,
+  CircleStop,
+  Pause,
+  Film,
+  Calendar,
+  HardDrive,
+  Trash2,
+  Download,
+  Edit3,
+  Check,
+  X,
+  ChevronRight,
+  RotateCcw,
+  Archive,
+  Maximize2,
+  Grid,
+  List,
+  Images,
+  PlayCircle,
+} from "lucide-react"
+import cn from "clsx"
+import Image from "next/image"
 
-interface Camera {
-  id: number
+// Import proper TypeScript interfaces - ARCHITECTURAL LAW COMPLIANCE
+interface TimelapseConfig {
   name: string
-  rtsp_url: string
-  status: string
-  health_status: string
-  last_capture_at: string | null
-  consecutive_failures: number
-  use_time_window: boolean
-  time_window_start: string | null
-  time_window_end: string | null
-  // Video generation settings
-  video_generation_mode: "standard" | "target"
-  standard_fps: number
-  enable_time_limits: boolean
-  min_time_seconds?: number | null
-  max_time_seconds?: number | null
-  target_time_seconds?: number | null
-  fps_bounds_min: number
-  fps_bounds_max: number
-  // Full image object instead of just ID
-  last_image?: {
-    id: number
-    captured_at: string
-    file_path: string
-    file_size: number | null
-    day_number: number
-  } | null
-}
-
-interface Timelapse {
-  id: number
-  camera_id: number
-  status: string
-  start_date: string
-  image_count: number
-  last_capture_at: string | null
-  created_at: string
-}
-
-interface Video {
-  id: number
-  camera_id: number
-  name: string
-  status: string
-  file_path: string | null
-  file_size: number | null
-  duration_seconds: number | null
-  created_at: string
-}
-
-interface LogEntry {
-  id: number
-  level: string
-  message: string
-  timestamp: string
-  camera_id: number | null
+  useTimeWindow: boolean
+  timeWindowStart: string
+  timeWindowEnd: string
+  useAutoStop: boolean
+  autoStopAt?: string
+  videoSettings?: any
 }
 
 export default function CameraDetailsPage() {
@@ -76,20 +78,44 @@ export default function CameraDetailsPage() {
   const router = useRouter()
   const cameraId = parseInt(params.id as string)
 
+  // 🎯 REFACTORED: Single hook replaces 6 separate API calls
+  const {
+    camera,
+    activeTimelapse,
+    timelapses,
+    videos,
+    recentImages,
+    recentActivity,
+    stats,
+    loading,
+    error,
+    refetch,
+  } = useCameraDetails(cameraId)
+
   // Get timezone from settings
   const { timezone } = useCaptureSettings()
 
-  // Individual state for each data type - no artificial CameraDetails structure
-  const [camera, setCamera] = useState<Camera | null>(null)
-  const [timelapses, setTimelapses] = useState<Timelapse[]>([])
-  const [videos, setVideos] = useState<Video[]>([])
-  const [imageCount, setImageCount] = useState<number>(0)
-  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([])
-
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // UI state only - no more complex data management
+  const [imageKey, setImageKey] = useState(Date.now()) // Force image refresh
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [imageKey, setImageKey] = useState(Date.now()) // For cache-busting
+  const [showLatestCapture, setShowLatestCapture] = useState(true) // true = latest capture, false = latest timelapse video
+
+  // Modal states
+  const [selectedTimelapse, setSelectedTimelapse] = useState<any>(null)
+  const [timelapseModalOpen, setTimelapseModalOpen] = useState(false)
+  const [newTimelapseDialogOpen, setNewTimelapseDialogOpen] = useState(false)
+  const [confirmStopOpen, setConfirmStopOpen] = useState(false)
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+
+  // Computed values from clean data
+  const completedTimelapses = timelapses.filter((t) => t.status === "completed")
+  const completedVideos = videos.filter((v) => v.status === "completed")
+
+  // Timelapse status helpers
+  const isTimelapseRunning = activeTimelapse?.status === "running"
+  const isTimelapsePaused = activeTimelapse?.status === "paused"
+
+  // 🎯 PRODUCTION: Console.log statements removed for clean production code
 
   // Use the new time formatting hooks
   const lastImageCapturedText = useRelativeTime(
@@ -101,26 +127,35 @@ export default function CameraDetailsPage() {
     }
   )
 
-  // Computed values from real data
-  const activeTimelapse = timelapses.find((t) => t.status === "running") || null
-  const completedVideos = videos.filter((v) => v.status === "completed")
-  const stats = {
-    currentTimelapseImages: activeTimelapse?.image_count || 0,
-    totalImages: imageCount,
-    videoCount: completedVideos.length,
-    daysSinceFirstCapture: camera?.last_capture_at
-      ? Math.floor(
-          (Date.now() - new Date(camera.last_capture_at).getTime()) /
-            (1000 * 60 * 60 * 24)
-        )
-      : 0,
-  }
+  // Countdown hook for next capture timing
+  const countdownState = useCameraCountdown({
+    camera: camera
+      ? {
+          id: camera.id,
+          last_capture_at: camera.last_capture_at,
+          next_capture_at:
+            camera.last_image?.captured_at || camera.last_capture_at,
+          time_window_start: camera.time_window_start,
+          time_window_end: camera.time_window_end,
+          use_time_window: camera.use_time_window,
+        }
+      : {
+          id: 0,
+          last_capture_at: null,
+          next_capture_at: null,
+          time_window_start: null,
+          time_window_end: null,
+          use_time_window: false,
+        },
+    timelapse: activeTimelapse || undefined,
+    captureInterval: 300, // 5 minutes - you might want to get this from camera settings
+    enabled: isTimelapseRunning,
+  })
 
-  useEffect(() => {
-    fetchAllCameraData()
-  }, [cameraId])
+  // Extract progress for the animated border
+  const { captureProgress } = countdownState
 
-  // SSE event handling for real-time updates
+  // 🎯 REFACTORED: Simplified SSE event handling with new hook
   useEffect(() => {
     let eventSource: EventSource | null = null
 
@@ -129,48 +164,52 @@ export default function CameraDetailsPage() {
         eventSource = new EventSource("/api/events")
 
         eventSource.onopen = () => {
-          console.log(`SSE connected for camera details (camera ${cameraId})`)
+          // SSE connection established
         }
 
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data)
 
-            switch (data.type) {
-              case "image_captured":
-                if (data.camera_id === cameraId) {
-                  console.log(`New image captured for camera ${cameraId}`)
+            // Only handle events for this camera
+            if (data.camera_id === cameraId) {
+              switch (data.type) {
+                case "image_captured":
                   // Force image refresh with cache-busting
                   setImageKey(Date.now())
-                  // Update image count if provided
-                  if (data.image_count !== undefined) {
-                    setImageCount(data.image_count)
-                  }
-                }
-                break
-              case "timelapse_status_changed":
-                if (data.camera_id === cameraId) {
-                  console.log(`Timelapse status changed for camera ${cameraId}`)
-                  // Refresh all data when timelapse status changes
-                  fetchAllCameraData()
-                }
-                break
-              default:
-                console.log("Unknown SSE event:", data.type)
+                  // Refetch comprehensive data to stay in sync
+                  refetch()
+                  break
+
+                case "timelapse_status_changed":
+                case "camera_status_changed":
+                case "timelapse_created":
+                  // For any significant state changes, refetch all data
+                  refetch()
+                  setImageKey(Date.now())
+                  break
+
+                default:
+                  // Handle unknown event types gracefully
+                  break
+              }
             }
           } catch (error) {
-            console.error("Error parsing SSE event:", error)
+            console.error("[❌ SSE] Error parsing event:", error)
           }
         }
 
         eventSource.onerror = (error) => {
-          console.error(`SSE connection error for camera details:`, error)
+          console.error(
+            `[❌ SSE] Connection error for camera ${cameraId}:`,
+            error
+          )
           if (eventSource) {
             eventSource.close()
           }
         }
       } catch (error) {
-        console.error("Failed to establish SSE connection:", error)
+        console.error("[❌ SSE] Failed to establish connection:", error)
       }
     }
 
@@ -181,129 +220,191 @@ export default function CameraDetailsPage() {
         eventSource.close()
       }
     }
-  }, [cameraId])
+  }, [cameraId, refetch])
 
-  const fetchAllCameraData = async () => {
-    try {
-      setLoading(true)
-      setError(null)
+  // 🎯 REMOVED: fetchAllCameraData function - replaced by useCameraDetails hook
 
-      // Fetch all data in parallel
-      const [
-        cameraResponse,
-        timelapsesResponse,
-        videosResponse,
-        imageCountResponse,
-        logsResponse,
-      ] = await Promise.all([
-        fetch(`/api/cameras/${cameraId}`),
-        fetch(`/api/timelapses?camera_id=${cameraId}`),
-        fetch(`/api/videos?camera_id=${cameraId}`),
-        fetch(`/api/images/count?camera_id=${cameraId}`),
-        fetch(`/api/logs?camera_id=${cameraId}&limit=10`),
-      ])
+  // 🎯 REMOVED: fetchTimelapseImages function - using comprehensive hook for data
 
-      // Check if camera exists
-      if (!cameraResponse.ok) {
-        throw new Error("Camera not found")
-      }
-
-      // Parse all responses
-      const cameraData = await cameraResponse.json()
-      const timelapsesData = timelapsesResponse.ok
-        ? await timelapsesResponse.json()
-        : []
-      const videosData = videosResponse.ok ? await videosResponse.json() : []
-      const imageCountData = imageCountResponse.ok
-        ? await imageCountResponse.json()
-        : { count: 0 }
-      const logsData = logsResponse.ok ? await logsResponse.json() : []
-
-      // Set all state
-      setCamera(cameraData)
-      setTimelapses(
-        Array.isArray(timelapsesData)
-          ? timelapsesData
-          : timelapsesData.timelapses || []
-      )
-      setVideos(
-        Array.isArray(videosData) ? videosData : videosData.videos || []
-      )
-      setImageCount(
-        typeof imageCountData === "number"
-          ? imageCountData
-          : imageCountData.count || 0
-      )
-      setRecentLogs(Array.isArray(logsData) ? logsData : logsData.logs || [])
-
-      // No need to fetch latest image separately - it's included in camera data
-    } catch (err) {
-      console.error("Error fetching camera data:", err)
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch camera details"
-      )
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleTimelapseAction = async (action: "start" | "stop") => {
-    if (!camera) return
+  const handlePauseTimelapse = async () => {
+    if (!camera || !activeTimelapse) return
 
     try {
-      setActionLoading(action)
+      setActionLoading("pause")
 
-      if (action === "start") {
-        const response = await fetch("/api/timelapses", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            camera_id: camera.id,
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error("Failed to start timelapse")
+      const response = await fetch(
+        `/api/timelapses/${activeTimelapse.id}/status?camera_id=${camera.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "paused" }),
         }
+      )
+
+      if (response.ok) {
+        toast.timelapsePaused(camera.name)
+        // 🎯 REFACTORED: Use comprehensive hook for data refresh
+        await refetch()
       } else {
-        if (!activeTimelapse) return
-
-        const response = await fetch(`/api/timelapses/${activeTimelapse.id}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            status: "completed",
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error("Failed to stop timelapse")
-        }
+        throw new Error("Failed to pause timelapse")
       }
-
-      // Refresh data after action
-      await fetchAllCameraData()
-
-      // Show success toast
-      toast.success(`Timelapse ${action}ed successfully!`, {
-        description: `Camera "${camera.name}" timelapse has been ${action}ed`,
-        duration: 4000,
-      })
-    } catch (err) {
-      console.error(`Error ${action}ing timelapse:`, err)
-      toast.error(`Failed to ${action} timelapse`, {
+    } catch (error) {
+      console.error("Error pausing timelapse:", error)
+      toast.error("Failed to pause timelapse", {
         description:
-          err instanceof Error ? err.message : "Unknown error occurred",
-        duration: 6000,
+          error instanceof Error ? error.message : "Unknown error occurred",
       })
     } finally {
       setActionLoading(null)
     }
   }
+
+  const handleResumeTimelapse = async () => {
+    if (!camera || !activeTimelapse) return
+
+    try {
+      setActionLoading("resume")
+
+      const response = await fetch(
+        `/api/timelapses/${activeTimelapse.id}/status?camera_id=${camera.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "running" }),
+        }
+      )
+
+      if (response.ok) {
+        toast.timelapseResumed(camera.name)
+        // 🎯 REFACTORED: Use comprehensive hook for data refresh
+        await refetch()
+      } else {
+        throw new Error("Failed to resume timelapse")
+      }
+    } catch (error) {
+      console.error("Error resuming timelapse:", error)
+      toast.error("Failed to resume timelapse", {
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleStopTimelapse = async () => {
+    if (!camera || !activeTimelapse) return
+
+    try {
+      setActionLoading("stop")
+
+      // Complete the timelapse using entity-based endpoint
+      const response = await fetch(
+        `/api/timelapses/${activeTimelapse.id}/complete?camera_id=${camera.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+
+      if (response.ok) {
+        toast.success(`⏹️ Timelapse stopped for ${camera.name}`, {
+          description: "Recording session has ended",
+        })
+        // 🎯 REFACTORED: Use comprehensive hook for data refresh
+        await refetch()
+        setImageKey(Date.now())
+      } else {
+        throw new Error("Failed to stop timelapse")
+      }
+    } catch (error) {
+      console.error("Error stopping timelapse:", error)
+      toast.error("Failed to stop timelapse", {
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleStartNewTimelapse = async (config: TimelapseConfig) => {
+    if (!camera) return
+
+    try {
+      setActionLoading("start")
+
+      // ARCHITECTURAL LAW: Timezone-aware validation for auto-stop
+      if (config.useAutoStop && config.autoStopAt) {
+        const autoStopDate = new Date(config.autoStopAt)
+        const now = new Date()
+        if (autoStopDate <= now) {
+          toast.error("Auto-stop time must be in the future")
+          throw new Error("Invalid auto-stop time")
+        }
+      }
+
+      const timelapseData = {
+        camera_id: camera.id,
+        status: "running",
+        name: config.name,
+        auto_stop_at: config.useAutoStop ? config.autoStopAt : null,
+        time_window_start: config.useTimeWindow ? config.timeWindowStart : null,
+        time_window_end: config.useTimeWindow ? config.timeWindowEnd : null,
+        use_custom_time_window: config.useTimeWindow,
+        // ARCHITECTURAL LAW: Video settings inheritance pattern
+        ...(config.videoSettings && config.videoSettings),
+      }
+
+      // No optimistic updates needed - comprehensive hook will handle data updates
+
+      // Use the entity-based endpoint
+      const response = await fetch("/api/timelapses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(timelapseData),
+      })
+
+      const result = await response.json()
+
+      if (response.ok) {
+        toast.timelapseStarted(camera.name)
+        setNewTimelapseDialogOpen(false)
+
+        // 🎯 REFACTORED: Use new hook's refetch for complete data synchronization
+        await refetch()
+
+        // Force image refresh with cache-busting
+        setImageKey(Date.now())
+
+        // Additional refresh to ensure backend state is synchronized
+        setTimeout(async () => {
+          await refetch()
+        }, 1000)
+      } else {
+        // Reset with fresh data on failure
+        await refetch()
+        throw new Error(result.detail || "Failed to start timelapse")
+      }
+    } catch (error) {
+      console.error("Error starting new timelapse:", error)
+      toast.error("Failed to start timelapse", {
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
+        duration: 6000,
+      })
+      throw error // Re-throw so dialog handles loading state properly
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // 🎯 REMOVED: handleDeleteImages function - referenced undefined selectedVideo variable
+  // This function was never called from the UI and contained references to undefined variables.
+  // Image management functionality should be implemented with proper state management when needed.
+
+  // 🎯 REMOVED: handleRegenerateVideo function - no longer called after removing handleDeleteImages
+  // Video regeneration functionality should be implemented through the main video management UI when needed.
 
   // Helper functions
   const formatFileSize = (bytes: number) => {
@@ -312,6 +413,18 @@ export default function CameraDetailsPage() {
     const sizes = ["Bytes", "KB", "MB", "GB"]
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+  }
+
+  const formatDuration = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = seconds % 60
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, "0")}:${secs
+        .toString()
+        .padStart(2, "0")}`
+    }
+    return `${minutes}:${secs.toString().padStart(2, "0")}`
   }
 
   const getHealthStatusIcon = (status: string) => {
@@ -339,6 +452,11 @@ export default function CameraDetailsPage() {
         return "bg-gray-100 text-primary"
     }
   }
+
+  // 🎯 REMOVED: Dead code for image filtering/sorting
+  // This code referenced undefined variables (imageSearchTerm, imageSortBy, imageSortOrder)
+  // and was never used in the actual UI. The comprehensive hook provides recentImages
+  // for display purposes, but full image management is handled elsewhere.
 
   if (loading) {
     return (
@@ -373,217 +491,743 @@ export default function CameraDetailsPage() {
         <div className='px-4 py-4 mx-auto max-w-7xl sm:px-6 lg:px-8'>
           <div className='flex items-center justify-between'>
             <div className='flex items-center gap-4'>
-              <Link href='/' className='text-blue-600 hover:text-blue'>
-                ← Dashboard
+              <Link
+                href='/'
+                className='text-blue-600 hover:text-blue-800 transition-colors'
+              >
+                <ArrowLeft className='w-5 h-5' />
               </Link>
-              <h1 className='text-2xl font-bold text-white'>{camera.name}</h1>
-              <div className='flex items-center gap-2'>
-                <span className='text-lg'>
-                  {getHealthStatusIcon(camera.health_status)}
-                </span>
-                <span
-                  className={`px-2 py-1 text-xs rounded-full ${getHealthStatusColor(
-                    camera.health_status
-                  )}`}
+              <div className='flex items-center gap-3'>
+                <div className='p-2 glass rounded-lg'>
+                  <Camera className='w-5 h-5 text-accent' />
+                </div>
+                <div>
+                  <h1 className='text-2xl font-bold text-white'>
+                    {camera.name}
+                  </h1>
+                  <p className='text-sm text-primary'>Camera #{camera.id}</p>
+                </div>
+              </div>
+              <div className='flex items-center gap-3'>
+                {/* Online status indicator with dot */}
+                <div className='flex items-center gap-2'>
+                  <div
+                    className={cn(
+                      "w-3 h-3 rounded-full border-2 border-white/50 transition-all duration-300",
+                      camera.health_status === "online"
+                        ? "bg-green-500 shadow-lg shadow-green-500/50 animate-pulse"
+                        : camera.health_status === "offline"
+                        ? "bg-red-500 shadow-lg shadow-red-500/50 animate-pulse"
+                        : "bg-yellow-500 shadow-lg shadow-yellow-500/50 animate-pulse"
+                    )}
+                  />
+                  <span
+                    className={`px-3 py-1 text-xs rounded-full font-medium ${getHealthStatusColor(
+                      camera.health_status
+                    )}`}
+                  >
+                    {camera.health_status}
+                  </span>
+                </div>
+
+                {/* Recording Status Badge */}
+                {stats?.current_timelapse_status === "running" && (
+                  <div className='flex items-center gap-2'>
+                    <div className='w-2 h-2 bg-cyan rounded-full animate-pulse' />
+                    <span className='px-3 py-1 text-xs rounded-full font-medium bg-gradient-to-r from-cyan/10 to-purple/10 text-cyan border border-cyan/20'>
+                      Recording:{" "}
+                      {stats.current_timelapse_name || "Unnamed Timelapse"}
+                    </span>
+                  </div>
+                )}
+
+                {/* Settings Button */}
+                <Button
+                  onClick={() => setSettingsModalOpen(true)}
+                  size='sm'
+                  variant='outline'
+                  className='border-purple-muted/40 hover:bg-purple/20 text-white'
+                  title='Camera Settings'
                 >
-                  {camera.health_status}
-                </span>
+                  <Settings className='w-4 h-4' />
+                </Button>
               </div>
             </div>
-            {/* <div className='flex items-center gap-2'>
-              {activeTimelapse?.status === "running" ? (
-                <button
-                  onClick={() => handleTimelapseAction("stop")}
-                  disabled={actionLoading === "stop"}
-                  className='px-4 py-2 text-white bg-failure rounded-lg hover:bg-failure/80 disabled:opacity-50'
-                >
-                  {actionLoading === "stop" ? "Stopping..." : "Stop Timelapse"}
-                </button>
-              ) : (
-                <button
-                  onClick={() => handleTimelapseAction("start")}
-                  disabled={actionLoading === "start"}
-                  className='px-4 py-2 text-white bg-success rounded-lg hover:bg-success/80 disabled:opacity-50'
-                >
-                  {actionLoading === "start"
-                    ? "Starting..."
-                    : "Start Timelapse"}
-                </button>
-              )}
-            </div> */}
-            {/* Main Start/Stop button */}
-            <div>
-              <Button
-                onClick={() => {
-                  const isRunning = timelapse?.status === "running"
-                  const isPaused = timelapse?.status === "paused"
 
-                  if (isRunning || isPaused) {
-                    // Show confirmation dialog for stopping
-                    setConfirmStopOpen(true)
-                  } else {
-                    // Open new timelapse dialog instead of starting directly
-                    setNewTimelapseDialogOpen(true)
-                  }
-                }}
-                size='lg'
-                disabled={camera.health_status === "offline"}
-                className={cn(
-                  "font-medium transition-all duration-300 min-w-[140px] grow",
-                  camera.health_status === "offline"
-                    ? "bg-gray-600 text-gray-400 cursor-not-allowed opacity-50"
-                    : isTimelapseRunning || isTimelapsePaused
-                    ? "bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20"
-                    : "bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black hover:shadow-lg"
-                )}
-              >
-                {camera.health_status === "offline" ? (
-                  <>
-                    <Square className='w-4 h-4 mr-1' />
-                    Offline
-                  </>
-                ) : isTimelapseRunning || isTimelapsePaused ? (
-                  <>
-                    <CircleStop className='w-4 h-4 mr-1' />
-                    Stop
-                  </>
-                ) : (
-                  <>
-                    <Play className='w-4 h-4 mr-1' />
-                    Start A New Timelapse
-                  </>
-                )}
-              </Button>
+            {/* Main Control Button */}
+            <div className='flex items-center gap-3'>
+              {isTimelapseRunning && (
+                <Button
+                  onClick={handlePauseTimelapse}
+                  disabled={actionLoading === "pause"}
+                  size='sm'
+                  className='bg-yellow-600 hover:bg-yellow-700 text-white'
+                >
+                  {actionLoading === "pause" ? (
+                    <>
+                      <div className='w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin' />
+                      Pausing...
+                    </>
+                  ) : (
+                    <>
+                      <Pause className='w-4 h-4 mr-2' />
+                      Pause
+                    </>
+                  )}
+                </Button>
+              )}
+
+              {isTimelapsePaused && (
+                <Button
+                  onClick={handleResumeTimelapse}
+                  disabled={actionLoading === "resume"}
+                  size='sm'
+                  className='bg-green-600 hover:bg-green-700 text-white'
+                >
+                  {actionLoading === "resume" ? (
+                    <>
+                      <div className='w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin' />
+                      Resuming...
+                    </>
+                  ) : (
+                    <>
+                      <Play className='w-4 h-4 mr-2' />
+                      Resume
+                    </>
+                  )}
+                </Button>
+              )}
+
+              {camera.health_status === "offline" ? (
+                <Button
+                  onClick={() => {}}
+                  size='lg'
+                  disabled={true}
+                  className='bg-gray-600 text-gray-400 cursor-not-allowed opacity-50 font-medium transition-all duration-300 min-w-[160px]'
+                >
+                  <Square className='w-4 h-4 mr-2' />
+                  Offline
+                </Button>
+              ) : isTimelapseRunning || isTimelapsePaused ? (
+                <Button
+                  onClick={() => setConfirmStopOpen(true)}
+                  size='lg'
+                  className='bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20 font-medium transition-all duration-300 min-w-[160px]'
+                >
+                  <CircleStop className='w-4 h-4 mr-2' />
+                  Stop Timelapse
+                </Button>
+              ) : (
+                <AnimatedGradientButton
+                  onClick={() => setNewTimelapseDialogOpen(true)}
+                  size='lg'
+                  className='font-medium min-w-[160px]'
+                >
+                  <Play className='w-4 h-4 mr-2' />
+                  Start New Timelapse
+                </AnimatedGradientButton>
+              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className='px-4 py-8 mx-auto max-w-7xl sm:px-6 lg:px-8'>
-        <div className='grid grid-cols-1 gap-8 lg:grid-cols-3'>
-          {/* Main Content - Latest Image */}
-          <div className='lg:col-span-2'>
-            <div className='overflow-hidden glass-strong rounded-lg shadow-sm'>
+        <div className='grid grid-cols-1 gap-8 lg:grid-cols-4'>
+          {/* Main Content */}
+          <div className='lg:col-span-3 space-y-8'>
+            {/* Latest Image */}
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
               <div className='p-6'>
-                <h2 className='mb-4 text-lg font-semibold text-white'>
-                  Latest Capture
-                </h2>
-                <div className='overflow-hidden glass-strong rounded-lg aspect-video'>
-                  {camera.last_image ? (
-                    <img
-                      src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
-                      alt={`Latest capture from ${camera.name}`}
-                      className='object-cover w-full h-full'
-                      onError={(e) => {
-                        // Hide the image element and show placeholder instead
-                        e.currentTarget.style.display = "none"
-                        const parent = e.currentTarget.parentElement
-                        if (
-                          parent &&
-                          !parent.querySelector(".image-error-placeholder")
-                        ) {
-                          const placeholder = document.createElement("div")
-                          placeholder.className =
-                            "flex items-center justify-center w-full h-full text-gray-500 image-error-placeholder"
-                          placeholder.innerHTML = `
-                            <div class="text-center">
-                              <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                              </svg>
-                              <p class="mt-2">Image not available</p>
-                            </div>
-                          `
-                          parent.appendChild(placeholder)
-                        }
-                      }}
-                    />
-                  ) : (
-                    <div className='flex items-center justify-center w-full h-full text-gray-500'>
-                      <div className='text-center'>
-                        <svg
-                          className='w-12 h-12 mx-auto text-gray-400'
-                          fill='none'
-                          viewBox='0 0 24 24'
-                          stroke='currentColor'
-                        >
-                          <path
-                            strokeLinecap='round'
-                            strokeLinejoin='round'
-                            strokeWidth={2}
-                            d='M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z'
-                          />
-                          <path
-                            strokeLinecap='round'
-                            strokeLinejoin='round'
-                            strokeWidth={2}
-                            d='M15 13a3 3 0 11-6 0 3 3 0 016 0z'
-                          />
-                        </svg>
-                        <p className='mt-2'>No images captured yet</p>
+                <div className='flex items-center justify-between mb-6'>
+                  <div className='flex items-center gap-4'>
+                    <h2 className='text-xl font-bold text-white flex items-center gap-2'>
+                      <Eye className='w-5 h-5 text-accent' />
+                      {showLatestCapture
+                        ? "Latest Capture"
+                        : "Latest Timelapse Video"}
+                    </h2>
+
+                    {/* Toggle between latest capture and latest timelapse */}
+                    <div className='flex items-center space-x-2'>
+                      <Button
+                        onClick={() => setShowLatestCapture(true)}
+                        size='sm'
+                        variant={showLatestCapture ? "default" : "outline"}
+                        className={`transition-all duration-300 ${
+                          showLatestCapture
+                            ? "bg-cyan text-black shadow-lg shadow-cyan/20"
+                            : "border-gray-600 text-gray-400 hover:text-white hover:border-gray-400"
+                        }`}
+                      >
+                        <Camera className='w-4 h-4 mr-1' />
+                        Image
+                      </Button>
+                      <Button
+                        onClick={() => setShowLatestCapture(false)}
+                        size='sm'
+                        variant={!showLatestCapture ? "default" : "outline"}
+                        className={`transition-all duration-300 ${
+                          !showLatestCapture
+                            ? "bg-purple text-white shadow-lg shadow-purple/20"
+                            : "border-gray-600 text-gray-400 hover:text-white hover:border-gray-400"
+                        }`}
+                        disabled={completedVideos.length === 0}
+                      >
+                        <Video className='w-4 h-4 mr-1' />
+                        Video
+                      </Button>
+                    </div>
+                  </div>
+
+                  {showLatestCapture && camera.last_image && (
+                    <div className='flex flex-col items-end gap-1 text-sm'>
+                      <div className='flex items-center gap-2 text-primary'>
+                        <Clock className='w-4 h-4' />
+                        {lastImageCapturedText}
+                      </div>
+                      <div className='text-xs text-yellow-400 font-mono'>
+                        {formatAbsoluteTime(
+                          camera.last_image.captured_at,
+                          timezone
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
-                {camera.last_image && (
-                  <div className='grid grid-cols-2 gap-4 mt-4 text-sm text-primary'>
-                    <div>
-                      <span className='font-medium'>Captured:</span>{" "}
-                      {lastImageCapturedText}
+
+                <div className='glass-strong rounded-xl aspect-video overflow-hidden transition-all duration-500 relative group'>
+                  {showLatestCapture ? (
+                    // Latest Image View
+                    camera.last_image ? (
+                      <>
+                        <Image
+                          src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
+                          alt={`Latest capture from ${camera.name}`}
+                          width={800}
+                          height={450}
+                          className='object-cover w-full h-full hover:scale-105 transition-transform duration-300'
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none"
+                            const parent = e.currentTarget.parentElement
+                            if (
+                              parent &&
+                              !parent.querySelector(".image-error-placeholder")
+                            ) {
+                              const placeholder = document.createElement("div")
+                              placeholder.className =
+                                "flex items-center justify-center w-full h-full text-gray-500 image-error-placeholder"
+                              placeholder.innerHTML = `
+                                <div class="text-center">
+                                  <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  </svg>
+                                  <p class="mt-2">Image not available</p>
+                                </div>
+                              `
+                              parent.appendChild(placeholder)
+                            }
+                          }}
+                        />
+                        {/* Download Button for Image */}
+                        <Button
+                          onClick={async () => {
+                            try {
+                              // Try the dedicated download endpoint first
+                              let response = await fetch(
+                                `/api/cameras/${camera.id}/latest-capture/download`
+                              )
+                              let isUsingFallback = false
+
+                              // If that fails, fall back to the regular endpoint
+                              if (!response.ok) {
+                                response = await fetch(
+                                  `/api/cameras/${camera.id}/latest-capture?t=${imageKey}`
+                                )
+                                isUsingFallback = true
+                              }
+
+                              if (!response.ok) {
+                                throw new Error("Failed to download image")
+                              }
+
+                              const blob = await response.blob()
+                              const url = window.URL.createObjectURL(blob)
+                              const a = document.createElement("a")
+                              a.href = url
+
+                              // Generate filename with timestamp
+                              let filename = `${camera.name}_latest_capture.jpg`
+
+                              if (isUsingFallback) {
+                                // For fallback, generate timestamp ourselves
+                                const now = new Date()
+                                const timestamp = now
+                                  .toISOString()
+                                  .slice(0, 19)
+                                  .replace(/[:-]/g, "")
+                                  .replace("T", "_")
+                                const safeCameraName = camera.name
+                                  .replace(/[^a-zA-Z0-9\s\-_]/g, "")
+                                  .replace(/\s+/g, "_")
+                                filename = `${safeCameraName}_${timestamp}.jpg`
+                              } else {
+                                // Try to get filename from response headers
+                                const contentDisposition = response.headers.get(
+                                  "content-disposition"
+                                )
+                                if (contentDisposition) {
+                                  const filenameMatch =
+                                    contentDisposition.match(
+                                      /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/
+                                    )
+                                  if (filenameMatch) {
+                                    filename = filenameMatch[1].replace(
+                                      /['"]/g,
+                                      ""
+                                    )
+                                  }
+                                }
+                              }
+
+                              a.download = filename
+                              document.body.appendChild(a)
+                              a.click()
+                              document.body.removeChild(a)
+                              window.URL.revokeObjectURL(url)
+                              toast.success("Image downloaded successfully!")
+                            } catch (error) {
+                              console.error("Error downloading image:", error)
+                              toast.error("Failed to download image")
+                            }
+                          }}
+                          size='sm'
+                          className='absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 text-white border border-white/20 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 shadow-lg'
+                          title='Download latest capture'
+                        >
+                          <Download className='w-4 h-4' />
+                        </Button>
+
+                        {/* Capture Progress Indicator */}
+                        {isTimelapseRunning && captureProgress > 0 && (
+                          <div className='absolute top-3 left-3 bg-black/60 hover:bg-black/80 text-white border border-yellow-400/30 backdrop-blur-sm px-3 py-1 rounded-md text-sm font-medium transition-all duration-300'>
+                            <div className='flex items-center gap-2'>
+                              <div className='w-2 h-2 bg-yellow-400 rounded-full animate-pulse' />
+                              {Math.round(captureProgress)}% to next capture
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className='flex items-center justify-center w-full h-full text-gray-500'>
+                        <div className='text-center'>
+                          <Camera className='w-16 h-16 mx-auto text-gray-400 mb-4' />
+                          <p className='text-lg font-medium'>
+                            No images captured yet
+                          </p>
+                          <p className='text-sm mt-2'>
+                            Start a timelapse to begin capturing
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  ) : // Latest Video View
+                  completedVideos.length > 0 ? (
+                    <div className='relative w-full h-full bg-black'>
+                      <video
+                        controls
+                        className='w-full h-full object-contain'
+                        poster={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
+                      >
+                        <source
+                          src={`/api/videos/${completedVideos[0].id}/stream`}
+                          type='video/mp4'
+                        />
+                        Your browser does not support the video tag.
+                      </video>
+                      <div className='absolute top-3 left-3 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-2'>
+                        <p className='text-sm text-white font-medium'>
+                          {completedVideos[0].file_path?.split("/").pop() ||
+                            "Latest Video"}
+                        </p>
+                        <p className='text-xs text-gray-300'>
+                          {completedVideos[0].duration_seconds
+                            ? `${Math.floor(
+                                completedVideos[0].duration_seconds / 60
+                              )}:${String(
+                                completedVideos[0].duration_seconds % 60
+                              ).padStart(2, "0")}`
+                            : "Unknown duration"}
+                        </p>
+                      </div>
+                      {/* Download Button for Video */}
+                      <Button
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(
+                              `/api/videos/${completedVideos[0].id}/download`
+                            )
+                            if (!response.ok) {
+                              throw new Error("Failed to download video")
+                            }
+                            const blob = await response.blob()
+                            const url = window.URL.createObjectURL(blob)
+                            const a = document.createElement("a")
+                            a.href = url
+                            a.download =
+                              completedVideos[0].file_path?.split("/").pop() ||
+                              `${camera.name}_latest_video.mp4`
+                            document.body.appendChild(a)
+                            a.click()
+                            document.body.removeChild(a)
+                            window.URL.revokeObjectURL(url)
+                            toast.success("Video downloaded successfully!")
+                          } catch (error) {
+                            console.error("Error downloading video:", error)
+                            toast.error("Failed to download video")
+                          }
+                        }}
+                        size='sm'
+                        className='absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 text-white border border-white/20 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-300 shadow-lg'
+                        title='Download latest video'
+                      >
+                        <Download className='w-4 h-4' />
+                      </Button>
                     </div>
-                    <div>
-                      <span className='font-medium'>Day:</span>{" "}
-                      {camera.last_image.day_number}
+                  ) : (
+                    <div className='flex items-center justify-center w-full h-full text-gray-500'>
+                      <div className='text-center'>
+                        <Video className='w-16 h-16 mx-auto text-gray-400 mb-4' />
+                        <p className='text-lg font-medium'>
+                          No timelapse videos yet
+                        </p>
+                        <p className='text-sm mt-2'>
+                          Generate your first video from captured images
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <span className='font-medium'>File Size:</span>{" "}
-                      {formatFileSize(camera.last_image.file_size || 0)}
+                  )}
+                </div>
+
+                {showLatestCapture
+                  ? // Image stats
+                    camera.last_image && (
+                      <div className='grid grid-cols-2 md:grid-cols-5 gap-4 mt-6 text-sm'>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            Captured
+                          </div>
+                          <div className='text-white'>
+                            {lastImageCapturedText}
+                          </div>
+                          <div className='text-xs text-yellow-400 font-mono mt-1'>
+                            {formatAbsoluteTime(
+                              camera.last_image.captured_at,
+                              timezone
+                            )}
+                          </div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            Resolution
+                          </div>
+                          <div className='text-white'>2688×1512</div>
+                          <div className='text-xs text-gray-400'>4MP</div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>Day</div>
+                          <div className='text-white'>
+                            #{camera.last_image.day_number}
+                          </div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            File Size
+                          </div>
+                          <div className='text-white'>
+                            {formatFileSize(camera.last_image.file_size || 0)}
+                          </div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            Timelapse
+                          </div>
+                          <div className='text-white'>
+                            {activeTimelapse
+                              ? `#${activeTimelapse.id}`
+                              : "None"}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  : // Video stats
+                    completedVideos.length > 0 && (
+                      <div className='grid grid-cols-2 md:grid-cols-5 gap-4 mt-6 text-sm'>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            Created
+                          </div>
+                          <div className='text-white'>
+                            {formatRelativeTime(completedVideos[0].created_at, {
+                              timezone,
+                            })}
+                          </div>
+                          <div className='text-xs text-yellow-400 font-mono mt-1'>
+                            {formatAbsoluteTime(
+                              completedVideos[0].created_at,
+                              timezone
+                            )}
+                          </div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            Duration
+                          </div>
+                          <div className='text-white'>
+                            {completedVideos[0].duration_seconds
+                              ? `${Math.floor(
+                                  completedVideos[0].duration_seconds / 60
+                                )}:${String(
+                                  completedVideos[0].duration_seconds % 60
+                                ).padStart(2, "0")}`
+                              : "Unknown"}
+                          </div>
+                          <div className='text-xs text-gray-400'>mm:ss</div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>
+                            File Size
+                          </div>
+                          <div className='text-white'>
+                            {formatFileSize(completedVideos[0].file_size || 0)}
+                          </div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>Images</div>
+                          <div className='text-white'>
+                            {completedVideos[0].settings?.total_images || "N/A"}
+                          </div>
+                          <div className='text-xs text-gray-400'>used</div>
+                        </div>
+                        <div className='glass rounded-lg p-3'>
+                          <div className='text-primary font-medium'>FPS</div>
+                          <div className='text-white'>
+                            {completedVideos[0].settings?.fps || "N/A"}
+                          </div>
+                          <div className='text-xs text-gray-400'>
+                            frames/sec
+                          </div>
+                        </div>
+                      </div>
+                    )}
+              </div>
+            </div>
+
+            {/* Timelapses Table */}
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <div className='flex items-center justify-between mb-6'>
+                  <h2 className='text-xl font-bold text-white flex items-center gap-2'>
+                    <Film className='w-5 h-5 text-accent' />
+                    Timelapses
+                  </h2>
+                  <div className='flex items-center gap-2 text-sm text-primary'>
+                    <span>{timelapses.length} total</span>
+                    {completedTimelapses.length > 0 && (
+                      <span>• {completedTimelapses.length} completed</span>
+                    )}
+                  </div>
+                </div>
+
+                {timelapses.length > 0 ? (
+                  <div className='overflow-hidden rounded-lg'>
+                    <div className='overflow-x-auto'>
+                      <table className='w-full'>
+                        <thead>
+                          <tr className='border-b border-gray-700'>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Name
+                            </th>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Status
+                            </th>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Images
+                            </th>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Started
+                            </th>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Last Capture
+                            </th>
+                            <th className='text-left py-3 px-4 font-medium text-primary'>
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {timelapses.map((timelapse) => (
+                            <tr
+                              key={timelapse.id}
+                              className='border-b border-gray-800 hover:bg-gray-800/50 transition-colors cursor-pointer'
+                              onClick={() => {
+                                const numericId = parseInt(
+                                  timelapse.id?.toString()
+                                )
+                                if (isNaN(numericId)) {
+                                  toast.error("Invalid timelapse ID")
+                                  return
+                                }
+
+                                setSelectedTimelapse({
+                                  ...timelapse,
+                                  id: numericId,
+                                })
+                                setTimelapseModalOpen(true)
+                              }}
+                            >
+                              <td className='py-4 px-4'>
+                                <div className='text-white font-medium'>
+                                  {timelapse.name ||
+                                    `Timelapse #${timelapse.id}`}
+                                </div>
+                              </td>
+                              <td className='py-4 px-4'>
+                                <span
+                                  className={cn(
+                                    "px-2 py-1 rounded-full text-xs font-medium",
+                                    timelapse.status === "running" &&
+                                      "bg-green-100 text-green-800",
+                                    timelapse.status === "paused" &&
+                                      "bg-yellow-100 text-yellow-800",
+                                    timelapse.status === "completed" &&
+                                      "bg-blue-100 text-blue-800",
+                                    timelapse.status === "archived" &&
+                                      "bg-gray-100 text-gray-800"
+                                  )}
+                                >
+                                  {timelapse.status}
+                                  {timelapse.status === "running" && (
+                                    <span className='ml-1 inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse' />
+                                  )}
+                                </span>
+                              </td>
+                              <td className='py-4 px-4 text-white'>
+                                {timelapse.image_count.toLocaleString()}
+                              </td>
+                              <td className='py-4 px-4 text-primary'>
+                                {new Date(
+                                  timelapse.start_date
+                                ).toLocaleDateString("en-US", {
+                                  timeZone: timezone,
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
+                              </td>
+                              <td className='py-4 px-4 text-primary'>
+                                {timelapse.last_capture_at
+                                  ? formatRelativeTime(
+                                      timelapse.last_capture_at,
+                                      { timezone }
+                                    )
+                                  : "Never"}
+                              </td>
+                              <td className='py-4 px-4'>
+                                <div className='flex items-center gap-2'>
+                                  <Button
+                                    size='sm'
+                                    variant='outline'
+                                    className='text-accent border-accent hover:bg-accent hover:text-black'
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+
+                                      const numericId = parseInt(
+                                        timelapse.id?.toString()
+                                      )
+                                      if (isNaN(numericId)) {
+                                        toast.error("Invalid timelapse ID")
+                                        return
+                                      }
+
+                                      setSelectedTimelapse({
+                                        ...timelapse,
+                                        id: numericId,
+                                      })
+                                      setTimelapseModalOpen(true)
+                                    }}
+                                  >
+                                    <Eye className='w-4 h-4' />
+                                  </Button>
+                                  <ChevronRight className='w-4 h-4 text-gray-500' />
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    <div>
-                      <span className='font-medium'>Timelapse:</span>{" "}
-                      {activeTimelapse ? `#${activeTimelapse.id}` : "None"}
-                    </div>
+                  </div>
+                ) : (
+                  <div className='text-center py-12'>
+                    <Film className='w-16 h-16 mx-auto text-gray-400 mb-4' />
+                    <p className='text-lg font-medium text-gray-400'>
+                      No timelapses yet
+                    </p>
+                    <p className='text-sm text-gray-500 mt-2'>
+                      Start your first timelapse to begin capturing memories
+                    </p>
+                    <Button
+                      onClick={() => setNewTimelapseDialogOpen(true)}
+                      className='mt-4 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black'
+                    >
+                      <Play className='w-4 h-4 mr-2' />
+                      Start New Timelapse
+                    </Button>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Recent Activity */}
-            <div className='mt-8 glass-strong rounded-lg shadow-sm'>
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
               <div className='p-6'>
-                <h3 className='mb-4 text-lg font-semibold text-white'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <Clock className='w-5 h-5 text-accent' />
                   Recent Activity
                 </h3>
                 <div className='space-y-3'>
-                  {recentLogs.length > 0 ? (
-                    recentLogs.map((log) => (
+                  {recentActivity.length > 0 ? (
+                    recentActivity.map((log) => (
                       <div
                         key={log.id}
-                        className='flex items-start gap-3 p-3 rounded-lg glass'
+                        className='flex items-start gap-3 p-4 rounded-lg glass hover:bg-gray-800/50 transition-colors'
                       >
                         <div
-                          className={`px-2 py-1 text-xs rounded ${
+                          className={cn(
+                            "px-2 py-1 text-xs rounded font-medium",
                             log.level === "error"
-                              ? "bg-red-100 text-red-600"
+                              ? "bg-red-100 text-red-800"
                               : log.level === "warning"
-                              ? "bg-yellow-100 text-yellow-600"
-                              : "bg-blue-100 text-blue-600"
-                          }`}
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-blue-100 text-blue-800"
+                          )}
                         >
                           {log.level.toUpperCase()}
                         </div>
                         <div className='flex-1'>
                           <p className='text-sm text-white'>{log.message}</p>
-                          <p className='mt-1 text-xs text-gray-500'>
+                          <p className='mt-1 text-xs text-primary'>
                             {formatRelativeTime(log.timestamp, { timezone })}
                           </p>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <p className='py-4 text-center text-gray-500'>
-                      No recent activity
-                    </p>
+                    <div className='text-center py-8'>
+                      <p className='text-gray-500'>No recent activity</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -593,120 +1237,377 @@ export default function CameraDetailsPage() {
           {/* Sidebar - Stats and Controls */}
           <div className='space-y-6'>
             {/* Stats */}
-            <div className='p-6 glass-strong rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-white'>
-                Statistics
-              </h3>
-              <div className='space-y-4'>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Current Timelapse</span>
-                  <span className='font-semibold'>
-                    {stats.currentTimelapseImages} images
-                  </span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Total Images</span>
-                  <span className='font-semibold'>{stats.totalImages}</span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Videos Generated</span>
-                  <span className='font-semibold'>{stats.videoCount}</span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Days Active</span>
-                  <span className='font-semibold'>
-                    {stats.daysSinceFirstCapture}
-                  </span>
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <Zap className='w-5 h-5 text-accent' />
+                  Statistics
+                </h3>
+                <div className='space-y-4'>
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center'>
+                      <span className='text-primary font-medium'>
+                        Current Timelapse
+                      </span>
+                      <span className='text-xl font-bold text-white'>
+                        {stats?.current_timelapse_images?.toLocaleString() ||
+                          "0"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      images captured
+                    </div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center'>
+                      <span className='text-primary font-medium'>
+                        Total Images
+                      </span>
+                      <span className='text-xl font-bold text-white'>
+                        {stats?.total_images?.toLocaleString() || "0"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>all time</div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center'>
+                      <span className='text-primary font-medium'>
+                        Videos Generated
+                      </span>
+                      <span className='text-xl font-bold text-white'>
+                        {stats?.total_videos || "0"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>completed</div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center'>
+                      <span className='text-primary font-medium'>
+                        Timelapses
+                      </span>
+                      <span className='text-xl font-bold text-white'>
+                        {stats?.timelapse_count || "0"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>created</div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center'>
+                      <span className='text-primary font-medium'>
+                        Days Active
+                      </span>
+                      <span className='text-xl font-bold text-white'>
+                        {stats?.days_since_first_capture || "0"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      since first capture
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Timelapse Status */}
-            <div className='p-6 glass-strong rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-white'>
-                Timelapse Status
-              </h3>
-              {activeTimelapse ? (
-                <div className='space-y-3'>
-                  <div className='flex justify-between'>
-                    <span className='text-primary'>Status</span>
-                    <span
-                      className={`px-2 py-1 text-xs rounded-full ${
-                        activeTimelapse.status === "running"
-                          ? "bg-green-100 text-green-600"
-                          : "bg-gray-100 text-primary"
-                      }`}
-                    >
-                      {activeTimelapse.status}
-                    </span>
-                  </div>
-                  <div className='flex justify-between'>
-                    <span className='text-primary'>Started</span>
-                    <span className='text-sm'>
-                      {new Date(activeTimelapse.start_date).toLocaleDateString(
-                        "en-US",
-                        { timeZone: timezone }
-                      )}
-                    </span>
-                  </div>
-                  <div className='flex justify-between'>
-                    <span className='text-primary'>Images</span>
-                    <span className='text-sm'>
-                      {activeTimelapse.image_count}
-                    </span>
-                  </div>
-                  {activeTimelapse.last_capture_at && (
-                    <div className='flex justify-between'>
-                      <span className='text-primary'>Last Capture</span>
-                      <span className='text-sm'>
-                        {formatRelativeTime(activeTimelapse.last_capture_at, {
-                          timezone,
-                        })}
-                      </span>
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <PlayCircle className='w-5 h-5 text-accent' />
+                  Timelapse Status
+                </h3>
+                {activeTimelapse ? (
+                  <div className='space-y-4'>
+                    {/* Timelapse Name */}
+                    <div className='glass rounded-lg p-4'>
+                      <div className='flex justify-between items-center mb-2'>
+                        <span className='text-primary font-medium'>Name</span>
+                        <span className='text-white font-medium'>
+                          {stats?.current_timelapse_name ||
+                            activeTimelapse.name ||
+                            "Unnamed Timelapse"}
+                        </span>
+                      </div>
+                      <div className='text-xs text-gray-500'>
+                        Timelapse #{activeTimelapse.id}
+                      </div>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <p className='py-4 text-center text-gray-500'>
-                  No active timelapse
-                </p>
-              )}
+
+                    <div className='glass rounded-lg p-4'>
+                      <div className='flex justify-between items-center mb-2'>
+                        <span className='text-primary font-medium'>Status</span>
+                        <span
+                          className={cn(
+                            "px-3 py-1 text-xs rounded-full font-medium",
+                            activeTimelapse.status === "running"
+                              ? "bg-green-100 text-green-800"
+                              : activeTimelapse.status === "paused"
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-gray-100 text-gray-800"
+                          )}
+                        >
+                          {activeTimelapse.status}
+                          {activeTimelapse.status === "running" && (
+                            <span className='ml-1 inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse' />
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className='glass rounded-lg p-4'>
+                      <div className='flex justify-between items-center mb-2'>
+                        <span className='text-primary font-medium'>
+                          Started
+                        </span>
+                        <span className='text-white font-medium'>
+                          {new Date(
+                            activeTimelapse.start_date
+                          ).toLocaleDateString("en-US", {
+                            timeZone: timezone,
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </span>
+                      </div>
+                      <div className='text-xs text-gray-500'>
+                        {formatRelativeTime(activeTimelapse.start_date, {
+                          timezone,
+                        })}{" "}
+                        ago
+                      </div>
+                    </div>
+
+                    <div className='glass rounded-lg p-4'>
+                      <div className='flex justify-between items-center mb-2'>
+                        <span className='text-primary font-medium'>Images</span>
+                        <span className='text-white font-bold text-lg'>
+                          {(
+                            stats?.current_timelapse_images ||
+                            activeTimelapse.image_count ||
+                            0
+                          ).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className='text-xs text-gray-500'>
+                        captured so far
+                      </div>
+                    </div>
+
+                    {activeTimelapse.last_capture_at && (
+                      <div className='glass rounded-lg p-4'>
+                        <div className='flex justify-between items-center mb-2'>
+                          <span className='text-primary font-medium'>
+                            Last Capture
+                          </span>
+                          <span className='text-white font-medium'>
+                            {formatRelativeTime(
+                              activeTimelapse.last_capture_at,
+                              { timezone }
+                            )}
+                          </span>
+                        </div>
+                        <div className='text-xs text-gray-500'>
+                          {new Date(
+                            activeTimelapse.last_capture_at
+                          ).toLocaleString("en-US", {
+                            timeZone: timezone,
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className='text-center py-8'>
+                    <PlayCircle className='w-12 h-12 mx-auto text-gray-400 mb-3' />
+                    <p className='text-gray-400 font-medium'>
+                      No active timelapse
+                    </p>
+                    <p className='text-gray-500 text-sm mt-1'>
+                      Start one to begin capturing
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Camera Settings */}
-            <div className='p-6 glass-strong rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-white'>
-                Camera Settings
-              </h3>
-              <div className='space-y-3'>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Status</span>
-                  <span
-                    className={`px-2 py-1 text-xs rounded-full ${
-                      camera.status === "active"
-                        ? "bg-green-100 text-green-600"
-                        : "bg-gray-100 text-primary"
+            {/* Capture Controls */}
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <Camera className='w-5 h-5 text-accent' />
+                  Capture Controls
+                </h3>
+
+                {/* Next Capture Countdown */}
+                <div className='space-y-4'>
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center mb-2'>
+                      <span className='text-primary font-medium'>
+                        Next Capture
+                      </span>
+                      <span
+                        className={`font-mono text-lg ${
+                          isTimelapseRunning
+                            ? countdownState.isOverdue
+                              ? "text-red-400"
+                              : countdownState.isNow
+                              ? "text-green-400"
+                              : "text-white"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        {isTimelapseRunning
+                          ? countdownState.countdown
+                          : "Inactive"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      {isTimelapseRunning
+                        ? countdownState.isOverdue
+                          ? "capture overdue"
+                          : countdownState.isNow
+                          ? "capturing now"
+                          : "countdown timer"
+                        : "no active timelapse"}
+                    </div>
+                    {isTimelapseRunning &&
+                      countdownState.nextCaptureAbsolute && (
+                        <div className='text-xs text-yellow-400 font-mono mt-1'>
+                          {countdownState.nextCaptureAbsolute}
+                        </div>
+                      )}
+                  </div>
+
+                  {/* Manual Capture Button */}
+                  <Button
+                    onClick={async () => {
+                      if (!camera || !isTimelapseRunning) {
+                        toast.error("No active timelapse running")
+                        return
+                      }
+
+                      try {
+                        const response = await fetch(
+                          `/api/cameras/${camera.id}/capture-now`,
+                          {
+                            method: "POST",
+                          }
+                        )
+
+                        if (response.ok) {
+                          toast.success("Manual capture triggered!")
+                        } else {
+                          const error = await response.json()
+                          toast.error(
+                            error.detail || "Failed to trigger capture"
+                          )
+                        }
+                      } catch (error) {
+                        console.error("Error triggering manual capture:", error)
+                        toast.error("Failed to trigger capture")
+                      }
+                    }}
+                    disabled={
+                      !isTimelapseRunning || camera?.health_status !== "online"
+                    }
+                    className={`w-full font-medium ${
+                      isTimelapseRunning && camera?.health_status === "online"
+                        ? "bg-gradient-to-r from-cyan to-purple hover:from-cyan-dark hover:to-purple-dark text-black"
+                        : "bg-gray-600 text-gray-400 cursor-not-allowed opacity-50"
                     }`}
                   >
-                    {camera.status}
-                  </span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Time Window</span>
-                  <span className='text-sm'>
-                    {camera.use_time_window
-                      ? `${camera.time_window_start} - ${camera.time_window_end}`
-                      : "Disabled"}
-                  </span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-primary'>Failures</span>
-                  <span className='text-sm'>{camera.consecutive_failures}</span>
+                    <Camera className='w-4 h-4 mr-2' />
+                    {!isTimelapseRunning
+                      ? "No Active Timelapse"
+                      : camera?.health_status !== "online"
+                      ? "Camera Offline"
+                      : "Take Manual Capture"}
+                  </Button>
+
+                  <div className='text-xs text-gray-500 text-center'>
+                    {isTimelapseRunning
+                      ? "Capture an image right now"
+                      : "Start a timelapse to enable manual capture"}
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Video Generation Settings */}
+            {/* Camera Settings */}
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <Settings className='w-5 h-5 text-accent' />
+                  Camera Settings
+                </h3>
+                <div className='space-y-4'>
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center mb-2'>
+                      <span className='text-primary font-medium'>Status</span>
+                      <span
+                        className={cn(
+                          "px-3 py-1 text-xs rounded-full font-medium",
+                          camera.status === "active"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-gray-100 text-gray-800"
+                        )}
+                      >
+                        {camera.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center mb-2'>
+                      <span className='text-primary font-medium'>
+                        Time Window
+                      </span>
+                      <span className='text-white font-medium'>
+                        {camera.use_time_window &&
+                        camera.time_window_start &&
+                        camera.time_window_end
+                          ? `${camera.time_window_start} - ${camera.time_window_end}`
+                          : "Disabled"}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500'>
+                      {camera.use_time_window
+                        ? "Capture window active"
+                        : "24/7 capture mode"}
+                    </div>
+                  </div>
+
+                  <div className='glass rounded-lg p-4'>
+                    <div className='flex justify-between items-center mb-2'>
+                      <span className='text-primary font-medium'>Failures</span>
+                      <span
+                        className={cn(
+                          "font-bold",
+                          camera.consecutive_failures > 5
+                            ? "text-red-400"
+                            : camera.consecutive_failures > 2
+                            ? "text-yellow-400"
+                            : "text-green-400"
+                        )}
+                      >
+                        {camera.consecutive_failures}
+                      </span>
+                    </div>
+                    <div className='text-xs text-gray-500'>consecutive</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Video Generation Settings
             <VideoGenerationSettings
               settings={{
                 video_generation_mode: camera.video_generation_mode,
@@ -732,10 +1633,8 @@ export default function CameraDetailsPage() {
                     throw new Error("Failed to update video settings")
                   }
 
-                  // Update local camera state
-                  setCamera((prev) =>
-                    prev ? { ...prev, ...newSettings } : null
-                  )
+                  // 🎯 REFACTORED: Use comprehensive hook for data refresh
+                  await refetch()
 
                   toast.success("Video generation settings updated", {
                     description: "Settings will apply to new timelapses",
@@ -752,37 +1651,128 @@ export default function CameraDetailsPage() {
                   })
                 }
               }}
-              totalImages={stats.totalImages}
+              totalImages={stats?.total_images || 0}
               showPreview={true}
               className='w-full'
-            />
+            /> */}
 
             {/* Quick Actions */}
-            <div className='p-6 glass-strong rounded-lg shadow-sm'>
-              <h3 className='mb-4 text-lg font-semibold text-white'>
-                Quick Actions
-              </h3>
-              <div className='space-y-3'>
-                <Link
-                  href={`/logs?camera_id=${camera.id}`}
-                  className='block w-full px-4 py-2 text-center text-blue-600 rounded-lg bg-blue-50 hover:bg-blue-100'
-                >
-                  View Logs
-                </Link>
-                <Link
-                  href={`/videos?camera_id=${camera.id}`}
-                  className='block w-full px-4 py-2 text-center text-green-600 rounded-lg bg-green-50 hover:bg-green-100'
-                >
-                  View Videos
-                </Link>
-                <button className='w-full px-4 py-2 text-primary rounded-lg glass hover:bg-gray-100'>
-                  Test Connection
-                </button>
+            <div className='glass-strong rounded-2xl shadow-xl overflow-hidden'>
+              <div className='p-6'>
+                <h3 className='text-lg font-bold text-white mb-6 flex items-center gap-2'>
+                  <Zap className='w-5 h-5 text-accent' />
+                  Quick Actions
+                </h3>
+                <div className='space-y-3'>
+                  <Link
+                    href={`/logs?camera_id=${camera.id}`}
+                    className='block w-full px-4 py-3 text-center font-medium rounded-lg glass hover:bg-gray-700/50 transition-all text-white border border-gray-600 hover:border-accent'
+                  >
+                    View Logs
+                  </Link>
+                  <Link
+                    href={`/videos?camera_id=${camera.id}`}
+                    className='block w-full px-4 py-3 text-center font-medium rounded-lg glass hover:bg-gray-700/50 transition-all text-white border border-gray-600 hover:border-accent'
+                  >
+                    View Videos
+                  </Link>
+                  <button className='w-full px-4 py-3 font-medium rounded-lg glass hover:bg-gray-700/50 transition-all text-white border border-gray-600 hover:border-accent'>
+                    Test Connection
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Comprehensive Timelapse Modal */}
+      {selectedTimelapse && (
+        <TimelapseDetailsModal
+          isOpen={timelapseModalOpen}
+          onClose={() => {
+            setTimelapseModalOpen(false)
+            setSelectedTimelapse(null)
+          }}
+          timelapseId={selectedTimelapse.id}
+          cameraName={camera.name}
+          onDataUpdate={() => {
+            // 🎯 REFACTORED: Use comprehensive hook for data refresh
+            refetch()
+          }}
+        />
+      )}
+
+      {/* Settings Modal */}
+      <TimelapseSettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        cameraId={cameraId}
+        cameraName={camera.name}
+        onSettingsUpdate={() => {
+          // 🎯 REFACTORED: Use comprehensive hook for data refresh
+          refetch()
+        }}
+      />
+
+      {/* Stop Timelapse Confirmation Dialog */}
+      <Dialog open={confirmStopOpen} onOpenChange={setConfirmStopOpen}>
+        <DialogContent className='glass-opaque border-purple-muted max-w-md'>
+          <DialogHeader>
+            <DialogTitle className='text-white'>Stop Timelapse</DialogTitle>
+          </DialogHeader>
+          <div className='space-y-4'>
+            <p className='text-grey-light'>
+              Are you sure you want to stop the current timelapse for{" "}
+              <strong>{camera.name}</strong>?
+            </p>
+            <p className='text-sm text-yellow-400'>
+              This will complete the timelapse and you can generate a video from
+              the captured images.
+            </p>
+            <div className='flex items-center justify-end space-x-3 pt-4'>
+              <Button
+                variant='outline'
+                onClick={() => setConfirmStopOpen(false)}
+                className='border-gray-600 text-white hover:bg-gray-700'
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  setConfirmStopOpen(false)
+                  await handleStopTimelapse()
+                }}
+                disabled={actionLoading === "stop"}
+                className='bg-failure hover:bg-failure/80 text-white'
+              >
+                {actionLoading === "stop" ? (
+                  <>
+                    <div className='w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin' />
+                    Stopping...
+                  </>
+                ) : (
+                  "Stop Timelapse"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create New Timelapse Dialog - PREVIOUSLY MISSING COMPONENT */}
+      <CreateTimelapseDialog
+        isOpen={newTimelapseDialogOpen}
+        onClose={() => setNewTimelapseDialogOpen(false)}
+        onConfirm={handleStartNewTimelapse}
+        cameraId={camera.id}
+        cameraName={camera.name}
+        defaultTimeWindow={{
+          start: camera.time_window_start || "06:00:00",
+          end: camera.time_window_end || "18:00:00",
+          enabled: camera.use_time_window || false,
+        }}
+      />
     </div>
   )
 }

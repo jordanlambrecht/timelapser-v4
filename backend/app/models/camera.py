@@ -8,14 +8,6 @@ import re
 from enum import Enum
 
 
-from pydantic import BaseModel, field_validator, Field, ConfigDict
-from typing import Optional, Literal, Dict, Any
-from datetime import datetime, time
-from loguru import logger
-import re
-from enum import Enum
-
-
 class VideoGenerationMode(str, Enum):
     STANDARD = "standard"
     TARGET = "target"
@@ -27,16 +19,16 @@ class CameraBase(BaseModel):
     status: Literal["active", "inactive"] = Field(
         default="active", description="Camera status"
     )
-    time_window_start: Optional[time] = Field(
-        None, description="Start time for capture window"
+    time_window_start: Optional[str] = Field(
+        None, description="Start time for capture window (HH:MM:SS format)"
     )
-    time_window_end: Optional[time] = Field(
-        None, description="End time for capture window"
+    time_window_end: Optional[str] = Field(
+        None, description="End time for capture window (HH:MM:SS format)"
     )
     use_time_window: bool = Field(
         default=False, description="Whether to use time windows"
     )
-    
+
     # Video generation settings
     video_generation_mode: VideoGenerationMode = Field(
         default=VideoGenerationMode.STANDARD, description="Video generation mode"
@@ -110,21 +102,39 @@ class CameraBase(BaseModel):
             raise ValueError("FPS bounds must be between 1 and 120")
         return v
 
+    @field_validator("time_window_start", "time_window_end")
+    @classmethod
+    def validate_time_window(cls, v: Optional[str]) -> Optional[str]:
+        """Validate time window format (HH:MM:SS)"""
+        if v is None:
+            return v
+
+        # Check format using regex
+        time_pattern = r"^([01]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+        if not re.match(time_pattern, v):
+            raise ValueError("Time must be in HH:MM:SS format (24-hour)")
+
+        return v
+
     def validate_video_settings(self) -> None:
         """Validate video generation settings consistency"""
         # Validate time limits consistency
-        if (self.min_time_seconds is not None and 
-            self.max_time_seconds is not None and 
-            self.min_time_seconds >= self.max_time_seconds):
+        if (
+            self.min_time_seconds is not None
+            and self.max_time_seconds is not None
+            and self.min_time_seconds >= self.max_time_seconds
+        ):
             raise ValueError("Minimum time must be less than maximum time")
-        
+
         # Validate FPS bounds consistency
         if self.fps_bounds_min >= self.fps_bounds_max:
             raise ValueError("Minimum FPS bound must be less than maximum FPS bound")
-        
+
         # Validate target mode requirements
-        if (self.video_generation_mode == VideoGenerationMode.TARGET and 
-            self.target_time_seconds is None):
+        if (
+            self.video_generation_mode == VideoGenerationMode.TARGET
+            and self.target_time_seconds is None
+        ):
             raise ValueError("Target time must be specified for target mode")
 
 
@@ -140,11 +150,11 @@ class CameraUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     rtsp_url: Optional[str] = None
     status: Optional[Literal["active", "inactive"]] = None
-    time_window_start: Optional[time] = None
-    time_window_end: Optional[time] = None
+    time_window_start: Optional[str] = None
+    time_window_end: Optional[str] = None
     use_time_window: Optional[bool] = None
     active_timelapse_id: Optional[int] = None
-    
+
     # Video generation settings
     video_generation_mode: Optional[VideoGenerationMode] = None
     standard_fps: Optional[int] = Field(None, ge=1, le=120)
@@ -213,7 +223,8 @@ class CameraWithLastImage(CameraWithTimelapse):
     def preview_image_url(self) -> Optional[str]:
         """Get the preview image URL if available"""
         if self.last_image:
-            return f"/api/images/{self.last_image.id}/thumbnail"
+            # 🎯 FIXED: Use correct camera-based thumbnail endpoint, not forbidden /api/images/{id}/thumbnail
+            return f"/api/cameras/{self.id}/latest-thumbnail"
         return None
 
 
@@ -268,6 +279,12 @@ def transform_camera_with_image_row(row: Dict[str, Any]) -> CameraWithLastImage:
         if not k.startswith("last_image_") and not k.startswith("timelapse_")
     }
 
+    # Convert time objects to strings for API serialization
+    if camera_data.get("time_window_start") and hasattr(camera_data["time_window_start"], "strftime"):
+        camera_data["time_window_start"] = camera_data["time_window_start"].strftime("%H:%M:%S")
+    if camera_data.get("time_window_end") and hasattr(camera_data["time_window_end"], "strftime"):
+        camera_data["time_window_end"] = camera_data["time_window_end"].strftime("%H:%M:%S")
+
     # Add timelapse fields manually
     if "timelapse_status" in row:
         camera_data["timelapse_status"] = row["timelapse_status"]
@@ -307,3 +324,53 @@ def transform_camera_with_stats_row(
     camera_with_stats.stats = CameraStats(**stats)
 
     return camera_with_stats
+
+
+# 🎯 COMPREHENSIVE CAMERA DETAILS MODELS - Single endpoint for camera detail page
+
+
+class LogForCamera(BaseModel):
+    """Simplified log model for camera details"""
+
+    id: int
+    timestamp: datetime
+    level: str
+    message: str
+    camera_id: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraDetailStats(BaseModel):
+    """Comprehensive statistics for camera detail page"""
+
+    total_images: int = 0
+    current_timelapse_images: int = 0
+    current_timelapse_name: Optional[str] = None
+    total_videos: int = 0
+    timelapse_count: int = 0
+    days_since_first_capture: Optional[int] = None
+    storage_used_mb: Optional[float] = None
+    last_24h_images: int = 0
+    success_rate_percent: Optional[float] = None
+
+
+class CameraDetailsResponse(BaseModel):
+    """Comprehensive camera details response for single endpoint"""
+
+    camera: CameraWithLastImage
+    active_timelapse: Optional["Timelapse"] = None
+    timelapses: list["Timelapse"] = []
+    recent_images: list[ImageForCamera] = []
+    videos: list["Video"] = []
+    recent_activity: list[LogForCamera] = []
+    stats: CameraDetailStats
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Forward reference updates for circular imports
+from .timelapse import Timelapse
+from .video import Video
+
+CameraDetailsResponse.model_rebuild()

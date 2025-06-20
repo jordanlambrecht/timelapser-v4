@@ -1,24 +1,12 @@
 // src/app/api/events/route.ts
 import { NextRequest, NextResponse } from "next/server"
-
-// SECURITY: Define allowed event types and their expected structure
-const ALLOWED_EVENT_TYPES = [
-  "connected",
-  "image_captured",
-  "camera_status_changed",
-  "timelapse_status_changed",
-  "camera_added",
-  "camera_updated",
-  "camera_deleted",
-  "video_generated",
-  "video_status_changed",
-  "thumbnail_regeneration_progress",
-  "thumbnail_regeneration_complete",
-  "thumbnail_regeneration_cancelled",
-  "thumbnail_regeneration_error",
-] as const
-
-type AllowedEventType = (typeof ALLOWED_EVENT_TYPES)[number]
+import {
+  eventEmitter,
+  ALLOWED_EVENT_TYPES,
+  sanitizeEventData,
+  type SSEEvent,
+  type AllowedEventType,
+} from "@/lib/event-emitter"
 
 // SECURITY: Sanitize string values to prevent XSS
 function sanitizeString(value: any): string {
@@ -91,54 +79,6 @@ function validateAndSanitizeEvent(data: any): any {
     timestamp: new Date().toISOString(), // Always add server timestamp
   }
 }
-
-// Global event emitter for SSE
-class EventEmitter {
-  private clients: Set<ReadableStreamDefaultController> = new Set()
-
-  addClient(controller: ReadableStreamDefaultController) {
-    this.clients.add(controller)
-  }
-
-  removeClient(controller: ReadableStreamDefaultController) {
-    this.clients.delete(controller)
-  }
-
-  emit(data: any) {
-    try {
-      const sanitizedData = validateAndSanitizeEvent(data)
-      const message = `data: ${JSON.stringify(sanitizedData)}\n\n`
-
-      console.log(
-        `[SSE] Emitting event to ${this.clients.size} clients:`,
-        sanitizedData
-      )
-
-      this.clients.forEach((controller) => {
-        try {
-          controller.enqueue(new TextEncoder().encode(message))
-        } catch (error) {
-          console.error("[SSE] Failed to send to client:", error)
-          // Client disconnected, remove it
-          this.clients.delete(controller)
-        }
-      })
-    } catch (error) {
-      console.error("Failed to emit event due to validation error:", error)
-      // Don't broadcast invalid events
-    }
-  }
-
-  getClientCount() {
-    return this.clients.size
-  }
-}
-
-// Global event emitter instance
-const eventEmitter = new EventEmitter()
-
-// Export eventEmitter for use in other route handlers
-export { eventEmitter }
 
 export async function GET(request: NextRequest) {
   console.log("🔗 New SSE connection established")

@@ -9,6 +9,63 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2025.06.20] - API Endpoint Debugging & Event System Fixes 🔧
+
+### Bug Fixes
+
+#### 🚨 **Critical API Endpoint Issues Resolved**
+
+- **FIXED**: 404 error for `/api/timelapses/[id]/complete` endpoint
+  - Created missing Next.js API proxy route
+  - Updated backend endpoint to use query parameters correctly
+  - Added proper camera_id parameter handling
+- **FIXED**: 404 error for `/api/timelapses/[id]` single timelapse fetching
+  - Added missing backend `GET /{timelapse_id}` endpoint
+  - Created corresponding database method `get_timelapse_by_id()`
+  - Implemented Next.js API proxy route
+
+#### ⚡ **Event System Structure Corrections**
+
+- **FIXED**: SSE event structure violations across multiple API routes
+  - Corrected event data nesting to follow `{ type, data, timestamp }` structure
+  - Fixed timelapses route putting data directly on event object
+  - Updated videos route to use proper event structure
+- **FIXED**: Invalid event types using non-approved event names
+  - Changed `"video_generation_started"` to `"video_status_changed"` with
+    status: "generating"
+  - Changed `"video_failed"` to `"video_status_changed"` with status: "failed"
+  - Ensured all events use types from `ALLOWED_EVENT_TYPES` constant
+
+#### 🔧 **Next.js 15 Compatibility Fixes**
+
+- **UPDATED**: All dynamic route handlers to use async params
+  - Fixed route signature to `{ params }: { params: Promise<{ id: string }> }`
+  - Added proper awaiting: `const { id } = await params`
+  - Resolved TypeScript compilation errors
+
+### Code Quality
+
+#### 📚 **Enhanced Documentation & AI Context**
+
+- **UPDATED**: AI-CONTEXT.md with new debugging patterns and constraints
+  - Added API development rules and event system constraints
+  - Documented systematic debugging approach for 404 errors
+  - Added "DON'T BREAK THIS" warnings for event structure
+- **ESTABLISHED**: Complete API development pattern documentation
+  - Database method → Backend router → Frontend proxy → UI chain
+  - Event emission and structure validation requirements
+
+### Architecture
+
+#### 🏗️ **API Architecture Improvements**
+
+- **ENHANCED**: Backend timelapse router with missing endpoints
+  - Added proper query parameter handling for completion endpoint
+  - Implemented single timelapse retrieval functionality
+- **IMPROVED**: Database layer with missing query methods
+  - Added `get_timelapse_by_id()` for individual timelapse fetching
+  - Maintained consistency with existing database patterns
+
 ## [2025.06.18] - Architecture Validation & Code Quality 🔧
 
 ### Code Quality & Architectural Compliance

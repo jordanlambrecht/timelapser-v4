@@ -13,7 +13,7 @@ import {
 import { TimelapseModal } from "@/components/timelapse-modal"
 import { VideoNameModal } from "@/components/video-name-modal"
 import { VideoProgressModal } from "@/components/video-progress-modal"
-import { NewTimelapseDialog } from "@/components/new-timelapse-dialog"
+import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
 import { StopTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { CameraImageWithFallback } from "@/components/camera-image-with-fallback"
 import {
@@ -107,7 +107,8 @@ export function CameraCard({
   const [timelapseModalOpen, setTimelapseModalOpen] = useState(false)
   const [videoNameModalOpen, setVideoNameModalOpen] = useState(false)
   const [videoProgressModalOpen, setVideoProgressModalOpen] = useState(false)
-  const [newTimelapseDialogOpen, setNewTimelapseDialogOpen] = useState(false)
+  const [createTimelapseDialogOpen, setCreateTimelapseDialogOpen] =
+    useState(false)
   const [currentVideoName, setCurrentVideoName] = useState("")
 
   // Confirmation dialog state for stopping timelapse
@@ -470,7 +471,7 @@ export function CameraCard({
 
       if (response.ok) {
         toast.timelapseStarted(camera.name)
-        setNewTimelapseDialogOpen(false)
+        setCreateTimelapseDialogOpen(false)
 
         // Reset image-related state for new timelapse
         setActualImageCount(0)
@@ -916,7 +917,7 @@ export function CameraCard({
             </Button>
           ) : (
             <AnimatedGradientButton
-              onClick={() => setNewTimelapseDialogOpen(true)}
+              onClick={() => setCreateTimelapseDialogOpen(true)}
               size='lg'
               className='font-medium min-w-[140px] grow'
             >
@@ -942,10 +943,10 @@ export function CameraCard({
         </div>
       </CardContent>
 
-      {/* New Timelapse Dialog */}
-      <NewTimelapseDialog
-        isOpen={newTimelapseDialogOpen}
-        onClose={() => setNewTimelapseDialogOpen(false)}
+      {/* Timelapse Dialog */}
+      <CreateTimelapseDialog
+        isOpen={createTimelapseDialogOpen}
+        onClose={() => setCreateTimelapseDialogOpen(false)}
         onConfirm={handleNewTimelapseConfirm}
         cameraId={camera.id}
         cameraName={camera.name}
@@ -988,8 +989,14 @@ export function CameraCard({
         onConfirm={async () => {
           setStopLoading(true)
           try {
-            // Pass the current timelapse status, not the target status
-            await onToggleTimelapse(camera.id, timelapse?.status || "stopped")
+            // Since stop button only shows when timelapse is running, always pass "running"
+            // This ensures handleToggleTimelapse executes the stop logic
+            console.log("Stopping timelapse:", {
+              cameraId: camera.id,
+              timelapseStatus: timelapse?.status,
+              timelapseId: timelapse?.id,
+            })
+            await onToggleTimelapse(camera.id, "running")
             setConfirmStopOpen(false)
           } catch (error) {
             console.error("Error stopping timelapse:", error)
