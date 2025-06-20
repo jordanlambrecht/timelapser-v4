@@ -330,6 +330,22 @@ class AsyncDatabase:
                     )
                 return cast(List[Dict[str, Any]], await cur.fetchall())
 
+    async def get_timelapse_by_id(self, timelapse_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single timelapse by ID"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT t.*, c.name as camera_name 
+                    FROM timelapses t
+                    JOIN cameras c ON t.camera_id = c.id
+                    WHERE t.id = %s
+                    """,
+                    (timelapse_id,),
+                )
+                result = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], result)
+
     async def create_new_timelapse(
         self, camera_id: int, config: Dict[str, Any]
     ) -> Optional[int]:
@@ -355,12 +371,12 @@ class AsyncDatabase:
                     RETURNING id
                 """,
                     (
-                        camera_id, 
+                        camera_id,
                         config.get("name"),
                         config.get("auto_stop_at"),
                         config.get("time_window_start"),
                         config.get("time_window_end"),
-                        config.get("use_custom_time_window", False)
+                        config.get("use_custom_time_window", False),
                     ),
                 )
                 result_row = await cur.fetchone()
@@ -380,7 +396,9 @@ class AsyncDatabase:
 
                 return timelapse_id
 
-    async def copy_camera_video_settings_to_timelapse(self, camera_id: int, timelapse_id: int) -> bool:
+    async def copy_camera_video_settings_to_timelapse(
+        self, camera_id: int, timelapse_id: int
+    ) -> bool:
         """Copy video generation settings from camera to timelapse"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -396,13 +414,15 @@ class AsyncDatabase:
                     (camera_id,),
                 )
                 camera_settings_row = await cur.fetchone()
-                
+
                 if not camera_settings_row:
-                    logger.error(f"Camera {camera_id} not found for copying video settings")
+                    logger.error(
+                        f"Camera {camera_id} not found for copying video settings"
+                    )
                     return False
-                
+
                 camera_settings = cast(Dict[str, Any], camera_settings_row)
-                
+
                 # Update timelapse with camera's settings
                 await cur.execute(
                     """
@@ -424,10 +444,12 @@ class AsyncDatabase:
                         timelapse_id,
                     ),
                 )
-                
+
                 return cur.rowcount > 0
 
-    async def get_effective_video_settings(self, camera_id: int, timelapse_id: Optional[int] = None) -> Dict[str, Any]:
+    async def get_effective_video_settings(
+        self, camera_id: int, timelapse_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Get effective video generation settings (timelapse overrides or camera defaults)"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -443,12 +465,12 @@ class AsyncDatabase:
                     (camera_id,),
                 )
                 camera_row = await cur.fetchone()
-                
+
                 if not camera_row:
                     raise ValueError(f"Camera {camera_id} not found")
-                
+
                 camera_settings = cast(Dict[str, Any], camera_row)
-                
+
                 if timelapse_id:
                     # Get timelapse overrides
                     await cur.execute(
@@ -462,21 +484,27 @@ class AsyncDatabase:
                         (timelapse_id,),
                     )
                     timelapse_row = await cur.fetchone()
-                    
+
                     if timelapse_row:
                         timelapse_settings = cast(Dict[str, Any], timelapse_row)
-                        
+
                         # Use timelapse settings where not null, fall back to camera settings
                         effective_settings = {}
                         for key in camera_settings.keys():
                             timelapse_value = timelapse_settings.get(key)
-                            effective_settings[key] = timelapse_value if timelapse_value is not None else camera_settings[key]
-                        
+                            effective_settings[key] = (
+                                timelapse_value
+                                if timelapse_value is not None
+                                else camera_settings[key]
+                            )
+
                         return effective_settings
-                
+
                 return camera_settings
 
-    async def update_timelapse_video_settings(self, timelapse_id: int, settings: Dict[str, Any]) -> bool:
+    async def update_timelapse_video_settings(
+        self, timelapse_id: int, settings: Dict[str, Any]
+    ) -> bool:
         """Update video generation settings for a timelapse"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -508,9 +536,7 @@ class AsyncDatabase:
                 await cur.execute(query, values)
                 return cur.rowcount > 0
 
-    async def update_timelapse_status(
-        self, timelapse_id: int, status: str
-    ) -> bool:
+    async def update_timelapse_status(self, timelapse_id: int, status: str) -> bool:
         """Update status of an existing timelapse (for pause/resume/stop/complete)"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -524,9 +550,7 @@ class AsyncDatabase:
                 )
                 return cur.rowcount > 0
 
-    async def complete_timelapse(
-        self, camera_id: int, timelapse_id: int
-    ) -> bool:
+    async def complete_timelapse(self, camera_id: int, timelapse_id: int) -> bool:
         """Complete a timelapse and clear active_timelapse_id"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -539,7 +563,7 @@ class AsyncDatabase:
                     """,
                     (timelapse_id,),
                 )
-                
+
                 # Clear active_timelapse_id from camera
                 await cur.execute(
                     """
@@ -549,184 +573,77 @@ class AsyncDatabase:
                     """,
                     (camera_id,),
                 )
-                
+
                 return cur.rowcount > 0
 
     async def get_camera_timelapse_stats(self, camera_id: int) -> Dict[str, Any]:
-        """Get timelapse statistics for a camera (total vs current)"""
+        """Get timelapse-specific statistics for a camera"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
-                # Get total images across all timelapses for this camera
+                # Get total images for camera
                 await cur.execute(
                     """
                     SELECT COUNT(*) as total_images
                     FROM images 
                     WHERE camera_id = %s
-                    """,
+                """,
                     (camera_id,),
                 )
                 total_row = await cur.fetchone()
-                total_dict = cast(Optional[Dict[str, Any]], total_row)
-                total_images = total_dict["total_images"] if total_dict else 0
 
-                # Get current timelapse info and count images directly from images table
+                # Get current timelapse info and image count
                 await cur.execute(
                     """
                     SELECT 
-                        t.id as timelapse_id,
-                        t.name as timelapse_name,
-                        t.status as timelapse_status,
-                        COALESCE(img_count.image_count, 0) as current_images
+                        t.id,
+                        t.name,
+                        t.status,
+                        COALESCE(COUNT(i.id), 0) as current_timelapse_images
                     FROM cameras c
                     LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
-                    LEFT JOIN (
-                        SELECT timelapse_id, COUNT(*) as image_count
-                        FROM images
-                        WHERE camera_id = %s AND timelapse_id IS NOT NULL
-                        GROUP BY timelapse_id
-                    ) img_count ON t.id = img_count.timelapse_id
+                    LEFT JOIN images i ON i.camera_id = c.id AND i.timelapse_id = t.id
                     WHERE c.id = %s
-                    """,
-                    (camera_id, camera_id),
-                )
-                current_row = await cur.fetchone()
-                current_dict = cast(Optional[Dict[str, Any]], current_row)
-
-                result = {
-                    "total_images": total_images,
-                    "current_timelapse_id": current_dict.get("timelapse_id") if current_dict else None,
-                    "current_timelapse_name": current_dict.get("timelapse_name") if current_dict else None,
-                    "current_timelapse_status": current_dict.get("timelapse_status") if current_dict else None,
-                    "current_timelapse_images": current_dict.get("current_images", 0) if current_dict else 0,
-                }
-                
-                logger.debug(f"Camera {camera_id} timelapse stats: {result}")
-                return result
-
-    async def create_or_update_timelapse(
-        self, camera_id: int, status: str, config: Optional[Dict[str, Any]] = None
-    ) -> Optional[int]:
-        """LEGACY METHOD - Create or update timelapse for camera with optional configuration
-        
-        NOTE: This method is maintained for backward compatibility but should be phased out
-        in favor of create_new_timelapse() and update_timelapse_status() for the entity-based model.
-        """
-        async with self.get_connection() as conn:
-            async with conn.cursor() as cur:
-                # Check if camera has an active timelapse
-                await cur.execute(
-                    """
-                    SELECT t.id, t.status 
-                    FROM cameras c
-                    LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
-                    WHERE c.id = %s
-                    """,
+                    GROUP BY t.id, t.name, t.status
+                """,
                     (camera_id,),
                 )
-                existing_row = await cur.fetchone()
-                existing_dict = cast(Optional[Dict[str, Any]], existing_row)
-                timelapse_id: Optional[int] = None
+                timelapse_row = await cur.fetchone()
 
-                if existing_dict and existing_dict.get("id"):
-                    # Update existing active timelapse
-                    timelapse_id = cast(int, existing_dict["id"])
-                    
-                    # If changing from stopped/paused to running, update start_date
-                    if existing_dict["status"] != "running" and status == "running":
-                        if config:
-                            await cur.execute(
-                                """
-                                UPDATE timelapses 
-                                SET status = %s, start_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP,
-                                    name = COALESCE(%s, name),
-                                    auto_stop_at = %s,
-                                    time_window_start = %s,
-                                    time_window_end = %s,
-                                    use_custom_time_window = %s
-                                WHERE id = %s
-                            """,
-                                (
-                                    status, 
-                                    config.get("name"),
-                                    config.get("auto_stop_at"),
-                                    config.get("time_window_start"),
-                                    config.get("time_window_end"),
-                                    config.get("use_custom_time_window", False),
-                                    timelapse_id
-                                ),
-                            )
-                        else:
-                            await cur.execute(
-                                """
-                                UPDATE timelapses 
-                                SET status = %s, start_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP
-                                WHERE id = %s
-                            """,
-                                (status, timelapse_id),
-                            )
-                    else:
-                        await cur.execute(
-                            """
-                            UPDATE timelapses 
-                            SET status = %s, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = %s
-                        """,
-                            (status, timelapse_id),
-                        )
-                else:
-                    # Create new timelapse and set as active
-                    if config:
-                        await cur.execute(
-                            """
-                            INSERT INTO timelapses (camera_id, status, start_date, name, auto_stop_at,
-                                                  time_window_start, time_window_end, use_custom_time_window)
-                            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s)
-                            RETURNING id
-                        """,
-                            (
-                                camera_id, 
-                                status, 
-                                config.get("name"),
-                                config.get("auto_stop_at"),
-                                config.get("time_window_start"),
-                                config.get("time_window_end"),
-                                config.get("use_custom_time_window", False)
-                            ),
-                        )
-                    else:
-                        await cur.execute(
-                            """
-                            INSERT INTO timelapses (camera_id, status, start_date)
-                            VALUES (%s, %s, CURRENT_DATE)
-                            RETURNING id
-                        """,
-                            (camera_id, status),
-                        )
-                    result_row_new = await cur.fetchone()
-                    result_dict_new = cast(Optional[Dict[str, Any]], result_row_new)
-                    timelapse_id = result_dict_new["id"] if result_dict_new else None
+                total_data = cast(Dict[str, Any], total_row) if total_row else {}
+                timelapse_data = (
+                    cast(Dict[str, Any], timelapse_row) if timelapse_row else {}
+                )
 
-                    # Set as active timelapse
-                    if timelapse_id:
-                        await cur.execute(
-                            """
-                            UPDATE cameras 
-                            SET active_timelapse_id = %s, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = %s
-                            """,
-                            (timelapse_id, camera_id),
-                        )
-
-                return timelapse_id
-
-    # Duplicate method removed - using the first one at line 148
+                return {
+                    "total_images": total_data.get("total_images", 0),
+                    "current_timelapse_images": timelapse_data.get(
+                        "current_timelapse_images", 0
+                    ),
+                    "current_timelapse_name": timelapse_data.get("name"),
+                    "current_timelapse_status": timelapse_data.get("status"),
+                }
 
     # Video methods
-    async def get_videos(self, camera_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get videos, optionally filtered by camera"""
+    async def get_videos(
+        self, 
+        camera_id: Optional[int] = None, 
+        timelapse_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get videos, optionally filtered by camera or timelapse"""
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
-                if camera_id:
+                if camera_id and timelapse_id:
+                    await cur.execute(
+                        """
+                        SELECT v.*, c.name as camera_name 
+                        FROM videos v
+                        JOIN cameras c ON v.camera_id = c.id
+                        WHERE v.camera_id = %s AND v.timelapse_id = %s
+                        ORDER BY v.created_at DESC
+                    """,
+                        (camera_id, timelapse_id),
+                    )
+                elif camera_id:
                     await cur.execute(
                         """
                         SELECT v.*, c.name as camera_name 
@@ -736,6 +653,17 @@ class AsyncDatabase:
                         ORDER BY v.created_at DESC
                     """,
                         (camera_id,),
+                    )
+                elif timelapse_id:
+                    await cur.execute(
+                        """
+                        SELECT v.*, c.name as camera_name 
+                        FROM videos v
+                        JOIN cameras c ON v.camera_id = c.id
+                        WHERE v.timelapse_id = %s
+                        ORDER BY v.created_at DESC
+                    """,
+                        (timelapse_id,),
                     )
                 else:
                     await cur.execute(
@@ -830,6 +758,54 @@ class AsyncDatabase:
                 await cur.execute("DELETE FROM videos WHERE id = %s", (video_id,))
                 return cur.rowcount > 0
 
+    async def get_logs(
+        self, camera_id: Optional[int] = None, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get logs, optionally filtered by camera"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                if camera_id:
+                    await cur.execute(
+                        """
+                        SELECT id, timestamp, level, message, camera_id
+                        FROM logs 
+                        WHERE camera_id = %s OR camera_id IS NULL
+                        ORDER BY timestamp DESC
+                        LIMIT %s
+                        """,
+                        (camera_id, limit),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        SELECT id, timestamp, level, message, camera_id
+                        FROM logs 
+                        ORDER BY timestamp DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                return cast(List[Dict[str, Any]], await cur.fetchall())
+
+    async def get_recent_images(
+        self, camera_id: int, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get recent images for a camera"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT id, captured_at, file_path, file_size, day_number,
+                           thumbnail_path, thumbnail_size, small_path, small_size
+                    FROM images 
+                    WHERE camera_id = %s
+                    ORDER BY captured_at DESC
+                    LIMIT %s
+                    """,
+                    (camera_id, limit),
+                )
+                return cast(List[Dict[str, Any]], await cur.fetchall())
+
     async def get_dashboard_data(self):
         """Get aggregated dashboard data in parallel"""
         # Fetch all dashboard data in parallel using the existing methods
@@ -894,6 +870,45 @@ class AsyncDatabase:
 
                 await cur.execute(query, params)
                 return cast(List[Dict[str, Any]], await cur.fetchall())
+
+    async def get_timelapse_images_paginated(
+        self,
+        timelapse_id: int,
+        offset: int = 0,
+        limit: int = 50,
+        search: Optional[str] = None,
+    ) -> List[Dict]:
+        """Get images for a specific timelapse with pagination and search"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                query = """
+                    SELECT * FROM images 
+                    WHERE timelapse_id = %s
+                """
+                params = [timelapse_id]
+
+                if search:
+                    query += " AND file_path ILIKE %s"
+                    params.append(f"%{search}%")
+
+                query += " ORDER BY captured_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                await cur.execute(query, params)
+                return cast(List[Dict[str, Any]], await cur.fetchall())
+
+    async def get_image_by_id(self, image_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single image by ID"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT * FROM images WHERE id = %s
+                    """,
+                    (image_id,),
+                )
+                result = await cur.fetchone()
+                return cast(Optional[Dict[str, Any]], result)
 
     # Settings methods
     async def get_settings(self) -> List[Dict[str, Any]]:
@@ -1114,9 +1129,15 @@ class SyncDatabase:
                 return cast(List[Dict[str, Any]], cur.fetchall())
 
     def record_captured_image(
-        self, camera_id: int, timelapse_id: int, file_path: str, file_size: int,
-        thumbnail_path: Optional[str] = None, thumbnail_size: Optional[int] = None,
-        small_path: Optional[str] = None, small_size: Optional[int] = None
+        self,
+        camera_id: int,
+        timelapse_id: int,
+        file_path: str,
+        file_size: int,
+        thumbnail_path: Optional[str] = None,
+        thumbnail_size: Optional[int] = None,
+        small_path: Optional[str] = None,
+        small_size: Optional[int] = None,
     ) -> Optional[int]:
         """Record a captured image in the database with optional thumbnail data"""
         with self.get_connection() as conn:
@@ -1147,8 +1168,17 @@ class SyncDatabase:
                     VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
-                    (camera_id, timelapse_id, file_path, day_number, file_size,
-                     thumbnail_path, thumbnail_size, small_path, small_size),
+                    (
+                        camera_id,
+                        timelapse_id,
+                        file_path,
+                        day_number,
+                        file_size,
+                        thumbnail_path,
+                        thumbnail_size,
+                        small_path,
+                        small_size,
+                    ),
                 )
 
                 image_row = cur.fetchone()
