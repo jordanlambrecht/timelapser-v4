@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function POST(
   request: NextRequest,
@@ -13,8 +13,6 @@ export async function POST(
   const cameraId = id
 
   try {
-    console.log(`Triggering immediate capture for camera ${cameraId}`)
-
     // Proxy to FastAPI backend
     const response = await proxyToFastAPI(
       `/api/cameras/${cameraId}/capture-now`,
@@ -27,14 +25,11 @@ export async function POST(
 
     // If successful, broadcast capture event
     if (response.status === 200) {
-      console.log("Broadcasting capture_now_requested event:", {
-        camera_id: parseInt(cameraId),
-        timestamp: new Date().toISOString(),
-      })
-
       eventEmitter.emit({
         type: "capture_now_requested",
-        camera_id: parseInt(cameraId),
+        data: {
+          camera_id: parseInt(cameraId),
+        },
         timestamp: new Date().toISOString(),
       })
     }

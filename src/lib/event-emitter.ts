@@ -12,6 +12,7 @@ const ALLOWED_EVENT_TYPES = [
   "camera_deleted",
   "video_generated",
   "video_status_changed",
+  "capture_now_requested",
   "thumbnail_regeneration_progress",
   "thumbnail_regeneration_complete",
   "thumbnail_regeneration_cancelled",

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function GET() {
   // Proxy to FastAPI backend
@@ -27,10 +27,11 @@ export async function POST(request: NextRequest) {
       const responseData = responseText ? JSON.parse(responseText) : {}
 
       // Broadcast camera added event
-      console.log("Broadcasting camera_added event:", responseData)
       eventEmitter.emit({
         type: "camera_added",
-        camera: responseData,
+        data: {
+          camera: responseData,
+        },
         timestamp: new Date().toISOString(),
       })
 

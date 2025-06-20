@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function GET(
   request: NextRequest,
@@ -35,10 +35,11 @@ export async function PUT(
       const responseData = responseText ? JSON.parse(responseText) : {}
 
       // Broadcast camera updated event
-      console.log("Broadcasting camera_updated event:", responseData)
       eventEmitter.emit({
         type: "camera_updated",
-        camera: responseData,
+        data: {
+          camera: responseData,
+        },
         timestamp: new Date().toISOString(),
       })
 
@@ -83,14 +84,12 @@ export async function DELETE(
     // If successful, broadcast the event
     if (response.status === 200 || response.status === 204) {
       // Broadcast camera deleted event
-      console.log(
-        "Broadcasting camera_deleted event for camera ID:",
-        parseInt(id)
-      )
       eventEmitter.emit({
         type: "camera_deleted",
-        camera_id: parseInt(id),
-        camera_name: cameraName,
+        data: {
+          camera_id: parseInt(id),
+          camera_name: cameraName,
+        },
         timestamp: new Date().toISOString(),
       })
     }

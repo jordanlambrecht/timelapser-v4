@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI, proxyToFastAPIWithQuery } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -16,27 +16,48 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
 
-    // Proxy to FastAPI backend
-    const response = await proxyToFastAPI("/api/timelapses", {
-      method: "POST",
-      body,
-    })
+    // Determine if this is creating a new timelapse or updating existing one
+    const isNewTimelapse = !body.timelapse_id && body.status === "running"
+    const isStatusUpdate = body.timelapse_id && body.status
+
+    let response: Response
+    let fastApiEndpoint: string
+
+    if (isNewTimelapse) {
+      // Creating a new timelapse entity - use entity-based endpoint
+      fastApiEndpoint = "/api/timelapses/new"
+      response = await proxyToFastAPI(fastApiEndpoint, {
+        method: "POST",
+        body,
+      })
+    } else if (isStatusUpdate) {
+      // Updating status of existing timelapse - use entity-based endpoint
+      fastApiEndpoint = `/api/timelapses/${body.timelapse_id}/status`
+      response = await proxyToFastAPI(fastApiEndpoint, {
+        method: "PUT",
+        body: { status: body.status },
+      })
+    } else {
+      // Fallback to legacy endpoint for other cases
+      fastApiEndpoint = "/api/timelapses"
+      response = await proxyToFastAPI(fastApiEndpoint, {
+        method: "POST",
+        body,
+      })
+    }
 
     // If successful, broadcast the event
     if (response.status === 200 || response.status === 201) {
       const responseData = await response.json()
 
       // Broadcast timelapse status changed event
-      console.log("Broadcasting timelapse_status_changed event:", {
-        camera_id: body.camera_id,
-        timelapse_id: responseData.timelapse_id,
-        status: body.status,
-      })
       eventEmitter.emit({
         type: "timelapse_status_changed",
-        camera_id: body.camera_id,
-        timelapse_id: responseData.timelapse_id,
-        status: body.status,
+        data: {
+          camera_id: body.camera_id,
+          timelapse_id: responseData.timelapse_id,
+          status: body.status,
+        },
         timestamp: new Date().toISOString(),
       })
 

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI, proxyToFastAPIWithQuery } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -81,10 +81,13 @@ export async function POST(request: NextRequest) {
 
       // Broadcast video generation started event
       eventEmitter.emit({
-        type: "video_generation_started",
-        camera_id: cameraId,
-        video_id: result.video_id,
-        video_name: result.video_name,
+        type: "video_status_changed",
+        data: {
+          camera_id: cameraId,
+          video_id: result.video_id,
+          video_name: result.video_name,
+          status: "generating",
+        },
         timestamp: new Date().toISOString(),
       })
 
@@ -101,9 +104,12 @@ export async function POST(request: NextRequest) {
 
       // Broadcast video failed event
       eventEmitter.emit({
-        type: "video_failed",
-        camera_id: cameraId,
-        error: error.detail || error.error || "Video generation failed",
+        type: "video_status_changed",
+        data: {
+          camera_id: cameraId,
+          status: "failed",
+          error: error.detail || error.error || "Video generation failed",
+        },
         timestamp: new Date().toISOString(),
       })
 

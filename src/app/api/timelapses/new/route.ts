@@ -3,13 +3,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 // Import eventEmitter for broadcasting changes
-import { eventEmitter } from "@/app/api/events/route"
+import { eventEmitter } from "@/lib/event-emitter"
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-
-    console.log("Creating new entity-based timelapse:", body)
 
     // Proxy to FastAPI backend's new entity-based endpoint
     const response = await proxyToFastAPI("/api/timelapses/new", {
@@ -22,30 +20,31 @@ export async function POST(request: NextRequest) {
 
     // If successful, broadcast the event
     if (response.status === 200 || response.status === 201) {
-      console.log("Broadcasting timelapse_status_changed event for new timelapse:", {
-        camera_id: body.camera_id,
-        timelapse_id: responseData.timelapse_id,
-        status: "running",
-      })
-      
       // Broadcast timelapse status changed event
       eventEmitter.emit({
         type: "timelapse_status_changed",
-        camera_id: body.camera_id,
-        timelapse_id: responseData.timelapse_id,
-        status: "running",
+        data: {
+          camera_id: body.camera_id,
+          timelapse_id: responseData.timelapse_id,
+          status: "running",
+        },
         timestamp: new Date().toISOString(),
       })
 
       // Also broadcast camera status change to refresh UI
       eventEmitter.emit({
-        type: "camera_status_changed", 
-        camera_id: body.camera_id,
-        status: "active",
+        type: "camera_status_changed",
+        data: {
+          camera_id: body.camera_id,
+          status: "active",
+        },
         timestamp: new Date().toISOString(),
       })
 
-      console.log("New entity-based timelapse created successfully:", responseData)
+      console.log(
+        "New entity-based timelapse created successfully:",
+        responseData
+      )
       return NextResponse.json(responseData, { status: response.status })
     } else {
       console.error("Failed to create new timelapse:", responseData)
@@ -54,7 +53,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error creating new timelapse:", error)
     return NextResponse.json(
-      { error: "Failed to create new timelapse", details: error instanceof Error ? error.message : "Unknown error" },
+      {
+        error: "Failed to create new timelapse",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     )
   }
