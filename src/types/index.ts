@@ -1,4 +1,5 @@
 export type {
+  Camera,
   CameraWithLastImage,
   CameraDetailStats,
   CameraDetailsResponse,
@@ -11,6 +12,19 @@ export type {
   CreateTimelapseDialogProps,
   TimelapseConfig,
 } from "./timelapses"
+export {
+  type AutomationScheduleConfig,
+  type MilestoneConfig,
+  type CameraAutomationSettings,
+  type TimelapseAutomationSettings,
+  type VideoGenerationJob,
+  type VideoQueueStatus,
+  type ManualTriggerRequest,
+  type AutomationStats,
+  type CameraWithAutomation,
+  type TimelapseWithAutomation,
+  VideoAutomationMode,
+} from "./video-automation"
 export type { Video } from "./videos"
 export type {
   WeatherSettings,

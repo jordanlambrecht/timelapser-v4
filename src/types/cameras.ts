@@ -3,7 +3,7 @@ import { LogForCamera } from "./logs"
 import { Timelapse } from "./timelapses"
 import { Video } from "./videos"
 
-export interface CameraWithLastImage {
+export interface Camera {
   id: number
   name: string
   rtsp_url: string
@@ -17,7 +17,6 @@ export interface CameraWithLastImage {
   created_at: string
   updated_at: string
 
-  // 🎯 FIXED: Added missing fields to match backend Pydantic model exactly
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
@@ -36,7 +35,9 @@ export interface CameraWithLastImage {
   consecutive_corruption_failures: number
   degraded_mode_active: boolean
   last_degraded_at?: string
+}
 
+export interface CameraWithLastImage extends Camera {
   last_image?: ImageForCamera
 }
 
