@@ -38,7 +38,7 @@ interface GlassTableCellProps {
 
 interface SelectableRowProps extends Omit<GlassTableRowProps, "isSelected"> {
   isSelected: boolean
-  onSelectionChange: (selected: boolean) => void
+  onSelectionChange: (selected: boolean, isShiftClick?: boolean) => void
   selectionDisabled?: boolean
 }
 
@@ -128,7 +128,7 @@ export function SelectableTableRow({
   const handleRowClick = (e: React.MouseEvent) => {
     if (e.shiftKey && !selectionDisabled) {
       e.preventDefault()
-      onSelectionChange(!isSelected)
+      onSelectionChange(true, true) // Always select on shift-click for range selection
     } else if (onClick) {
       onClick()
     }
@@ -136,7 +136,7 @@ export function SelectableTableRow({
 
   const handleCheckboxChange = (checked: boolean) => {
     if (!selectionDisabled) {
-      onSelectionChange(checked)
+      onSelectionChange(checked, false) // Normal checkbox click
     }
   }
 

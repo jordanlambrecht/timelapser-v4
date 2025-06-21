@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
@@ -188,6 +189,9 @@ export const TimelapseDetailsModal = memo(
 
     // Image management states
     const [selectedImages, setSelectedImages] = useState<Set<number>>(new Set())
+    const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(
+      null
+    )
     const [imagesPage, setImagesPage] = useState(1)
     const [imagesSearch, setImagesSearch] = useState("")
     const [hasMoreImages, setHasMoreImages] = useState(true)
@@ -334,6 +338,7 @@ export const TimelapseDetailsModal = memo(
       if (!isOpen) {
         setImages([])
         setSelectedImages(new Set())
+        setLastSelectedIndex(null)
         setImagesPage(1)
         setImagesSearch("")
         setHasMoreImages(true)
@@ -341,19 +346,68 @@ export const TimelapseDetailsModal = memo(
       }
     }, [isOpen])
 
+    // Custom selectable row with shift-click support
+    const ShiftSelectableTableRow = ({
+      children,
+      isSelected,
+      onSelectionChange,
+      imageId,
+    }: {
+      children: React.ReactNode
+      isSelected: boolean
+      onSelectionChange: (selected: boolean, isShiftClick?: boolean) => void
+      imageId: number
+    }) => {
+      const handleRowClick = (e: React.MouseEvent) => {
+        // Check for shift key and prevent default behavior
+        if (e.shiftKey) {
+          e.preventDefault()
+          onSelectionChange(true, true) // Always select when shift-clicking
+        } else {
+          // Toggle selection on normal click
+          onSelectionChange(!isSelected, false)
+        }
+      }
+
+      const handleCheckboxChange = (checked: boolean) => {
+        onSelectionChange(checked, false)
+      }
+
+      return (
+        <tr
+          className={cn(
+            "border-b border-purple-muted/10 transition-all duration-200",
+            "hover:bg-purple/5 hover:shadow-lg hover:shadow-purple/10",
+            "cursor-pointer",
+            isSelected && "bg-cyan/10 border-cyan/30"
+          )}
+          onClick={handleRowClick}
+        >
+          <td className='px-3 py-2 w-10'>
+            <Checkbox
+              checked={isSelected}
+              onCheckedChange={handleCheckboxChange}
+              className='border-cyan/50 data-[state=checked]:bg-cyan data-[state=checked]:border-cyan'
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            />
+          </td>
+          {children}
+        </tr>
+      )
+    }
+
     // Memoized the image components to prevent unnecessary re-renders
     const MemoizedImageRow = memo(
       ({ image }: { image: TimelapseImage }) => (
-        <SelectableTableRow
-          key={`image-${image.id}`}
+        <ShiftSelectableTableRow
+          imageId={image.id}
           isSelected={selectedImages.has(image.id)}
-          onSelectionChange={(selected) =>
-            handleImageSelection(image.id, selected)
+          onSelectionChange={(selected, isShiftClick) =>
+            handleImageSelection(image.id, selected, isShiftClick)
           }
         >
           <GlassTableCell className='w-20'>
             <ImageThumbnail
-              key={`img-${image.id}`}
               imageId={image.id}
               src={`/api/images/${image.id}/thumbnail`}
               alt={`Image ${image.id}`}
@@ -364,6 +418,7 @@ export const TimelapseDetailsModal = memo(
               fileSize={image.file_size || 0}
               className='w-12 h-12'
               showActions={false}
+              isSelected={selectedImages.has(image.id)}
             />
           </GlassTableCell>
           <GlassTableCell>
@@ -411,12 +466,13 @@ export const TimelapseDetailsModal = memo(
               </Button>
             </div>
           </GlassTableCell>
-        </SelectableTableRow>
+        </ShiftSelectableTableRow>
       ),
       (prevProps, nextProps) => {
         return (
           prevProps.image.id === nextProps.image.id &&
-          prevProps.image.captured_at === nextProps.image.captured_at
+          prevProps.image.captured_at === nextProps.image.captured_at &&
+          prevProps.image.file_size === nextProps.image.file_size
         )
       }
     )
@@ -562,14 +618,51 @@ export const TimelapseDetailsModal = memo(
       }
     }
 
-    const handleImageSelection = (imageId: number, selected: boolean) => {
+    const handleImageSelection = (
+      imageId: number,
+      selected: boolean,
+      isShiftClick?: boolean
+    ) => {
       setSelectedImages((prev) => {
         const newSelection = new Set(prev)
-        if (selected) {
-          newSelection.add(imageId)
+        const currentIndex = images.findIndex((img) => img.id === imageId)
+
+        if (isShiftClick && lastSelectedIndex !== null && currentIndex !== -1) {
+          // Range selection with shift-click
+          const startIndex = Math.min(lastSelectedIndex, currentIndex)
+          const endIndex = Math.max(lastSelectedIndex, currentIndex)
+
+          // Clear any existing selection first for clean range selection
+          const rangesToSelect = []
+          for (let i = startIndex; i <= endIndex; i++) {
+            if (images[i]) {
+              rangesToSelect.push(images[i].id)
+            }
+          }
+
+          // If all items in range are already selected, deselect them
+          const allRangeSelected = rangesToSelect.every((id) =>
+            newSelection.has(id)
+          )
+
+          if (allRangeSelected) {
+            // Deselect the range
+            rangesToSelect.forEach((id) => newSelection.delete(id))
+          } else {
+            // Select the range
+            rangesToSelect.forEach((id) => newSelection.add(id))
+          }
         } else {
-          newSelection.delete(imageId)
+          // Normal single selection
+          if (selected) {
+            newSelection.add(imageId)
+          } else {
+            newSelection.delete(imageId)
+          }
+          // Update last selected index for future range selections
+          setLastSelectedIndex(currentIndex)
         }
+
         return newSelection
       })
     }
@@ -577,8 +670,10 @@ export const TimelapseDetailsModal = memo(
     const handleSelectAllImages = () => {
       if (selectedImages.size === images.length) {
         setSelectedImages(new Set())
+        setLastSelectedIndex(null)
       } else {
         setSelectedImages(new Set(images.map((img) => img.id)))
+        setLastSelectedIndex(images.length - 1) // Set to last image when selecting all
       }
     }
 
@@ -599,6 +694,54 @@ export const TimelapseDetailsModal = memo(
 
     const handleImageDownload = (image: TimelapseImage) => {
       window.open(`/api/images/${image.id}/download`, "_blank")
+    }
+
+    const handleBulkImageDownload = async () => {
+      if (selectedImages.size === 0) {
+        toast.error("No images selected")
+        return
+      }
+
+      try {
+        setActionLoading("bulk-download")
+
+        const imageIds = Array.from(selectedImages)
+
+        // Create the request
+        const response = await fetch("/api/images/bulk-download", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ image_ids: imageIds }),
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        // Get the blob data
+        const blob = await response.blob()
+
+        // Create download link
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `timelapse_${timelapseId}_images_${imageIds.length}.zip`
+        document.body.appendChild(a)
+        a.click()
+
+        // Cleanup
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+
+        toast.success(`Downloaded ${imageIds.length} images as ZIP file`)
+      } catch (error) {
+        console.error("Bulk download error:", error)
+        toast.error("Failed to download images")
+      } finally {
+        setActionLoading(null)
+      }
     }
 
     const getTimelapseDisplayName = () => {
@@ -994,6 +1137,20 @@ export const TimelapseDetailsModal = memo(
                             <span className='text-sm text-cyan'>
                               {selectedImages.size} selected
                             </span>
+                            <Button
+                              onClick={handleBulkImageDownload}
+                              size='sm'
+                              variant='ghost'
+                              disabled={actionLoading === "bulk-download"}
+                              className='bg-cyan/20 hover:bg-cyan/30 text-cyan border-cyan/30'
+                            >
+                              {actionLoading === "bulk-download" ? (
+                                <Loader2 className='w-4 h-4 mr-2 animate-spin' />
+                              ) : (
+                                <Download className='w-4 h-4 mr-2' />
+                              )}
+                              Download Selected
+                            </Button>
                             <Button
                               onClick={() => setShowImageDeleteConfirm(true)}
                               size='sm'

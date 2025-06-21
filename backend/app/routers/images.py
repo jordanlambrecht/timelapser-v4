@@ -1,13 +1,85 @@
 # backend/app/routers/images.py
 from fastapi import APIRouter, Query, HTTPException, Path
-from fastapi.responses import FileResponse
-from typing import Optional, Dict, Any, cast
+from fastapi.responses import FileResponse, StreamingResponse
+from typing import Optional, Dict, Any, cast, List
 from loguru import logger
 from pathlib import Path as PathlibPath
+import zipfile
+import io
+import os
+from pydantic import BaseModel
 from ..database import async_db, sync_db
 from ..config import settings
 
 router = APIRouter()
+
+
+class BulkDownloadRequest(BaseModel):
+    image_ids: List[int]
+
+
+@router.post("/bulk-download")
+async def bulk_download_images(request: BulkDownloadRequest):
+    """Download multiple images as a ZIP file"""
+    try:
+        if not request.image_ids:
+            raise HTTPException(status_code=400, detail="No image IDs provided")
+
+        if len(request.image_ids) > 100:  # Reasonable limit
+            raise HTTPException(
+                status_code=400, detail="Too many images requested (max 100)"
+            )
+
+        # Create ZIP file in memory
+        zip_buffer = io.BytesIO()
+        project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for image_id in request.image_ids:
+                try:
+                    # Get image details from database
+                    image = await async_db.get_image_by_id(image_id)
+                    if not image:
+                        logger.warning(f"Image {image_id} not found in database")
+                        continue
+
+                    # Construct full file path
+                    full_path = project_root / image["file_path"]
+
+                    if not full_path.exists():
+                        logger.warning(f"Image file not found: {full_path}")
+                        continue
+
+                    # Add file to ZIP with a clean filename
+                    # Use image ID and timestamp to avoid conflicts
+                    filename = (
+                        f"image_{image_id}_{image.get('timestamp', 'unknown')}.jpg"
+                    )
+                    # Clean filename to avoid issues
+                    filename = "".join(c for c in filename if c.isalnum() or c in ".-_")
+
+                    zip_file.write(full_path, filename)
+
+                except Exception as e:
+                    logger.error(f"Error adding image {image_id} to ZIP: {e}")
+                    continue
+
+        zip_buffer.seek(0)
+
+        # Return ZIP file as streaming response
+        return StreamingResponse(
+            io.BytesIO(zip_buffer.read()),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=images_bulk_download.zip"
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create bulk download: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create bulk download")
 
 
 @router.get("/count")
@@ -62,11 +134,13 @@ async def get_debug_images():
         timelapses = await async_db.get_timelapses()
         if not timelapses:
             return {"error": "No timelapses found", "images": [], "cameras": []}
-        
+
         # Get images from first timelapse
         first_timelapse_id = timelapses[0]["id"]
-        images = await async_db.get_timelapse_images_paginated(first_timelapse_id, limit=10)
-        
+        images = await async_db.get_timelapse_images_paginated(
+            first_timelapse_id, limit=10
+        )
+
         return {
             "images": images[:5],  # Just return first 5 for debugging
             "timelapse_count": len(timelapses),
@@ -125,7 +199,7 @@ async def get_image_thumbnail(image_id: int = Path(..., description="Image ID"))
 
         # Try thumbnail first, fall back to small, then full
         project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
-        
+
         if image.get("thumbnail_path"):
             thumbnail_path = project_root / image["thumbnail_path"]
             if thumbnail_path.exists():
@@ -169,7 +243,7 @@ async def get_image_small(image_id: int = Path(..., description="Image ID")):
 
         # Try small first, fall back to full
         project_root = PathlibPath("/Users/jordanlambrecht/dev-local/timelapser-v4")
-        
+
         if image.get("small_path"):
             small_path = project_root / image["small_path"]
             if small_path.exists():
