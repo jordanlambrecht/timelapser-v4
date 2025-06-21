@@ -12,3 +12,12 @@ export type {
   TimelapseConfig,
 } from "./timelapses"
 export type { Video } from "./videos"
+export type {
+  WeatherSettings,
+  WeatherData,
+  WeatherApiKeyValidation,
+  WeatherApiKeyValidationResponse,
+  WeatherRefreshResponse,
+  SunTimeWindow,
+  TimeWindowMode,
+} from "./weather"

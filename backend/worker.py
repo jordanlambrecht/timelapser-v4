@@ -10,6 +10,8 @@ Core Functionality:
 - Database integration with both sync and async database connections
 - Graceful shutdown handling with proper signal management
 - Time window support for camera capture scheduling
+- Weather integration for sunrise/sunset capture windows
+- Weather data collection and caching
 
 Architecture:
 - Uses AsyncIOScheduler for job scheduling
@@ -17,12 +19,14 @@ Architecture:
 - Supports concurrent camera operations with asyncio
 - Maintains camera health status and connectivity monitoring
 - Database operations run in thread executor for sync compatibility
+- Weather data refreshed daily for location-based timing
 
 The worker runs continuously and performs:
 1. Image capture from all active cameras at configured intervals
 2. Health checks for camera connectivity (every minute)
 3. Database updates for timelapse progress tracking
 4. Event broadcasting for real-time UI updates
+5. Weather data refreshing for sunrise/sunset calculations
 
 Designed to work seamlessly with the FastAPI backend while maintaining
 independent operation for reliable timelapse generation.
@@ -32,7 +36,7 @@ import os
 import signal
 import asyncio
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time, date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
@@ -42,6 +46,7 @@ from app.config import settings
 from rtsp_capture import RTSPCapture
 from video_generator import VideoGenerator
 from worker_corruption_integration import initialize_worker_corruption_detection
+from weather.service import WeatherManager, OpenWeatherService
 
 
 class AsyncTimelapseWorker:
@@ -91,7 +96,7 @@ class AsyncTimelapseWorker:
         data_dir = project_root / "data"
         self.capture = RTSPCapture(base_data_dir=str(data_dir))
         self.video_generator = VideoGenerator(sync_db)
-        
+
         self.scheduler = AsyncIOScheduler()
         self.running = False
         self.current_interval = settings.capture_interval
@@ -104,10 +109,14 @@ class AsyncTimelapseWorker:
         # Initialize sync database for worker FIRST
         sync_db.initialize()
         logger.info("Sync database initialized for worker")
-        
+
         # Initialize corruption detection integration AFTER database is ready
         self.corruption_integration = initialize_worker_corruption_detection(sync_db)
         logger.info("✅ Corruption detection initialized successfully")
+
+        # Initialize weather manager for sunrise/sunset and weather data
+        self.weather_manager = WeatherManager(sync_db)
+        logger.info("Weather manager initialized")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -129,22 +138,51 @@ class AsyncTimelapseWorker:
         # Don't call sys.exit(0) here - let the main loop handle the exit
 
     def _is_within_time_window(self, camera) -> bool:
-        """Check if current time is within camera's capture window"""
-        if not camera.get("use_time_window", False):
+        """Check if current time is within camera's capture window (regular or sun-based)"""
+        try:
+            # Check if camera uses custom time window (overrides global settings)
+            if camera.get("use_custom_time_window", False):
+                start_time = camera.get("custom_time_window_start")
+                end_time = camera.get("custom_time_window_end")
+
+                if start_time and end_time:
+                    return self._check_time_range(start_time, end_time)
+
+            # Check camera's regular time window
+            if camera.get("use_time_window", False):
+                start_time = camera.get("time_window_start")
+                end_time = camera.get("time_window_end")
+
+                if start_time and end_time:
+                    return self._check_time_range(start_time, end_time)
+
+            # Check if sunrise/sunset mode is enabled and weather data is available
+            settings_dict = sync_db.get_settings_dict()
+            if settings_dict.get("sunrise_sunset_enabled", "false").lower() == "true":
+                return self._check_sun_based_window(settings_dict)
+
+            # No time restrictions - capture allowed
             return True
 
-        start_time = camera.get("time_window_start")
-        end_time = camera.get("time_window_end")
+        except Exception as e:
+            logger.warning(
+                f"Error checking time window for camera {camera.get('id')}: {e}"
+            )
+            return True  # Default to allowing capture if check fails
 
-        if not start_time or not end_time:
-            return True
-
+    def _check_time_range(self, start_time_str: str, end_time_str: str) -> bool:
+        """Check if current time is within the specified time range"""
         try:
             # Convert string times to time objects if needed
-            if isinstance(start_time, str):
-                start_time = datetime.strptime(start_time, "%H:%M:%S").time()
-            if isinstance(end_time, str):
-                end_time = datetime.strptime(end_time, "%H:%M:%S").time()
+            if isinstance(start_time_str, str):
+                start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
+            else:
+                start_time = start_time_str
+
+            if isinstance(end_time_str, str):
+                end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
+            else:
+                end_time = end_time_str
 
             current_time = datetime.now().time()
 
@@ -155,8 +193,43 @@ class AsyncTimelapseWorker:
                 return current_time >= start_time or current_time <= end_time
 
         except Exception as e:
-            logger.warning(f"Error parsing time window for camera {camera['id']}: {e}")
+            logger.warning(
+                f"Error parsing time range {start_time_str} - {end_time_str}: {e}"
+            )
             return True
+
+    def _check_sun_based_window(self, settings_dict: dict) -> bool:
+        """Check if current time is within sunrise/sunset window"""
+        try:
+            # Check if we have required weather data
+            sunrise_timestamp = settings_dict.get("sunrise_timestamp")
+            sunset_timestamp = settings_dict.get("sunset_timestamp")
+
+            if not sunrise_timestamp or not sunset_timestamp:
+                logger.debug("No sunrise/sunset data available")
+                return True  # Allow capture if no data
+
+            # Get offsets
+            sunrise_offset_minutes = int(settings_dict.get("sunrise_offset_minutes", 0))
+            sunset_offset_minutes = int(settings_dict.get("sunset_offset_minutes", 0))
+
+            # Use weather service to check if within window
+            service = OpenWeatherService(
+                api_key="dummy",  # Not needed for time calculations
+                latitude=0,
+                longitude=0,
+            )
+
+            return service.is_within_sun_window(
+                sunrise_timestamp=int(sunrise_timestamp),
+                sunset_timestamp=int(sunset_timestamp),
+                sunrise_offset_minutes=sunrise_offset_minutes,
+                sunset_offset_minutes=sunset_offset_minutes,
+            )
+
+        except Exception as e:
+            logger.warning(f"Error checking sun-based window: {e}")
+            return True  # Default to allowing capture if check fails
 
     async def capture_from_camera(self, camera_info):
         """
@@ -241,13 +314,15 @@ class AsyncTimelapseWorker:
                 )
 
             # Use corruption-aware capture with retry logic
-            success, message, saved_file_path, corruption_details = await loop.run_in_executor(
-                None,
-                self.corruption_integration.evaluate_with_retry,
-                camera_id,
-                rtsp_url,
-                capture_func,
-                timelapse["id"],
+            success, message, saved_file_path, corruption_details = (
+                await loop.run_in_executor(
+                    None,
+                    self.corruption_integration.evaluate_with_retry,
+                    camera_id,
+                    rtsp_url,
+                    capture_func,
+                    timelapse["id"],
+                )
             )
 
             # Log corruption detection results
@@ -296,12 +371,18 @@ class AsyncTimelapseWorker:
                     },
                     "timestamp": datetime.now().isoformat(),
                 }
-                
+
                 # Add corruption details if available
-                if corruption_details and not corruption_details.get("detection_disabled"):
-                    event_data["data"]["corruption_score"] = corruption_details.get("score")
-                    event_data["data"]["corruption_action"] = corruption_details.get("action_taken")
-                
+                if corruption_details and not corruption_details.get(
+                    "detection_disabled"
+                ):
+                    event_data["data"]["corruption_score"] = corruption_details.get(
+                        "score"
+                    )
+                    event_data["data"]["corruption_action"] = corruption_details.get(
+                        "action_taken"
+                    )
+
                 await loop.run_in_executor(
                     None,
                     sync_db.broadcast_event,
@@ -416,6 +497,75 @@ class AsyncTimelapseWorker:
         except Exception as e:
             logger.error(f"Error checking video generation requests: {e}")
 
+    async def refresh_weather_data(self):
+        """Refresh weather data if needed and weather is enabled"""
+        try:
+            # Check if weather functionality is enabled
+            settings_dict = await asyncio.get_event_loop().run_in_executor(
+                None, sync_db.get_settings_dict
+            )
+
+            weather_enabled = (
+                settings_dict.get("weather_enabled", "false").lower() == "true"
+            )
+            if not weather_enabled:
+                logger.debug("Weather functionality disabled, skipping refresh")
+                return
+
+            # Check if we have required settings
+            latitude = settings_dict.get("latitude")
+            longitude = settings_dict.get("longitude")
+            api_key = settings_dict.get("openweather_api_key")
+
+            if not all([latitude, longitude, api_key]):
+                logger.warning(
+                    "Weather refresh skipped: Missing required settings (lat/lng/api_key)"
+                )
+                return
+
+            # Type narrowing - at this point we know api_key is not None
+            assert api_key is not None, "api_key should not be None after validation"
+
+            # Check if weather data is stale (not from today)
+            today = date.today().isoformat()
+            weather_date_fetched = settings_dict.get("weather_date_fetched", "")
+
+            if weather_date_fetched == today:
+                logger.debug("Weather data is current, skipping refresh")
+                return
+
+            logger.info("Refreshing weather data...")
+
+            # Call the async weather refresh method directly with plain text API key
+            weather_data = await self.weather_manager.refresh_weather_if_needed(api_key)
+
+            if weather_data:
+                logger.info(
+                    f"Weather data refreshed: {weather_data.temperature}°C, {weather_data.description}"
+                )
+
+                # Broadcast weather update event
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    sync_db.broadcast_event,
+                    {
+                        "type": "weather_updated",
+                        "data": {
+                            "temperature": weather_data.temperature,
+                            "icon": weather_data.icon,
+                            "description": weather_data.description,
+                            "date_fetched": weather_data.date_fetched.isoformat(),
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+            else:
+                logger.warning("Failed to refresh weather data")
+
+        except Exception as e:
+            logger.error(f"Error refreshing weather data: {e}")
+
     async def update_scheduler_interval(self):
         """Update scheduler interval if settings changed"""
         try:
@@ -435,11 +585,17 @@ class AsyncTimelapseWorker:
         Jobs Configured:
         1. Image Capture Job - Captures from all running cameras at configured interval
         2. Health Monitoring Job - Tests camera connectivity every minute
-        3. Interval Update Job - Checks for configuration changes every 5 minutes
+        3. Weather Data Refresh Job - Updates weather data daily at 6 AM and on startup
+        4. Interval Update Job - Checks for configuration changes every 5 minutes
 
         The worker runs continuously until interrupted by signal or error.
         All jobs are configured with max_instances=1 to prevent overlapping
         executions that could cause resource conflicts.
+
+        Weather functionality includes:
+        - Daily refresh of weather data for sunrise/sunset calculations
+        - Automatic sunrise/sunset time window support for cameras
+        - Weather condition logging for capture context
 
         Job scheduling uses AsyncIOScheduler for true async operation while
         database operations are executed in thread pools for sync compatibility.
@@ -467,6 +623,27 @@ class AsyncTimelapseWorker:
             seconds=60,  # Check connectivity every minute
             id="health_job",
             name="Monitor Camera Connectivity",
+            max_instances=1,
+        )
+
+        # Schedule weather data refresh job (daily at 6 AM)
+        self.scheduler.add_job(
+            func=self.refresh_weather_data,
+            trigger="cron",
+            hour=6,
+            minute=0,
+            id="weather_job",
+            name="Refresh Weather Data",
+            max_instances=1,
+        )
+
+        # Also run weather refresh on startup
+        self.scheduler.add_job(
+            func=self.refresh_weather_data,
+            trigger="date",
+            run_date=datetime.now(),
+            id="weather_startup_job",
+            name="Initial Weather Data Refresh",
             max_instances=1,
         )
 

@@ -1718,7 +1718,7 @@ export default function CameraDetailsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Create New Timelapse Dialog - PREVIOUSLY MISSING COMPONENT */}
+      {/* Create New Timelapse Dialog*/}
       <CreateTimelapseDialog
         isOpen={newTimelapseDialogOpen}
         onClose={() => setNewTimelapseDialogOpen(false)}

@@ -30,6 +30,12 @@ export function useSettings(): SettingsState & SettingsActions {
   const [enableLogCompression, setEnableLogCompression] = useState(false)
   const [maxLogFiles, setMaxLogFiles] = useState(10)
 
+  // Weather settings
+  const [weatherEnabled, setWeatherEnabled] = useState(false)
+  const [sunriseSunsetEnabled, setSunriseSunsetEnabled] = useState(false)
+  const [latitude, setLatitude] = useState<number | null>(null)
+  const [longitude, setLongitude] = useState<number | null>(null)
+
   // Corruption detection settings
   const [corruptionDetectionEnabled, setCorruptionDetectionEnabled] =
     useState(true)
@@ -66,12 +72,18 @@ export function useSettings(): SettingsState & SettingsActions {
       setGenerateThumbnails(data.generate_thumbnails !== "false")
       setImageCaptureType((data.image_capture_type || "JPG") as "PNG" | "JPG")
 
-      // Handle API key specially
-      const apiKeyHash = data.openweather_api_key_hash || ""
-      setOriginalApiKeyHash(apiKeyHash)
-      if (apiKeyHash && !apiKeyModified) {
+      // Handle API key specially - now stored as plain text for development
+      const apiKey = data.openweather_api_key || ""
+      setOriginalApiKeyHash(apiKey) // This is now the plain text key, not a hash
+      if (apiKey && !apiKeyModified) {
         setOpenWeatherApiKey("")
       }
+
+      // Weather settings
+      setWeatherEnabled(data.weather_enabled === "true")
+      setSunriseSunsetEnabled(data.sunrise_sunset_enabled === "true")
+      setLatitude(data.latitude ? parseFloat(data.latitude) : null)
+      setLongitude(data.longitude ? parseFloat(data.longitude) : null)
 
       // Logging settings
       setLogRetentionDays(parseInt(data.log_retention_days || "30"))
@@ -140,6 +152,9 @@ export function useSettings(): SettingsState & SettingsActions {
     setSaving(true)
 
     try {
+      // Initialize changedSettings array at the top
+      const changedSettings: string[] = []
+      
       const updates = [
         { key: "capture_interval", value: captureInterval.toString() },
         { key: "timezone", value: timezone },
@@ -157,18 +172,44 @@ export function useSettings(): SettingsState & SettingsActions {
         { key: "max_log_files", value: maxLogFiles.toString() },
       ]
 
+      // Save weather settings using dedicated API
+      const weatherSettings = {
+        weather_enabled: weatherEnabled,
+        sunrise_sunset_enabled: sunriseSunsetEnabled,
+        latitude: latitude,
+        longitude: longitude,
+      }
+
+      try {
+        const weatherResponse = await fetch("/api/settings/weather", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(weatherSettings),
+        })
+
+        if (!weatherResponse.ok) {
+          const errorText = await weatherResponse.text()
+          throw new Error(
+            `Failed to save weather settings: ${weatherResponse.status} ${weatherResponse.statusText} - ${errorText}`
+          )
+        }
+        changedSettings.push("weather_settings")
+      } catch (weatherError) {
+        console.error("Failed to save weather settings:", weatherError)
+        throw weatherError
+      }
+
       // Only include API key if modified
       if (apiKeyModified && openWeatherApiKey.trim()) {
         updates.push({ key: "openweather_api_key", value: openWeatherApiKey })
       }
 
-      const changedSettings: string[] = []
       const currentSettings = {
         capture_interval: settings["capture_interval"] || "",
         timezone: settings["timezone"] || "",
         generate_thumbnails: settings["generate_thumbnails"] || "",
         image_capture_type: settings["image_capture_type"] || "",
-        openweather_api_key_hash: settings["openweather_api_key_hash"] || "",
+        openweather_api_key: settings["openweather_api_key"] || "",
         log_retention_days: settings["log_retention_days"] || "",
         max_log_file_size: settings["max_log_file_size"] || "",
         enable_debug_logging: settings["enable_debug_logging"] || "",
@@ -343,6 +384,8 @@ export function useSettings(): SettingsState & SettingsActions {
               return "max log files"
             case "corruption_detection_settings":
               return "corruption detection settings"
+            case "weather_settings":
+              return "weather settings"
             default:
               return key.replace(/_/g, " ")
           }
@@ -404,6 +447,10 @@ export function useSettings(): SettingsState & SettingsActions {
     apiKeyModified,
     settings,
     fetchSettings,
+    weatherEnabled,
+    sunriseSunsetEnabled,
+    latitude,
+    longitude,
     corruptionDetectionEnabled,
     corruptionScoreThreshold,
     corruptionAutoDiscardEnabled,
@@ -427,6 +474,10 @@ export function useSettings(): SettingsState & SettingsActions {
     openWeatherApiKey,
     apiKeyModified,
     originalApiKeyHash,
+    weatherEnabled,
+    sunriseSunsetEnabled,
+    latitude,
+    longitude,
     logRetentionDays,
     maxLogFileSize,
     enableDebugLogging,
@@ -453,6 +504,10 @@ export function useSettings(): SettingsState & SettingsActions {
     setOpenWeatherApiKey,
     setApiKeyModified,
     setOriginalApiKeyHash,
+    setWeatherEnabled,
+    setSunriseSunsetEnabled,
+    setLatitude,
+    setLongitude,
     setLogRetentionDays,
     setMaxLogFileSize,
     setEnableDebugLogging,

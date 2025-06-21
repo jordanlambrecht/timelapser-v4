@@ -10,6 +10,12 @@ export interface SettingsState {
   apiKeyModified: boolean
   originalApiKeyHash: string
 
+  // Weather settings
+  weatherEnabled: boolean
+  sunriseSunsetEnabled: boolean
+  latitude: number | null
+  longitude: number | null
+
   // Logging settings
   logRetentionDays: number
   maxLogFileSize: number
@@ -45,6 +51,12 @@ export interface SettingsActions {
   setOpenWeatherApiKey: (value: string) => void
   setApiKeyModified: (value: boolean) => void
   setOriginalApiKeyHash: (value: string) => void
+
+  // Weather settings
+  setWeatherEnabled: (value: boolean) => void
+  setSunriseSunsetEnabled: (value: boolean) => void
+  setLatitude: (value: number | null) => void
+  setLongitude: (value: number | null) => void
 
   // Logging settings
   setLogRetentionDays: (value: number) => void

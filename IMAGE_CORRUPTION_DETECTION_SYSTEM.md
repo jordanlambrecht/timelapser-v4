@@ -362,12 +362,16 @@ ALTER TABLE timelapses ADD COLUMN total_corruption_score BIGINT DEFAULT 0; -- Su
 
 -- Add to settings table
 ALTER TABLE settings ADD COLUMN corruption_detection_enabled BOOLEAN DEFAULT true;
-ALTER TABLE settings ADD COLUMN corruption_score_threshold INTEGER DEFAULT 70 CHECK (corruption_score_threshold >= 0 AND corruption_score_threshold <= 100);
-ALTER TABLE settings ADD COLUMN corruption_auto_discard_enabled BOOLEAN DEFAULT false;
-ALTER TABLE settings ADD COLUMN corruption_auto_disable_degraded BOOLEAN DEFAULT false;
-ALTER TABLE settings ADD COLUMN corruption_degraded_consecutive_threshold INTEGER DEFAULT 10;
-ALTER TABLE settings ADD COLUMN corruption_degraded_time_window_minutes INTEGER DEFAULT 30;
-ALTER TABLE settings ADD COLUMN corruption_degraded_failure_percentage INTEGER DEFAULT 50;
+-- Corruption settings added as key-value rows (CORRECT APPROACH)
+INSERT INTO settings (key, value) VALUES
+('corruption_detection_enabled', 'true'),
+('corruption_score_threshold', '70'),
+('corruption_auto_discard_enabled', 'false'),
+('corruption_auto_disable_degraded', 'false'),
+('corruption_degraded_consecutive_threshold', '10'),
+('corruption_degraded_time_window_minutes', '30'),
+('corruption_degraded_failure_percentage', '50')
+ON CONFLICT (key) DO NOTHING;
 ```
 
 ---

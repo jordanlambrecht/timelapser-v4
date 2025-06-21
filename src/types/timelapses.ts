@@ -5,9 +5,15 @@ export interface Timelapse {
   name?: string
   start_date?: string
   auto_stop_at?: string
+  
+  // Time window configuration
+  time_window_type: "none" | "time" | "sunrise_sunset"
   time_window_start?: string
   time_window_end?: string
+  sunrise_offset_minutes?: number
+  sunset_offset_minutes?: number
   use_custom_time_window: boolean
+  
   image_count: number
   last_capture_at?: string
   created_at: string
@@ -39,9 +45,11 @@ export interface CreateTimelapseDialogProps {
 
 export interface TimelapseConfig {
   name: string
-  useTimeWindow: boolean
+  timeWindowType: "none" | "time" | "sunrise_sunset"
   timeWindowStart: string
   timeWindowEnd: string
+  sunriseOffsetMinutes: number
+  sunsetOffsetMinutes: number
   useAutoStop: boolean
   autoStopAt?: string
 }

@@ -2834,6 +2834,36 @@ class SyncDatabase:
             }
         )
 
+    # Weather Methods (Sync)
+
+    def get_settings_dict(self) -> Dict[str, str]:
+        """Get all settings as a key-value dictionary"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT key, value FROM settings")
+                rows = cast(List[Dict[str, Any]], cur.fetchall())
+                return {row["key"]: row["value"] for row in rows}
+
+    def create_or_update_setting(self, key: str, value: str) -> Optional[Dict[str, Any]]:
+        """Create or update a setting"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Use UPSERT to create or update
+                cur.execute(
+                    """
+                    INSERT INTO settings (key, value) 
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) 
+                    DO UPDATE SET 
+                        value = EXCLUDED.value,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING id, key, value, created_at, updated_at
+                    """,
+                    (key, value),
+                )
+                result = cur.fetchone()
+                return cast(Optional[Dict[str, Any]], result)
+
 
 # Global Database Instances
 # These pre-configured instances are used throughout the application

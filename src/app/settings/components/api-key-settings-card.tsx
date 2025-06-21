@@ -71,16 +71,9 @@ export function ApiKeySettingsCard({
         <CardTitle className='flex items-center space-x-2'>
           <Cloud className='w-5 h-5 text-blue-400' />
           <span>External Services</span>
-          <Badge
-            variant='secondary'
-            className='ml-2 text-xs bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
-          >
-            Not Implemented
-          </Badge>
         </CardTitle>
         <CardDescription>
-          Configure external API integrations (settings are saved but features
-          are not active yet)
+          Configure external API integrations for enhanced functionality
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>

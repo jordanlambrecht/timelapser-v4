@@ -10,6 +10,7 @@ import { LoggingSettingsCard } from "./components/logging-settings-card"
 import { ApiKeySettingsCard } from "./components/api-key-settings-card"
 import { CaptureSettingsCard } from "./components/capture-settings-card"
 import { CorruptionSettingsCard } from "./components/corruption-settings-card"
+import { WeatherSettingsCard } from "./components/weather-settings-card"
 import { CurrentConfigurationCard } from "./components/current-configuration-card"
 import { InfoCards } from "./components/info-cards"
 import { Separator } from "@/components/ui/separator"
@@ -33,6 +34,14 @@ export default function Settings() {
     apiKeyModified,
     setApiKeyModified,
     originalApiKeyHash,
+    weatherEnabled,
+    setWeatherEnabled,
+    sunriseSunsetEnabled,
+    setSunriseSunsetEnabled,
+    latitude,
+    setLatitude,
+    longitude,
+    setLongitude,
     logRetentionDays,
     setLogRetentionDays,
     maxLogFileSize,
@@ -136,6 +145,21 @@ export default function Settings() {
           timezone={timezone}
           saving={saving}
           onTimezoneChange={setTimezone}
+        />
+
+        {/* Weather Settings - Full Width */}
+        <WeatherSettingsCard
+          weatherEnabled={weatherEnabled}
+          setWeatherEnabled={setWeatherEnabled}
+          sunriseSunsetEnabled={sunriseSunsetEnabled}
+          setSunriseSunsetEnabled={setSunriseSunsetEnabled}
+          latitude={latitude}
+          setLatitude={setLatitude}
+          longitude={longitude}
+          setLongitude={setLongitude}
+          openWeatherApiKey={openWeatherApiKey}
+          apiKeyModified={apiKeyModified}
+          originalApiKeyHash={originalApiKeyHash}
         />
 
         {/* Additional Settings Grid */}

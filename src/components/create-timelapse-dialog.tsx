@@ -14,7 +14,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Calendar, Clock, Play, Settings } from "lucide-react"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Calendar, Clock, Play, Settings, Sunrise, Sunset } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { CreateTimelapseDialogProps, TimelapseConfig } from "@types"
 
@@ -28,9 +29,11 @@ export function CreateTimelapseDialog({
 }: CreateTimelapseDialogProps) {
   const [config, setConfig] = useState<TimelapseConfig>({
     name: "",
-    useTimeWindow: defaultTimeWindow?.enabled || false,
+    timeWindowType: "none",
     timeWindowStart: defaultTimeWindow?.start || "06:00",
     timeWindowEnd: defaultTimeWindow?.end || "18:00",
+    sunriseOffsetMinutes: 45,
+    sunsetOffsetMinutes: -45,
     useAutoStop: false,
     autoStopAt: "",
   })
@@ -47,7 +50,7 @@ export function CreateTimelapseDialog({
       setConfig((prev) => ({
         ...prev,
         name: defaultName,
-        useTimeWindow: defaultTimeWindow?.enabled || false,
+        timeWindowType: defaultTimeWindow?.enabled ? "time" : "none",
         timeWindowStart: defaultTimeWindow?.start || "06:00",
         timeWindowEnd: defaultTimeWindow?.end || "18:00",
         useAutoStop: false,
@@ -86,7 +89,7 @@ export function CreateTimelapseDialog({
       }
     }
 
-    if (config.useTimeWindow) {
+    if (config.timeWindowType === "time") {
       const startTime = config.timeWindowStart
       const endTime = config.timeWindowEnd
       if (startTime >= endTime) {
@@ -145,28 +148,46 @@ export function CreateTimelapseDialog({
 
           {/* Time Window Settings */}
           <div className='space-y-4'>
-            <div className='flex items-center space-x-3'>
-              <Switch
-                id='useTimeWindow'
-                checked={config.useTimeWindow}
-                onCheckedChange={(checked) =>
-                  setConfig((prev) => ({ ...prev, useTimeWindow: checked }))
-                }
-                disabled={loading}
-              />
-              <div className='flex items-center space-x-2'>
-                <Clock className='w-4 h-4 text-cyan' />
-                <Label
-                  htmlFor='useTimeWindow'
-                  className='text-white font-medium'
-                >
-                  Use Active Time Window
+            <div className='flex items-center space-x-2'>
+              <Clock className='w-4 h-4 text-cyan' />
+              <Label className='text-white font-medium'>
+                Time Window Control
+              </Label>
+            </div>
+            
+            <RadioGroup
+              value={config.timeWindowType}
+              onValueChange={(value: "none" | "time" | "sunrise_sunset") =>
+                setConfig((prev) => ({ ...prev, timeWindowType: value }))
+              }
+              className="space-y-3"
+              disabled={loading}
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="none" id="none" />
+                <Label htmlFor="none" className="text-white">
+                  No time restrictions (capture 24/7)
                 </Label>
               </div>
-            </div>
+              
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="time" id="time" />
+                <Label htmlFor="time" className="text-white">
+                  Fixed time window
+                </Label>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="sunrise_sunset" id="sunrise_sunset" />
+                <Label htmlFor="sunrise_sunset" className="text-white">
+                  Sunrise/sunset window
+                </Label>
+              </div>
+            </RadioGroup>
 
-            {config.useTimeWindow && (
-              <div className='ml-7 space-y-4 p-4 bg-cyan/5 border border-cyan/20 rounded-lg'>
+            {/* Fixed Time Window Controls */}
+            {config.timeWindowType === "time" && (
+              <div className='ml-6 space-y-4 p-4 bg-cyan/5 border border-cyan/20 rounded-lg'>
                 <div className='grid grid-cols-2 gap-4'>
                   <div className='space-y-2'>
                     <Label className='text-cyan text-sm'>Start Time</Label>
@@ -201,6 +222,126 @@ export function CreateTimelapseDialog({
                 </div>
                 <p className='text-xs text-cyan/70'>
                   Recording will only occur during this time window each day
+                </p>
+              </div>
+            )}
+
+            {/* Sunrise/Sunset Window Controls */}
+            {config.timeWindowType === "sunrise_sunset" && (
+              <div className='ml-6 space-y-4 p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-lg'>
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-2'>
+                    <div className='flex items-center space-x-2'>
+                      <Sunrise className='w-4 h-4 text-yellow-400' />
+                      <Label className='text-yellow-400 text-sm'>Sunrise Offset</Label>
+                    </div>
+                    <div className='flex items-center space-x-2'>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunriseOffsetMinutes: prev.sunriseOffsetMinutes - 15,
+                          }))
+                        }
+                        className='h-8 w-8 p-0 border-yellow-500/30 text-yellow-400'
+                        disabled={loading}
+                      >
+                        -
+                      </Button>
+                      <Input
+                        type='number'
+                        step='15'
+                        value={config.sunriseOffsetMinutes}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunriseOffsetMinutes: parseInt(e.target.value) || 0,
+                          }))
+                        }
+                        className='text-center bg-black/20 border-yellow-500/30 text-white'
+                        disabled={loading}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunriseOffsetMinutes: prev.sunriseOffsetMinutes + 15,
+                          }))
+                        }
+                        className='h-8 w-8 p-0 border-yellow-500/30 text-yellow-400'
+                        disabled={loading}
+                      >
+                        +
+                      </Button>
+                    </div>
+                    <p className='text-xs text-yellow-400/70'>
+                      Minutes before (-) or after (+) sunrise
+                    </p>
+                  </div>
+                  
+                  <div className='space-y-2'>
+                    <div className='flex items-center space-x-2'>
+                      <Sunset className='w-4 h-4 text-orange-400' />
+                      <Label className='text-orange-400 text-sm'>Sunset Offset</Label>
+                    </div>
+                    <div className='flex items-center space-x-2'>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunsetOffsetMinutes: prev.sunsetOffsetMinutes - 15,
+                          }))
+                        }
+                        className='h-8 w-8 p-0 border-orange-500/30 text-orange-400'
+                        disabled={loading}
+                      >
+                        -
+                      </Button>
+                      <Input
+                        type='number'
+                        step='15'
+                        value={config.sunsetOffsetMinutes}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunsetOffsetMinutes: parseInt(e.target.value) || 0,
+                          }))
+                        }
+                        className='text-center bg-black/20 border-orange-500/30 text-white'
+                        disabled={loading}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            sunsetOffsetMinutes: prev.sunsetOffsetMinutes + 15,
+                          }))
+                        }
+                        className='h-8 w-8 p-0 border-orange-500/30 text-orange-400'
+                        disabled={loading}
+                      >
+                        +
+                      </Button>
+                    </div>
+                    <p className='text-xs text-orange-400/70'>
+                      Minutes before (-) or after (+) sunset
+                    </p>
+                  </div>
+                </div>
+                <p className='text-xs text-yellow-500/70'>
+                  Recording will occur from sunrise offset to sunset offset each day
                 </p>
               </div>
             )}
