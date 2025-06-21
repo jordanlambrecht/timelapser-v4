@@ -30,6 +30,29 @@ export function useSettings(): SettingsState & SettingsActions {
   const [enableLogCompression, setEnableLogCompression] = useState(false)
   const [maxLogFiles, setMaxLogFiles] = useState(10)
 
+  // Corruption detection settings
+  const [corruptionDetectionEnabled, setCorruptionDetectionEnabled] =
+    useState(true)
+  const [corruptionScoreThreshold, setCorruptionScoreThreshold] = useState(70)
+  const [corruptionAutoDiscardEnabled, setCorruptionAutoDiscardEnabled] =
+    useState(false)
+  const [corruptionAutoDisableDegraded, setCorruptionAutoDisableDegraded] =
+    useState(false)
+  const [
+    corruptionDegradedConsecutiveThreshold,
+    setCorruptionDegradedConsecutiveThreshold,
+  ] = useState(10)
+  const [
+    corruptionDegradedTimeWindowMinutes,
+    setCorruptionDegradedTimeWindowMinutes,
+  ] = useState(30)
+  const [
+    corruptionDegradedFailurePercentage,
+    setCorruptionDegradedFailurePercentage,
+  ] = useState(50)
+  const [corruptionHeavyDetectionEnabled, setCorruptionHeavyDetectionEnabled] =
+    useState(false)
+
   const fetchSettings = useCallback(async () => {
     console.log("🔄 Fetching settings from API...")
     try {
@@ -58,6 +81,52 @@ export function useSettings(): SettingsState & SettingsActions {
       setEnableLogRotation(data.enable_log_rotation !== "false")
       setEnableLogCompression(data.enable_log_compression === "true")
       setMaxLogFiles(parseInt(data.max_log_files || "10"))
+
+      // Fetch corruption settings separately
+      try {
+        const corruptionResponse = await fetch("/api/corruption/settings", {
+          cache: "no-store",
+        })
+        const corruptionData = await corruptionResponse.json()
+
+        if (corruptionData.global_settings) {
+          const global = corruptionData.global_settings
+          setCorruptionDetectionEnabled(
+            global.corruption_detection_enabled !== false
+          )
+          setCorruptionScoreThreshold(
+            parseInt(global.corruption_score_threshold || "70")
+          )
+          setCorruptionAutoDiscardEnabled(
+            global.corruption_auto_discard_enabled === true
+          )
+          setCorruptionAutoDisableDegraded(
+            global.corruption_auto_disable_degraded === true
+          )
+          setCorruptionDegradedConsecutiveThreshold(
+            parseInt(global.corruption_degraded_consecutive_threshold || "10")
+          )
+          setCorruptionDegradedTimeWindowMinutes(
+            parseInt(global.corruption_degraded_time_window_minutes || "30")
+          )
+          setCorruptionDegradedFailurePercentage(
+            parseInt(global.corruption_degraded_failure_percentage || "50")
+          )
+        }
+
+        // Check if any camera has heavy detection enabled
+        if (corruptionData.camera_settings) {
+          const hasHeavyDetection = Object.values(
+            corruptionData.camera_settings
+          ).some((camera: any) => camera.corruption_detection_heavy === true)
+          setCorruptionHeavyDetectionEnabled(hasHeavyDetection)
+        }
+      } catch (corruptionError) {
+        console.error(
+          "❌ Failed to fetch corruption settings:",
+          corruptionError
+        )
+      }
 
       console.log("✅ Settings state updated")
     } catch (error) {
@@ -123,20 +192,125 @@ export function useSettings(): SettingsState & SettingsActions {
 
         if (currentValue !== newValue) {
           changedSettings.push(update.key)
+
+          // Only make API call if value actually changed
+          const response = await fetch("/api/settings/", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(update),
+          })
+
+          if (!response.ok) {
+            const errorText = await response.text()
+            throw new Error(
+              `Failed to save ${update.key}: ${response.status} ${response.statusText} - ${errorText}`
+            )
+          }
+        }
+      }
+
+      // Save corruption detection settings separately
+      const corruptionSettings = {
+        global_settings: {
+          corruption_detection_enabled: corruptionDetectionEnabled,
+          corruption_score_threshold: corruptionScoreThreshold,
+          corruption_auto_discard_enabled: corruptionAutoDiscardEnabled,
+          corruption_auto_disable_degraded: corruptionAutoDisableDegraded,
+          corruption_degraded_consecutive_threshold:
+            corruptionDegradedConsecutiveThreshold,
+          corruption_degraded_time_window_minutes:
+            corruptionDegradedTimeWindowMinutes,
+          corruption_degraded_failure_percentage:
+            corruptionDegradedFailurePercentage,
+        },
+        camera_settings: {
+          // For now, apply heavy detection setting to all cameras
+          // This could be enhanced later to be per-camera
+          heavy_detection_enabled: corruptionHeavyDetectionEnabled,
+        },
+      }
+
+      // Check if corruption settings have actually changed
+      let corruptionSettingsChanged = false
+      try {
+        const currentCorruptionResponse = await fetch(
+          "/api/corruption/settings",
+          {
+            cache: "no-store",
+          }
+        )
+        const currentCorruptionData = await currentCorruptionResponse.json()
+
+        if (currentCorruptionData.global_settings) {
+          const current = currentCorruptionData.global_settings
+          const newSettings = corruptionSettings.global_settings
+
+          // Compare each corruption setting
+          corruptionSettingsChanged =
+            current.corruption_detection_enabled !==
+              newSettings.corruption_detection_enabled ||
+            current.corruption_score_threshold !==
+              newSettings.corruption_score_threshold ||
+            current.corruption_auto_discard_enabled !==
+              newSettings.corruption_auto_discard_enabled ||
+            current.corruption_auto_disable_degraded !==
+              newSettings.corruption_auto_disable_degraded ||
+            current.corruption_degraded_consecutive_threshold !==
+              newSettings.corruption_degraded_consecutive_threshold ||
+            current.corruption_degraded_time_window_minutes !==
+              newSettings.corruption_degraded_time_window_minutes ||
+            current.corruption_degraded_failure_percentage !==
+              newSettings.corruption_degraded_failure_percentage
         }
 
-        const response = await fetch("/api/settings/", {
+        // Also check camera settings for heavy detection changes
+        if (
+          !corruptionSettingsChanged &&
+          currentCorruptionData.camera_settings
+        ) {
+          const currentHeavyDetectionStates = Object.values(
+            currentCorruptionData.camera_settings
+          ).map((camera: any) => camera.corruption_detection_heavy)
+          const allCurrentlyHeavy = currentHeavyDetectionStates.every(
+            (state) => state === true
+          )
+          const allCurrentlyLight = currentHeavyDetectionStates.every(
+            (state) => state === false
+          )
+
+          // If we're setting all to heavy but not all are currently heavy, or vice versa
+          if (
+            (corruptionHeavyDetectionEnabled && !allCurrentlyHeavy) ||
+            (!corruptionHeavyDetectionEnabled && !allCurrentlyLight)
+          ) {
+            corruptionSettingsChanged = true
+          }
+        }
+      } catch (error) {
+        console.error(
+          "Failed to fetch current corruption settings for comparison:",
+          error
+        )
+        // If we can't fetch current settings, assume they changed to be safe
+        corruptionSettingsChanged = true
+      }
+
+      if (corruptionSettingsChanged) {
+        const corruptionResponse = await fetch("/api/corruption/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(update),
+          body: JSON.stringify(corruptionSettings),
         })
 
-        if (!response.ok) {
-          const errorText = await response.text()
+        if (!corruptionResponse.ok) {
+          const errorText = await corruptionResponse.text()
           throw new Error(
-            `Failed to save ${update.key}: ${response.status} ${response.statusText} - ${errorText}`
+            `Failed to save corruption settings: ${corruptionResponse.status} ${corruptionResponse.statusText} - ${errorText}`
           )
         }
+
+        // Only add to changed settings list if API call was made
+        changedSettings.push("corruption_detection_settings")
       }
 
       // Show success toast
@@ -167,6 +341,8 @@ export function useSettings(): SettingsState & SettingsActions {
               return "log compression"
             case "max_log_files":
               return "max log files"
+            case "corruption_detection_settings":
+              return "corruption detection settings"
             default:
               return key.replace(/_/g, " ")
           }
@@ -228,6 +404,14 @@ export function useSettings(): SettingsState & SettingsActions {
     apiKeyModified,
     settings,
     fetchSettings,
+    corruptionDetectionEnabled,
+    corruptionScoreThreshold,
+    corruptionAutoDiscardEnabled,
+    corruptionAutoDisableDegraded,
+    corruptionDegradedConsecutiveThreshold,
+    corruptionDegradedTimeWindowMinutes,
+    corruptionDegradedFailurePercentage,
+    corruptionHeavyDetectionEnabled,
   ])
 
   useEffect(() => {
@@ -250,6 +434,14 @@ export function useSettings(): SettingsState & SettingsActions {
     enableLogRotation,
     enableLogCompression,
     maxLogFiles,
+    corruptionDetectionEnabled,
+    corruptionScoreThreshold,
+    corruptionAutoDiscardEnabled,
+    corruptionAutoDisableDegraded,
+    corruptionDegradedConsecutiveThreshold,
+    corruptionDegradedTimeWindowMinutes,
+    corruptionDegradedFailurePercentage,
+    corruptionHeavyDetectionEnabled,
     loading,
     saving,
 
@@ -268,6 +460,14 @@ export function useSettings(): SettingsState & SettingsActions {
     setEnableLogRotation,
     setEnableLogCompression,
     setMaxLogFiles,
+    setCorruptionDetectionEnabled,
+    setCorruptionScoreThreshold,
+    setCorruptionAutoDiscardEnabled,
+    setCorruptionAutoDisableDegraded,
+    setCorruptionDegradedConsecutiveThreshold,
+    setCorruptionDegradedTimeWindowMinutes,
+    setCorruptionDegradedFailurePercentage,
+    setCorruptionHeavyDetectionEnabled,
     fetchSettings,
     saveSettings,
   }

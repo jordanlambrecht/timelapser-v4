@@ -99,11 +99,33 @@ All Components
 - `/src/hooks/use-camera-sse.ts` - Specialized event hooks
 - Components use hooks, never direct EventSource connections
 
-**SSE Event Structure (Important)**:
-- Event data is provided **directly on the event object**
-- ✅ Correct: `event.camera_id`, `event.image_count`, `event.status`
-- ❌ Wrong: `event.data.camera_id` (data property doesn't exist)
-- The SSE context parses raw events and passes data objects directly to subscribers
+**SSE Event Structure (CRITICAL)**:
+- **ALWAYS use proper event structure**: `{ type, data: {...}, timestamp }`
+- ✅ Correct: `event.data.camera_id`, `event.data.image_count`, `event.data.status`
+- ❌ Wrong: `event.camera_id` (data directly on event object)
+- All events MUST nest data under the `data` property for consistency
+
+### Corruption Detection System Rules (CRITICAL - Quality Control)
+
+1. **NEVER bypass corruption integration** - All image captures must go through corruption detection pipeline
+2. **ALWAYS use WorkerCorruptionIntegration.evaluate_with_retry()** - Never call RTSPCapture.capture_image() directly
+3. **Use per-camera heavy detection settings** - Respect `corruption_detection_heavy` flag from database
+4. **NEVER skip corruption scoring** - Every captured image must receive a corruption score (0-100)
+5. **Proper retry logic** - Failed corruption checks trigger automatic retry when auto-discard enabled
+6. **Database logging required** - All corruption evaluations must be logged to `corruption_logs` table
+7. **SSE events for corruption** - Broadcast corruption events for real-time UI updates
+8. **Graceful degradation** - System continues if corruption detection fails, with error logging
+
+**Corruption Detection Integration Pattern**:
+```python
+# ✅ CORRECT - Corruption-aware capture
+success, message, file_path, corruption_details = self.corruption_integration.evaluate_with_retry(
+    camera_id, rtsp_url, capture_func, timelapse_id
+)
+
+# ❌ WRONG - Direct capture bypasses corruption detection  
+success, message, file_path = self.capture.capture_image(...)
+```
 
 ### System-Wide Constraints
 
@@ -122,10 +144,191 @@ All Components
 - **Synchronous database calls in FastAPI** - Use async_db only
 - **Absolute paths in database** - Store relative paths from project root
 - **FK-based latest image tracking** - Use query-based LATERAL joins only
-- **Non-existent image endpoints** - Never reference
-  `/api/images/{id}/thumbnail`
+- **Non-existent image endpoints** - Never reference `/api/images/{id}/thumbnail`
 - **Simple browser-local time calculations** - Always use timezone-aware system
 - **Individual EventSource connections** - Creates connection spam (79+ connections), use centralized SSE system only
+- **Direct RTSP capture calls** - Always use corruption detection wrapper
+- **eventEmitter for corruption events** - Use SSE subscriptions only
+- **Manual corruption scoring** - Use CorruptionController.evaluate_frame()
+- **Hardcoded corruption thresholds** - Load from database settings
+
+## 🛡️ CORRUPTION DETECTION SYSTEM ARCHITECTURE
+
+**Purpose**: Automatically detect and handle corrupted images from RTSP cameras to ensure professional-quality timelapses.
+
+### **Core Components Architecture**
+```
+RTSP Capture → CorruptionController → FastDetector + HeavyDetector → ScoreCalculator → ActionHandler → Database + Events
+```
+
+**Component Breakdown**:
+- **CorruptionController**: Central orchestrator managing the detection pipeline
+- **FastDetector**: Lightweight heuristic checks (1-5ms) - always enabled
+- **HeavyDetector**: Computer vision analysis (20-100ms) - per-camera optional  
+- **ScoreCalculator**: Weighted scoring algorithm (0-100 scale)
+- **ActionHandler**: Retry/discard logic based on corruption scores
+- **HealthMonitor**: Camera degraded mode tracking
+
+### **Integration Architecture**
+```
+Worker.capture_from_camera() → WorkerCorruptionIntegration.evaluate_with_retry() → CorruptionController.evaluate_frame() → Database.log_corruption_detection() → SSE Events
+```
+
+**Critical Integration Points**:
+1. **Worker Integration**: `AsyncTimelapseWorker.__init__()` initializes corruption detection
+2. **Capture Pipeline**: Every image capture goes through corruption evaluation
+3. **Database Logging**: All evaluations logged to `corruption_logs` table
+4. **Real-time Events**: Corruption events broadcast via SSE system
+5. **Per-Camera Settings**: Heavy detection enabled/disabled per camera
+
+### **Scoring Algorithm**
+```
+Starting Score: 100 (Perfect Image)
+Final Score = max(0, Starting Score - Total Penalties)
+
+Score Ranges:
+- 90-100: Excellent quality (save)
+- 70-89:  Good quality (save)  
+- 50-69:  Acceptable quality (save)
+- 30-49:  Poor quality (flag for review)
+- 0-29:   Severely corrupted (auto-discard candidate)
+
+Weighted Combination (when Heavy Detection enabled):
+Final Score = (Fast_Score * 30%) + (Heavy_Score * 70%)
+```
+
+### **Fast Detection Checks (Always Enabled)**
+- **File Size Validation**: 25KB minimum, 10MB maximum
+- **Pixel Statistics**: Mean intensity, variance, uniformity analysis
+- **Basic Validity**: Image dimensions, channel count, data type verification
+- **Performance**: 1-5ms per image
+
+### **Heavy Detection Checks (Per-Camera Optional)**  
+- **Blur Detection**: Laplacian variance analysis (threshold: 100)
+- **Edge Analysis**: Canny edge detection with density measurement (1%-50% range)
+- **Noise Detection**: Median filter comparison for noise ratio (max 30%)
+- **Histogram Analysis**: Entropy calculation for color distribution (min 3.0)
+- **Pattern Detection**: 8x8 block uniformity for JPEG corruption (max 80%)
+- **Performance**: 20-100ms per image
+
+### **Database Schema (Corruption Tables)**
+```sql
+-- Corruption detection logs
+CREATE TABLE corruption_logs (
+    id SERIAL PRIMARY KEY,
+    camera_id INTEGER REFERENCES cameras(id) ON DELETE CASCADE,
+    image_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
+    corruption_score INTEGER NOT NULL CHECK (corruption_score >= 0 AND corruption_score <= 100),
+    fast_score INTEGER CHECK (fast_score >= 0 AND fast_score <= 100),
+    heavy_score INTEGER CHECK (heavy_score >= 0 AND heavy_score <= 100),
+    detection_details JSONB NOT NULL,
+    action_taken VARCHAR(50) NOT NULL, -- 'saved', 'discarded', 'retried'
+    processing_time_ms INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Additional fields in existing tables
+ALTER TABLE images ADD COLUMN corruption_score INTEGER DEFAULT 100;
+ALTER TABLE images ADD COLUMN is_flagged BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN corruption_detection_heavy BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN degraded_mode_active BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN consecutive_corruption_failures INTEGER DEFAULT 0;
+ALTER TABLE cameras ADD COLUMN lifetime_glitch_count INTEGER DEFAULT 0;
+```
+
+### **SSE Events for Corruption Detection**
+```typescript
+// Corruption detection event
+{
+  type: "image_corruption_detected",
+  data: {
+    camera_id: number,
+    corruption_score: number,
+    is_corrupted: boolean,
+    action_taken: string,
+    failed_checks: string[],
+    processing_time_ms: number
+  },
+  timestamp: string
+}
+
+// Camera degraded mode event  
+{
+  type: "camera_degraded_mode_triggered", 
+  data: {
+    camera_id: number,
+    consecutive_failures: number,
+    degraded_mode_active: boolean
+  },
+  timestamp: string
+}
+
+// Corruption reset event
+{
+  type: "camera_corruption_reset",
+  data: {
+    camera_id: number,
+    degraded_mode_reset: boolean
+  },
+  timestamp: string
+}
+```
+
+### **File Structure for Corruption Detection**
+```
+backend/
+├── corruption_detection/
+│   ├── __init__.py
+│   ├── controller.py          # CorruptionController main class
+│   ├── fast_detector.py       # FastDetector implementation
+│   ├── heavy_detector.py      # HeavyDetector implementation  
+│   ├── score_calculator.py    # Scoring algorithms
+│   ├── action_handler.py      # Retry/discard logic
+│   └── health_monitor.py      # Degraded mode tracking
+├── worker_corruption_integration.py  # Worker integration wrapper
+└── app/
+    ├── models/corruption.py    # Pydantic models
+    └── routers/corruption.py   # API endpoints
+
+frontend/
+├── src/
+│   ├── components/
+│   │   ├── corruption-indicator.tsx    # UI indicators
+│   │   └── corruption-settings-card.tsx  # Settings UI
+│   ├── hooks/
+│   │   └── use-corruption-stats.ts     # SSE-based corruption hooks
+│   └── types/
+│       └── corruption.ts              # TypeScript interfaces
+```
+
+### **Performance Specifications**
+```
+Fast Detection: < 5ms per image
+Heavy Detection: < 100ms per image  
+Database Logging: < 10ms per result
+Total Overhead: < 110ms per capture (when heavy enabled)
+
+Memory Usage:
+- Fast Detection: < 1MB working memory
+- Heavy Detection: < 5MB working memory
+
+Throughput Impact:
+- Baseline (no detection): ~200ms per capture
+- With Fast Only: ~205ms per capture (+2.5%)
+- With Fast + Heavy: ~300ms per capture (+50%)
+```
+
+### **Configuration Hierarchy**
+```
+Global App Settings (Base Defaults)
+├── corruption_detection_enabled: true
+├── corruption_score_threshold: 70
+├── corruption_auto_discard_enabled: false
+└── corruption_auto_disable_degraded: false
+
+Per-Camera Settings (Overrides)  
+└── corruption_detection_heavy: false (per camera)
+```
 
 ## 🧠 WHY ARCHITECTURAL DECISIONS WERE MADE
 
@@ -558,6 +761,47 @@ Enhanced `start-services.sh` with health check retries and proper ordering
 
 **Real Example**: Camera dashboard with 10 cameras = 12+ connections (dashboard + 10 cards + modals). Fixed with SSEProvider pattern achieving 99% connection reduction.
 
+### 9. **"Corruption detection can be added as an optional post-processing step"**
+
+❌ **Why This Defeats the Purpose**:
+
+- Corruption detection must happen **during capture pipeline** to enable retry logic
+- Post-processing can't retry failed captures - the moment is gone
+- Auto-discard functionality requires real-time evaluation during capture
+- Database integrity requires corruption scoring before image record creation  
+- **Solution**: Integrate corruption detection into `WorkerCorruptionIntegration.evaluate_with_retry()`
+
+### 10. **"We can simplify by using the same corruption threshold for all cameras"**
+
+❌ **Why Per-Camera Settings Are Essential**:
+
+- Different camera hardware has different noise/quality characteristics
+- Indoor vs outdoor cameras have vastly different corruption patterns
+- Heavy detection (computer vision) may be too slow for high-frequency captures on some cameras
+- Camera-specific corruption_detection_heavy settings allow fine-tuned performance
+- **Solution**: Load per-camera settings from database and respect individual camera configurations
+
+### 11. **"Fast detection is enough - heavy detection is just unnecessary overhead"**
+
+❌ **Why Both Detection Levels Are Needed**:
+
+- Fast detection catches obvious corruption (file size, basic pixel issues) but misses subtle problems
+- Heavy detection catches blur, noise, compression artifacts that fast detection can't detect  
+- Weighted scoring (30% fast + 70% heavy) provides comprehensive quality assessment
+- Per-camera enablement allows optimization - enable heavy detection only where needed
+- Professional timelapses require thorough quality control, not just basic file validation
+- **Solution**: Use both detection levels with per-camera heavy detection configuration
+
+### 12. **"Corruption events should use direct eventEmitter for better performance"**
+
+❌ **Why This Breaks the SSE Architecture**:
+
+- Creates the same connection spam problem that was solved for regular camera events
+- Bypasses the centralized SSE system that achieves 99% connection reduction
+- eventEmitter is for internal component state, not real-time data synchronization
+- Corruption events must follow the same `{ type, data: {...}, timestamp }` structure
+- **Solution**: Use `useSSESubscription` for corruption events like all other real-time updates
+
 ## 🗄️ DATABASE SCHEMA
 
 **Core Relationships**:
@@ -565,15 +809,44 @@ Enhanced `start-services.sh` with health check retries and proper ordering
 ```
 cameras (1) ──► timelapses (many) ──► images (many)
 timelapses (1) ──► videos (many)
+cameras (1) ──► corruption_logs (many)
+images (1) ──► corruption_logs (0..1)
 ```
 
 **Key Tables**:
 
-- `cameras`: RTSP config, health status, time windows, video settings
+- `cameras`: RTSP config, health status, time windows, video settings, corruption settings
 - `timelapses`: Recording sessions with entity-based architecture
-- `images`: Captures linked to timelapse, day_number calculation
+- `images`: Captures linked to timelapse, day_number calculation, corruption scores
 - `videos`: Generated MP4s with overlay settings
-- `settings`: Global config including timezone
+- `settings`: Global config including timezone and corruption detection settings
+- `corruption_logs`: Detailed corruption detection audit trail with scores and actions
+
+**Corruption Detection Schema**:
+
+```sql
+-- Corruption detection audit trail
+CREATE TABLE corruption_logs (
+    id SERIAL PRIMARY KEY,
+    camera_id INTEGER REFERENCES cameras(id) ON DELETE CASCADE,
+    image_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
+    corruption_score INTEGER NOT NULL CHECK (corruption_score >= 0 AND corruption_score <= 100),
+    fast_score INTEGER CHECK (fast_score >= 0 AND fast_score <= 100),
+    heavy_score INTEGER CHECK (heavy_score >= 0 AND heavy_score <= 100),
+    detection_details JSONB NOT NULL,
+    action_taken VARCHAR(50) NOT NULL, -- 'saved', 'discarded', 'retried'
+    processing_time_ms INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Corruption fields in existing tables
+ALTER TABLE images ADD COLUMN corruption_score INTEGER DEFAULT 100;
+ALTER TABLE images ADD COLUMN is_flagged BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN corruption_detection_heavy BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN degraded_mode_active BOOLEAN DEFAULT false;
+ALTER TABLE cameras ADD COLUMN consecutive_corruption_failures INTEGER DEFAULT 0;
+ALTER TABLE cameras ADD COLUMN lifetime_glitch_count INTEGER DEFAULT 0;
+```
 
 **Critical Pattern - Query-Based Image Retrieval**:
 
@@ -761,16 +1034,22 @@ timelapser-v4/
 
 ## 🔄 KEY WORKFLOWS
 
-**Image Capture**:
+**Image Capture (with Corruption Detection)**:
 
 1. Worker captures RTSP frame every 5 minutes using OpenCV
-2. Save to filesystem:
-   `/data/cameras/camera-{id}/images/YYYY-MM-DD/capture_YYYYMMDD_HHMMSS.jpg`
-3. Generate thumbnails (if enabled) using Pillow with separate folders
-4. Record in database: `sync_db.record_captured_image()` with active timelapse
-   relationship
-5. Update camera health: `sync_db.update_camera_health()`
-6. Broadcast SSE event: `sync_db.notify_image_captured()` for real-time UI
+2. **Corruption Detection Pipeline**:
+   - Fast Detection: File size, pixel statistics, uniformity (1-5ms)
+   - Heavy Detection: Blur, edge, noise, histogram analysis (20-100ms, if enabled)
+   - Score Calculation: Weighted scoring algorithm (0-100 scale)
+   - Action Decision: Save, retry, or discard based on score vs threshold
+3. **Retry Logic**: If corruption score < threshold and auto-discard enabled, retry once
+4. Save to filesystem: `/data/cameras/camera-{id}/images/YYYY-MM-DD/capture_YYYYMMDD_HHMMSS.jpg`
+5. Generate thumbnails (if enabled) using Pillow with separate folders
+6. **Corruption Logging**: Record evaluation results in `corruption_logs` table
+7. Record in database: `sync_db.record_captured_image()` with corruption score and timelapse relationship
+8. Update camera health and corruption stats: `sync_db.update_camera_health()` + `sync_db.update_camera_corruption_stats()`
+9. **Degraded Mode Check**: Monitor consecutive failures and trigger degraded mode if thresholds exceeded
+10. Broadcast SSE events: `sync_db.broadcast_event()` with corruption details for real-time UI
 
 **Day Number Calculation**:
 
@@ -821,16 +1100,23 @@ useRealtimeCameras() → EventSource('/api/sse') → Live UI updates
 - **Centralized SSE System** - Single connection shared across all components (99% connection reduction)
 - **SSE Connection Health** - Visual indicator for live updates
 - **Error Broadcasting** - Failed captures show immediately
+- **Corruption Detection Events** - Real-time corruption score updates
+- **Degraded Mode Alerts** - Live camera quality issue notifications
+- **Quality Statistics Updates** - System-wide corruption stats refresh automatically
 
 ### ✅ CORE FUNCTIONALITY (Production Ready)
 
 - **RTSP Camera Management** - Add, edit, delete cameras with validation
 - **Time Window Controls** - Capture only during specified hours
-- **Automated Image Capture** - Scheduled captures every 5 minutes
-  (configurable)
-- **Health Monitoring** - Automatic offline detection and recovery
+- **Automated Image Capture** - Scheduled captures every 5 minutes (configurable) with corruption detection
+- **Image Quality Control** - Automatic corruption detection with fast and heavy analysis modes
+- **Intelligent Retry Logic** - Corrupted images automatically retried when auto-discard enabled
+- **Camera Health Monitoring** - Automatic offline detection, recovery, and degraded mode tracking
+- **Per-Camera Quality Settings** - Individual heavy detection configuration for optimal performance
+- **Quality Score Database** - Complete corruption audit trail with 0-100 scoring system
+- **Degraded Mode Protection** - Automatic camera management when quality issues persist
 - **Video Generation** - FFmpeg integration with quality settings
-- **Database Tracking** - Complete image and video metadata
+- **Database Tracking** - Complete image and video metadata with corruption scores
 - **Day Number Tracking** - Proper day counting for overlay generation
 
 ### 🔧 DEVELOPMENT PATTERNS
@@ -958,6 +1244,14 @@ GET /api/cameras/{id}/latest-small     # 800×600 medium
 POST /api/timelapses/new            # Create NEW entity (not status change)
 POST /api/timelapses/{id}/complete  # Mark as historical record
 GET /api/cameras/{id}/timelapse-stats # Total vs current image counts
+
+# Corruption Detection System
+GET /api/corruption/stats           # System-wide corruption statistics
+GET /api/corruption/cameras/{id}/stats # Per-camera corruption details
+GET /api/corruption/logs            # Corruption detection audit logs
+POST /api/corruption/cameras/{id}/reset-degraded # Reset camera degraded mode
+GET /api/corruption/settings        # Global corruption detection settings
+PATCH /api/corruption/settings      # Update corruption detection settings
 
 # Real-time Events
 GET /api/events                     # SSE connection

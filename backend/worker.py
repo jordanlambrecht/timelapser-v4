@@ -41,6 +41,7 @@ from app.database import async_db, sync_db
 from app.config import settings
 from rtsp_capture import RTSPCapture
 from video_generator import VideoGenerator
+from worker_corruption_integration import initialize_worker_corruption_detection
 
 
 class AsyncTimelapseWorker:
@@ -90,6 +91,7 @@ class AsyncTimelapseWorker:
         data_dir = project_root / "data"
         self.capture = RTSPCapture(base_data_dir=str(data_dir))
         self.video_generator = VideoGenerator(sync_db)
+        
         self.scheduler = AsyncIOScheduler()
         self.running = False
         self.current_interval = settings.capture_interval
@@ -99,9 +101,13 @@ class AsyncTimelapseWorker:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Initialize sync database for worker
+        # Initialize sync database for worker FIRST
         sync_db.initialize()
-        logger.info("Async worker initialized with sync database")
+        logger.info("Sync database initialized for worker")
+        
+        # Initialize corruption detection integration AFTER database is ready
+        self.corruption_integration = initialize_worker_corruption_detection(sync_db)
+        logger.info("✅ Corruption detection initialized successfully")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -223,18 +229,34 @@ class AsyncTimelapseWorker:
                 f"Starting capture for camera {camera_id} ({camera_name}) [thumbnails: {'enabled' if generate_thumbnails else 'disabled'}]"
             )
 
-            # Capture image - RTSPCapture handles directory creation and database recording
-            # Note: RTSPCapture still uses sync database, so we run in executor
-            success, message, saved_file_path = await loop.run_in_executor(
+            # Capture image with corruption detection and retry logic
+            def capture_func():
+                return self.capture.capture_image(
+                    camera_id,
+                    camera_name,
+                    rtsp_url,
+                    sync_db,  # RTSPCapture still uses sync_db
+                    timelapse["id"],
+                    generate_thumbnails,  # Pass thumbnail setting
+                )
+
+            # Use corruption-aware capture with retry logic
+            success, message, saved_file_path, corruption_details = await loop.run_in_executor(
                 None,
-                self.capture.capture_image,
+                self.corruption_integration.evaluate_with_retry,
                 camera_id,
-                camera_name,
                 rtsp_url,
-                sync_db,  # RTSPCapture still uses sync_db
+                capture_func,
                 timelapse["id"],
-                generate_thumbnails,  # Pass thumbnail setting
             )
+
+            # Log corruption detection results
+            if corruption_details and not corruption_details.get("detection_disabled"):
+                corruption_score = corruption_details.get("score", "N/A")
+                action_taken = corruption_details.get("action_taken", "unknown")
+                logger.info(
+                    f"Camera {camera_id} corruption check: score={corruption_score}, action={action_taken}"
+                )
 
             if success:
                 await loop.run_in_executor(
@@ -261,20 +283,29 @@ class AsyncTimelapseWorker:
                         f"Image captured, count: {updated_timelapse.get('image_count', 0)}"
                     )
 
-                # Broadcast image captured event with next_capture_at
-                await loop.run_in_executor(
-                    None,
-                    sync_db.broadcast_event,
-                    {
-                        "type": "image_captured",
+                # Broadcast image captured event with corruption details
+                event_data = {
+                    "type": "image_captured",
+                    "data": {
                         "camera_id": camera_id,
                         "image_count": (
                             updated_timelapse.get("image_count", 0)
                             if updated_timelapse
                             else 0
                         ),
-                        "timestamp": datetime.now().isoformat(),
                     },
+                    "timestamp": datetime.now().isoformat(),
+                }
+                
+                # Add corruption details if available
+                if corruption_details and not corruption_details.get("detection_disabled"):
+                    event_data["data"]["corruption_score"] = corruption_details.get("score")
+                    event_data["data"]["corruption_action"] = corruption_details.get("action_taken")
+                
+                await loop.run_in_executor(
+                    None,
+                    sync_db.broadcast_event,
+                    event_data,
                 )
 
                 logger.info(f"Successfully captured and saved image: {message}")

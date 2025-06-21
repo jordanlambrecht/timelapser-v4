@@ -229,12 +229,12 @@ class AsyncDatabase:
                                        consecutive_failures, video_generation_mode, 
                                        standard_fps, enable_time_limits, min_time_seconds,
                                        max_time_seconds, target_time_seconds, fps_bounds_min,
-                                       fps_bounds_max)
+                                       fps_bounds_max, corruption_detection_heavy)
                     VALUES (%(name)s, %(rtsp_url)s, %(status)s, %(time_window_start)s,
                            %(time_window_end)s, %(use_time_window)s, 'unknown', 0,
                            %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,
                            %(min_time_seconds)s, %(max_time_seconds)s, %(target_time_seconds)s,
-                           %(fps_bounds_min)s, %(fps_bounds_max)s)
+                           %(fps_bounds_min)s, %(fps_bounds_max)s, %(corruption_detection_heavy)s)
                     RETURNING id
                 """,
                     camera_data,
@@ -268,6 +268,7 @@ class AsyncDatabase:
                         "target_time_seconds",
                         "fps_bounds_min",
                         "fps_bounds_max",
+                        "corruption_detection_heavy",
                     ]:
                         fields.append(f"{field} = %({field})s")
                         values[field] = value
@@ -542,15 +543,17 @@ class AsyncDatabase:
 
                 return timelapse_id
 
-    async def trigger_immediate_capture_for_timelapse(self, camera_id: int, timelapse_id: int) -> dict:
+    async def trigger_immediate_capture_for_timelapse(
+        self, camera_id: int, timelapse_id: int
+    ) -> dict:
         """
         Trigger an immediate capture for a specific camera and timelapse.
         This is used when starting a new timelapse to get the first image immediately.
-        
+
         Args:
             camera_id: ID of the camera to capture from
             timelapse_id: ID of the timelapse to associate the image with
-            
+
         Returns:
             dict: Result containing success status and details
         """
@@ -559,44 +562,50 @@ class AsyncDatabase:
             import asyncio
             from pathlib import Path
             from datetime import datetime
-            
+
             # Get camera details
             camera = await self.get_camera_by_id(camera_id)
             if not camera:
                 return {"success": False, "error": "Camera not found"}
-                
+
             if camera.get("health_status") != "online":
-                return {"success": False, "error": f"Camera is {camera.get('health_status', 'unknown')}"}
-                
+                return {
+                    "success": False,
+                    "error": f"Camera is {camera.get('health_status', 'unknown')}",
+                }
+
             # Get timelapse details
             timelapse = await self.get_timelapse_by_id(timelapse_id)
             if not timelapse:
                 return {"success": False, "error": "Timelapse not found"}
-                
+
             if timelapse.get("status") != "running":
                 return {"success": False, "error": "Timelapse is not running"}
-                
+
             # Check time window
             if not self._is_camera_within_time_window(camera):
                 return {"success": False, "error": "Camera is outside time window"}
-                
+
             # Import here to avoid circular imports
             from rtsp_capture import RTSPCapture
-            
+
             # Initialize capture system
             project_root = Path(__file__).parent.parent.parent
             data_dir = project_root / "data"
             capture = RTSPCapture(base_data_dir=str(data_dir))
-            
+
             # Get thumbnail generation setting
             def get_thumbnail_setting():
                 try:
                     # Access global sync_db instance
                     import app.database
+
                     sync_instance = app.database.sync_db
                     with sync_instance.get_connection() as conn:
                         with conn.cursor() as cur:
-                            cur.execute("SELECT value FROM settings WHERE key = 'generate_thumbnails'")
+                            cur.execute(
+                                "SELECT value FROM settings WHERE key = 'generate_thumbnails'"
+                            )
                             result = cur.fetchone()
                             if result:
                                 return result[0].lower() == "true"
@@ -604,15 +613,18 @@ class AsyncDatabase:
                 except Exception as e:
                     logger.warning(f"Failed to get thumbnail setting: {e}")
                     return True
-                    
+
             # Get thumbnail setting
             loop = asyncio.get_event_loop()
-            generate_thumbnails = await loop.run_in_executor(None, get_thumbnail_setting)
-            
+            generate_thumbnails = await loop.run_in_executor(
+                None, get_thumbnail_setting
+            )
+
             # Access global sync_db instance for capture operations
             import app.database
+
             sync_instance = app.database.sync_db
-            
+
             # Perform immediate capture
             success, message, saved_file_path = await loop.run_in_executor(
                 None,
@@ -622,26 +634,31 @@ class AsyncDatabase:
                 camera["rtsp_url"],
                 sync_instance,  # RTSPCapture still uses sync_db
                 timelapse_id,
-                generate_thumbnails
+                generate_thumbnails,
             )
-            
+
             if success:
                 # Update camera health
                 await loop.run_in_executor(
                     None, sync_instance.update_camera_health, camera_id, "online", True
                 )
-                
+
                 # Calculate and update next capture time to reset the timer
-                capture_interval = await loop.run_in_executor(None, sync_instance.get_capture_interval_setting)
-                await loop.run_in_executor(
-                    None, sync_instance.calculate_and_update_next_capture, camera_id, capture_interval
+                capture_interval = await loop.run_in_executor(
+                    None, sync_instance.get_capture_interval_setting
                 )
-                
+                await loop.run_in_executor(
+                    None,
+                    sync_instance.calculate_and_update_next_capture,
+                    camera_id,
+                    capture_interval,
+                )
+
                 # Get updated timelapse info for accurate image count
                 updated_timelapse = await loop.run_in_executor(
                     None, sync_instance.get_active_timelapse_for_camera, camera_id
                 )
-                
+
                 # Broadcast image captured event
                 await loop.run_in_executor(
                     None,
@@ -651,25 +668,37 @@ class AsyncDatabase:
                         "data": {
                             "camera_id": camera_id,
                             "timelapse_id": timelapse_id,
-                            "image_count": updated_timelapse.get("image_count", 0) if updated_timelapse else 0,
+                            "image_count": (
+                                updated_timelapse.get("image_count", 0)
+                                if updated_timelapse
+                                else 0
+                            ),
                         },
                         "timestamp": datetime.now().isoformat(),
-                    }
+                    },
                 )
-                
+
                 return {
-                    "success": True, 
+                    "success": True,
                     "message": message,
                     "file_path": saved_file_path,
-                    "image_count": updated_timelapse.get("image_count", 0) if updated_timelapse else 0
+                    "image_count": (
+                        updated_timelapse.get("image_count", 0)
+                        if updated_timelapse
+                        else 0
+                    ),
                 }
             else:
                 # Update camera health to offline
                 await loop.run_in_executor(
-                    None, sync_instance.update_camera_health, camera_id, "offline", False
+                    None,
+                    sync_instance.update_camera_health,
+                    camera_id,
+                    "offline",
+                    False,
                 )
                 return {"success": False, "error": message}
-                
+
         except Exception as e:
             logger.error(f"Error in immediate capture for camera {camera_id}: {e}")
             return {"success": False, "error": str(e)}
@@ -682,20 +711,20 @@ class AsyncDatabase:
         try:
             if not camera.get("use_time_window") or not camera.get("time_window_start"):
                 return True  # No time window restrictions
-                
+
             from datetime import datetime, time
-            
+
             # Get current time in the configured timezone
             # Note: This assumes the time window is in the database timezone
             now = datetime.now()
             current_time = now.time()
-            
+
             start_time_str = camera["time_window_start"]
             end_time_str = camera["time_window_end"]
-            
+
             start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
             end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
-            
+
             # Handle overnight windows
             if start_time <= end_time:
                 # Normal window (e.g., 06:00 - 18:00)
@@ -703,9 +732,11 @@ class AsyncDatabase:
             else:
                 # Overnight window (e.g., 22:00 - 06:00)
                 return current_time >= start_time or current_time <= end_time
-                
+
         except Exception as e:
-            logger.warning(f"Error checking time window for camera {camera.get('id')}: {e}")
+            logger.warning(
+                f"Error checking time window for camera {camera.get('id')}: {e}"
+            )
             return True  # Default to allowing capture if time window check fails
 
     async def copy_camera_video_settings_to_timelapse(
@@ -860,6 +891,83 @@ class AsyncDatabase:
                     """,
                     (status, timelapse_id),
                 )
+                return cur.rowcount > 0
+
+    async def update_timelapse(
+        self, timelapse_id: int, updates: Dict[str, Any]
+    ) -> bool:
+        """Update properties of an existing timelapse (name, auto_stop_at, etc.)"""
+        if not updates:
+            return True
+
+        # Build the SET clause dynamically based on provided updates
+        set_parts = []
+        values = []
+
+        allowed_fields = {
+            "name": "name",
+            "auto_stop_at": "auto_stop_at",
+            "time_window_start": "time_window_start",
+            "time_window_end": "time_window_end",
+            "use_custom_time_window": "use_custom_time_window",
+            "status": "status",
+        }
+
+        for key, value in updates.items():
+            if key in allowed_fields:
+                set_parts.append(f"{allowed_fields[key]} = %s")
+                values.append(value)
+
+        if not set_parts:
+            return True  # No valid fields to update
+
+        # Always update the timestamp
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                query = f"""
+                    UPDATE timelapses 
+                    SET {', '.join(set_parts)}
+                    WHERE id = %s
+                """
+                values.append(timelapse_id)
+
+                await cur.execute(query, values)
+                return cur.rowcount > 0
+
+    async def delete_timelapse(self, timelapse_id: int) -> bool:
+        """Delete a timelapse and all associated data (images, videos)"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # First, clear any camera's active_timelapse_id that points to this timelapse
+                await cur.execute(
+                    """
+                    UPDATE cameras 
+                    SET active_timelapse_id = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE active_timelapse_id = %s
+                    """,
+                    (timelapse_id,),
+                )
+
+                # Delete associated videos (this should cascade to delete video files on disk)
+                await cur.execute(
+                    "DELETE FROM videos WHERE timelapse_id = %s",
+                    (timelapse_id,),
+                )
+
+                # Delete associated images (this should cascade to delete image files on disk)
+                await cur.execute(
+                    "DELETE FROM images WHERE timelapse_id = %s",
+                    (timelapse_id,),
+                )
+
+                # Finally, delete the timelapse itself
+                await cur.execute(
+                    "DELETE FROM timelapses WHERE id = %s",
+                    (timelapse_id,),
+                )
+
                 return cur.rowcount > 0
 
     async def complete_timelapse(self, camera_id: int, timelapse_id: int) -> bool:
@@ -1334,9 +1442,11 @@ class AsyncDatabase:
         self.broadcast_event(
             {
                 "type": "image_captured",
-                "camera_id": camera_id,
-                "image_count": image_count,
-                "day_number": day_number,
+                "data": {
+                    "camera_id": camera_id,
+                    "image_count": image_count,
+                    "day_number": day_number,
+                },
                 "timestamp": datetime.now().isoformat(),
             }
         )
@@ -1347,13 +1457,15 @@ class AsyncDatabase:
         """Notify frontend that camera status changed"""
         event_data = {
             "type": "camera_status_changed",
-            "camera_id": camera_id,
-            "status": status,
+            "data": {
+                "camera_id": camera_id,
+                "status": status,
+            },
             "timestamp": datetime.now().isoformat(),
         }
 
         if health_status:
-            event_data["health_status"] = health_status
+            event_data["data"]["health_status"] = health_status
 
         self.broadcast_event(event_data)
 
@@ -1364,12 +1476,267 @@ class AsyncDatabase:
         self.broadcast_event(
             {
                 "type": "timelapse_status_changed",
-                "camera_id": camera_id,
-                "timelapse_id": timelapse_id,
-                "status": status,
+                "data": {
+                    "camera_id": camera_id,
+                    "timelapse_id": timelapse_id,
+                    "status": status,
+                },
                 "timestamp": datetime.now().isoformat(),
             }
         )
+
+    # Corruption Detection Methods (Async)
+
+    async def get_corruption_settings(self) -> Dict[str, Any]:
+        """Get corruption detection settings from database"""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Fetch corruption settings from key-value pairs
+                    await cur.execute(
+                        """
+                        SELECT key, value 
+                        FROM settings 
+                        WHERE key IN (
+                            'corruption_detection_enabled',
+                            'corruption_score_threshold',
+                            'corruption_auto_discard_enabled',
+                            'corruption_auto_disable_degraded',
+                            'corruption_degraded_consecutive_threshold',
+                            'corruption_degraded_time_window_minutes',
+                            'corruption_degraded_failure_percentage'
+                        )
+                    """
+                    )
+                    rows = cast(List[Dict[str, Any]], await cur.fetchall())
+
+                    # Convert to dictionary with proper type conversion
+                    settings = {}
+                    for row in rows:
+                        key = row["key"]
+                        value = row["value"]
+
+                        # Convert boolean settings
+                        if key in [
+                            "corruption_detection_enabled",
+                            "corruption_auto_discard_enabled",
+                            "corruption_auto_disable_degraded",
+                        ]:
+                            settings[key] = value.lower() == "true"
+                        # Convert integer settings
+                        elif key in [
+                            "corruption_score_threshold",
+                            "corruption_degraded_consecutive_threshold",
+                            "corruption_degraded_time_window_minutes",
+                            "corruption_degraded_failure_percentage",
+                        ]:
+                            settings[key] = int(value)
+                        else:
+                            settings[key] = value
+
+                    # Provide defaults for any missing settings
+                    defaults = {
+                        "corruption_detection_enabled": True,
+                        "corruption_score_threshold": 70,
+                        "corruption_auto_discard_enabled": False,
+                        "corruption_auto_disable_degraded": False,
+                        "corruption_degraded_consecutive_threshold": 10,
+                        "corruption_degraded_time_window_minutes": 30,
+                        "corruption_degraded_failure_percentage": 50,
+                    }
+
+                    for key, default_value in defaults.items():
+                        if key not in settings:
+                            settings[key] = default_value
+
+                    return settings
+
+        except Exception as e:
+            logger.error(f"Failed to get corruption settings: {e}")
+            return {
+                "corruption_detection_enabled": True,
+                "corruption_score_threshold": 70,
+                "corruption_auto_discard_enabled": False,
+                "corruption_auto_disable_degraded": False,
+                "corruption_degraded_consecutive_threshold": 10,
+                "corruption_degraded_time_window_minutes": 30,
+                "corruption_degraded_failure_percentage": 50,
+            }
+
+    async def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
+        """Get per-camera corruption detection settings"""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT corruption_detection_heavy
+                        FROM cameras 
+                        WHERE id = %s
+                    """,
+                        (camera_id,),
+                    )
+                    result_row = await cur.fetchone()
+                    if result_row:
+                        return cast(Dict[str, Any], result_row)
+                    else:
+                        return {"corruption_detection_heavy": False}
+        except Exception as e:
+            logger.error(
+                f"Failed to get camera corruption settings for {camera_id}: {e}"
+            )
+            return {"corruption_detection_heavy": False}
+
+    async def update_camera_corruption_settings(
+        self, camera_id: int, corruption_detection_heavy: bool
+    ) -> bool:
+        """Update per-camera corruption detection settings"""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET corruption_detection_heavy = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """,
+                        (corruption_detection_heavy, camera_id),
+                    )
+                    return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to update camera corruption settings: {e}")
+            return False
+
+    async def get_corruption_logs(
+        self, camera_id: Optional[int] = None, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get corruption detection logs"""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    if camera_id:
+                        await cur.execute(
+                            """
+                            SELECT cl.*, c.name as camera_name
+                            FROM corruption_logs cl
+                            JOIN cameras c ON cl.camera_id = c.id
+                            WHERE cl.camera_id = %s
+                            ORDER BY cl.created_at DESC
+                            LIMIT %s OFFSET %s
+                        """,
+                            (camera_id, limit, offset),
+                        )
+                    else:
+                        await cur.execute(
+                            """
+                            SELECT cl.*, c.name as camera_name
+                            FROM corruption_logs cl
+                            JOIN cameras c ON cl.camera_id = c.id
+                            ORDER BY cl.created_at DESC
+                            LIMIT %s OFFSET %s
+                        """,
+                            (limit, offset),
+                        )
+
+                    rows = await cur.fetchall()
+                    return [cast(Dict[str, Any], row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get corruption logs: {e}")
+            return []
+
+    async def get_corruption_stats(
+        self, camera_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Get corruption detection statistics"""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    if camera_id:
+                        # Camera-specific stats
+                        await cur.execute(
+                            """
+                            SELECT 
+                                lifetime_glitch_count,
+                                consecutive_corruption_failures,
+                                degraded_mode_active,
+                                last_degraded_at
+                            FROM cameras
+                            WHERE id = %s
+                        """,
+                            (camera_id,),
+                        )
+                        camera_stats = await cur.fetchone()
+
+                        # Recent average score
+                        await cur.execute(
+                            """
+                            SELECT AVG(corruption_score) as avg_score
+                            FROM corruption_logs
+                            WHERE camera_id = %s 
+                            AND created_at > NOW() - INTERVAL '7 days'
+                        """,
+                            (camera_id,),
+                        )
+                        avg_result = await cur.fetchone()
+
+                        if camera_stats:
+                            stats = cast(Dict[str, Any], camera_stats)
+                            avg_data = cast(Dict[str, Any], avg_result)
+                            stats["recent_average_score"] = float(
+                                avg_data["avg_score"] or 100.0
+                            )
+                            return stats
+
+                    else:
+                        # System-wide stats
+                        await cur.execute(
+                            """
+                            SELECT 
+                                COUNT(*) as total_cameras,
+                                COUNT(CASE WHEN degraded_mode_active = false THEN 1 END) as healthy_cameras,
+                                COUNT(CASE WHEN degraded_mode_active = true THEN 1 END) as degraded_cameras,
+                                AVG(lifetime_glitch_count) as avg_glitch_count
+                            FROM cameras
+                        """
+                        )
+                        system_stats = await cur.fetchone()
+
+                        # Today's flagged images
+                        await cur.execute(
+                            """
+                            SELECT COUNT(*) as flagged_today
+                            FROM corruption_logs
+                            WHERE action_taken IN ('discarded', 'retried_failed')
+                            AND created_at > CURRENT_DATE
+                        """
+                        )
+                        today_stats = await cur.fetchone()
+
+                        if system_stats and today_stats:
+                            stats = cast(Dict[str, Any], system_stats)
+                            today_data = cast(Dict[str, Any], today_stats)
+                            stats["images_flagged_today"] = today_data["flagged_today"]
+                            return stats
+
+                    return {}
+        except Exception as e:
+            logger.error(f"Failed to get corruption stats: {e}")
+            return {}
+
+    async def reset_camera_degraded_mode(self, camera_id: int) -> bool:
+        """Reset a camera's degraded mode status"""
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _reset_degraded_mode():
+                sync_db.set_camera_degraded_mode(camera_id, False)
+                return True
+
+            return await loop.run_in_executor(None, _reset_degraded_mode)
+        except Exception as e:
+            logger.error(f"Error resetting camera {camera_id} degraded mode: {e}")
+            return False
 
 
 # Sync database wrapper for non-async operations
@@ -1954,9 +2321,11 @@ class SyncDatabase:
         self.broadcast_event(
             {
                 "type": "image_captured",
-                "camera_id": camera_id,
-                "image_count": image_count,
-                "day_number": day_number,
+                "data": {
+                    "camera_id": camera_id,
+                    "image_count": image_count,
+                    "day_number": day_number,
+                },
                 "timestamp": datetime.now().isoformat(),
             }
         )
@@ -1967,13 +2336,15 @@ class SyncDatabase:
         """Notify frontend that camera status changed"""
         event_data = {
             "type": "camera_status_changed",
-            "camera_id": camera_id,
-            "status": status,
+            "data": {
+                "camera_id": camera_id,
+                "status": status,
+            },
             "timestamp": datetime.now().isoformat(),
         }
 
         if health_status:
-            event_data["health_status"] = health_status
+            event_data["data"]["health_status"] = health_status
 
         self.broadcast_event(event_data)
 
@@ -2121,6 +2492,347 @@ class SyncDatabase:
         except Exception as e:
             logger.error(f"Failed to get capture interval setting: {e}")
             return 300
+
+    # Corruption Detection Methods (Sync)
+
+    def get_corruption_settings(self) -> Dict[str, Any]:
+        """Get corruption detection settings from database (sync version)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT 
+                            corruption_detection_enabled,
+                            corruption_score_threshold,
+                            corruption_auto_discard_enabled,
+                            corruption_auto_disable_degraded,
+                            corruption_degraded_consecutive_threshold,
+                            corruption_degraded_time_window_minutes,
+                            corruption_degraded_failure_percentage
+                        FROM settings 
+                        LIMIT 1
+                    """
+                    )
+                    result_row = cur.fetchone()
+                    if result_row:
+                        return cast(Dict[str, Any], result_row)
+                    else:
+                        # Return defaults if no settings found
+                        return {
+                            "corruption_detection_enabled": True,
+                            "corruption_score_threshold": 70,
+                            "corruption_auto_discard_enabled": False,
+                            "corruption_auto_disable_degraded": False,
+                            "corruption_degraded_consecutive_threshold": 10,
+                            "corruption_degraded_time_window_minutes": 30,
+                            "corruption_degraded_failure_percentage": 50,
+                        }
+        except Exception as e:
+            logger.error(f"Failed to get corruption settings: {e}")
+            return {
+                "corruption_detection_enabled": True,
+                "corruption_score_threshold": 70,
+                "corruption_auto_discard_enabled": False,
+                "corruption_auto_disable_degraded": False,
+                "corruption_degraded_consecutive_threshold": 10,
+                "corruption_degraded_time_window_minutes": 30,
+                "corruption_degraded_failure_percentage": 50,
+            }
+
+    def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
+        """Get per-camera corruption detection settings (sync version)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT corruption_detection_heavy
+                        FROM cameras 
+                        WHERE id = %s
+                    """,
+                        (camera_id,),
+                    )
+                    result_row = cur.fetchone()
+                    if result_row:
+                        return cast(Dict[str, Any], result_row)
+                    else:
+                        return {"corruption_detection_heavy": False}
+        except Exception as e:
+            logger.error(
+                f"Failed to get camera corruption settings for {camera_id}: {e}"
+            )
+            return {"corruption_detection_heavy": False}
+
+    def log_corruption_result(self, camera_id: int, result) -> Optional[int]:
+        """Log corruption detection result to database"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO corruption_logs 
+                        (camera_id, corruption_score, fast_score, heavy_score, 
+                         detection_details, action_taken, processing_time_ms)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """,
+                        (
+                            camera_id,
+                            result.score,
+                            result.corruption_score.fast_score,
+                            result.corruption_score.heavy_score,
+                            json.dumps(result.corruption_score.details),
+                            result.action_taken,
+                            result.corruption_score.details.get(
+                                "total_processing_time_ms"
+                            ),
+                        ),
+                    )
+
+                    result_row = cur.fetchone()
+                    result_dict = cast(Optional[Dict[str, Any]], result_row)
+                    return result_dict["id"] if result_dict else None
+
+        except Exception as e:
+            logger.error(f"Failed to log corruption result: {e}")
+            return None
+
+    def update_camera_corruption_failure_count(self, camera_id: int, is_success: bool):
+        """Update camera corruption failure count and lifetime glitch count"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if is_success:
+                        # Reset consecutive failures on success
+                        cur.execute(
+                            """
+                            UPDATE cameras 
+                            SET consecutive_corruption_failures = 0,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """,
+                            (camera_id,),
+                        )
+                    else:
+                        # Increment both consecutive and lifetime counts on failure
+                        cur.execute(
+                            """
+                            UPDATE cameras 
+                            SET consecutive_corruption_failures = consecutive_corruption_failures + 1,
+                                lifetime_glitch_count = lifetime_glitch_count + 1,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """,
+                            (camera_id,),
+                        )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to update corruption failure count for camera {camera_id}: {e}"
+            )
+
+    def get_camera_corruption_failure_stats(self, camera_id: int) -> Dict[str, Any]:
+        """Get corruption failure statistics for a camera"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT 
+                            consecutive_corruption_failures,
+                            lifetime_glitch_count,
+                            degraded_mode_active,
+                            last_degraded_at
+                        FROM cameras
+                        WHERE id = %s
+                    """,
+                        (camera_id,),
+                    )
+                    result_row = cur.fetchone()
+                    if result_row:
+                        return cast(Dict[str, Any], result_row)
+                    else:
+                        return {
+                            "consecutive_corruption_failures": 0,
+                            "lifetime_glitch_count": 0,
+                            "degraded_mode_active": False,
+                            "last_degraded_at": None,
+                        }
+        except Exception as e:
+            logger.error(
+                f"Failed to get corruption failure stats for camera {camera_id}: {e}"
+            )
+            return {
+                "consecutive_corruption_failures": 0,
+                "lifetime_glitch_count": 0,
+                "degraded_mode_active": False,
+                "last_degraded_at": None,
+            }
+
+    def set_camera_degraded_mode(
+        self, camera_id: int, is_degraded: bool, auto_disable: bool = False
+    ):
+        """Set camera degraded mode status and optionally disable camera"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if is_degraded:
+                        # Entering degraded mode
+                        if auto_disable:
+                            # Auto-disable camera
+                            cur.execute(
+                                """
+                                UPDATE cameras 
+                                SET degraded_mode_active = %s,
+                                    last_degraded_at = CURRENT_TIMESTAMP,
+                                    status = 'inactive',
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """,
+                                (is_degraded, camera_id),
+                            )
+                            logger.warning(
+                                f"Camera {camera_id} auto-disabled due to persistent corruption"
+                            )
+                        else:
+                            # Just mark as degraded
+                            cur.execute(
+                                """
+                                UPDATE cameras 
+                                SET degraded_mode_active = %s,
+                                    last_degraded_at = CURRENT_TIMESTAMP,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """,
+                                (is_degraded, camera_id),
+                            )
+                    else:
+                        # Exiting degraded mode (recovery)
+                        cur.execute(
+                            """
+                            UPDATE cameras 
+                            SET degraded_mode_active = %s,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """,
+                            (is_degraded, camera_id),
+                        )
+
+        except Exception as e:
+            logger.error(f"Failed to set degraded mode for camera {camera_id}: {e}")
+
+    def get_corruption_failures_since(
+        self, camera_id: int, cutoff_time: datetime
+    ) -> int:
+        """Get number of corruption failures since the cutoff time"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) as failure_count
+                        FROM corruption_logs
+                        WHERE camera_id = %s 
+                        AND action_taken IN ('discarded', 'retried_failed')
+                        AND created_at > %s
+                    """,
+                        (camera_id, cutoff_time),
+                    )
+                    result_row = cur.fetchone()
+                    if result_row:
+                        result = cast(Dict[str, Any], result_row)
+                        return result["failure_count"]
+                    return 0
+        except Exception as e:
+            logger.error(
+                f"Failed to get corruption failures since {cutoff_time} for camera {camera_id}: {e}"
+            )
+            return 0
+
+    def get_recent_corruption_failure_rate(
+        self, camera_id: int, capture_count: int
+    ) -> float:
+        """Get failure rate over the last N corruption evaluations (0.0 to 1.0)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get last N corruption logs for this camera
+                    cur.execute(
+                        """
+                        SELECT action_taken
+                        FROM corruption_logs
+                        WHERE camera_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                    """,
+                        (camera_id, capture_count),
+                    )
+                    results = cur.fetchall()
+
+                    if not results:
+                        return 0.0
+
+                    total_evaluations = len(results)
+                    failed_evaluations = sum(
+                        1
+                        for row in results
+                        if cast(Dict[str, Any], row)["action_taken"]
+                        in ["discarded", "retried_failed"]
+                    )
+
+                    return failed_evaluations / total_evaluations
+
+        except Exception as e:
+            logger.error(
+                f"Failed to get recent failure rate for camera {camera_id}: {e}"
+            )
+            return 0.0
+
+    def reset_camera_corruption_failures(self, camera_id: int):
+        """Reset camera corruption failure counts (for manual recovery)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE cameras 
+                        SET consecutive_corruption_failures = 0,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """,
+                        (camera_id,),
+                    )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to reset corruption failures for camera {camera_id}: {e}"
+            )
+
+    def broadcast_corruption_event(
+        self,
+        camera_id: int,
+        corruption_score: int,
+        is_corrupted: bool,
+        action_taken: str,
+        failed_checks: list,
+        processing_time_ms: int,
+    ) -> None:
+        """Broadcast corruption detection event via SSE"""
+        self.broadcast_event(
+            {
+                "type": "image_corruption_detected",
+                "data": {
+                    "camera_id": camera_id,
+                    "corruption_score": corruption_score,
+                    "is_corrupted": is_corrupted,
+                    "action_taken": action_taken,
+                    "failed_checks": failed_checks,
+                    "processing_time_ms": processing_time_ms,
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
 
 # Global Database Instances

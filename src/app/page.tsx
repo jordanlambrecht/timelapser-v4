@@ -14,6 +14,7 @@ import {
   Play,
   Pause,
   Square,
+  Shield,
 } from "lucide-react"
 import { CameraCard } from "@/components/camera-card"
 import { StatsCard } from "@/components/stats-card"
@@ -26,6 +27,14 @@ import {
 import { toast } from "@/lib/toast"
 import { useDashboardSSE } from "@/hooks/use-camera-sse"
 import { useSSE, useSSESubscription } from "@/contexts/sse-context"
+import {
+  CorruptionHealthSummary,
+  CorruptionAlert,
+} from "@/components/corruption-indicator"
+import {
+  useCorruptionStats,
+  useCorruptionActions,
+} from "@/hooks/use-corruption-stats"
 
 interface Camera {
   id: number
@@ -38,6 +47,11 @@ interface Camera {
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
+  // Corruption detection fields
+  degraded_mode_active?: boolean
+  recent_avg_score?: number
+  lifetime_glitch_count?: number
+  consecutive_corruption_failures?: number
   // Full image object instead of just ID
   last_image?: {
     id: number
@@ -84,6 +98,11 @@ export default function Dashboard() {
   const [bulkOperationLoading, setBulkOperationLoading] = useState<
     string | null
   >(null)
+
+  // Phase 3: Corruption detection integration
+  const { systemStats: corruptionStats, loading: corruptionLoading } =
+    useCorruptionStats()
+  const { resetCameraDegradedMode } = useCorruptionActions()
 
   const fetchData = async () => {
     try {
@@ -160,12 +179,18 @@ export default function Dashboard() {
   // Global SSE connection for dashboard-wide events
   const { isConnected } = useSSE()
 
-  // Subscribe to specific dashboard events
+  // Subscribe to specific dashboard events including corruption events
   useSSESubscription(
     (event) =>
-      ["camera_updated", "timelapse_status_changed", "image_captured"].includes(
-        event.type
-      ),
+      [
+        "camera_updated",
+        "timelapse_status_changed",
+        "image_captured",
+        "image_corruption_detected",
+        "camera_degraded_mode_triggered",
+        "camera_corruption_reset",
+        "corruption_stats_updated",
+      ].includes(event.type),
     (event) => {
       setLastEventTime(Date.now())
 
@@ -249,6 +274,63 @@ export default function Dashboard() {
                 console.error("Failed to refresh camera data:", error)
               )
           }, 500) // Small delay to ensure database is updated
+          break
+
+        case "image_corruption_detected":
+          // Show toast notification for corruption detection
+          if (event.data.is_corrupted && event.data.corruption_score < 50) {
+            toast.warning(
+              `Camera ${event.data.camera_id}: Poor image quality detected (Score: ${event.data.corruption_score})`
+            )
+          }
+          break
+
+        case "camera_degraded_mode_triggered":
+          // Update camera with degraded mode status and show alert
+          setCameras((prev) =>
+            prev.map((camera) =>
+              camera.id === event.data.camera_id
+                ? {
+                    ...camera,
+                    degraded_mode_active: true,
+                    consecutive_corruption_failures:
+                      event.data.consecutive_failures || 0,
+                  }
+                : camera
+            )
+          )
+          toast.error(
+            `Camera ${event.data.camera_id} entered degraded mode due to quality issues`
+          )
+          break
+
+        case "camera_corruption_reset":
+          // Update camera status and show success toast
+          setCameras((prev) =>
+            prev.map((camera) =>
+              camera.id === event.data.cameraId
+                ? {
+                    ...camera,
+                    degraded_mode_active: false,
+                    consecutive_corruption_failures: 0,
+                  }
+                : camera
+            )
+          )
+          if (!event.data.error) {
+            toast.success(
+              `Camera ${event.data.cameraId} degraded mode reset successfully`
+            )
+          } else {
+            toast.error(
+              `Failed to reset camera ${event.data.cameraId}: ${event.data.error}`
+            )
+          }
+          break
+
+        case "corruption_stats_updated":
+          // Refresh corruption stats when updated
+          // The useCorruptionStats hook will handle the refetch automatically
           break
       }
     }
@@ -833,30 +915,40 @@ export default function Dashboard() {
     0
   )
 
-  if (loading) {
-    return (
-      <div className='flex items-center justify-center min-h-[60vh]'>
-        <div className='space-y-6 text-center'>
-          <div className='relative'>
-            <div className='w-16 h-16 mx-auto border-4 rounded-full border-pink/20 border-t-pink animate-spin' />
-            <div
-              className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-b-cyan animate-spin'
-              style={{
-                animationDirection: "reverse",
-                animationDuration: "1.5s",
-              }}
-            />
-          </div>
-          <div>
-            <p className='font-medium text-white'>Loading dashboard...</p>
-            <p className='mt-1 text-sm text-grey-light/60'>
-              Fetching camera data
-            </p>
-          </div>
-        </div>
-      </div>
-    )
+  const handleCorruptionReset = async (cameraId: number) => {
+    try {
+      await resetCameraDegradedMode(cameraId)
+      // Refresh camera data to show updated status
+      fetchData()
+    } catch (error) {
+      console.error("Failed to reset camera degraded mode:", error)
+    }
   }
+
+  // if (loading) {
+  //   return (
+  //     <div className='flex items-center justify-center min-h-[60vh]'>
+  //       <div className='space-y-6 text-center'>
+  //         <div className='relative'>
+  //           <div className='w-16 h-16 mx-auto border-4 rounded-full border-pink/20 border-t-pink animate-spin' />
+  //           <div
+  //             className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-b-cyan animate-spin'
+  //             style={{
+  //               animationDirection: "reverse",
+  //               animationDuration: "1.5s",
+  //             }}
+  //           />
+  //         </div>
+  //         <div>
+  //           <p className='font-medium text-white'>Loading dashboard...</p>
+  //           <p className='mt-1 text-sm text-grey-light/60'>
+  //             Fetching camera data
+  //           </p>
+  //         </div>
+  //       </div>
+  //     </div>
+  //   )
+  // }
 
   return (
     <div className='relative space-y-12'>
@@ -1032,6 +1124,39 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* System Health Overview */}
+      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
+        {/* ...existing health cards... */}
+
+        {/* Phase 3: Corruption Health Summary Card */}
+        {!corruptionLoading && corruptionStats && (
+          <div className='p-4 bg-purple-800 rounded-lg shadow-md'>
+            <div className='flex items-center justify-between mb-2'>
+              <h3 className='text-lg font-semibold text-white'>
+                Image Quality
+              </h3>
+              <Shield className='w-6 h-6 text-purple-300' />
+            </div>
+            <CorruptionHealthSummary
+              stats={corruptionStats}
+              className='space-y-2'
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Phase 3: Corruption Alerts for Degraded Cameras */}
+      {cameras
+        .filter((camera) => camera.degraded_mode_active)
+        .map((camera) => (
+          <CorruptionAlert
+            key={`corruption-${camera.id}`}
+            camera={camera}
+            onReset={handleCorruptionReset}
+            className='mb-4'
+          />
+        ))}
 
       {/* Cameras Section with Dynamic Layout */}
       <div className='space-y-8'>

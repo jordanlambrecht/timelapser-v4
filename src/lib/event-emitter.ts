@@ -17,6 +17,12 @@ const ALLOWED_EVENT_TYPES = [
   "thumbnail_regeneration_complete",
   "thumbnail_regeneration_cancelled",
   "thumbnail_regeneration_error",
+  // Phase 3: Corruption detection events
+  "image_corruption_detected",
+  "camera_degraded_mode_triggered",
+  "camera_corruption_reset",
+  "corruption_stats_updated",
+  "corruption_settings_updated",
 ] as const
 
 type AllowedEventType = (typeof ALLOWED_EVENT_TYPES)[number]
@@ -78,6 +84,7 @@ interface SSEEvent {
 
 class EventEmitter {
   private clients: Set<ReadableStreamDefaultController> = new Set()
+  private listeners: Map<string, Set<(event: SSEEvent) => void>> = new Map()
 
   addClient(controller: ReadableStreamDefaultController) {
     this.clients.add(controller)
@@ -91,12 +98,43 @@ class EventEmitter {
     return this.clients.size
   }
 
+  // Add traditional event emitter methods for client-side hooks
+  on(eventType: AllowedEventType, callback: (event: SSEEvent) => void) {
+    if (!this.listeners.has(eventType)) {
+      this.listeners.set(eventType, new Set())
+    }
+    this.listeners.get(eventType)!.add(callback)
+  }
+
+  off(eventType: AllowedEventType, callback: (event: SSEEvent) => void) {
+    const listeners = this.listeners.get(eventType)
+    if (listeners) {
+      listeners.delete(callback)
+      if (listeners.size === 0) {
+        this.listeners.delete(eventType)
+      }
+    }
+  }
+
   emit(event: SSEEvent) {
+    // Validate event type
+    if (!ALLOWED_EVENT_TYPES.includes(event.type)) {
+      console.error(`❌ Invalid event type: ${event.type}`)
+      return
+    }
+
+    // Sanitize event data
+    const sanitizedEvent = {
+      ...event,
+      data: sanitizeEventData(event.data),
+    }
+
+    // Send to SSE clients
     const deadClients: ReadableStreamDefaultController[] = []
 
     this.clients.forEach((controller) => {
       try {
-        const chunk = `data: ${JSON.stringify(event)}\n\n`
+        const chunk = `data: ${JSON.stringify(sanitizedEvent)}\n\n`
         controller.enqueue(new TextEncoder().encode(chunk))
       } catch (error) {
         console.error("❌ Failed to send SSE message:", error)
@@ -111,6 +149,18 @@ class EventEmitter {
 
     if (deadClients.length > 0) {
       console.log(`🧹 Cleaned up ${deadClients.length} dead SSE clients`)
+    }
+
+    // Notify local listeners (for client-side hooks)
+    const listeners = this.listeners.get(event.type)
+    if (listeners) {
+      listeners.forEach((callback) => {
+        try {
+          callback(sanitizedEvent)
+        } catch (error) {
+          console.error(`❌ Event listener error for ${event.type}:`, error)
+        }
+      })
     }
   }
 }

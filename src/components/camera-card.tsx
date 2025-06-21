@@ -29,6 +29,8 @@ import {
   Pause,
   Timer,
   CircleStop,
+  AlertTriangle,
+  Shield,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
@@ -56,6 +58,11 @@ interface CameraCardProps {
     time_window_end?: string
     use_time_window: boolean
     next_capture_at?: string
+    // Corruption detection fields
+    corruption_detection_heavy?: boolean
+    degraded_mode_active?: boolean
+    recent_avg_score?: number
+    lifetime_glitch_count?: number
     // Full image object instead of just ID
     last_image?: {
       id: number
@@ -63,6 +70,8 @@ interface CameraCardProps {
       file_path: string
       file_size: number | null
       day_number: number
+      corruption_score?: number
+      is_flagged?: boolean
     } | null
   }
   timelapse?: {
@@ -493,6 +502,29 @@ export function CameraCard({
                   timeWindowEnd={camera.time_window_end}
                   useTimeWindow={camera.use_time_window}
                 />
+                
+                {/* Corruption Status Indicator */}
+                {camera.degraded_mode_active && (
+                  <div className='flex items-center space-x-1 px-2 py-1 bg-red-500/20 border border-red-500/30 rounded-md'>
+                    <AlertTriangle className='h-3 w-3 text-red-400' />
+                    <span className='text-xs text-red-400 font-medium'>Degraded</span>
+                  </div>
+                )}
+                
+                {/* Quality Score Indicator (if available and not degraded) */}
+                {!camera.degraded_mode_active && camera.recent_avg_score !== undefined && (
+                  <div className='flex items-center space-x-1 px-2 py-1 bg-black/30 rounded-md'>
+                    <Shield className='h-3 w-3 text-cyan-400' />
+                    <span className={`text-xs font-medium ${
+                      camera.recent_avg_score >= 90 ? 'text-green-400' :
+                      camera.recent_avg_score >= 70 ? 'text-blue-400' :
+                      camera.recent_avg_score >= 50 ? 'text-yellow-400' :
+                      camera.recent_avg_score >= 30 ? 'text-orange-400' : 'text-red-400'
+                    }`}>
+                      Q:{camera.recent_avg_score}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

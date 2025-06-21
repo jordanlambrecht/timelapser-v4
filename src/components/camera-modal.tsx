@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Camera, Clock, Wifi, Settings } from "lucide-react"
+import { Camera, Clock, Wifi, Settings, Shield, CheckCircle, Circle } from "lucide-react"
 import { toast } from "@/lib/toast"
 
 interface CameraModalProps {
@@ -35,6 +35,7 @@ export function CameraModal({
     use_time_window: false,
     time_window_start: "06:00",
     time_window_end: "18:00",
+    corruption_detection_heavy: false,
   })
   const [saving, setSaving] = useState(false)
 
@@ -47,6 +48,7 @@ export function CameraModal({
         use_time_window: camera?.use_time_window || false,
         time_window_start: camera?.time_window_start || "06:00",
         time_window_end: camera?.time_window_end || "18:00",
+        corruption_detection_heavy: camera?.corruption_detection_heavy || false,
       })
       setSaving(false) // Reset saving state when modal opens
     }
@@ -209,6 +211,77 @@ export function CameraModal({
                   </p>
                 </div>
               )}
+            </div>
+
+            {/* Image Quality Detection Section */}
+            <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+              <div className='flex items-center justify-between'>
+                <div className='space-y-2'>
+                  <Label className='flex items-center space-x-2 font-medium text-white'>
+                    <Shield className='w-4 h-4 text-cyan/70' />
+                    <span>Image Quality Detection</span>
+                  </Label>
+                  <p className='text-sm text-grey-light/60'>
+                    Automatically detect and handle corrupted images from this camera
+                  </p>
+                </div>
+                <div className='flex items-center space-x-2'>
+                  <span className='text-xs font-medium text-grey-light/60'>
+                    {formData.corruption_detection_heavy ? "Advanced" : "Basic"}
+                  </span>
+                  <Switch
+                    checked={formData.corruption_detection_heavy}
+                    onCheckedChange={(checked) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        corruption_detection_heavy: checked,
+                      }))
+                    }
+                    className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+                  />
+                </div>
+              </div>
+
+              {/* Detection Methods Explanation */}
+              <div className='p-4 border bg-grey-dark/30 border-purple-muted/20 rounded-xl'>
+                <div className='text-sm font-medium text-white mb-3'>Detection Methods:</div>
+                <div className='space-y-2 text-xs'>
+                  <div className='flex items-center space-x-2'>
+                    <CheckCircle className='h-3 w-3 text-success' />
+                    <span className='text-grey-light/80'>Fast heuristics (file size, pixel statistics)</span>
+                  </div>
+                  <div className='flex items-center space-x-2'>
+                    {formData.corruption_detection_heavy ? (
+                      <CheckCircle className='h-3 w-3 text-success' />
+                    ) : (
+                      <Circle className='h-3 w-3 text-grey-light/40' />
+                    )}
+                    <span className={formData.corruption_detection_heavy ? "text-grey-light/80" : "text-grey-light/40"}>
+                      Computer vision (blur, noise, pattern analysis)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Performance Impact Indicator */}
+              <div className='flex items-center justify-between p-3 bg-purple-muted/10 border border-purple-muted/20 rounded-xl'>
+                <div className='flex items-center space-x-2 text-xs text-grey-light/60'>
+                  <Clock className='h-3 w-3' />
+                  <span>Processing time per capture:</span>
+                </div>
+                <div className='flex items-center space-x-2'>
+                  <span className='text-xs font-medium text-white'>
+                    ~{formData.corruption_detection_heavy ? '55' : '5'}ms
+                  </span>
+                  <div className={`px-2 py-1 rounded text-xs font-medium ${
+                    formData.corruption_detection_heavy 
+                      ? 'bg-yellow/20 text-yellow border border-yellow/30' 
+                      : 'bg-success/20 text-success border border-success/30'
+                  }`}>
+                    {formData.corruption_detection_heavy ? '+50ms' : '+2ms'}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

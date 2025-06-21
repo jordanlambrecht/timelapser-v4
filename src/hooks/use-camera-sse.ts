@@ -15,6 +15,9 @@ export interface CameraSSECallbacks {
   onStatusChanged?: (data: CameraSSEData) => void
   onTimelapseStatusChanged?: (data: CameraSSEData) => void
   onCameraUpdated?: (data: CameraSSEData) => void
+  onCorruptionDetected?: (data: CameraSSEData) => void
+  onDegradedModeTriggered?: (data: CameraSSEData) => void
+  onCorruptionReset?: (data: CameraSSEData) => void
 }
 
 /**
@@ -27,41 +30,71 @@ export function useCameraSSE(cameraId: number, callbacks: CameraSSECallbacks) {
     onStatusChanged,
     onTimelapseStatusChanged,
     onCameraUpdated,
+    onCorruptionDetected,
+    onDegradedModeTriggered,
+    onCorruptionReset,
   } = callbacks
 
   // Subscribe to image capture events for this camera
-  useSSESubscription(
-    (event) => event.type === "image_captured" && event.camera_id === cameraId,
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "image_captured" && event.data?.camera_id === cameraId,
     useCallback((event) => {
-      onImageCaptured?.(event)
+      onImageCaptured?.(event.data)
     }, [onImageCaptured]),
     [cameraId]
   )
 
   // Subscribe to camera status changes
-  useSSESubscription(
-    (event) => event.type === "camera_status_changed" && event.camera_id === cameraId,
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "camera_status_changed" && event.data?.camera_id === cameraId,
     useCallback((event) => {
-      onStatusChanged?.(event)
+      onStatusChanged?.(event.data)
     }, [onStatusChanged]),
     [cameraId]
   )
 
   // Subscribe to timelapse status changes
-  useSSESubscription(
-    (event) => event.type === "timelapse_status_changed" && event.camera_id === cameraId,
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_status_changed" && event.data?.camera_id === cameraId,
     useCallback((event) => {
-      onTimelapseStatusChanged?.(event)
+      onTimelapseStatusChanged?.(event.data)
     }, [onTimelapseStatusChanged]),
     [cameraId]
   )
 
   // Subscribe to camera updates
-  useSSESubscription(
-    (event) => event.type === "camera_updated" && event.camera_id === cameraId,
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "camera_updated" && event.data?.camera_id === cameraId,
     useCallback((event) => {
-      onCameraUpdated?.(event)
+      onCameraUpdated?.(event.data)
     }, [onCameraUpdated]),
+    [cameraId]
+  )
+
+  // Subscribe to corruption detection events
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "image_corruption_detected" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onCorruptionDetected?.(event.data)
+    }, [onCorruptionDetected]),
+    [cameraId]
+  )
+
+  // Subscribe to degraded mode triggers
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "camera_degraded_mode_triggered" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onDegradedModeTriggered?.(event.data)
+    }, [onDegradedModeTriggered]),
+    [cameraId]
+  )
+
+  // Subscribe to corruption resets
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "camera_corruption_reset" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onCorruptionReset?.(event.data)
+    }, [onCorruptionReset]),
     [cameraId]
   )
 }
@@ -79,14 +112,14 @@ export function useDashboardSSE(callbacks: {
   const { onCameraAdded, onCameraDeleted, onVideoGenerated, onThumbnailProgress } = callbacks
 
   // Camera management events
-  useSSESubscription(
+  useSSESubscription<any>(
     (event) => event.type === "camera_added",
     useCallback((event) => {
       onCameraAdded?.(event)
     }, [onCameraAdded])
   )
 
-  useSSESubscription(
+  useSSESubscription<any>(
     (event) => event.type === "camera_deleted", 
     useCallback((event) => {
       onCameraDeleted?.(event)
@@ -94,7 +127,7 @@ export function useDashboardSSE(callbacks: {
   )
 
   // Video generation events
-  useSSESubscription(
+  useSSESubscription<any>(
     (event) => event.type === "video_generated",
     useCallback((event) => {
       onVideoGenerated?.(event)
@@ -102,7 +135,7 @@ export function useDashboardSSE(callbacks: {
   )
 
   // Thumbnail regeneration progress
-  useSSESubscription(
+  useSSESubscription<any>(
     (event) => event.type.startsWith("thumbnail_regeneration"),
     useCallback((event) => {
       onThumbnailProgress?.(event)

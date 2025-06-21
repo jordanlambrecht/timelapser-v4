@@ -8,6 +8,10 @@ export interface ImageForCamera {
   file_path: string
   file_size: number | null
   day_number: number
+  // Corruption detection fields
+  corruption_score: number
+  is_flagged: boolean
+  corruption_details: object | null
 }
 
 // Camera interfaces
@@ -18,6 +22,15 @@ export interface CameraBase {
   time_window_start: string | null // Time as HH:MM:SS string
   time_window_end: string | null // Time as HH:MM:SS string
   use_time_window: boolean
+  video_generation_mode: "standard" | "target"
+  standard_fps: number
+  enable_time_limits: boolean
+  min_time_seconds: number | null
+  max_time_seconds: number | null
+  target_time_seconds: number | null
+  fps_bounds_min: number
+  fps_bounds_max: number
+  corruption_detection_heavy: boolean
 }
 
 export interface CameraCreate extends CameraBase {}
@@ -29,6 +42,15 @@ export interface CameraUpdate {
   time_window_start?: string | null
   time_window_end?: string | null
   use_time_window?: boolean
+  video_generation_mode?: "standard" | "target"
+  standard_fps?: number
+  enable_time_limits?: boolean
+  min_time_seconds?: number | null
+  max_time_seconds?: number | null
+  target_time_seconds?: number | null
+  fps_bounds_min?: number
+  fps_bounds_max?: number
+  corruption_detection_heavy?: boolean
 }
 
 export interface Camera extends CameraBase {
@@ -38,8 +60,14 @@ export interface Camera extends CameraBase {
   last_capture_success: boolean | null
   consecutive_failures: number
   next_capture_at: string | null // When next capture is scheduled
+  active_timelapse_id: number | null
   created_at: string // ISO datetime string
   updated_at: string // ISO datetime string
+  // Corruption detection fields
+  lifetime_glitch_count: number
+  consecutive_corruption_failures: number
+  degraded_mode_active: boolean
+  last_degraded_at: string | null
   // Include full image object instead of just ID
   last_image: ImageForCamera | null
 }

@@ -1,4 +1,5 @@
 // src/components/spirograph-logo.tsx
+
 import { cn } from "@/lib/utils"
 
 interface SpirographLogoProps {

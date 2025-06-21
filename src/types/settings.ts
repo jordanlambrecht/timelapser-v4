@@ -19,6 +19,16 @@ export interface SettingsState {
   enableLogCompression: boolean
   maxLogFiles: number
 
+  // Corruption detection settings
+  corruptionDetectionEnabled: boolean
+  corruptionScoreThreshold: number
+  corruptionAutoDiscardEnabled: boolean
+  corruptionAutoDisableDegraded: boolean
+  corruptionDegradedConsecutiveThreshold: number
+  corruptionDegradedTimeWindowMinutes: number
+  corruptionDegradedFailurePercentage: number
+  corruptionHeavyDetectionEnabled: boolean
+
   // UI state
   loading: boolean
   saving: boolean
@@ -44,6 +54,16 @@ export interface SettingsActions {
   setEnableLogRotation: (value: boolean) => void
   setEnableLogCompression: (value: boolean) => void
   setMaxLogFiles: (value: number) => void
+
+  // Corruption detection settings
+  setCorruptionDetectionEnabled: (value: boolean) => void
+  setCorruptionScoreThreshold: (value: number) => void
+  setCorruptionAutoDiscardEnabled: (value: boolean) => void
+  setCorruptionAutoDisableDegraded: (value: boolean) => void
+  setCorruptionDegradedConsecutiveThreshold: (value: number) => void
+  setCorruptionDegradedTimeWindowMinutes: (value: number) => void
+  setCorruptionDegradedFailurePercentage: (value: number) => void
+  setCorruptionHeavyDetectionEnabled: (value: boolean) => void
 
   // Actions
   fetchSettings: () => Promise<void>

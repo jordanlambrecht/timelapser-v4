@@ -55,6 +55,11 @@ class CameraBase(BaseModel):
         default=60, ge=1, le=120, description="Maximum FPS bound for target mode"
     )
 
+    # Corruption detection settings
+    corruption_detection_heavy: bool = Field(
+        default=False, description="Enable advanced computer vision corruption detection"
+    )
+
     @field_validator("rtsp_url")
     @classmethod
     def validate_rtsp_url(_cls, v: str) -> str:

@@ -9,8 +9,13 @@ import { TimezoneSettingsCard } from "./components/timezone-settings-card"
 import { LoggingSettingsCard } from "./components/logging-settings-card"
 import { ApiKeySettingsCard } from "./components/api-key-settings-card"
 import { CaptureSettingsCard } from "./components/capture-settings-card"
+import { CorruptionSettingsCard } from "./components/corruption-settings-card"
 import { CurrentConfigurationCard } from "./components/current-configuration-card"
 import { InfoCards } from "./components/info-cards"
+import { Separator } from "@/components/ui/separator"
+import { Badge } from "@/components/ui/badge"
+import { toast } from "@/lib/toast"
+import CorruptionTestComponent from "@/components/corruption-test-component"
 
 export default function Settings() {
   const {
@@ -42,6 +47,23 @@ export default function Settings() {
     setEnableLogCompression,
     maxLogFiles,
     setMaxLogFiles,
+    corruptionDetectionEnabled,
+    setCorruptionDetectionEnabled,
+    corruptionScoreThreshold,
+    setCorruptionScoreThreshold,
+    corruptionAutoDiscardEnabled,
+    setCorruptionAutoDiscardEnabled,
+    corruptionAutoDisableDegraded,
+    setCorruptionAutoDisableDegraded,
+    corruptionDegradedConsecutiveThreshold,
+    setCorruptionDegradedConsecutiveThreshold,
+    corruptionDegradedTimeWindowMinutes,
+    setCorruptionDegradedTimeWindowMinutes,
+    corruptionDegradedFailurePercentage,
+    setCorruptionDegradedFailurePercentage,
+    corruptionHeavyDetectionEnabled,
+    setCorruptionHeavyDetectionEnabled,
+
     loading,
     saving,
 
@@ -146,6 +168,40 @@ export default function Settings() {
           />
         </div>
 
+        {/* Corruption Detection Settings - Full Width */}
+        <CorruptionSettingsCard
+          corruptionDetectionEnabled={corruptionDetectionEnabled}
+          setCorruptionDetectionEnabled={setCorruptionDetectionEnabled}
+          corruptionScoreThreshold={corruptionScoreThreshold}
+          setCorruptionScoreThreshold={setCorruptionScoreThreshold}
+          corruptionAutoDiscardEnabled={corruptionAutoDiscardEnabled}
+          setCorruptionAutoDiscardEnabled={setCorruptionAutoDiscardEnabled}
+          corruptionAutoDisableDegraded={corruptionAutoDisableDegraded}
+          setCorruptionAutoDisableDegraded={setCorruptionAutoDisableDegraded}
+          corruptionDegradedConsecutiveThreshold={
+            corruptionDegradedConsecutiveThreshold
+          }
+          setCorruptionDegradedConsecutiveThreshold={
+            setCorruptionDegradedConsecutiveThreshold
+          }
+          corruptionDegradedTimeWindowMinutes={
+            corruptionDegradedTimeWindowMinutes
+          }
+          setCorruptionDegradedTimeWindowMinutes={
+            setCorruptionDegradedTimeWindowMinutes
+          }
+          corruptionDegradedFailurePercentage={
+            corruptionDegradedFailurePercentage
+          }
+          setCorruptionDegradedFailurePercentage={
+            setCorruptionDegradedFailurePercentage
+          }
+          corruptionHeavyDetectionEnabled={corruptionHeavyDetectionEnabled}
+          setCorruptionHeavyDetectionEnabled={
+            setCorruptionHeavyDetectionEnabled
+          }
+        />
+        <CorruptionTestComponent />
         {/*  Save Button */}
         <div className='flex justify-center pt-4 pb-2'>
           <Button
