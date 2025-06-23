@@ -17,6 +17,7 @@ import logging
 import os
 from datetime import datetime, date
 from app.database import SyncDatabase
+from app.time_utils import get_timezone_aware_timestamp_sync, parse_iso_timestamp_safe, format_filename_timestamp, extract_date_from_filename
 
 logger = logging.getLogger(__name__)
 
@@ -302,11 +303,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def extract_date_from_filename(self, filename: str) -> Optional[date]:
         """Extract date from capture filename like 'capture_20240610_143022.jpg'"""
         try:
-            # Expected format: capture_YYYYMMDD_HHMMSS.jpg
-            basename = os.path.basename(filename)
-            if basename.startswith("capture_") and len(basename) >= 21:
-                date_str = basename[8:16]  # Extract YYYYMMDD
-                return datetime.strptime(date_str, "%Y%m%d").date()
+            # Use centralized date extraction function
+            return extract_date_from_filename(filename, "capture_")
         except Exception:
             pass
         return None
@@ -475,7 +473,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         logger.info("FFmpeg command: %s", cmd_str)
 
         # Execute FFmpeg
-        start_time = datetime.now()
+        # Use centralized timezone utility (AI-CONTEXT compliant)
+        from app.time_utils import utc_now
+
+        start_time = utc_now()
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -484,7 +485,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             check=False,  # 5 minute timeout
         )
 
-        duration = (datetime.now() - start_time).total_seconds()
+        duration = (utc_now() - start_time).total_seconds()
 
         if result.returncode != 0:
             error_msg = f"FFmpeg failed: {result.stderr}"
@@ -668,7 +669,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         # Generate video name if not provided
         if not video_name:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if self.db:
+                # Use timezone-aware timestamp from database settings
+                timestamp_iso = get_timezone_aware_timestamp_sync(self.db)
+                # Parse ISO timestamp and convert to filename format using centralized utilities
+                timestamp_dt = parse_iso_timestamp_safe(timestamp_iso)
+                timestamp = format_filename_timestamp(timestamp_dt)
+            else:
+                # Fallback to centralized timezone utility (AI-CONTEXT compliant)
+                from app.time_utils import utc_now
+
+                fallback_time = utc_now()
+                timestamp = format_filename_timestamp(fallback_time)
             day_range = (
                 f"_days{day_start}-{day_end}"
                 if day_start or day_end

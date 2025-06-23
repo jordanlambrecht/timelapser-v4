@@ -149,6 +149,7 @@ class OpenWeatherService:
         sunset_timestamp: int,
         sunrise_offset_minutes: int = 0,
         sunset_offset_minutes: int = 0,
+        timezone_str: str = "UTC",
     ) -> TimeWindow:
         """
         Calculate time window based on sunrise/sunset with offsets.
@@ -158,13 +159,22 @@ class OpenWeatherService:
             sunset_timestamp: Unix timestamp of sunset
             sunrise_offset_minutes: Minutes to offset sunrise (+ = later, - = earlier)
             sunset_offset_minutes: Minutes to offset sunset (+ = later, - = earlier)
+            timezone_str: Timezone for calculations (defaults to UTC)
 
         Returns:
             TimeWindow: Calculated time window
         """
-        # Convert timestamps to local time
-        sunrise_dt = datetime.fromtimestamp(sunrise_timestamp)
-        sunset_dt = datetime.fromtimestamp(sunset_timestamp)
+        # Convert timestamps to timezone-aware datetime
+        from zoneinfo import ZoneInfo
+        try:
+            tz = ZoneInfo(timezone_str)
+            sunrise_dt = datetime.fromtimestamp(sunrise_timestamp, tz=tz)
+            sunset_dt = datetime.fromtimestamp(sunset_timestamp, tz=tz)
+        except Exception:
+            # Fallback to UTC if timezone is invalid
+            tz = ZoneInfo("UTC")
+            sunrise_dt = datetime.fromtimestamp(sunrise_timestamp, tz=tz)
+            sunset_dt = datetime.fromtimestamp(sunset_timestamp, tz=tz)
 
         # Apply offsets
         start_dt = sunrise_dt + timedelta(minutes=sunrise_offset_minutes)
@@ -187,6 +197,7 @@ class OpenWeatherService:
         sunrise_offset_minutes: int = 0,
         sunset_offset_minutes: int = 0,
         check_time: Optional[datetime] = None,
+        timezone_str: str = "UTC",
     ) -> bool:
         """
         Check if current time (or specified time) is within sun-based window.
@@ -196,19 +207,30 @@ class OpenWeatherService:
             sunset_timestamp: Unix timestamp of sunset
             sunrise_offset_minutes: Minutes to offset sunrise
             sunset_offset_minutes: Minutes to offset sunset
-            check_time: Time to check (defaults to now)
+            check_time: Time to check (defaults to now in configured timezone)
+            timezone_str: Timezone for calculations (defaults to UTC)
 
         Returns:
             bool: True if within window
         """
+        # Get current time in configured timezone if not provided
         if check_time is None:
-            check_time = datetime.now()
+            from zoneinfo import ZoneInfo
+            try:
+                # Use centralized timezone utility (AI-CONTEXT compliant)
+                from app.time_utils import create_timezone_aware_datetime
+                check_time = create_timezone_aware_datetime(timezone_str)
+            except Exception:
+                # Fallback to centralized UTC utility (AI-CONTEXT compliant)
+                from app.time_utils import utc_now
+                check_time = utc_now()
 
         window = self.calculate_sun_time_window(
             sunrise_timestamp,
             sunset_timestamp,
             sunrise_offset_minutes,
             sunset_offset_minutes,
+            timezone_str,
         )
 
         current_time = check_time.time()
@@ -392,8 +414,19 @@ class WeatherManager:
                 logger.warning("Weather refresh skipped: Location not configured")
                 return None
 
-            # Check if weather data is from today
-            today = date.today().isoformat()
+            # Check if weather data is from today in configured timezone
+            from app.time_utils import get_timezone_aware_date_from_settings
+            
+            # Get raw settings dict to access timezone setting
+            import inspect
+            get_settings_method = getattr(self.db, "get_settings_dict")
+            if inspect.iscoroutinefunction(get_settings_method):
+                settings_dict = await self.db.get_settings_dict()
+            else:
+                settings_dict = self.db.get_settings_dict()
+                
+            today = get_timezone_aware_date_from_settings(settings_dict)
+            
             if settings.get("weather_date_fetched") == today:
                 # Data is current, return cached data
                 if all(
@@ -460,11 +493,22 @@ class WeatherManager:
                 longitude=0,
             )
 
+            # Get timezone setting for calculations
+            import inspect
+            get_settings_method = getattr(self.db, "get_settings_dict")
+            if inspect.iscoroutinefunction(get_settings_method):
+                settings_dict = await self.db.get_settings_dict()
+            else:
+                settings_dict = self.db.get_settings_dict()
+            
+            timezone_str = settings_dict.get("timezone", "UTC")
+
             return service.calculate_sun_time_window(
                 sunrise_timestamp=settings["sunrise_timestamp"],
                 sunset_timestamp=settings["sunset_timestamp"],
                 sunrise_offset_minutes=settings.get("sunrise_offset_minutes", 0),
                 sunset_offset_minutes=settings.get("sunset_offset_minutes", 0),
+                timezone_str=timezone_str,
             )
 
         except Exception as e:

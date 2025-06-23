@@ -62,7 +62,7 @@ def _format_log_results(logs_result: List[Dict[str, Any]]) -> List[Dict[str, Any
             "level": row["level"],
             "message": row["message"],
             "camera_id": row["camera_id"],
-            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,  # OK: datetime object already timezone-aware from DB
             "camera_name": row["camera_name"],
         }
         for row in logs_result

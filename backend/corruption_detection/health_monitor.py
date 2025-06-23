@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 from .models import CorruptionResult
+from app.time_utils import get_timezone_aware_timestamp_sync
 
 
 @dataclass
@@ -105,7 +106,7 @@ class HealthMonitor:
                             "consecutive_failures": health_changes[
                                 "consecutive_failures"
                             ],
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": get_timezone_aware_timestamp_sync(self.sync_db),
                         }
                     )
                 else:
@@ -121,7 +122,7 @@ class HealthMonitor:
                         "degraded_mode_active": True,
                         "consecutive_failures": health_changes["consecutive_failures"],
                         "auto_disabled": health_changes["auto_disabled"],
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": get_timezone_aware_timestamp_sync(self.sync_db),
                     }
                 )
 
@@ -138,7 +139,7 @@ class HealthMonitor:
                         "camera_id": camera_id,
                         "degraded_mode_active": False,
                         "recovered": True,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": get_timezone_aware_timestamp_sync(self.sync_db),
                     }
                 )
 
@@ -151,7 +152,7 @@ class HealthMonitor:
                         "corruption_score": result.score,
                         "action_taken": result.action_taken,
                         "severity": "high",
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": get_timezone_aware_timestamp_sync(self.sync_db),
                     }
                 )
 
@@ -279,7 +280,10 @@ class HealthMonitor:
     def _get_failures_in_time_window(self, camera_id: int, window_minutes: int) -> int:
         """Get number of corruption failures in the specified time window"""
         try:
-            cutoff_time = datetime.now() - timedelta(minutes=window_minutes)
+            # Get timezone-aware current timestamp and calculate cutoff
+            current_timestamp_str = get_timezone_aware_timestamp_sync(self.sync_db)
+            current_time = datetime.fromisoformat(current_timestamp_str.replace('Z', '+00:00'))
+            cutoff_time = current_time - timedelta(minutes=window_minutes)
             return self.sync_db.get_corruption_failures_since(camera_id, cutoff_time)
         except Exception as e:
             self.logger.error(
@@ -320,7 +324,7 @@ class HealthMonitor:
                     "camera_id": camera_id,
                     "degraded_mode_active": False,
                     "manually_reset": True,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": get_timezone_aware_timestamp_sync(self.sync_db),
                 }
             )
 

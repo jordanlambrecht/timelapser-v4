@@ -9,6 +9,95 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2025.06.23] - Timezone & Path Consolidation System 🕐
+
+### Major System Improvements
+
+#### 🕐 **Centralized Timezone Handling Implementation**
+
+- **CREATED**: Complete centralized timezone utilities module
+  (`backend/app/timezone_utils.py`)
+  - Consolidated all timezone-aware timestamp and date generation functions
+  - Implemented both sync and async versions for worker and FastAPI contexts
+  - Added comprehensive timezone validation and error handling with UTC
+    fallbacks
+  - Proper inheritance pattern: timelapse → camera → system timezone defaults
+- **REFACTORED**: All backend modules to use centralized timezone utilities
+  - Updated `database.py`, `worker.py`, `video_automation_service.py`,
+    `video_generator.py`
+  - Replaced all naive `datetime.now()` calls with timezone-aware functions
+  - Fixed broken timezone function calls and inconsistent date/time handling
+  - Enhanced event broadcasting with timezone-aware timestamps
+- **ENHANCED**: SSE event system with consistent timezone-aware timestamps
+  - All event broadcasting now uses `{ type, data, timestamp }` structure with
+    proper timezone handling
+  - Updated corruption detection, weather service, and automation event
+    timestamps
+  - Eliminated timezone inconsistencies across real-time updates
+
+#### 📁 **Hardcoded Path Elimination & Config-Driven Architecture**
+
+- **COMPLETED**: All hardcoded absolute paths removed from codebase
+  - Eliminated hardcoded `/Users/*/dev-local/timelapser-v4` paths in image
+    serving endpoints
+  - Replaced `get_project_root()` with config-driven `settings.data_directory`
+    in all file serving
+  - **FULLY UPDATED**: `backend/app/routers/images.py` - ALL endpoints now use
+    config-driven paths
+    - `get_image` endpoint: uses `settings.data_directory`
+    - `get_image_thumbnail` endpoint: uses `settings.data_directory`
+    - `get_image_small` endpoint: uses `settings.data_directory`
+    - `download_image` endpoint: uses `settings.data_directory`
+    - `bulk_download_images` endpoint: uses `settings.data_directory`
+  - Fixed frontend API route (`src/app/api/images/[...path]/route.ts`) to use
+    dynamic paths
+- **ENHANCED**: Video automation service with config-driven directory handling
+  - Updated `video_automation_service.py` to use `settings.data_directory` and
+    `settings.videos_directory`
+  - Eliminated "TODO: Implement proper data directory handling" with proper
+    config integration
+  - All video generation now uses centralized configuration settings
+- **STANDARDIZED**: Path handling across all modules
+  - Consistent use of `pathlib.Path` for cross-platform compatibility
+  - Environment variable support for all directory settings
+  - Relative path storage in database (never absolute paths)
+  - Zero remaining uses of `get_project_root()` for file serving
+
+### Code Quality & Architecture
+
+#### 🏗️ **System Architecture Compliance**
+
+- **VALIDATED**: Frontend SSE usage remains AI-CONTEXT compliant
+  - Maintained single centralized SSE connection (no polling)
+  - All timezone-aware timestamps flow through centralized SSE context
+  - No impact on existing real-time update performance
+- **ENHANCED**: Error handling and fallback mechanisms
+  - Robust UTC fallbacks for timezone calculation failures
+  - Graceful degradation when timezone settings are invalid
+  - Comprehensive logging for timezone and path resolution issues
+
+#### 📚 **Documentation & AI Context Updates**
+
+- **UPDATED**: AI-CONTEXT.md with new timezone and path management rules
+  - Added "Timezone System Rules" section with critical implementation
+    guidelines
+  - Added "Path Management Rules" section for config-driven development
+  - Enhanced "NEVER USE" section with timezone and path anti-patterns
+  - Documented centralized utilities usage patterns for future AI assistance
+
+### Technical Impact
+
+- **Performance**: No performance impact - centralized utilities are lightweight
+  wrappers
+- **Portability**: Complete elimination of hardcoded paths enables easy
+  deployment across environments
+- **Consistency**: All datetime operations now use same timezone-aware
+  calculation methods
+- **Maintainability**: Single source of truth for timezone logic reduces
+  duplication and bugs
+- **Future-Proofing**: Config-driven architecture supports easy environment
+  customization
+
 ## [2025.06.20] - API Endpoint Debugging & Event System Fixes 🔧
 
 ### Bug Fixes

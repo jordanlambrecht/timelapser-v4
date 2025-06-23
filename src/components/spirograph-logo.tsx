@@ -1,5 +1,6 @@
 // src/components/spirograph-logo.tsx
-
+"use client"
+import React, { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
 
 interface SpirographLogoProps {
@@ -7,72 +8,69 @@ interface SpirographLogoProps {
   size?: number
 }
 
-export function SpirographLogo({ className, size = 48 }: SpirographLogoProps) {
-  // Generate spirograph path using mathematical equations
-  const generateSpirographPath = (
-    R: number,
-    r: number,
-    d: number,
-    steps: number = 500
-  ) => {
-    const path: string[] = []
-    const centerX = 50
-    const centerY = 50
+// Helper function for GCD calculation
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b)
+}
 
-    for (let i = 0; i <= steps; i++) {
-      const t = (i / steps) * 2 * Math.PI * 10 // Multiple rotations for complete pattern
-      const x =
-        centerX +
-        ((R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t)) * 0.8
-      const y =
-        centerY +
-        ((R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t)) * 0.8
+// Generate a spirograph path
+function generateSpirographPath(
+  R: number,
+  r: number,
+  d: number,
+  precision = 100
+): string {
+  const path = []
+  const iterations = Math.ceil((r * precision) / gcd(R, r))
 
-      if (i === 0) {
-        path.push(`M ${x} ${y}`)
-      } else {
-        path.push(`L ${x} ${y}`)
-      }
+  for (let i = 0; i <= iterations; i++) {
+    const t = (i / precision) * 2 * Math.PI
+    const x = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t)
+    const y = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t)
+
+    // Scale and center - larger scale for bigger spirograph
+    const scaledX = x * 0.8 + 50
+    const scaledY = y * 0.8 + 50
+
+    if (i === 0) {
+      path.push(`M ${scaledX.toFixed(2)} ${scaledY.toFixed(2)}`)
+    } else {
+      path.push(`L ${scaledX.toFixed(2)} ${scaledY.toFixed(2)}`)
     }
-
-    return path.join(" ")
   }
 
-  // Different spirograph parameters for layered effect
-  const spirographs = [
+  return path.join(" ")
+}
+
+export function SpirographLogo({ className, size = 48 }: SpirographLogoProps) {
+  const [isClient, setIsClient] = useState(false)
+
+  // Only render the dynamic content on the client to avoid hydration issues
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+  // Simplified spirograph configurations - larger and less complex
+  const spirographConfigs = [
     {
-      R: 30,
-      r: 7,
-      d: 15,
-      color: "var(--color-pink)",
-      opacity: 0.8,
-      duration: "20s",
-    },
-    {
-      R: 25,
-      r: 5,
-      d: 12,
-      color: "var(--color-cyan)",
-      opacity: 0.7,
+      R: 40,
+      r: 12,
+      d: 8,
+      color: "url(#spirograph-gradient-1)",
+      opacity: 0.9,
       duration: "15s",
     },
     {
-      R: 20,
-      r: 8,
-      d: 10,
-      color: "var(--color-purple)",
-      opacity: 0.6,
-      duration: "25s",
-    },
-    {
       R: 35,
-      r: 12,
-      d: 8,
-      color: "var(--color-purple-light)",
-      opacity: 0.5,
-      duration: "30s",
+      r: 10,
+      d: 6,
+      color: "var(--color-purple)",
+      opacity: 0.7,
+      duration: "20s",
     },
   ]
+
+  const innerPatternConfig = { R: 30, r: 8, d: 5 }
 
   return (
     <div
@@ -143,51 +141,67 @@ export function SpirographLogo({ className, size = 48 }: SpirographLogoProps) {
           className='animate-spin'
           style={{ animationDuration: "60s", transformOrigin: "50px 50px" }}
         >
-          {/* Main spirograph layers */}
-          {spirographs.map((config, index) => (
+          {/* Main spirograph layers - only render on client */}
+          {isClient &&
+            spirographConfigs.map((config, index) => (
+              <g
+                key={index}
+                className='animate-spin'
+                style={{
+                  animationDuration: config.duration,
+                  animationDirection: index % 2 === 0 ? "normal" : "reverse",
+                  transformOrigin: "50px 50px",
+                }}
+              >
+                <path
+                  d={generateSpirographPath(config.R, config.r, config.d)}
+                  fill='none'
+                  stroke={config.color}
+                  strokeWidth='1.5'
+                  opacity={config.opacity}
+                  strokeLinecap='round'
+                  strokeLinejoin='round'
+                />
+              </g>
+            ))}
+
+          {/* Additional detailed inner pattern - only render on client */}
+          {isClient && (
             <g
-              key={index}
               className='animate-spin'
               style={{
-                animationDuration: config.duration,
-                animationDirection: index % 2 === 0 ? "normal" : "reverse",
+                animationDuration: "8s",
+                animationDirection: "reverse",
                 transformOrigin: "50px 50px",
               }}
             >
               <path
-                d={generateSpirographPath(config.R, config.r, config.d)}
+                d={generateSpirographPath(
+                  innerPatternConfig.R,
+                  innerPatternConfig.r,
+                  innerPatternConfig.d
+                )}
                 fill='none'
-                stroke={
-                  index < 2
-                    ? `url(#spirograph-gradient-${index + 1})`
-                    : config.color
-                }
-                strokeWidth='0.5'
-                opacity={config.opacity}
+                stroke='var(--color-yellow)'
+                strokeWidth='1'
+                opacity='0.8'
                 strokeLinecap='round'
-                strokeLinejoin='round'
               />
             </g>
-          ))}
+          )}
 
-          {/* Additional detailed inner pattern */}
-          <g
-            className='animate-spin'
-            style={{
-              animationDuration: "8s",
-              animationDirection: "reverse",
-              transformOrigin: "50px 50px",
-            }}
-          >
-            <path
-              d={generateSpirographPath(15, 3, 8)}
+          {/* Fallback static content for SSR */}
+          {!isClient && (
+            <circle
+              cx='50'
+              cy='50'
+              r='30'
               fill='none'
-              stroke='var(--color-yellow)'
-              strokeWidth='0.3'
-              opacity='0.9'
-              strokeLinecap='round'
+              stroke='var(--color-purple)'
+              strokeWidth='1.5'
+              opacity='0.7'
             />
-          </g>
+          )}
         </g>
 
         {/* Center dot */}

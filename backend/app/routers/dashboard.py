@@ -4,6 +4,7 @@ from typing import List, Dict, Any, cast
 from loguru import logger
 
 from ..database import async_db
+from ..time_utils import get_timezone_aware_timestamp_async
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ async def get_dashboard_data():
             "cameras": cameras,
             "timelapses": timelapses,
             "videos": videos,
-            "timestamp": "2024-01-01T00:00:00Z",  # Add timestamp for cache busting
+            "timestamp": await get_timezone_aware_timestamp_async(async_db),
         }
 
         return dashboard_data

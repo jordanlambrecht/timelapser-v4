@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     data_directory: str = "./data"
     images_directory: str = "./data/cameras"
     videos_directory: str = "./data/videos"
+    thumbnails_directory: str = "./data/thumbnails"
 
     # Worker settings
     capture_interval: int = 300  # 5 minutes default

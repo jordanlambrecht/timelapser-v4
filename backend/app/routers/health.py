@@ -1,9 +1,10 @@
 # backend/app/routers/health.py
-from fastapi import APIRouter, HTTPException
-from typing import Dict, Any
+from fastapi import APIRouter
+
 from loguru import logger
-from datetime import datetime
+
 from ..database import sync_db, async_db
+from ..time_utils import get_timezone_aware_timestamp_async
 
 router = APIRouter()
 
@@ -29,7 +30,7 @@ async def health_check():
 
         return {
             "status": "healthy" if overall_healthy else "degraded",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": await get_timezone_aware_timestamp_async(async_db),
             "version": "1.0.0",
             "services": {
                 "database": {
@@ -55,7 +56,7 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         return {
             "status": "unhealthy",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": await get_timezone_aware_timestamp_async(async_db),
             "version": "1.0.0",
             "error": str(e),
             "services": {
@@ -89,3 +90,41 @@ async def get_health_stats():
             "status": "error",
             "error": str(e),
         }
+
+
+@router.get("/stats-discovery")
+async def get_stats_discovery():
+    """
+    Discover all available statistics endpoints across the system.
+    This endpoint helps users find the specific stats they need.
+    """
+    return {
+        "description": "Available statistics endpoints throughout the Timelapser system",
+        "endpoints": {
+            "system_health": {
+                "url": "/api/health/stats",
+                "description": "Comprehensive system health statistics including cameras, timelapses, and captures",
+            },
+            "cameras": {
+                "url": "/api/cameras/stats",
+                "description": "Camera statistics with detailed image and capture information",
+            },
+            "corruption_detection": {
+                "url": "/api/corruption/stats",
+                "description": "Image corruption detection statistics and system health scores",
+            },
+            "thumbnails": {
+                "url": "/api/thumbnails/stats",
+                "description": "Thumbnail coverage statistics and image processing metrics",
+            },
+            "logs": {
+                "url": "/api/logs/stats",
+                "description": "System log statistics by level and frequency",
+            },
+            "video_automation": {
+                "url": "/api/video-automation/stats",
+                "description": "Video automation job queue statistics and processing metrics",
+            },
+        },
+        "usage_note": "Each endpoint provides domain-specific statistics. Use the URLs above to access detailed metrics for specific system components.",
+    }

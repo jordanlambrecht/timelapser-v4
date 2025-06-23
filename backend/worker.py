@@ -42,11 +42,13 @@ from loguru import logger
 
 # Import from the same backend directory
 from app.database import async_db, sync_db
+from app.time_utils import get_timezone_aware_timestamp_sync, get_timezone_aware_time_sync, utc_now, get_timezone_aware_date_sync, parse_time_string
 from app.config import settings
 from rtsp_capture import RTSPCapture
 from video_generator import VideoGenerator
 from worker_corruption_integration import initialize_worker_corruption_detection
 from weather.service import WeatherManager, OpenWeatherService
+from video_automation_service import VideoAutomationService
 
 
 class AsyncTimelapseWorker:
@@ -91,10 +93,8 @@ class AsyncTimelapseWorker:
         runtime configuration changes.
         """
         # Initialize components
-        # Use absolute path to project root data directory
-        project_root = Path(__file__).parent.parent
-        data_dir = project_root / "data"
-        self.capture = RTSPCapture(base_data_dir=str(data_dir))
+        # Use config-driven data directory (AI-CONTEXT compliant)
+        self.capture = RTSPCapture(base_data_dir=settings.data_directory)
         self.video_generator = VideoGenerator(sync_db)
 
         self.scheduler = AsyncIOScheduler()
@@ -117,6 +117,10 @@ class AsyncTimelapseWorker:
         # Initialize weather manager for sunrise/sunset and weather data
         self.weather_manager = WeatherManager(sync_db)
         logger.info("Weather manager initialized")
+
+        # Initialize video automation service
+        self.video_automation = VideoAutomationService(sync_db)
+        logger.info("Video automation service initialized")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -175,16 +179,23 @@ class AsyncTimelapseWorker:
         try:
             # Convert string times to time objects if needed
             if isinstance(start_time_str, str):
-                start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
+                start_time = parse_time_string(start_time_str)
             else:
                 start_time = start_time_str
 
             if isinstance(end_time_str, str):
-                end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
+                end_time = parse_time_string(end_time_str)
             else:
                 end_time = end_time_str
 
-            current_time = datetime.now().time()
+            # Get current time in the configured timezone
+            try:
+                from app.time_utils import get_timezone_aware_time_sync
+                current_time = get_timezone_aware_time_sync(sync_db)
+            except Exception:
+                # Fallback to centralized timezone utility (AI-CONTEXT compliant)
+                from app.time_utils import utc_now
+                current_time = utc_now().time()
 
             # Handle overnight windows (e.g., 22:00 - 06:00)
             if start_time <= end_time:
@@ -220,11 +231,15 @@ class AsyncTimelapseWorker:
                 longitude=0,
             )
 
+            # Get timezone for sun window calculation
+            timezone_str = settings_dict.get("timezone", "UTC")
+
             return service.is_within_sun_window(
                 sunrise_timestamp=int(sunrise_timestamp),
                 sunset_timestamp=int(sunset_timestamp),
                 sunrise_offset_minutes=sunrise_offset_minutes,
                 sunset_offset_minutes=sunset_offset_minutes,
+                timezone_str=timezone_str,
             )
 
         except Exception as e:
@@ -358,6 +373,22 @@ class AsyncTimelapseWorker:
                         f"Image captured, count: {updated_timelapse.get('image_count', 0)}"
                     )
 
+                # Trigger per-capture video automation if enabled
+                try:
+                    automation_triggered = await loop.run_in_executor(
+                        None,
+                        self.video_automation.trigger_per_capture_generation,
+                        camera_id,
+                    )
+                    if automation_triggered:
+                        logger.info(
+                            f"Triggered per-capture video generation for camera {camera_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to trigger per-capture automation for camera {camera_id}: {e}"
+                    )
+
                 # Broadcast image captured event with corruption details
                 event_data = {
                     "type": "image_captured",
@@ -369,7 +400,7 @@ class AsyncTimelapseWorker:
                             else 0
                         ),
                     },
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": get_timezone_aware_timestamp_sync(sync_db),
                 }
 
                 # Add corruption details if available
@@ -488,14 +519,20 @@ class AsyncTimelapseWorker:
         except Exception as e:
             logger.error(f"Error in check_camera_health: {e}")
 
-    async def check_for_video_generation_requests(self):
-        """Check for pending video generation requests"""
+    async def process_video_automation(self):
+        """Process video automation triggers and jobs"""
         try:
-            # This would need to be implemented in the database layer
-            # For now, skip video generation in worker
-            pass
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None, self.video_automation.process_automation_triggers
+            )
+
+            # Log activity if any
+            if any(results.values()):
+                logger.info(f"Video automation activity: {results}")
+
         except Exception as e:
-            logger.error(f"Error checking video generation requests: {e}")
+            logger.error(f"Error processing video automation: {e}")
 
     async def refresh_weather_data(self):
         """Refresh weather data if needed and weather is enabled"""
@@ -527,7 +564,9 @@ class AsyncTimelapseWorker:
             assert api_key is not None, "api_key should not be None after validation"
 
             # Check if weather data is stale (not from today)
-            today = date.today().isoformat()
+            # Use timezone-aware date for proper comparison
+            from app.time_utils import get_timezone_aware_date_sync
+            today = get_timezone_aware_date_sync(sync_db)
             weather_date_fetched = settings_dict.get("weather_date_fetched", "")
 
             if weather_date_fetched == today:
@@ -557,7 +596,7 @@ class AsyncTimelapseWorker:
                             "description": weather_data.description,
                             "date_fetched": weather_data.date_fetched.isoformat(),
                         },
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": get_timezone_aware_timestamp_sync(sync_db),
                     },
                 )
             else:
@@ -638,24 +677,27 @@ class AsyncTimelapseWorker:
         )
 
         # Also run weather refresh on startup
+        # Use centralized timezone utility (AI-CONTEXT compliant)
+        from app.time_utils import utc_now
+        startup_time = utc_now()
         self.scheduler.add_job(
             func=self.refresh_weather_data,
             trigger="date",
-            run_date=datetime.now(),
+            run_date=startup_time,
             id="weather_startup_job",
             name="Initial Weather Data Refresh",
             max_instances=1,
         )
 
-        # Schedule video generation check (disabled for now)
-        # self.scheduler.add_job(
-        #     func=self.check_for_video_generation_requests,
-        #     trigger="interval",
-        #     seconds=60,
-        #     id='video_job',
-        #     name='Check Video Generation Requests',
-        #     max_instances=1
-        # )
+        # Schedule video automation processing
+        self.scheduler.add_job(
+            func=self.process_video_automation,
+            trigger="interval",
+            seconds=120,  # Check every 2 minutes
+            id="video_automation_job",
+            name="Process Video Automation",
+            max_instances=1,
+        )
 
         # Schedule interval update check
         self.scheduler.add_job(

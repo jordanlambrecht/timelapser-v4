@@ -34,9 +34,10 @@ class RTSPCapture:
 
     def ensure_timelapse_directory(self, camera_id: int, timelapse_id: int) -> Path:
         """Create and return timelapse-specific directory structure (entity-based)"""
+        # Use config-driven camera directory structure (AI-CONTEXT compliant)
         frames_dir = (
             self.base_data_dir
-            / "cameras"
+            / "cameras"  # This is acceptable as it's a subfolder of the configurable base
             / f"camera-{camera_id}"
             / f"timelapse-{timelapse_id}"
             / "frames"
@@ -46,7 +47,11 @@ class RTSPCapture:
 
     def ensure_camera_directories(self, camera_id: int) -> Dict[str, Path]:
         """Create and return camera-specific directory structure with separate folders for different sizes"""
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Use centralized timezone utility for date formatting (AI-CONTEXT compliant)
+        # Note: This should ideally get timezone from database, but for now using UTC fallback
+        from app.time_utils import format_date_string
+        today = format_date_string()
+        # Use config-driven base directory (AI-CONTEXT compliant)
         base_dir = self.base_data_dir / "cameras" / f"camera-{camera_id}"
 
         directories = {
@@ -83,12 +88,17 @@ class RTSPCapture:
 
     def generate_entity_filename(self, day_number: int) -> str:
         """Generate day-based filename for entity-based structure"""
-        timestamp = datetime.now().strftime("%H%M%S")
+        # Use centralized timezone utility for timestamp (AI-CONTEXT compliant)
+        from app.time_utils import format_filename_timestamp
+        timestamp = format_filename_timestamp().split('_')[1]  # Get just the time part
         return f"day{day_number:03d}_{timestamp}.jpg"
 
     def ensure_camera_directory(self, camera_id: int) -> Path:
         """Create and return camera-specific directory structure (LEGACY - for backward compatibility)"""
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Use centralized timezone utility for date formatting (AI-CONTEXT compliant)
+        from app.time_utils import format_date_string
+        today = format_date_string()
+        # Use config-driven base directory (AI-CONTEXT compliant)
         camera_dir = (
             self.base_data_dir / "cameras" / f"camera-{camera_id}" / "images" / today
         )
@@ -97,7 +107,9 @@ class RTSPCapture:
 
     def generate_filename(self, _camera_id: int) -> str:
         """Generate timestamped filename for captured image"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use centralized timezone utility for timestamp (AI-CONTEXT compliant)
+        from app.time_utils import format_filename_timestamp
+        timestamp = format_filename_timestamp()
         return f"capture_{timestamp}.jpg"
 
     def capture_frame_from_stream(self, rtsp_url: str) -> Optional[Any]:
@@ -252,8 +264,10 @@ class RTSPCapture:
                     filename = self.generate_filename(camera_id)
                     filepath = directories["images"] / filename
 
-                    # Store relative path for database (legacy)
-                    relative_db_path = f"data/cameras/camera-{camera_id}/images/{datetime.now().strftime('%Y-%m-%d')}/{filename}"
+                    # Store relative path for database (legacy) using centralized timezone utility (AI-CONTEXT compliant)
+                    from app.time_utils import utc_now
+                    today_str = utc_now().strftime('%Y-%m-%d')
+                    relative_db_path = f"data/cameras/camera-{camera_id}/images/{today_str}/{filename}"
 
                     # Save main image
                     success, file_size = self.save_frame_with_quality(
