@@ -52,9 +52,10 @@ export async function DELETE(
       // Delete the video file if it exists
       if (video.file_path) {
         try {
+          const dataDir = process.env.DATA_DIR || "/data"
           const fullPath = path.isAbsolute(video.file_path)
             ? video.file_path
-            : path.join(process.cwd(), video.file_path)
+            : path.join(dataDir, video.file_path)
 
           await fs.unlink(fullPath)
           console.log(`Deleted video file: ${fullPath}`)

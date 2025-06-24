@@ -11,16 +11,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Camera, Clock, Wifi, Settings, Shield, CheckCircle, Circle } from "lucide-react"
+import {
+  Camera,
+  Clock,
+  Wifi,
+  Settings,
+  Shield,
+  CheckCircle,
+  Circle,
+} from "lucide-react"
 import { toast } from "@/lib/toast"
-
-interface CameraModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onSave: (camera: any) => void
-  camera?: any
-  title: string
-}
+import type { CameraModalProps } from "@/types"
 
 export function CameraModal({
   isOpen,
@@ -222,7 +223,8 @@ export function CameraModal({
                     <span>Image Quality Detection</span>
                   </Label>
                   <p className='text-sm text-grey-light/60'>
-                    Automatically detect and handle corrupted images from this camera
+                    Automatically detect and handle corrupted images from this
+                    camera
                   </p>
                 </div>
                 <div className='flex items-center space-x-2'>
@@ -244,11 +246,15 @@ export function CameraModal({
 
               {/* Detection Methods Explanation */}
               <div className='p-4 border bg-grey-dark/30 border-purple-muted/20 rounded-xl'>
-                <div className='text-sm font-medium text-white mb-3'>Detection Methods:</div>
+                <div className='text-sm font-medium text-white mb-3'>
+                  Detection Methods:
+                </div>
                 <div className='space-y-2 text-xs'>
                   <div className='flex items-center space-x-2'>
                     <CheckCircle className='h-3 w-3 text-success' />
-                    <span className='text-grey-light/80'>Fast heuristics (file size, pixel statistics)</span>
+                    <span className='text-grey-light/80'>
+                      Fast heuristics (file size, pixel statistics)
+                    </span>
                   </div>
                   <div className='flex items-center space-x-2'>
                     {formData.corruption_detection_heavy ? (
@@ -256,7 +262,13 @@ export function CameraModal({
                     ) : (
                       <Circle className='h-3 w-3 text-grey-light/40' />
                     )}
-                    <span className={formData.corruption_detection_heavy ? "text-grey-light/80" : "text-grey-light/40"}>
+                    <span
+                      className={
+                        formData.corruption_detection_heavy
+                          ? "text-grey-light/80"
+                          : "text-grey-light/40"
+                      }
+                    >
                       Computer vision (blur, noise, pattern analysis)
                     </span>
                   </div>
@@ -271,14 +283,16 @@ export function CameraModal({
                 </div>
                 <div className='flex items-center space-x-2'>
                   <span className='text-xs font-medium text-white'>
-                    ~{formData.corruption_detection_heavy ? '55' : '5'}ms
+                    ~{formData.corruption_detection_heavy ? "55" : "5"}ms
                   </span>
-                  <div className={`px-2 py-1 rounded text-xs font-medium ${
-                    formData.corruption_detection_heavy 
-                      ? 'bg-yellow/20 text-yellow border border-yellow/30' 
-                      : 'bg-success/20 text-success border border-success/30'
-                  }`}>
-                    {formData.corruption_detection_heavy ? '+50ms' : '+2ms'}
+                  <div
+                    className={`px-2 py-1 rounded text-xs font-medium ${
+                      formData.corruption_detection_heavy
+                        ? "bg-yellow/20 text-yellow border border-yellow/30"
+                        : "bg-success/20 text-success border border-success/30"
+                    }`}
+                  >
+                    {formData.corruption_detection_heavy ? "+50ms" : "+2ms"}
                   </div>
                 </div>
               </div>

@@ -12,7 +12,6 @@ import { useCameraDetails } from "@/hooks/use-camera-details"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
-import { VideoGenerationSettings } from "@/components/video-generation-settings"
 import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
 import { TimelapseDetailsModal } from "@/components/timelapse-details-modal"
 import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
@@ -39,40 +38,17 @@ import {
   Square,
   Settings,
   Eye,
-  Plus,
-  MoreVertical,
   CircleStop,
   Pause,
   Film,
-  Calendar,
-  HardDrive,
-  Trash2,
   Download,
-  Edit3,
-  Check,
-  X,
   ChevronRight,
-  RotateCcw,
-  Archive,
-  Maximize2,
-  Grid,
-  List,
-  Images,
   PlayCircle,
 } from "lucide-react"
 import cn from "clsx"
 import Image from "next/image"
 
-// Import proper TypeScript interfaces - ARCHITECTURAL LAW COMPLIANCE
-interface TimelapseConfig {
-  name: string
-  useTimeWindow: boolean
-  timeWindowStart: string
-  timeWindowEnd: string
-  useAutoStop: boolean
-  autoStopAt?: string
-  videoSettings?: any
-}
+import { type TimelapseConfig } from "@/types"
 
 export default function CameraDetailsPage() {
   const params = useParams()
@@ -307,9 +283,11 @@ export default function CameraDetailsPage() {
         status: "running",
         name: config.name,
         auto_stop_at: config.useAutoStop ? config.autoStopAt : null,
-        time_window_start: config.useTimeWindow ? config.timeWindowStart : null,
-        time_window_end: config.useTimeWindow ? config.timeWindowEnd : null,
-        use_custom_time_window: config.useTimeWindow,
+        time_window_start:
+          config.timeWindowType === "time" ? config.timeWindowStart : null,
+        time_window_end:
+          config.timeWindowType === "time" ? config.timeWindowEnd : null,
+        use_custom_time_window: config.timeWindowType !== "none",
         // ARCHITECTURAL LAW: Video settings inheritance pattern
         ...(config.videoSettings && config.videoSettings),
       }
@@ -328,8 +306,6 @@ export default function CameraDetailsPage() {
       if (response.ok) {
         toast.timelapseStarted(camera.name)
         setNewTimelapseDialogOpen(false)
-
-        // 🎯 REFACTORED: Use new hook's refetch for complete data synchronization
         await refetch()
 
         // Force image refresh with cache-busting

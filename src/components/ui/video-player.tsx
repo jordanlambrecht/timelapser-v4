@@ -13,15 +13,7 @@ import {
   Download,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-interface VideoPlayerProps {
-  src: string
-  poster?: string
-  title?: string
-  className?: string
-  showDownload?: boolean
-  onDownload?: () => void
-}
+import { VideoPlayerProps } from "@/types"
 
 export function VideoPlayer({
   src,

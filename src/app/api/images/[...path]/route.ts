@@ -15,9 +15,8 @@ export async function GET(
     const filePath = path.join("/")
 
     // Security: Ensure we're only serving files from the data directory
-    const dataDir =
-      process.env.DATA_DIR ||
-      "/Users/jordanlambrecht/dev-local/timelapser-v4/data"
+    // AI-CONTEXT compliant: Use environment variable without process.cwd() fallback
+    const dataDir = process.env.DATA_DIR || "/data"
     const fullPath = join(dataDir, filePath)
 
     // Additional security: Ensure the resolved path is within the data directory

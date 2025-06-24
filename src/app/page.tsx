@@ -5,8 +5,8 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Plus,
-  Camera,
-  Video,
+  Camera as CameraIcon,
+  Video as VideoIcon,
   Clock,
   Activity,
   Zap,
@@ -35,50 +35,7 @@ import {
   useCorruptionStats,
   useCorruptionActions,
 } from "@/hooks/use-corruption-stats"
-
-interface Camera {
-  id: number
-  name: string
-  rtsp_url: string
-  status: string
-  health_status: "online" | "offline" | "unknown"
-  last_capture_at?: string
-  consecutive_failures: number
-  time_window_start?: string
-  time_window_end?: string
-  use_time_window: boolean
-  // Corruption detection fields
-  degraded_mode_active?: boolean
-  recent_avg_score?: number
-  lifetime_glitch_count?: number
-  consecutive_corruption_failures?: number
-  // Full image object instead of just ID
-  last_image?: {
-    id: number
-    captured_at: string
-    file_path: string
-    file_size: number | null
-    day_number: number
-  } | null
-}
-
-interface Timelapse {
-  id: number
-  camera_id: number
-  status: string
-  name?: string
-  image_count: number
-  last_capture_at?: string
-}
-
-interface Video {
-  id: number
-  camera_id: number
-  status: string
-  file_size?: number
-  duration?: number
-  created_at: string
-}
+import type { Camera, Timelapse, Video } from "@/types"
 
 export default function Dashboard() {
   const [cameras, setCameras] = useState<Camera[]>([])
@@ -230,6 +187,11 @@ export default function Dashboard() {
                   status: event.status,
                   image_count: 0,
                   last_capture_at: undefined,
+                  // Required fields for Timelapse type
+                  time_window_type: "none" as const,
+                  use_custom_time_window: false,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
                 },
               ]
             }
@@ -996,7 +958,7 @@ export default function Dashboard() {
           title='Total Cameras'
           value={cameras.length}
           description={`${onlineCameras} online`}
-          icon={Camera}
+          icon={CameraIcon}
           color='cyan'
           trend={
             onlineCameras > 0
@@ -1022,7 +984,7 @@ export default function Dashboard() {
           title='Generated Videos'
           value={totalVideos}
           description='Ready to download'
-          icon={Video}
+          icon={VideoIcon}
           color='purple'
         />
         <StatsCard
@@ -1208,7 +1170,7 @@ export default function Dashboard() {
 
               <div className='p-12 border glass-strong rounded-3xl border-purple-muted/30'>
                 <div className='flex items-center justify-center w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-2xl rotate-12'>
-                  <Camera className='w-10 h-10 text-white' />
+                  <CameraIcon className='w-10 h-10 text-white' />
                 </div>
 
                 <h3 className='mb-3 text-2xl font-bold text-white'>

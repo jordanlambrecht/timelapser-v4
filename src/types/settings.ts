@@ -1,3 +1,5 @@
+import { ReactNode } from "react"
+
 export interface SettingsState {
   // Core settings
   captureInterval: number
@@ -80,4 +82,77 @@ export interface SettingsActions {
   // Actions
   fetchSettings: () => Promise<void>
   saveSettings: () => Promise<void>
+}
+
+// Settings Component Props
+export interface ApiKeySettingsCardProps {
+  openWeatherApiKey: string
+  setOpenWeatherApiKey: (value: string) => void
+}
+
+export interface CaptureSettingsCardProps {
+  captureInterval: number
+  setCaptureInterval: (value: number) => void
+}
+
+export interface CorruptionSettingsCardProps {
+  // Global settings
+  corruptionDetectionEnabled: boolean
+  setCorruptionDetectionEnabled: (value: boolean) => void
+  corruptionScoreThreshold: number
+  setCorruptionScoreThreshold: (value: number) => void
+  corruptionAutoDiscardEnabled: boolean
+  setCorruptionAutoDiscardEnabled: (value: boolean) => void
+  corruptionAutoDisableDegraded: boolean
+  setCorruptionAutoDisableDegraded: (value: boolean) => void
+  corruptionDegradedConsecutiveThreshold: number
+  setCorruptionDegradedConsecutiveThreshold: (value: number) => void
+  corruptionDegradedTimeWindowMinutes: number
+  setCorruptionDegradedTimeWindowMinutes: (value: number) => void
+  corruptionDegradedFailurePercentage: number
+  setCorruptionDegradedFailurePercentage: (value: number) => void
+  corruptionHeavyDetectionEnabled: boolean
+  setCorruptionHeavyDetectionEnabled: (value: boolean) => void
+}
+
+export interface CurrentConfigurationCardProps {
+  settings: SettingsState
+}
+
+export interface LoggingSettingsCardProps {
+  logRetentionDays: number
+  setLogRetentionDays: (value: number) => void
+  maxLogFileSize: number
+  setMaxLogFileSize: (value: number) => void
+  enableDebugLogging: boolean
+  setEnableDebugLogging: (value: boolean) => void
+  logLevel: string
+  setLogLevel: (value: string) => void
+  enableLogRotation: boolean
+  setEnableLogRotation: (value: boolean) => void
+  enableLogCompression: boolean
+  setEnableLogCompression: (value: boolean) => void
+  maxLogFiles: number
+  setMaxLogFiles: (value: number) => void
+}
+
+export interface SettingsProviderProps {
+  children: ReactNode
+}
+
+export interface TimezoneSettingsCardProps {
+  timezone: string
+  setTimezone: (value: string) => void
+  saving: boolean
+}
+
+export interface WeatherSettingsCardProps {
+  weatherEnabled: boolean
+  setWeatherEnabled: (value: boolean) => void
+  sunriseSunsetEnabled: boolean
+  setSunriseSunsetEnabled: (value: boolean) => void
+  latitude: number | null
+  setLatitude: (value: number | null) => void
+  longitude: number | null
+  setLongitude: (value: number | null) => void
 }

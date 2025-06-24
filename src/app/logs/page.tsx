@@ -23,10 +23,7 @@ interface Log {
   timestamp: string
 }
 
-interface Camera {
-  id: number
-  name: string
-}
+import { Camera } from "@/types"
 
 interface LogStats {
   errors: number

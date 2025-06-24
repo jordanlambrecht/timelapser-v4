@@ -4,20 +4,16 @@
 import { useState } from "react"
 import { X, Video, Settings, Palette } from "lucide-react"
 import { VideoOverlayConfig, OverlaySettings } from "../video-overlay-config"
-
-interface Camera {
-  id: number
-  name: string
-}
+import { Camera } from "@/types"
 
 interface VideoGenerationModalProps {
   isOpen: boolean
   onClose: () => void
   camera: Camera
-  onGenerate: (settings: VideoGenerationSettings) => void
+  onGenerate: (settings: VideoModalSettings) => void
 }
 
-export interface VideoGenerationSettings {
+export interface VideoModalSettings {
   video_name?: string
   framerate: number
   quality: "low" | "medium" | "high"
@@ -37,7 +33,7 @@ export function VideoGenerationModal({
   >("basic")
   const [generating, setGenerating] = useState(false)
 
-  const [settings, setSettings] = useState<VideoGenerationSettings>({
+  const [settings, setSettings] = useState<VideoModalSettings>({
     video_name: "",
     framerate: 30,
     quality: "medium",

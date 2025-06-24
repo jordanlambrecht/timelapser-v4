@@ -64,9 +64,15 @@ import {
 import { cn } from "@/lib/utils"
 import { toast } from "@/lib/toast"
 import { formatDuration, formatDate } from "@/lib/time-utils"
+import type {
+  TimelapseDetails,
+  TimelapseVideo,
+  TimelapseImage,
+  TimelapseDetailsModalProps,
+} from "@/types"
 
 // Utility function for file size formatting
-const formatFileSize = (bytes: number | null): string => {
+const formatFileSize = (bytes: number | null | undefined): string => {
   if (!bytes || bytes === 0) return "0 Bytes"
   const k = 1024
   const sizes = ["Bytes", "KB", "MB", "GB"]
@@ -93,77 +99,6 @@ const VideoStatusBadge = ({
       <span className='capitalize'>{status}</span>
     </div>
   )
-}
-
-interface TimelapseDetails {
-  id: number
-  camera_id: number
-  name: string | null
-  status: "running" | "stopped" | "paused" | "completed" | "archived"
-  start_date: string
-  image_count: number
-  last_capture_at: string | null
-  created_at: string
-  updated_at: string
-  auto_stop_at: string | null
-  time_window_start: string | null
-  time_window_end: string | null
-  use_custom_time_window: boolean
-  // Video generation settings
-  video_generation_mode?: string
-  standard_fps?: number
-  enable_time_limits?: boolean
-  min_time_seconds?: number
-  max_time_seconds?: number
-  target_time_seconds?: number
-  fps_bounds_min?: number
-  fps_bounds_max?: number
-}
-
-interface TimelapseVideo {
-  id: number
-  camera_id: number
-  name: string
-  file_path: string | null
-  status: "generating" | "completed" | "failed"
-  image_count: number | null
-  file_size: number | null
-  duration_seconds: number | null
-  images_start_date: string | null
-  images_end_date: string | null
-  created_at: string
-  updated_at: string
-  calculated_fps: number | null
-  target_duration: number | null
-  actual_duration: number | null
-  fps_was_adjusted: boolean
-  adjustment_reason: string | null
-  settings: Record<string, any>
-}
-
-interface TimelapseImage {
-  id: number
-  camera_id: number
-  timelapse_id: number
-  file_path: string
-  captured_at: string
-  day_number: number
-  file_size: number | null
-  created_at: string
-  date_directory: string | null
-  thumbnail_path: string | null
-  small_path: string | null
-  thumbnail_size: number | null
-  small_size: number | null
-  updated_at: string
-}
-
-interface TimelapseDetailsModalProps {
-  isOpen: boolean
-  onClose: () => void
-  timelapseId: number
-  cameraName: string
-  onDataUpdate?: () => void
 }
 
 export const TimelapseDetailsModal = memo(
@@ -921,7 +856,9 @@ export const TimelapseDetailsModal = memo(
                       <StatItem
                         icon={Calendar}
                         label='Start Date'
-                        value={formatDate(timelapse.start_date)}
+                        value={formatDate(
+                          timelapse.start_date || timelapse.created_at
+                        )}
                         accent='yellow'
                       />
                       <StatItem

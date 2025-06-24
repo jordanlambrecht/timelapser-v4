@@ -89,3 +89,35 @@ export interface TimelapseWithAutomation extends Timelapse {
   automation_schedule?: AutomationScheduleConfig
   milestone_config?: MilestoneConfig
 }
+
+// Video Automation Component Props
+export interface VideoAutomationBadgeProps {
+  mode: VideoAutomationMode
+}
+
+export interface VideoAutomationStatusProps {
+  camera: CameraWithAutomation
+  jobs: VideoGenerationJob[]
+}
+
+export interface VideoAutomationSettingsProps {
+  cameraId?: number
+  initialSettings?: CameraAutomationSettings
+}
+
+export interface VideoQueueMonitorProps {
+  showHeader?: boolean
+  maxJobs?: number
+  className?: string
+}
+
+// Hook Interfaces
+export interface VideoJobEventData {
+  job_id: string
+  camera_id: number
+  camera_name: string
+  status: string
+  progress?: number
+  error?: string
+  output_path?: string
+}

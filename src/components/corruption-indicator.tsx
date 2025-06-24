@@ -4,14 +4,11 @@
 import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, Shield, CheckCircle, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-interface CorruptionIndicatorProps {
-  score: number
-  degradedMode?: boolean
-  size?: "sm" | "md" | "lg"
-  showLabel?: boolean
-  className?: string
-}
+import type {
+  CorruptionIndicatorProps,
+  CorruptionAlertProps,
+  CorruptionHealthSummaryProps,
+} from "@/types"
 
 export function CorruptionIndicator({
   score,
@@ -81,19 +78,6 @@ export function CorruptionIndicator({
   )
 }
 
-interface CorruptionAlertProps {
-  camera: {
-    id: number
-    name: string
-    degraded_mode_active?: boolean
-    consecutive_corruption_failures?: number
-    lifetime_glitch_count?: number
-    recent_avg_score?: number
-  }
-  onReset?: (cameraId: number) => void
-  className?: string
-}
-
 export function CorruptionAlert({
   camera,
   onReset,
@@ -137,16 +121,6 @@ export function CorruptionAlert({
       </div>
     </div>
   )
-}
-
-interface CorruptionHealthSummaryProps {
-  stats: {
-    total_cameras: number
-    cameras_healthy: number
-    cameras_degraded: number
-    system_health_score: number
-  }
-  className?: string
 }
 
 export function CorruptionHealthSummary({

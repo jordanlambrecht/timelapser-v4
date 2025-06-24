@@ -20,6 +20,8 @@ export interface Camera {
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
+  
+  // Video generation settings (FPS/duration)
   video_generation_mode: "standard" | "target"
   standard_fps: number
   enable_time_limits: boolean
@@ -28,6 +30,11 @@ export interface Camera {
   target_time_seconds?: number
   fps_bounds_min: number
   fps_bounds_max: number
+  
+  // Video automation settings (when to generate)
+  video_automation_mode: "manual" | "per_capture" | "scheduled" | "milestone"
+  generation_schedule?: Record<string, any>
+  milestone_config?: Record<string, any>
 
   // Corruption detection fields
   corruption_detection_heavy: boolean
@@ -61,4 +68,94 @@ export interface CameraDetailsResponse {
   videos: Video[]
   recent_activity: LogForCamera[]
   stats: CameraDetailStats
+}
+
+// Camera Component Props
+export interface CameraCardProps {
+  camera: CameraWithLastImage
+  onEditCamera: (camera: Camera) => void
+  onDeleteCamera: (camera: Camera) => void
+  onCreateTimelapse: (cameraId: number) => void
+  onOpenVideoModal: (camera: Camera) => void
+  className?: string
+}
+
+export interface CameraCardAutomationBadgeProps {
+  camera: Camera
+  className?: string
+}
+
+export interface CameraImageWithFallbackProps {
+  cameraId: number
+  cameraName: string
+  imageKey: number
+}
+
+// Hook Interfaces
+export interface CameraCountdownProps {
+  cameraId: number
+  intervalSeconds: number
+  onCountdownUpdate?: (timeRemaining: number) => void
+}
+
+export interface CountdownState {
+  timeRemaining: number
+  isActive: boolean
+  lastCapture?: string
+  nextCapture?: string
+}
+
+export interface CameraSSEData {
+  camera_id: number
+  event_type: string
+  data: any
+  timestamp: string
+}
+
+export interface CameraSSECallbacks {
+  onCameraUpdate?: (data: CameraSSEData) => void
+  onImageCapture?: (data: CameraSSEData) => void
+  onError?: (error: Event) => void
+  onConnect?: () => void
+  onDisconnect?: () => void
+}
+
+export interface CorruptionStats {
+  total_images: number
+  flagged_images: number
+  flagged_percentage: number
+  avg_corruption_score: number
+  last_24h_flagged: number
+  cameras_affected: number
+}
+
+export interface CameraCorruptionStats extends CorruptionStats {
+  camera_id: number
+  camera_name: string
+  recent_flagged: ImageForCamera[]
+}
+
+export interface CorruptionLogEntry {
+  timestamp: string
+  camera_id: number
+  camera_name: string
+  image_id: number
+  corruption_score: number
+  details: object | null
+}
+
+export interface UseCameraDetailsResult {
+  data: CameraDetailsResponse | null
+  isLoading: boolean
+  error: string | null
+  refetch: () => Promise<void>
+}
+
+// Data Interfaces
+export interface CorruptionTestResult {
+  imageId: number
+  originalScore: number
+  newScore: number
+  flagged: boolean
+  details: object | null
 }

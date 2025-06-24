@@ -15,7 +15,7 @@ import {
   Edit3,
   Check,
   X,
-  Video,
+  Video as VideoIcon,
   Calendar,
   Clock,
   HardDrive,
@@ -26,18 +26,7 @@ import { formatDuration, formatDate } from "@/lib/time-utils"
 import { DeleteTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { useCaptureSettings } from "@/hooks/use-camera-countdown"
 import { toast } from "@/lib/toast"
-
-interface Video {
-  id: number
-  camera_id: number
-  status: string
-  file_path?: string
-  file_size?: number
-  duration?: number
-  created_at: string
-  updated_at: string
-  settings?: any
-}
+import { Video } from "@/types"
 
 interface TimelapseModalProps {
   isOpen: boolean
@@ -234,7 +223,7 @@ export function TimelapseModal({
           <div className='absolute -top-2 -right-2 w-16 h-16 bg-gradient-to-bl from-purple/10 to-transparent rounded-full' />
           <DialogTitle className='flex items-center space-x-3 text-xl'>
             <div className='p-2 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-xl'>
-              <Video className='w-6 h-6 text-white' />
+              <VideoIcon className='w-6 h-6 text-white' />
             </div>
             <span className='text-white'>{cameraName} - Timelapses</span>
           </DialogTitle>
@@ -251,7 +240,7 @@ export function TimelapseModal({
           ) : videos.length === 0 ? (
             <div className='text-center py-12'>
               <div className='w-20 h-20 bg-gradient-to-br from-purple/20 to-cyan/20 rounded-2xl flex items-center justify-center mx-auto mb-6'>
-                <Video className='w-10 h-10 text-white/60' />
+                <VideoIcon className='w-10 h-10 text-white/60' />
               </div>
               <h3 className='text-xl font-bold text-white mb-2'>
                 No timelapses yet
@@ -297,7 +286,7 @@ export function TimelapseModal({
                           <div className='flex items-center space-x-1'>
                             <Clock className='w-4 h-4' />
                             <span>
-                              {formatDuration(selectedVideo.duration)}
+                              {formatDuration(selectedVideo.duration_seconds)}
                             </span>
                           </div>
                           <div className='flex items-center space-x-1'>
@@ -336,7 +325,7 @@ export function TimelapseModal({
               {/* Video List */}
               <div className='space-y-3'>
                 <h3 className='text-lg font-bold text-white flex items-center space-x-2'>
-                  <Video className='w-5 h-5 text-purple-light' />
+                  <VideoIcon className='w-5 h-5 text-purple-light' />
                   <span>All Timelapses ({videos.length})</span>
                 </h3>
 
@@ -399,7 +388,7 @@ export function TimelapseModal({
                                 {formatDate(video.created_at, timezone)}
                               </span>
                               <span>•</span>
-                              <span>{formatDuration(video.duration)}</span>
+                              <span>{formatDuration(video.duration_seconds)}</span>
                               <span>•</span>
                               <span>{formatFileSize(video.file_size)}</span>
                             </div>

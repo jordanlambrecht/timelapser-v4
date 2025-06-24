@@ -2,21 +2,10 @@
 "use client"
 
 import { useState } from "react"
+import type { OverlaySettings, VideoOverlayConfigProps } from "@/types"
 
-export interface OverlaySettings {
-  enabled: boolean
-  position: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center"
-  font_size: number
-  font_color: string
-  background_color: string
-  format: string
-}
-
-interface VideoOverlayConfigProps {
-  settings: OverlaySettings
-  onChange: (settings: OverlaySettings) => void
-  showPreview?: boolean
-}
+// Re-export OverlaySettings for backwards compatibility
+export type { OverlaySettings } from "@/types"
 
 export function VideoOverlayConfig({
   settings,

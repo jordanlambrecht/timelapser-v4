@@ -14,11 +14,9 @@ interface SettingsState {
   captureInterval: number
   timezone: string
   generateThumbnails: boolean
-
-  // Image settings
   imageCaptureType: "PNG" | "JPG"
 
-  // API Keys
+  // API settings
   openWeatherApiKey: string
   apiKeyModified: boolean
 
@@ -59,7 +57,7 @@ interface SettingsActions {
 
   // Actions
   saveSettings: () => Promise<void>
-  refreshSettings: () => Promise<void>
+  fetchSettings: () => Promise<void>
 }
 
 type SettingsContextType = SettingsState & SettingsActions
@@ -245,7 +243,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
     // Actions
     saveSettings,
-    refreshSettings: fetchSettings,
+    fetchSettings: fetchSettings,
   }
 
   return (
