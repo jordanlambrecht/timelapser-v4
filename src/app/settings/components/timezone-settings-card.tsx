@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { TimezoneSelector } from "@/components/timezone-selector-combobox"
+import { useSettings } from "@/contexts/settings-context"
 import { Globe } from "lucide-react"
 
 interface TimezoneSettingsCardProps {
