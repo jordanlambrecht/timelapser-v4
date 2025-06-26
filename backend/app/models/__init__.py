@@ -19,8 +19,30 @@ from .video_model import Video, VideoCreate, VideoUpdate, VideoWithDetails
 from .image_model import Image, ImageCreate, ImageWithDetails
 from .settings_model import Setting, SettingCreate, SettingUpdate
 from .log_model import Log, LogCreate
+from .shared_models import (
+    VideoGenerationMode,
+    VideoAutomationMode,
+    VideoGenerationSettings,
+    VideoGenerationSettingsOptional,
+    VideoAutomationSettings,
+    VideoAutomationSettingsOptional,
+    CorruptionDetectionSettings,
+    CorruptionDetectionSettingsOptional,
+    BaseStats,
+    CameraHealthStatus,
+    TimelapseStatistics,
+    CameraStatistics,
+    VideoGenerationJob,
+    VideoGenerationJobWithDetails,
+    VideoGenerationJobCreate,
+    VideoStatistics,
+    TimelapseForCleanup,
+    TimelapseVideoSettings,
+    CorruptionSettings,
+)
 
 __all__ = [
+    # Core Models
     "Camera",
     "CameraCreate",
     "CameraUpdate",
@@ -46,4 +68,24 @@ __all__ = [
     "SettingUpdate",
     "Log",
     "LogCreate",
+    # Shared Models
+    "VideoGenerationMode",
+    "VideoAutomationMode",
+    "VideoGenerationSettings",
+    "VideoGenerationSettingsOptional",
+    "VideoAutomationSettings",
+    "VideoAutomationSettingsOptional",
+    "CorruptionDetectionSettings",
+    "CorruptionDetectionSettingsOptional",
+    "BaseStats",
+    "CameraHealthStatus",
+    "TimelapseStatistics",
+    "CameraStatistics",
+    "VideoGenerationJob",
+    "VideoGenerationJobWithDetails",
+    "VideoGenerationJobCreate",
+    "VideoStatistics",
+    "TimelapseForCleanup",
+    "TimelapseVideoSettings",
+    "CorruptionSettings",
 ]

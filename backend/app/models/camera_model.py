@@ -1,12 +1,15 @@
 # backend/app/models/camera.py
 
 from pydantic import BaseModel, field_validator, Field, ConfigDict
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, Sequence
 from datetime import datetime
 import re
 
 # Import shared components to eliminate duplication
 from .shared_models import VideoGenerationMode, VideoAutomationMode, BaseStats
+from ..models.timelapse_model import TimelapseWithDetails
+from ..models.image_model import ImageWithDetails
+from ..models.log_model import Log
 
 
 class CameraBase(BaseModel):
@@ -336,12 +339,11 @@ class CameraDetailsResponse(BaseModel):
     """Comprehensive camera details response for single endpoint"""
 
     camera: CameraWithLastImage
-    active_timelapse: Optional["Timelapse"] = None
-    timelapses: list["Timelapse"] = []
-    recent_images: list[ImageForCamera] = []
-    videos: list["Video"] = []
-    recent_activity: list[LogForCamera] = []
     stats: CameraStats
+    timelapses: Sequence[TimelapseWithDetails]
+    videos: Sequence[Any]  # Adjust as needed
+    recent_images: Sequence[ImageWithDetails]
+    recent_activity: Sequence[Log]
 
     model_config = ConfigDict(from_attributes=True)
 
