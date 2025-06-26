@@ -1,18 +1,24 @@
-from .camera import (
+from .camera_model import (
     Camera,
     CameraCreate,
     CameraUpdate,
     CameraWithTimelapse,
     CameraWithLastImage,
-    CameraDetailStats,
+    CameraWithStats,
+    CameraStats,
     CameraDetailsResponse,
     LogForCamera,
 )
-from .timelapse import Timelapse, TimelapseCreate, TimelapseUpdate, TimelapseWithDetails
-from .video import Video, VideoCreate, VideoUpdate, VideoWithDetails
-from .image import Image, ImageCreate, ImageWithDetails
-from .settings import Setting, SettingCreate, SettingUpdate
-from .log import Log, LogCreate
+from .timelapse_model import (
+    Timelapse,
+    TimelapseCreate,
+    TimelapseUpdate,
+    TimelapseWithDetails,
+)
+from .video_model import Video, VideoCreate, VideoUpdate, VideoWithDetails
+from .image_model import Image, ImageCreate, ImageWithDetails
+from .settings_model import Setting, SettingCreate, SettingUpdate
+from .log_model import Log, LogCreate
 
 __all__ = [
     "Camera",
@@ -20,7 +26,8 @@ __all__ = [
     "CameraUpdate",
     "CameraWithTimelapse",
     "CameraWithLastImage",
-    "CameraDetailStats",
+    "CameraWithStats",
+    "CameraStats",
     "CameraDetailsResponse",
     "LogForCamera",
     "Timelapse",

@@ -126,7 +126,6 @@ echo "   📈 API health: http://localhost:8000/api/health"
 echo "   📝 Logs: backend/logs/ and data/worker.log"
 echo ""
 echo "📊 Quick health check:"
-curl -s http://localhost:8000/api/health | python3 -m json.tool 2>/dev/null || echo "Backend health check failed"
 echo ""
 echo "Press Ctrl+C to stop all services"
 

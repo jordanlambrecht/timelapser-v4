@@ -1,6 +1,6 @@
 # backend/app/models/image.py
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 
@@ -12,6 +12,15 @@ class ImageBase(BaseModel):
         ..., ge=1, description="Day number in the timelapse sequence"
     )
     file_size: Optional[int] = Field(None, ge=0, description="File size in bytes")
+
+    # Corruption detection fields (integrated, not separate)
+    corruption_score: int = Field(
+        default=100, ge=0, le=100, description="Corruption score (100 = perfect)"
+    )
+    is_flagged: bool = Field(default=False, description="Whether flagged as corrupted")
+    corruption_details: Optional[Dict[str, Any]] = Field(
+        None, description="Detailed corruption analysis results"
+    )
 
 
 class ImageCreate(ImageBase):

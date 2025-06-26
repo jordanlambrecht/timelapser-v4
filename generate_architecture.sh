@@ -46,7 +46,7 @@
 # Modify these settings to customize tool behavior without editing the script logic
 
 # General settings
-CONFIDENCE_LEVEL=80      # Vulture confidence threshold (0-100)
+CONFIDENCE_LEVEL=65      # Vulture confidence threshold (0-100)
 COMPLEXITY_THRESHOLD='C' # Radon complexity threshold (A=best, F=worst)
 DB_TIMEOUT=30            # Database connection timeout for tbls (seconds)
 # ESLINT_MAX_WARNINGS=50   # Maximum ESLint warnings to display (COMMENTED OUT)

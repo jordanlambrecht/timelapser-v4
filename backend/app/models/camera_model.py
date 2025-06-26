@@ -2,18 +2,16 @@
 
 from pydantic import BaseModel, field_validator, Field, ConfigDict
 from typing import Optional, Literal, Dict, Any
-from datetime import datetime, time
-from loguru import logger
+from datetime import datetime
 import re
-from enum import Enum
 
-
-class VideoGenerationMode(str, Enum):
-    STANDARD = "standard"
-    TARGET = "target"
+# Import shared components to eliminate duplication
+from .shared_models import VideoGenerationMode, VideoAutomationMode, BaseStats
 
 
 class CameraBase(BaseModel):
+    """Base camera model with all settings"""
+
     name: str = Field(..., min_length=1, max_length=255, description="Camera name")
     rtsp_url: str = Field(..., description="RTSP stream URL")
     status: Literal["active", "inactive"] = Field(
@@ -29,7 +27,7 @@ class CameraBase(BaseModel):
         default=False, description="Whether to use time windows"
     )
 
-    # Video generation settings
+    # Video generation settings (using composition)
     video_generation_mode: VideoGenerationMode = Field(
         default=VideoGenerationMode.STANDARD, description="Video generation mode"
     )
@@ -55,9 +53,33 @@ class CameraBase(BaseModel):
         default=60, ge=1, le=120, description="Maximum FPS bound for target mode"
     )
 
+    # Video automation settings
+    video_automation_mode: VideoAutomationMode = Field(
+        default=VideoAutomationMode.MANUAL,
+        description="Video generation automation mode",
+    )
+    # Keep consistent with database schema
+    generation_schedule: Optional[Dict[str, Any]] = Field(
+        None, description="Schedule configuration for scheduled mode"
+    )
+    milestone_config: Optional[Dict[str, Any]] = Field(
+        None, description="Milestone configuration for milestone mode"
+    )
+
     # Corruption detection settings
     corruption_detection_heavy: bool = Field(
-        default=False, description="Enable advanced computer vision corruption detection"
+        default=False,
+        description="Enable advanced computer vision corruption detection",
+    )
+    corruption_score: int = Field(
+        default=100, ge=0, le=100, description="Corruption score (100 = perfect)"
+    )
+    is_flagged: bool = Field(default=False, description="Whether flagged as corrupted")
+    lifetime_glitch_count: int = Field(
+        default=0, description="Total corruption incidents"
+    )
+    consecutive_corruption_failures: int = Field(
+        default=0, description="Current consecutive corruption failures"
     )
 
     @field_validator("rtsp_url")
@@ -160,7 +182,7 @@ class CameraUpdate(BaseModel):
     use_time_window: Optional[bool] = None
     active_timelapse_id: Optional[int] = None
 
-    # Video generation settings
+    # Video generation settings (all optional)
     video_generation_mode: Optional[VideoGenerationMode] = None
     standard_fps: Optional[int] = Field(None, ge=1, le=120)
     enable_time_limits: Optional[bool] = None
@@ -170,19 +192,46 @@ class CameraUpdate(BaseModel):
     fps_bounds_min: Optional[int] = Field(None, ge=1, le=60)
     fps_bounds_max: Optional[int] = Field(None, ge=1, le=120)
 
+    # Video automation settings (all optional)
+    video_automation_mode: Optional[VideoAutomationMode] = None
+    # Keep consistent with database schema
+    generation_schedule: Optional[Dict[str, Any]] = None
+    milestone_config: Optional[Dict[str, Any]] = None
+
+    # Corruption detection settings (all optional)
+    corruption_detection_heavy: Optional[bool] = None
+    corruption_score: Optional[int] = Field(None, ge=0, le=100)
+    is_flagged: Optional[bool] = None
+
     @field_validator("rtsp_url")
     @classmethod
-    def validate_rtsp_url(_cls, v: Optional[str]) -> Optional[str]:
+    def validate_rtsp_url(cls, v: Optional[str]) -> Optional[str]:
         """Validate RTSP URL format and prevent injection"""
         if v is None:
             return v
 
-        # Use the same validation as CameraBase
-        return CameraBase.model_validate({"rtsp_url": v, "name": "temp"}).rtsp_url
+        if not v:
+            raise ValueError("RTSP URL cannot be empty")
+
+        # Must start with rtsp:// or rtsps://
+        if not v.startswith(("rtsp://", "rtsps://")):
+            raise ValueError("URL must start with rtsp:// or rtsps://")
+
+        # Prevent injection attacks - no dangerous characters
+        dangerous_chars = [";", "&", "|", "`", "$", "(", ")", "<", ">", '"', "'"]
+        if any(char in v for char in dangerous_chars):
+            raise ValueError("RTSP URL contains invalid characters")
+
+        # Basic URL format validation
+        url_pattern = r"^rtsps?://[^\s/$.?#].[^\s]*$"
+        if not re.match(url_pattern, v):
+            raise ValueError("Invalid RTSP URL format")
+
+        return v
 
     @field_validator("name")
     @classmethod
-    def validate_name(_cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate camera name"""
         if v is None:
             return v
@@ -233,24 +282,22 @@ class CameraWithLastImage(CameraWithTimelapse):
         return None
 
 
-class CameraStats(BaseModel):
-    """Camera statistics and metrics"""
+class CameraStats(BaseStats):
+    """Enhanced camera statistics extending base stats"""
 
-    total_images: int = 0
-    last_24h_images: int = 0
     avg_capture_interval_minutes: Optional[float] = None
-    success_rate_percent: Optional[float] = None
-    storage_used_mb: Optional[float] = None
+    # Additional camera-specific stats
+    current_timelapse_images: int = 0
+    current_timelapse_name: Optional[str] = None
+    total_videos: int = 0
+    timelapse_count: int = 0
+    days_since_first_capture: Optional[int] = None
 
 
 class CameraWithStats(CameraWithLastImage):
     """Camera model with statistics included"""
 
     stats: CameraStats
-
-
-# Circular import prevention - define after Camera models
-from .image import Image
 
 
 class ImageForCamera(BaseModel):
@@ -273,77 +320,8 @@ class ImageForCamera(BaseModel):
 CameraWithLastImage.model_rebuild()
 
 
-# Utility functions for transforming database rows to models
-def transform_camera_with_image_row(row: Dict[str, Any]) -> CameraWithLastImage:
-    """Transform a database row with LATERAL joined image data into a CameraWithLastImage model"""
-
-    # Extract camera data, filtering out last_image_ prefixed fields and timelapse fields
-    camera_data = {
-        k: v
-        for k, v in row.items()
-        if not k.startswith("last_image_") and not k.startswith("timelapse_")
-    }
-
-    # Convert time objects to strings for API serialization
-    if camera_data.get("time_window_start") and hasattr(
-        camera_data["time_window_start"], "strftime"
-    ):
-        camera_data["time_window_start"] = camera_data["time_window_start"].strftime(
-            "%H:%M:%S"
-        )
-    if camera_data.get("time_window_end") and hasattr(
-        camera_data["time_window_end"], "strftime"
-    ):
-        camera_data["time_window_end"] = camera_data["time_window_end"].strftime(
-            "%H:%M:%S"
-        )
-
-    # Add timelapse fields manually
-    if "timelapse_status" in row:
-        camera_data["timelapse_status"] = row["timelapse_status"]
-    if "timelapse_id" in row:
-        camera_data["timelapse_id"] = row["timelapse_id"]
-
-    # Create camera instance
-    camera = CameraWithLastImage(**camera_data)
-
-    # Add image data if available from LATERAL join
-    if row.get("last_image_id") and row.get("last_image_captured_at"):
-        camera.last_image = ImageForCamera(
-            id=int(row["last_image_id"]),
-            captured_at=row["last_image_captured_at"],
-            file_path=row["last_image_file_path"],
-            file_size=row.get("last_image_file_size"),
-            day_number=row["last_image_day_number"],
-            thumbnail_path=row.get("last_image_thumbnail_path"),
-            thumbnail_size=row.get("last_image_thumbnail_size"),
-            small_path=row.get("last_image_small_path"),
-            small_size=row.get("last_image_small_size"),
-        )
-
-    return camera
-
-
-def transform_camera_with_stats_row(
-    row: Dict[str, Any], stats: Dict[str, Any]
-) -> CameraWithStats:
-    """Transform a database row with stats into a CameraWithStats model"""
-
-    # First get the camera with image
-    camera_with_image = transform_camera_with_image_row(row)
-
-    # Convert to CameraWithStats and add stats
-    camera_with_stats = CameraWithStats(**camera_with_image.model_dump())
-    camera_with_stats.stats = CameraStats(**stats)
-
-    return camera_with_stats
-
-
-# 🎯 COMPREHENSIVE CAMERA DETAILS MODELS - Single endpoint for camera detail page
-
-
 class LogForCamera(BaseModel):
-    """Simplified log model for camera details"""
+    """Simplified log model for camera relationships"""
 
     id: int
     timestamp: datetime
@@ -352,20 +330,6 @@ class LogForCamera(BaseModel):
     camera_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class CameraDetailStats(BaseModel):
-    """Comprehensive statistics for camera detail page"""
-
-    total_images: int = 0
-    current_timelapse_images: int = 0
-    current_timelapse_name: Optional[str] = None
-    total_videos: int = 0
-    timelapse_count: int = 0
-    days_since_first_capture: Optional[int] = None
-    storage_used_mb: Optional[float] = None
-    last_24h_images: int = 0
-    success_rate_percent: Optional[float] = None
 
 
 class CameraDetailsResponse(BaseModel):
@@ -377,13 +341,13 @@ class CameraDetailsResponse(BaseModel):
     recent_images: list[ImageForCamera] = []
     videos: list["Video"] = []
     recent_activity: list[LogForCamera] = []
-    stats: CameraDetailStats
+    stats: CameraStats
 
     model_config = ConfigDict(from_attributes=True)
 
 
 # Forward reference updates for circular imports
-from .timelapse import Timelapse
-from .video import Video
+from .timelapse_model import Timelapse
+from .video_model import Video
 
 CameraDetailsResponse.model_rebuild()

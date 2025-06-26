@@ -70,6 +70,12 @@ class Video(VideoBase):
     fps_was_adjusted: bool = False
     adjustment_reason: Optional[str] = None
 
+    # Video automation tracking
+    trigger_type: Optional[
+        Literal["manual", "per_capture", "scheduled", "milestone"]
+    ] = None
+    job_id: Optional[int] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
