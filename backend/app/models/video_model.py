@@ -1,3 +1,22 @@
+# Video generation status models
+from typing import Optional
+from datetime import datetime
+from pydantic import BaseModel
+
+class Progress(BaseModel):
+    image_count: Optional[int] = None
+    file_size: Optional[int] = None
+    duration_seconds: Optional[float] = None
+
+
+class VideoGenerationStatus(BaseModel):
+    video_id: int
+    status: str
+    job_id: Optional[int] = None
+    trigger_type: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    progress: Progress
 # backend/app/models/video.py
 
 from pydantic import BaseModel, Field, field_validator, ConfigDict

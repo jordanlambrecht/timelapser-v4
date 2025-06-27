@@ -6,6 +6,11 @@ Role: Video management and generation HTTP endpoints
 Responsibilities: Video metadata CRUD, manual video generation triggers, video file serving
 Interactions: Uses VideoService for business logic, coordinates with VideoAutomationService
              for generation requests
+
+NOTE: Some business logic remains in this router, specifically:
+- Construction of job settings dict in the /generate endpoint
+- Filename formatting/cleaning in the download endpoint
+For full separation of concerns, move these to a service or helper.
 """
 
 import re
@@ -13,12 +18,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
+
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, status
 from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
+from typing import Optional
+from ..models.video_model import Progress, VideoGenerationStatus
 
 from ..config import settings
+from ..constants import (
+    VIDEO_STATUSES,
+    MIN_FPS,
+    MAX_FPS,
+    DEFAULT_FPS,
+    VIDEO_QUALITIES,
+)
 from ..dependencies import (
     VideoServiceDep,
     SyncVideoServiceDep,
@@ -29,7 +44,10 @@ from ..utils.router_helpers import (
     handle_exceptions,
     create_success_response,
     create_error_response,
+    validate_entity_exists,
 )
+from ..utils.video_helpers import VideoSettingsHelper
+from ..utils.response_helpers import ResponseFormatter
 from ..utils.time_utils import parse_iso_timestamp_safe
 from ..utils.timezone_utils import format_filename_timestamp
 
@@ -69,14 +87,27 @@ class VideoGenerationRequest(BaseModel):
         return v
 
 
+from ..dependencies import CameraServiceDep, TimelapseServiceDep
+
+
 @router.get("/", response_model=List[VideoWithDetails])
 @handle_exceptions("get videos")
 async def get_videos(
     video_service: VideoServiceDep,
+    camera_service: CameraServiceDep,
+    timelapse_service: TimelapseServiceDep,
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
     timelapse_id: Optional[int] = Query(None, description="Filter by timelapse ID"),
 ):
     """Get all videos, optionally filtered by camera or timelapse"""
+    if camera_id:
+        await validate_entity_exists(
+            camera_service.get_camera_by_id, camera_id, "camera"
+        )
+    if timelapse_id:
+        await validate_entity_exists(
+            timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
+        )
     videos = await video_service.get_videos(timelapse_id=timelapse_id)
     return videos
 
@@ -85,9 +116,9 @@ async def get_videos(
 @handle_exceptions("get video")
 async def get_video(video_id: int, video_service: VideoServiceDep):
     """Get a specific video by ID"""
-    video = await video_service.get_video_by_id(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    video = await validate_entity_exists(
+        video_service.get_video_by_id, video_id, "video"
+    )
     return video
 
 
@@ -95,7 +126,13 @@ async def get_video(video_id: int, video_service: VideoServiceDep):
 @handle_exceptions("create video")
 async def create_video(video_data: VideoCreate, video_service: VideoServiceDep):
     """Create a new video generation request"""
-    # Prepare video data dictionary for creation
+    # Use VideoSettingsHelper to validate and apply settings
+    is_valid, error = VideoSettingsHelper.validate_video_settings(video_data.settings)
+    if not is_valid:
+        return ResponseFormatter.error(
+            "Invalid video settings", details={"error": error}
+        )
+
     prepared_data = {
         "camera_id": video_data.camera_id,
         "name": video_data.name,
@@ -108,7 +145,10 @@ async def create_video(video_data: VideoCreate, video_service: VideoServiceDep):
     logger.info(
         f"Created video generation request {created_video.id} for camera {video_data.camera_id}"
     )
-    return {"video_id": created_video.id, "status": "generating"}
+    return ResponseFormatter.success(
+        "Video generation request created",
+        data={"video_id": created_video.id, "status": "generating"},
+    )
 
 
 @router.delete("/{video_id}")
@@ -224,6 +264,16 @@ async def generate_video(
     loop = asyncio.get_event_loop()
 
     # Get active timelapse for camera - run sync method in executor
+
+    # Use constants for FPS and quality
+    video_fps = DEFAULT_FPS
+    if VIDEO_QUALITIES and "medium" in VIDEO_QUALITIES:
+        video_quality = "medium"
+    elif VIDEO_QUALITIES:
+        video_quality = VIDEO_QUALITIES[0]
+    else:
+        video_quality = "medium"
+
     try:
         job_id = await loop.run_in_executor(
             None,
@@ -233,8 +283,8 @@ async def generate_video(
                 priority="high",
                 settings={
                     "video_name": request.video_name,
-                    "framerate": 30,
-                    "quality": "medium",
+                    "framerate": video_fps,
+                    "quality": video_quality,
                 },
             ),
         )
@@ -283,7 +333,7 @@ async def get_video_generation_queue(
     return queue_status
 
 
-@router.get("/{video_id}/generation-status")
+@router.get("/{video_id}/generation-status", response_model=VideoGenerationStatus)
 @handle_exceptions("get video generation status")
 async def get_video_generation_status(video_id: int, video_service: VideoServiceDep):
     """Get generation status for a specific video"""
@@ -293,21 +343,20 @@ async def get_video_generation_status(video_id: int, video_service: VideoService
             status_code=status.HTTP_404_NOT_FOUND, detail="Video not found"
         )
 
-    # Format generation status from video record
-    generation_status = {
-        "video_id": video.id,
-        "status": video.status,
-        "job_id": video.job_id,
-        "trigger_type": video.trigger_type,
-        "created_at": video.created_at,
-        "updated_at": video.updated_at,
-        "progress": {
-            "image_count": video.image_count,
-            "file_size": video.file_size,
-            "duration_seconds": video.duration_seconds,
-        },
-    }
-
+    progress = Progress(
+        image_count=video.image_count,
+        file_size=video.file_size,
+        duration_seconds=video.duration_seconds,
+    )
+    generation_status = VideoGenerationStatus(
+        video_id=video.id,
+        status=video.status,
+        job_id=video.job_id,
+        trigger_type=video.trigger_type,
+        created_at=video.created_at,
+        updated_at=video.updated_at,
+        progress=progress,
+    )
     return generation_status
 
 

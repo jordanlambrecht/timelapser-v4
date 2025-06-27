@@ -267,3 +267,65 @@ class CorruptionSettings(BaseModel):
     corruption_degraded_failure_percentage: int = Field(default=50, ge=0, le=100)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+
+class ThumbnailGenerationResult(BaseModel):
+    """Result of thumbnail generation operation"""
+
+    success: bool
+    image_id: int
+    thumbnail_path: Optional[str] = None
+    small_path: Optional[str] = None
+    thumbnail_size: Optional[int] = None
+    small_size: Optional[int] = None
+    error: Optional[str] = None
+    processing_time_ms: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailRegenerationStatus(BaseModel):
+    """Status of thumbnail regeneration process"""
+
+    active: bool = False
+    progress: int = 0  # Percentage 0-100
+    total_images: int = 0
+    completed_images: int = 0
+    failed_images: int = 0
+    current_image_id: Optional[int] = None
+    current_image_name: Optional[str] = None
+    estimated_time_remaining_seconds: Optional[int] = None
+    started_at: Optional[datetime] = None
+    status_message: str = "idle"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailStatistics(BaseModel):
+    """Comprehensive thumbnail statistics"""
+
+    total_images: int = 0
+    images_with_thumbnails: int = 0
+    images_with_small: int = 0
+    images_without_thumbnails: int = 0
+    thumbnail_coverage_percentage: float = 0.0
+    total_thumbnail_storage_mb: float = 0.0
+    total_small_storage_mb: float = 0.0
+    avg_thumbnail_size_kb: float = 0.0
+    avg_small_size_kb: float = 0.0
+    last_updated: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailOperationResponse(BaseModel):
+    """Standard response for thumbnail operations"""
+
+    success: bool
+    message: str
+    operation: str  # 'generate', 'regenerate', 'cleanup', etc.
+    data: Optional[Dict[str, Any]] = None
+    timestamp: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

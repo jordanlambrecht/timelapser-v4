@@ -42,3 +42,51 @@ class ImageWithDetails(Image):
 
     camera_name: Optional[str] = None
     timelapse_status: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    small_path: Optional[str] = None
+    thumbnail_size: Optional[int] = None
+    small_size: Optional[int] = None
+
+
+class ThumbnailRegenerationResponse(BaseModel):
+    """Response model for thumbnail regeneration"""
+    
+    image_id: int
+    thumbnail_path: Optional[str] = None
+    small_path: Optional[str] = None
+    thumbnail_size: Optional[int] = None
+    small_size: Optional[int] = None
+    thumbnail_generated: bool = False
+    small_generated: bool = False
+
+
+class ImageStatisticsResponse(BaseModel):
+    """Response model for image statistics"""
+    
+    total_images: int = 0
+    total_file_size: int = 0
+    average_file_size: float = 0.0
+    corruption_rate: float = 0.0
+    quality_score: float = 100.0
+    date_range: Optional[Dict[str, str]] = None
+    day_range: Optional[Dict[str, int]] = None
+    
+
+class BulkDownloadResponse(BaseModel):
+    """Response model for bulk download operations"""
+    
+    requested_images: int
+    included_images: int
+    filename: str
+    total_size: Optional[int] = None
+    
+
+class QualityAssessmentResponse(BaseModel):
+    """Response model for quality assessment"""
+    
+    image_id: int
+    quality_score: int
+    corruption_detected: bool
+    analysis_details: Optional[Dict[str, Any]] = None
+    action_taken: Optional[str] = None
+    processing_time_ms: Optional[int] = None

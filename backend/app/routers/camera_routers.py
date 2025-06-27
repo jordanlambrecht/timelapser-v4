@@ -4,8 +4,7 @@ Camera management HTTP endpoints.
 
 Role: Camera management HTTP endpoints
 Responsibilities: Camera CRUD operations, health status endpoints, image serving endpoints
-Interactions: Uses CameraService for business logic, returns Pydantic models,
-             handles HTTP status codes and error responses
+Interactions: Uses CameraService for business logic, returns Pydantic models,handles HTTP status codes and error responses
 """
 
 import asyncio
