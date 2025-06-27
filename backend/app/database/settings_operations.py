@@ -132,9 +132,9 @@ class SettingsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO settings (key, value) 
+                        INSERT INTO settings (key, value)
                         VALUES (%s, %s)
-                        ON CONFLICT (key) 
+                        ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                     """,
                         (key, value),
@@ -166,9 +166,9 @@ class SettingsOperations:
                 async with conn.cursor() as cur:
                     for key, value in settings_dict.items():
                         query = """
-                        INSERT INTO settings (key, value) 
+                        INSERT INTO settings (key, value)
                         VALUES (%s, %s)
-                        ON CONFLICT (key) 
+                        ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                         """
                         await cur.execute(query, (key, value))
