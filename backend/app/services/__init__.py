@@ -15,13 +15,28 @@ Available Services:
 
 # Service exports for easy importing
 from .image_capture_service import ImageCaptureService as image_capture
-from .video_generation_service import VideoGenerationService as video_generation
+from .video_service import VideoService, SyncVideoService
 from .video_automation_service import VideoAutomationService as video_automation
 from .rtsp_capture_service import RTSPCapture
+from .camera_service import CameraService, SyncCameraService
+from .corruption_service import CorruptionService
+from .timelapse_service import TimelapseService
+from .image_service import ImageService
 
 # Note: Corruption detection and weather services are in their respective subdirectories
 # Import them as:
 # from app.services.corruption_detection import CorruptionController
 # from app.services.weather.service import WeatherManager
 
-__all__ = ["image_capture", "video_generation", "video_automation", "RTSPCapture"]
+__all__ = [
+    "image_capture", 
+    "VideoService", 
+    "SyncVideoService",
+    "video_automation", 
+    "RTSPCapture",
+    "CameraService",
+    "SyncCameraService",
+    "CorruptionService",
+    "TimelapseService",
+    "ImageService"
+]
