@@ -20,7 +20,7 @@ export interface Camera {
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
-  
+
   // Video generation settings (FPS/duration)
   video_generation_mode: "standard" | "target"
   standard_fps: number
@@ -30,7 +30,7 @@ export interface Camera {
   target_time_seconds?: number
   fps_bounds_min: number
   fps_bounds_max: number
-  
+
   // Video automation settings (when to generate)
   video_automation_mode: "manual" | "per_capture" | "scheduled" | "milestone"
   generation_schedule?: Record<string, any>
