@@ -3,8 +3,8 @@
 Shared model components to eliminate duplication across models.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Dict, Any, Literal, List
 from enum import Enum
 from datetime import datetime
 
@@ -70,11 +70,10 @@ class VideoAutomationSettings(BaseModel):
         default=VideoAutomationMode.MANUAL,
         description="Video generation automation mode",
     )
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = Field(
+    generation_schedule: Optional["GenerationSchedule"] = Field(
         None, description="Schedule configuration for scheduled mode"
     )
-    milestone_config: Optional[Dict[str, Any]] = Field(
+    milestone_config: Optional["MilestoneConfig"] = Field(
         None, description="Milestone configuration for milestone mode"
     )
 
@@ -83,9 +82,8 @@ class VideoAutomationSettingsOptional(BaseModel):
     """Optional version for updates"""
 
     video_automation_mode: Optional[VideoAutomationMode] = None
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = None
-    milestone_config: Optional[Dict[str, Any]] = None
+    generation_schedule: Optional["GenerationSchedule"] = None
+    milestone_config: Optional["MilestoneConfig"] = None
 
 
 class CorruptionDetectionSettings(BaseModel):
@@ -162,3 +160,110 @@ class CameraStatistics(BaseModel):
     first_capture_at: Optional[datetime] = None
     avg_quality_score: Optional[float] = None
     flagged_images: int = 0
+
+
+class VideoGenerationJob(BaseModel):
+    """Video generation job model"""
+
+    id: int
+    timelapse_id: int
+    trigger_type: str
+    status: str = "pending"
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    video_path: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VideoGenerationJobWithDetails(VideoGenerationJob):
+    """Video generation job with additional context"""
+
+    timelapse_name: Optional[str] = None
+    camera_name: Optional[str] = None
+
+
+class VideoGenerationJobCreate(BaseModel):
+    """Model for creating video generation jobs"""
+
+    timelapse_id: int
+    trigger_type: str = "manual"
+    settings: Optional[Dict[str, Any]] = None
+
+
+class VideoStatistics(BaseModel):
+    """Video statistics model"""
+
+    total_videos: int = 0
+    total_size_bytes: Optional[int] = None
+    avg_duration_seconds: Optional[float] = None
+    avg_fps: Optional[float] = None
+    latest_video_at: Optional[datetime] = None
+
+
+class TimelapseForCleanup(BaseModel):
+    """Timelapse model for cleanup operations"""
+
+    id: int
+    camera_id: int
+    name: str
+    description: Optional[str] = None
+    status: str
+    completed_at: Optional[datetime] = None
+    camera_name: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TimelapseVideoSettings(BaseModel):
+    """Timelapse video generation settings model"""
+
+    video_generation_mode: VideoGenerationMode = VideoGenerationMode.STANDARD
+    standard_fps: int = 12
+    enable_time_limits: bool = False
+    min_time_seconds: Optional[int] = None
+    max_time_seconds: Optional[int] = None
+    target_time_seconds: Optional[int] = None
+    fps_bounds_min: int = 1
+    fps_bounds_max: int = 60
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Timelapse scheduling and automation models
+class GenerationSchedule(BaseModel):
+    """Generation schedule configuration"""
+
+    type: Literal["daily", "weekly", "custom"] = "daily"
+    time: str = "18:00"  # HH:MM format
+    timezone: str = "UTC"
+    enabled: bool = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MilestoneConfig(BaseModel):
+    """Milestone-based generation configuration"""
+
+    thresholds: List[int] = Field(default_factory=lambda: [100, 500, 1000])
+    enabled: bool = True
+    reset_on_completion: bool = False
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CorruptionSettings(BaseModel):
+    """Global corruption detection settings model"""
+
+    corruption_detection_enabled: bool = True
+    corruption_score_threshold: int = Field(default=70, ge=0, le=100)
+    corruption_auto_discard_enabled: bool = False
+    corruption_auto_disable_degraded: bool = False
+    corruption_degraded_consecutive_threshold: int = Field(default=10, ge=1)
+    corruption_degraded_time_window_minutes: int = Field(default=30, ge=1)
+    corruption_degraded_failure_percentage: int = Field(default=50, ge=0, le=100)
+
+    model_config = ConfigDict(from_attributes=True)

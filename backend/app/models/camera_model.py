@@ -1,12 +1,18 @@
 # backend/app/models/camera.py
 
 from pydantic import BaseModel, field_validator, Field, ConfigDict
-from typing import Optional, Literal, Dict, Any, Sequence
+from typing import Optional, Literal, Sequence, Any
 from datetime import datetime
 import re
 
 # Import shared components to eliminate duplication
-from .shared_models import VideoGenerationMode, VideoAutomationMode, BaseStats
+from .shared_models import (
+    VideoGenerationMode,
+    VideoAutomationMode,
+    BaseStats,
+    GenerationSchedule,
+    MilestoneConfig,
+)
 from ..models.timelapse_model import TimelapseWithDetails
 from ..models.image_model import ImageWithDetails
 from ..models.log_model import Log
@@ -61,11 +67,10 @@ class CameraBase(BaseModel):
         default=VideoAutomationMode.MANUAL,
         description="Video generation automation mode",
     )
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = Field(
+    generation_schedule: Optional[GenerationSchedule] = Field(
         None, description="Schedule configuration for scheduled mode"
     )
-    milestone_config: Optional[Dict[str, Any]] = Field(
+    milestone_config: Optional[MilestoneConfig] = Field(
         None, description="Milestone configuration for milestone mode"
     )
 
@@ -197,9 +202,8 @@ class CameraUpdate(BaseModel):
 
     # Video automation settings (all optional)
     video_automation_mode: Optional[VideoAutomationMode] = None
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = None
-    milestone_config: Optional[Dict[str, Any]] = None
+    generation_schedule: Optional[GenerationSchedule] = None
+    milestone_config: Optional[MilestoneConfig] = None
 
     # Corruption detection settings (all optional)
     corruption_detection_heavy: Optional[bool] = None

@@ -39,6 +39,8 @@ from .shared_models import (
     TimelapseForCleanup,
     TimelapseVideoSettings,
     CorruptionSettings,
+    GenerationSchedule,
+    MilestoneConfig,
 )
 
 __all__ = [
@@ -88,4 +90,6 @@ __all__ = [
     "TimelapseForCleanup",
     "TimelapseVideoSettings",
     "CorruptionSettings",
+    "GenerationSchedule",
+    "MilestoneConfig",
 ]

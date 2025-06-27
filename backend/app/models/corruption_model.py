@@ -1,3 +1,12 @@
+# Per-camera corruption settings model for DB operations (used in camera_operations.py)
+from pydantic import BaseModel
+from typing import Optional
+
+class CorruptionSettingsModel(BaseModel):
+    corruption_detection_heavy: bool
+    lifetime_glitch_count: int
+    consecutive_corruption_failures: int
+    degraded_mode_active: bool
 # backend/app/models/corruption_model.py
 """
 Pydantic Models for Corruption Detection System

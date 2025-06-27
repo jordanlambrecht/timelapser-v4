@@ -1,15 +1,15 @@
 # backend/app/models/timelapse.py
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal
 from datetime import datetime, date
 
 # Import shared components to eliminate duplication
 from .shared_models import (
     VideoGenerationMode,
     VideoAutomationMode,
-    VideoGenerationSettingsOptional,  # why are these not used?
-    VideoAutomationSettingsOptional,  # why are these not used?
+    GenerationSchedule,
+    MilestoneConfig,
 )
 
 
@@ -58,9 +58,8 @@ class TimelapseCreate(TimelapseBase):
 
     # Video automation settings (optional overrides)
     video_automation_mode: Optional[VideoAutomationMode] = None
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = None
-    milestone_config: Optional[Dict[str, Any]] = None
+    generation_schedule: Optional[GenerationSchedule] = None
+    milestone_config: Optional[MilestoneConfig] = None
 
 
 class TimelapseUpdate(BaseModel):
@@ -90,9 +89,8 @@ class TimelapseUpdate(BaseModel):
 
     # Video automation settings (optional overrides)
     video_automation_mode: Optional[VideoAutomationMode] = None
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = None
-    milestone_config: Optional[Dict[str, Any]] = None
+    generation_schedule: Optional[GenerationSchedule] = None
+    milestone_config: Optional[MilestoneConfig] = None
 
 
 class Timelapse(TimelapseBase):
@@ -128,9 +126,8 @@ class Timelapse(TimelapseBase):
 
     # Video automation settings (nullable - inherited from camera)
     video_automation_mode: Optional[VideoAutomationMode] = None
-    # Keep consistent with database schema
-    generation_schedule: Optional[Dict[str, Any]] = None
-    milestone_config: Optional[Dict[str, Any]] = None
+    generation_schedule: Optional[GenerationSchedule] = None
+    milestone_config: Optional[MilestoneConfig] = None
 
     model_config = ConfigDict(from_attributes=True)
 

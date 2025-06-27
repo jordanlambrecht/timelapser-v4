@@ -5,6 +5,33 @@ from typing import Optional, Literal, Dict, Any
 from datetime import datetime, date
 
 
+class VideoGenerationJob(BaseModel):
+    id: int
+    timelapse_id: int
+    trigger_type: Optional[str] = None
+    status: str
+    settings: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    video_path: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    canceled_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    timelapse_name: Optional[str] = None
+
+    camera_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# backend/app/models/video.py
+
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import Optional, Literal, Dict, Any
+from datetime import datetime, date
+
+
 class VideoBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
     name: str = Field(..., min_length=1, max_length=255, description="Video name")
