@@ -418,7 +418,7 @@ async def get_timelapse_statistics(
         )
 
 
-@router.get("/{timelapse_id}/progress")
+@router.get("/{timelapse_id}/progress", response_model=TimelapseWithDetails)
 @handle_exceptions("get timelapse progress")
 async def get_timelapse_progress(
     timelapse_id: int = Depends(valid_timelapse_id), 
@@ -431,7 +431,6 @@ async def get_timelapse_progress(
     and capture rate analysis with timezone-aware calculations.
     """
     try:
-        # For now, return basic timelapse info as progress
         timelapse = await timelapse_service.get_timelapse_by_id(timelapse_id)
         if not timelapse:
             raise HTTPException(
@@ -439,14 +438,8 @@ async def get_timelapse_progress(
                 detail=f"Timelapse with ID {timelapse_id} not found"
             )
         
-        # Return basic progress information
-        return {
-            "timelapse_id": timelapse_id,
-            "status": timelapse.status,
-            "image_count": timelapse.image_count or 0,
-            "last_capture": timelapse.last_capture_at,
-            "created_at": timelapse.created_at
-        }
+        # Return the complete timelapse details as progress information
+        return timelapse
     
     except HTTPException:
         # Re-raise HTTP exceptions as-is
