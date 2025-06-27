@@ -8,17 +8,19 @@ from loguru import logger
 
 from .config import settings
 from .database import async_db, sync_db
-from .routers import (
-    cameras,
-    timelapses,
-    videos,
-    settings as settings_router,
-    logs,
-    images,
-    health,
-    dashboard,
-    thumbnails,
-    corruption,
+from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
+from app.routers import (
+    camera_routers as cameras,
+    timelapse_routers as timelapses,
+    video_routers as videos,
+    settings_routers as settings_router,
+    log_routers as logs,
+    image_routers as images,
+    health_routers as health,
+    dashboard_routers as dashboard,
+    thumbnail_routers as thumbnails,
+    corruption_routers as corruption,
+    video_automation_routers as video_automation,
 )
 
 
@@ -50,7 +52,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# Add middleware stack (order matters: last added = first executed)
+# 1. Error handling (outermost - catches all errors)
+app.add_middleware(ErrorHandlerMiddleware)
+
+# 2. Request logging (logs all requests with correlation IDs)
+app.add_middleware(RequestLoggerMiddleware)
+
+# 3. CORS middleware (innermost - handles CORS before business logic)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -59,19 +68,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Exception handlers
-@app.exception_handler(ValueError)
-async def value_error_handler(_request, exc):
-    """Handle validation errors"""
-    return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(_request, exc):
-    """Handle general exceptions"""
-    logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+# Note: Removed old exception handlers - now handled by ErrorHandlerMiddleware
 
 
 # Include routers
@@ -85,6 +82,9 @@ app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(thumbnails.router, prefix="/api/thumbnails", tags=["thumbnails"])
 app.include_router(corruption.router, prefix="/api/corruption", tags=["corruption"])
+app.include_router(
+    video_automation.router, prefix="/api/video-automation", tags=["video-automation"]
+)
 
 
 # Health check endpoint
