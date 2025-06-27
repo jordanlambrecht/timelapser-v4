@@ -13,7 +13,7 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 
 from loguru import logger
-from backend.app.models.statistics_model import (
+from app.models.statistics_model import (
     CameraStatsModel,
     TimelapseStatsModel,
     ImageStatsModel,

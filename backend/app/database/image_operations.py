@@ -431,6 +431,226 @@ class ImageOperations:
                 result = await cur.fetchone()
                 return result["count"] if result else 0
 
+    async def get_images_without_thumbnails(
+        self, limit: int = 100
+    ) -> List[ImageWithDetails]:
+        """
+        Get images that are missing thumbnail files.
+
+        Args:
+            limit: Maximum number of images to return
+
+        Returns:
+            List of ImageWithDetails models missing thumbnails
+
+        Usage:
+            images = await image_ops.get_images_without_thumbnails(50)
+        """
+        query = """
+        SELECT
+            i.*,
+            t.name as timelapse_name,
+            c.name as camera_name
+        FROM images i
+        JOIN timelapses t ON i.timelapse_id = t.id
+        JOIN cameras c ON t.camera_id = c.id
+        WHERE i.thumbnail_path IS NULL OR i.small_path IS NULL
+        ORDER BY i.captured_at DESC
+        LIMIT %s
+        """
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (limit,))
+                results = await cur.fetchall()
+                return [self._row_to_image_with_details(row) for row in results]
+
+    async def update_image_thumbnails(
+        self, image_id: int, thumbnail_data: Dict[str, Any]
+    ) -> bool:
+        """
+        Update thumbnail paths and sizes for an image.
+
+        Args:
+            image_id: ID of the image to update
+            thumbnail_data: Dictionary containing thumbnail paths and sizes
+
+        Returns:
+            True if update was successful
+
+        Usage:
+            success = await image_ops.update_image_thumbnails(1, {
+                'thumbnail_path': 'path/to/thumb.jpg',
+                'thumbnail_size': 1024,
+                'small_path': 'path/to/small.jpg',
+                'small_size': 4096
+            })
+        """
+        # Build dynamic update query for thumbnail fields
+        allowed_fields = {
+            "thumbnail_path",
+            "small_path",
+            "thumbnail_size",
+            "small_size",
+        }
+        update_fields = {
+            k: v
+            for k, v in thumbnail_data.items()
+            if k in allowed_fields and v is not None
+        }
+
+        if not update_fields:
+            return False
+
+        set_clauses = [f"{field} = %({field})s" for field in update_fields.keys()]
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+        query = f"UPDATE images SET {', '.join(set_clauses)} WHERE id = %(id)s"
+        update_fields["id"] = image_id
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, update_fields)
+                success = cur.rowcount > 0
+
+                if success:
+                    await self.db.broadcast_event(
+                        "image_thumbnails_updated",
+                        {"image_id": image_id, "thumbnail_data": thumbnail_data},
+                    )
+
+                return success
+
+    async def get_thumbnail_statistics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive thumbnail statistics.
+
+        Returns:
+            Dictionary containing thumbnail coverage and storage stats
+
+        Usage:
+            stats = await image_ops.get_thumbnail_statistics()
+        """
+        query = """
+        SELECT 
+            COUNT(*) as total_images,
+            COUNT(thumbnail_path) as images_with_thumbnails,
+            COUNT(small_path) as images_with_small,
+            COALESCE(SUM(thumbnail_size), 0) as total_thumbnail_bytes,
+            COALESCE(SUM(small_size), 0) as total_small_bytes,
+            COALESCE(AVG(thumbnail_size), 0) as avg_thumbnail_size,
+            COALESCE(AVG(small_size), 0) as avg_small_size
+        FROM images
+        """
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query)
+                result = await cur.fetchone()
+
+                if result:
+                    total_images = result["total_images"]
+                    images_with_thumbnails = result["images_with_thumbnails"]
+
+                    return {
+                        "total_images": total_images,
+                        "images_with_thumbnails": images_with_thumbnails,
+                        "images_with_small": result["images_with_small"],
+                        "images_without_thumbnails": total_images
+                        - images_with_thumbnails,
+                        "thumbnail_coverage_percentage": (
+                            (images_with_thumbnails / max(total_images, 1)) * 100
+                        ),
+                        "total_thumbnail_storage_mb": result["total_thumbnail_bytes"]
+                        / (1024 * 1024),
+                        "total_small_storage_mb": result["total_small_bytes"]
+                        / (1024 * 1024),
+                        "avg_thumbnail_size_kb": result["avg_thumbnail_size"] / 1024,
+                        "avg_small_size_kb": result["avg_small_size"] / 1024,
+                    }
+                else:
+                    return {
+                        "total_images": 0,
+                        "images_with_thumbnails": 0,
+                        "images_with_small": 0,
+                        "images_without_thumbnails": 0,
+                        "thumbnail_coverage_percentage": 0,
+                        "total_thumbnail_storage_mb": 0,
+                        "total_small_storage_mb": 0,
+                        "avg_thumbnail_size_kb": 0,
+                        "avg_small_size_kb": 0,
+                    }
+
+    async def get_image_statistics(
+        self, timelapse_id: Optional[int] = None, camera_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get comprehensive image statistics with optional filtering.
+
+        Args:
+            timelapse_id: Optional timelapse ID to filter by
+            camera_id: Optional camera ID to filter by
+
+        Returns:
+            Dictionary containing image statistics
+
+        Usage:
+            stats = await image_ops.get_image_statistics(timelapse_id=1)
+        """
+        # Build WHERE clause based on filters
+        where_conditions = []
+        params = []
+
+        if timelapse_id is not None:
+            where_conditions.append("i.timelapse_id = %s")
+            params.append(timelapse_id)
+
+        if camera_id is not None:
+            where_conditions.append("t.camera_id = %s")
+            params.append(camera_id)
+
+        where_clause = ""
+        if where_conditions:
+            where_clause = "WHERE " + " AND ".join(where_conditions)
+
+        query = f"""
+        SELECT 
+            COUNT(*) as total_images,
+            COALESCE(SUM(file_size), 0) as total_file_size,
+            COALESCE(AVG(file_size), 0) as avg_file_size,
+            MIN(captured_at) as first_capture_at,
+            MAX(captured_at) as last_capture_at,
+            COUNT(CASE WHEN is_flagged = true THEN 1 END) as flagged_images,
+            COALESCE(AVG(corruption_score), 100) as avg_corruption_score
+        FROM images i
+        JOIN timelapses t ON i.timelapse_id = t.id
+        {where_clause}
+        """
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                result = await cur.fetchone()
+
+                if result:
+                    return {
+                        "total_images": result["total_images"],
+                        "total_file_size_mb": result["total_file_size"] / (1024 * 1024),
+                        "avg_file_size_kb": result["avg_file_size"] / 1024,
+                        "first_capture_at": result["first_capture_at"],
+                        "last_capture_at": result["last_capture_at"],
+                        "flagged_images": result["flagged_images"],
+                        "avg_corruption_score": float(result["avg_corruption_score"]),
+                    }
+                else:
+                    return {
+                        "total_images": 0,
+                        "total_file_size_mb": 0,
+                        "avg_file_size_kb": 0,
+                        "first_capture_at": None,
+                        "last_capture_at": None,
+                        "flagged_images": 0,
+                        "avg_corruption_score": 100.0,
+                    }
+
 
 class SyncImageOperations:
     """
@@ -592,3 +812,83 @@ class SyncImageOperations:
                     logger.info(f"Cleaned up {affected} old images")
 
                 return affected
+
+    def update_image_thumbnails(
+        self, image_id: int, thumbnail_data: Dict[str, Any]
+    ) -> bool:
+        """
+        Update thumbnail paths and sizes for an image (sync version).
+
+        Args:
+            image_id: ID of the image to update
+            thumbnail_data: Dictionary containing thumbnail paths and sizes
+
+        Returns:
+            True if update was successful
+
+        Usage:
+            success = image_ops.update_image_thumbnails(1, {
+                'thumbnail_path': 'path/to/thumb.jpg',
+                'thumbnail_size': 1024
+            })
+        """
+        # Build dynamic update query for thumbnail fields
+        allowed_fields = {
+            "thumbnail_path",
+            "small_path",
+            "thumbnail_size",
+            "small_size",
+        }
+        update_fields = {
+            k: v
+            for k, v in thumbnail_data.items()
+            if k in allowed_fields and v is not None
+        }
+
+        if not update_fields:
+            return False
+
+        set_clauses = [f"{field} = %({field})s" for field in update_fields.keys()]
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+        query = f"UPDATE images SET {', '.join(set_clauses)} WHERE id = %(id)s"
+        update_fields["id"] = image_id
+
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, update_fields)
+                success = cur.rowcount > 0
+
+                if success:
+                    self.db.broadcast_event(
+                        "image_thumbnails_updated",
+                        {"image_id": image_id, "thumbnail_data": thumbnail_data},
+                    )
+
+                return success
+
+    def get_images_without_thumbnails(self, limit: int = 100) -> List[Image]:
+        """
+        Get images that are missing thumbnail files (sync version).
+
+        Args:
+            limit: Maximum number of images to return
+
+        Returns:
+            List of Image models missing thumbnails
+
+        Usage:
+            images = image_ops.get_images_without_thumbnails(50)
+        """
+        query = """
+        SELECT i.*
+        FROM images i
+        WHERE i.thumbnail_path IS NULL OR i.small_path IS NULL
+        ORDER BY i.captured_at DESC
+        LIMIT %s
+        """
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (limit,))
+                results = cur.fetchall()
+                return [self._row_to_image(row) for row in results]
