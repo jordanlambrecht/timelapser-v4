@@ -219,10 +219,6 @@ local-docs
 local-docs/**
 local-docs/
 
-tests
-tests/**
-tests/
-
 _local-docs
 _local-docs/**
 _local-docs/
