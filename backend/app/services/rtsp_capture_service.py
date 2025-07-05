@@ -89,8 +89,21 @@ class RTSPCaptureService:
             quality_setting = self.settings_ops.get_setting("image_quality")
             timeout_setting = self.settings_ops.get_setting("rtsp_timeout_seconds")
 
-            quality = int(quality_setting) if quality_setting else DEFAULT_RTSP_QUALITY
-            timeout = int(timeout_setting) if timeout_setting else DEFAULT_RTSP_TIMEOUT_SECONDS
+            # Safe int conversion for quality setting
+            quality = DEFAULT_RTSP_QUALITY
+            if quality_setting:
+                try:
+                    quality = int(quality_setting)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid image_quality setting '{quality_setting}', using default {DEFAULT_RTSP_QUALITY}")
+
+            # Safe int conversion for timeout setting
+            timeout = DEFAULT_RTSP_TIMEOUT_SECONDS
+            if timeout_setting:
+                try:
+                    timeout = int(timeout_setting)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid rtsp_timeout_seconds setting '{timeout_setting}', using default {DEFAULT_RTSP_TIMEOUT_SECONDS}")
 
             return {
                 "quality": quality,

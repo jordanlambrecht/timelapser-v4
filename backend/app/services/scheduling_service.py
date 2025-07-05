@@ -94,18 +94,32 @@ class SchedulingService:
                 "capture_grace_period_seconds"
             )
 
+            # Safe int conversions with defaults
+            min_interval_seconds = MIN_CAPTURE_INTERVAL_SECONDS
+            if min_interval:
+                try:
+                    min_interval_seconds = int(min_interval)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid min_capture_interval_seconds '{min_interval}', using default {MIN_CAPTURE_INTERVAL_SECONDS}")
+
+            max_interval_seconds = MAX_CAPTURE_INTERVAL_SECONDS
+            if max_interval:
+                try:
+                    max_interval_seconds = int(max_interval)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid max_capture_interval_seconds '{max_interval}', using default {MAX_CAPTURE_INTERVAL_SECONDS}")
+
+            grace_period_seconds = DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS
+            if grace_period:
+                try:
+                    grace_period_seconds = int(grace_period)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid capture_grace_period_seconds '{grace_period}', using default {DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS}")
+
             return {
-                "min_interval_seconds": (
-                    int(min_interval) if min_interval else MIN_CAPTURE_INTERVAL_SECONDS
-                ),
-                "max_interval_seconds": (
-                    int(max_interval) if max_interval else MAX_CAPTURE_INTERVAL_SECONDS
-                ),
-                "grace_period_seconds": (
-                    int(grace_period)
-                    if grace_period
-                    else DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS
-                ),
+                "min_interval_seconds": min_interval_seconds,
+                "max_interval_seconds": max_interval_seconds,
+                "grace_period_seconds": grace_period_seconds,
             }
         except Exception as e:
             logger.warning(f"Failed to get scheduling settings, using defaults: {e}")
