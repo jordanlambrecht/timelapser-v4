@@ -9,6 +9,7 @@ import { Toaster } from "sonner"
 import Footer from "@/components/footer"
 import { SSEProvider } from "@/contexts/sse-context"
 import { SettingsProvider } from "@/contexts/settings-context"
+import Link from "next/link"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -58,13 +59,15 @@ export default function RootLayout({
             <div className='flex items-center justify-between'>
               {/* Logo area with spirograph */}
               <div className='flex items-center space-x-4'>
-                <SpirographLogo size={48} />
-                <div>
-                  <h1 className='text-2xl font-bold gradient-text'>
-                    Timelapser
-                  </h1>
-                  <p className='font-mono text-xs text-grey-light/60'>v4.0</p>
-                </div>
+                <Link href={"/"}>
+                  <SpirographLogo size={48} />
+                  <div>
+                    <h1 className='text-2xl font-bold gradient-text'>
+                      Timelapser
+                    </h1>
+                    <p className='font-mono text-xs text-grey-light/60'>v4.0</p>
+                  </div>
+                </Link>
               </div>
 
               {/* Navigation with icons and active states */}
