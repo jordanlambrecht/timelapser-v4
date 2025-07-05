@@ -21,6 +21,7 @@ import {
   Circle,
 } from "lucide-react"
 import { toast } from "@/lib/toast"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import type { CameraModalProps } from "@/types"
 
 export function CameraModal({
@@ -315,7 +316,11 @@ export function CameraModal({
             >
               {saving ? (
                 <>
-                  <div className='w-4 h-4 mr-2 border-2 rounded-full border-black/30 border-t-black animate-spin' />
+                  <LoadingSpinner
+                    size='sm'
+                    variant='icon'
+                    className='text-black mr-2'
+                  />
                   {camera ? "Updating..." : "Adding..."}
                 </>
               ) : (

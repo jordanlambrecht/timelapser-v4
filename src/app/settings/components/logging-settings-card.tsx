@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { toast } from "@/lib/toast"
-import SwitchLabeled from "@/components/ui/switch-labeled"
+import { SuperSwitch } from "@/components/ui/switch"
 import { FileText } from "lucide-react"
 import { useSettings } from "@/contexts/settings-context"
 
@@ -175,7 +175,8 @@ export function LoggingSettingsCard() {
                     level)
                   </p>
                 </div>
-                <SwitchLabeled
+                <SuperSwitch
+                  variant="labeled"
                   id='debug-logging'
                   checked={enableDebugLogging}
                   onCheckedChange={setEnableDebugLogging}
@@ -191,7 +192,8 @@ export function LoggingSettingsCard() {
                     Automatically rotate logs when they reach max size
                   </p>
                 </div>
-                <SwitchLabeled
+                <SuperSwitch
+                  variant="labeled"
                   id='log-rotation'
                   checked={enableLogRotation}
                   onCheckedChange={setEnableLogRotation}
@@ -210,7 +212,8 @@ export function LoggingSettingsCard() {
                     Compress rotated log files to save disk space
                   </p>
                 </div>
-                <SwitchLabeled
+                <SuperSwitch
+                  variant="labeled"
                   id='log-compression'
                   checked={enableLogCompression}
                   onCheckedChange={setEnableLogCompression}

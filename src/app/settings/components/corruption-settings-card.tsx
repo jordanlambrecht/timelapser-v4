@@ -9,8 +9,9 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import SwitchLabeled from "@/components/ui/switch-labeled"
+import { SuperSwitch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
+import { NumberInput } from "@/components/ui/number-input"
 import { Shield, Zap, AlertTriangle, Settings2 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
@@ -58,7 +59,8 @@ export function CorruptionSettingsCard() {
               Master switch for all corruption detection features
             </div>
           </div>
-          <SwitchLabeled
+          <SuperSwitch
+            variant="labeled"
             checked={corruptionDetectionEnabled}
             onCheckedChange={setCorruptionDetectionEnabled}
             trueLabel='ON'
@@ -85,7 +87,8 @@ export function CorruptionSettingsCard() {
                     processing)
                   </div>
                 </div>
-                <SwitchLabeled
+                <SuperSwitch
+                  variant="labeled"
                   checked={corruptionHeavyDetectionEnabled}
                   onCheckedChange={setCorruptionHeavyDetectionEnabled}
                   trueLabel='ON'
@@ -104,21 +107,20 @@ export function CorruptionSettingsCard() {
               </div>
 
               <div className='space-y-2'>
-                <div className='flex items-center justify-between'>
-                  <Label>Corruption Score Threshold</Label>
-                  <span className='text-sm text-muted-foreground'>
-                    {corruptionScoreThreshold}
-                  </span>
-                </div>
-                <Input
-                  type='number'
+                <Label
+                  htmlFor='corruption-score-threshold'
+                  className='text-sm font-medium'
+                >
+                  Corruption Score Threshold
+                </Label>
+                <NumberInput
+                  id='corruption-score-threshold'
                   value={corruptionScoreThreshold}
-                  onChange={(e) =>
-                    setCorruptionScoreThreshold(parseInt(e.target.value) || 0)
-                  }
-                  min='0'
-                  max='100'
-                  step='5'
+                  onChange={setCorruptionScoreThreshold}
+                  min={0}
+                  max={100}
+                  step={5}
+                  hideLabel={true}
                 />
                 <div className='text-[0.8rem] text-muted-foreground'>
                   Images below this score are considered corrupted (0-100)
@@ -143,7 +145,8 @@ export function CorruptionSettingsCard() {
                       Automatically delete images that fail quality checks
                     </div>
                   </div>
-                  <SwitchLabeled
+                  <SuperSwitch
+                    variant="labeled"
                     checked={corruptionAutoDiscardEnabled}
                     onCheckedChange={setCorruptionAutoDiscardEnabled}
                     trueLabel='ON'
@@ -158,7 +161,8 @@ export function CorruptionSettingsCard() {
                       Automatically disable cameras with persistent corruption
                     </div>
                   </div>
-                  <SwitchLabeled
+                  <SuperSwitch
+                    variant="labeled"
                     checked={corruptionAutoDisableDegraded}
                     onCheckedChange={setCorruptionAutoDisableDegraded}
                     trueLabel='ON'
@@ -176,17 +180,19 @@ export function CorruptionSettingsCard() {
 
               <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                 <div className='space-y-2'>
-                  <Label className='text-sm'>Consecutive Failures</Label>
-                  <Input
-                    type='number'
+                  <Label
+                    htmlFor='consecutive-failures'
+                    className='text-sm font-medium'
+                  >
+                    Consecutive Failures
+                  </Label>
+                  <NumberInput
+                    id='consecutive-failures'
                     value={corruptionDegradedConsecutiveThreshold}
-                    onChange={(e) =>
-                      setCorruptionDegradedConsecutiveThreshold(
-                        parseInt(e.target.value) || 0
-                      )
-                    }
-                    min='1'
-                    max='50'
+                    onChange={setCorruptionDegradedConsecutiveThreshold}
+                    min={1}
+                    max={50}
+                    hideLabel={true}
                   />
                   <div className='text-[0.8rem] text-muted-foreground'>
                     Failures in a row
@@ -194,17 +200,16 @@ export function CorruptionSettingsCard() {
                 </div>
 
                 <div className='space-y-2'>
-                  <Label className='text-sm'>Time Window (minutes)</Label>
-                  <Input
-                    type='number'
+                  <Label htmlFor='time-window' className='text-sm font-medium'>
+                    Time Window (minutes)
+                  </Label>
+                  <NumberInput
+                    id='time-window'
                     value={corruptionDegradedTimeWindowMinutes}
-                    onChange={(e) =>
-                      setCorruptionDegradedTimeWindowMinutes(
-                        parseInt(e.target.value) || 0
-                      )
-                    }
-                    min='5'
-                    max='1440'
+                    onChange={setCorruptionDegradedTimeWindowMinutes}
+                    min={5}
+                    max={1440}
+                    hideLabel={true}
                   />
                   <div className='text-[0.8rem] text-muted-foreground'>
                     Monitor period
@@ -212,17 +217,19 @@ export function CorruptionSettingsCard() {
                 </div>
 
                 <div className='space-y-2'>
-                  <Label className='text-sm'>Failure Percentage</Label>
-                  <Input
-                    type='number'
+                  <Label
+                    htmlFor='failure-percentage'
+                    className='text-sm font-medium'
+                  >
+                    Failure Percentage
+                  </Label>
+                  <NumberInput
+                    id='failure-percentage'
                     value={corruptionDegradedFailurePercentage}
-                    onChange={(e) =>
-                      setCorruptionDegradedFailurePercentage(
-                        parseInt(e.target.value) || 0
-                      )
-                    }
-                    min='1'
-                    max='100'
+                    onChange={setCorruptionDegradedFailurePercentage}
+                    min={1}
+                    max={100}
+                    hideLabel={true}
                   />
                   <div className='text-[0.8rem] text-muted-foreground'>
                     % of recent captures

@@ -2,6 +2,7 @@
 "use client"
 
 import { useState } from "react"
+import { NumberInput } from "@/components/ui/number-input"
 import type { OverlaySettings, VideoOverlayConfigProps } from "@/types"
 
 // Re-export OverlaySettings for backwards compatibility
@@ -102,19 +103,14 @@ export function VideoOverlayConfig({
 
             {/* Font Size */}
             <div>
-              <label className='block mb-2 text-sm font-medium text-white'>
-                Font Size: {settings.font_size}px
-              </label>
-              <input
-                type='range'
-                min='24'
-                max='96'
-                step='4'
+              <NumberInput
+                label="Font Size"
                 value={settings.font_size}
-                onChange={(e) =>
-                  handleChange("font_size", parseInt(e.target.value))
-                }
-                className='w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer'
+                onChange={(value) => handleChange("font_size", value)}
+                min={24}
+                max={96}
+                step={4}
+                className="text-white"
               />
               <div className='flex justify-between mt-1 text-xs text-gray-400'>
                 <span>Small</span>
@@ -226,16 +222,13 @@ export function VideoOverlayConfig({
 
                 {/* Preview Day Controller */}
                 <div className='mt-3'>
-                  <label className='block mb-1 text-xs text-gray-400'>
-                    Preview Day: {previewDay}
-                  </label>
-                  <input
-                    type='range'
-                    min='1'
-                    max='100'
+                  <NumberInput
+                    label={`Preview Day: ${previewDay}`}
                     value={previewDay}
-                    onChange={(e) => setPreviewDay(parseInt(e.target.value))}
-                    className='w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer'
+                    onChange={setPreviewDay}
+                    min={1}
+                    max={100}
+                    className="text-white"
                   />
                 </div>
               </div>

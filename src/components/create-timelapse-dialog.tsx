@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { NumberInput } from "@/components/ui/number-input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -154,32 +155,32 @@ export function CreateTimelapseDialog({
                 Time Window Control
               </Label>
             </div>
-            
+
             <RadioGroup
               value={config.timeWindowType}
               onValueChange={(value: "none" | "time" | "sunrise_sunset") =>
                 setConfig((prev) => ({ ...prev, timeWindowType: value }))
               }
-              className="space-y-3"
+              className='space-y-3'
               disabled={loading}
             >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="none" id="none" />
-                <Label htmlFor="none" className="text-white">
+              <div className='flex items-center space-x-2'>
+                <RadioGroupItem value='none' id='none' />
+                <Label htmlFor='none' className='text-white'>
                   No time restrictions (capture 24/7)
                 </Label>
               </div>
-              
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="time" id="time" />
-                <Label htmlFor="time" className="text-white">
+
+              <div className='flex items-center space-x-2'>
+                <RadioGroupItem value='time' id='time' />
+                <Label htmlFor='time' className='text-white'>
                   Fixed time window
                 </Label>
               </div>
-              
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="sunrise_sunset" id="sunrise_sunset" />
-                <Label htmlFor="sunrise_sunset" className="text-white">
+
+              <div className='flex items-center space-x-2'>
+                <RadioGroupItem value='sunrise_sunset' id='sunrise_sunset' />
+                <Label htmlFor='sunrise_sunset' className='text-white'>
                   Sunrise/sunset window
                 </Label>
               </div>
@@ -233,17 +234,20 @@ export function CreateTimelapseDialog({
                   <div className='space-y-2'>
                     <div className='flex items-center space-x-2'>
                       <Sunrise className='w-4 h-4 text-yellow-400' />
-                      <Label className='text-yellow-400 text-sm'>Sunrise Offset</Label>
+                      <Label className='text-yellow-400 text-sm'>
+                        Sunrise Offset
+                      </Label>
                     </div>
                     <div className='flex items-center space-x-2'>
                       <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
+                        type='button'
+                        size='sm'
+                        variant='outline'
                         onClick={() =>
                           setConfig((prev) => ({
                             ...prev,
-                            sunriseOffsetMinutes: prev.sunriseOffsetMinutes - 15,
+                            sunriseOffsetMinutes:
+                              prev.sunriseOffsetMinutes - 15,
                           }))
                         }
                         className='h-8 w-8 p-0 border-yellow-500/30 text-yellow-400'
@@ -251,27 +255,27 @@ export function CreateTimelapseDialog({
                       >
                         -
                       </Button>
-                      <Input
-                        type='number'
-                        step='15'
+                      <NumberInput
+                        step={15}
                         value={config.sunriseOffsetMinutes}
-                        onChange={(e) =>
+                        onChange={(value) =>
                           setConfig((prev) => ({
                             ...prev,
-                            sunriseOffsetMinutes: parseInt(e.target.value) || 0,
+                            sunriseOffsetMinutes: value,
                           }))
                         }
                         className='text-center bg-black/20 border-yellow-500/30 text-white'
                         disabled={loading}
                       />
                       <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
+                        type='button'
+                        size='sm'
+                        variant='outline'
                         onClick={() =>
                           setConfig((prev) => ({
                             ...prev,
-                            sunriseOffsetMinutes: prev.sunriseOffsetMinutes + 15,
+                            sunriseOffsetMinutes:
+                              prev.sunriseOffsetMinutes + 15,
                           }))
                         }
                         className='h-8 w-8 p-0 border-yellow-500/30 text-yellow-400'
@@ -284,17 +288,19 @@ export function CreateTimelapseDialog({
                       Minutes before (-) or after (+) sunrise
                     </p>
                   </div>
-                  
+
                   <div className='space-y-2'>
                     <div className='flex items-center space-x-2'>
                       <Sunset className='w-4 h-4 text-orange-400' />
-                      <Label className='text-orange-400 text-sm'>Sunset Offset</Label>
+                      <Label className='text-orange-400 text-sm'>
+                        Sunset Offset
+                      </Label>
                     </div>
                     <div className='flex items-center space-x-2'>
                       <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
+                        type='button'
+                        size='sm'
+                        variant='outline'
                         onClick={() =>
                           setConfig((prev) => ({
                             ...prev,
@@ -306,23 +312,22 @@ export function CreateTimelapseDialog({
                       >
                         -
                       </Button>
-                      <Input
-                        type='number'
-                        step='15'
+                      <NumberInput
+                        step={15}
                         value={config.sunsetOffsetMinutes}
-                        onChange={(e) =>
+                        onChange={(value) =>
                           setConfig((prev) => ({
                             ...prev,
-                            sunsetOffsetMinutes: parseInt(e.target.value) || 0,
+                            sunsetOffsetMinutes: value,
                           }))
                         }
                         className='text-center bg-black/20 border-orange-500/30 text-white'
                         disabled={loading}
                       />
                       <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
+                        type='button'
+                        size='sm'
+                        variant='outline'
                         onClick={() =>
                           setConfig((prev) => ({
                             ...prev,
@@ -341,7 +346,8 @@ export function CreateTimelapseDialog({
                   </div>
                 </div>
                 <p className='text-xs text-yellow-500/70'>
-                  Recording will occur from sunrise offset to sunset offset each day
+                  Recording will occur from sunrise offset to sunset offset each
+                  day
                 </p>
               </div>
             )}

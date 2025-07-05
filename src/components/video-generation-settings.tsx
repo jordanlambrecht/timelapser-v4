@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { NumberInput } from "@/components/ui/number-input"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -242,16 +243,15 @@ export function VideoGenerationSettings({
         {localSettings.video_generation_mode === "standard" && (
           <div className='space-y-4'>
             <div className='space-y-2'>
-              <Label htmlFor='standard_fps'>Standard FPS</Label>
-              <Input
+              <NumberInput
                 id='standard_fps'
-                type='number'
-                min='1'
-                max='120'
+                label='Standard FPS'
+                min={1}
+                max={120}
                 value={localSettings.standard_fps}
-                onChange={(e) =>
+                onChange={(value) =>
                   updateSettings({
-                    standard_fps: parseInt(e.target.value) || 12,
+                    standard_fps: value,
                   })
                 }
               />
@@ -290,14 +290,13 @@ export function VideoGenerationSettings({
                       </Label>
                     </div>
                     {localSettings.min_time_seconds !== null && (
-                      <Input
-                        type='number'
-                        min='1'
-                        max='3600'
-                        value={localSettings.min_time_seconds || ""}
-                        onChange={(e) =>
+                      <NumberInput
+                        min={1}
+                        max={3600}
+                        value={localSettings.min_time_seconds || 1}
+                        onChange={(value) =>
                           updateSettings({
-                            min_time_seconds: parseInt(e.target.value) || null,
+                            min_time_seconds: value,
                           })
                         }
                       />
@@ -320,14 +319,13 @@ export function VideoGenerationSettings({
                       </Label>
                     </div>
                     {localSettings.max_time_seconds !== null && (
-                      <Input
-                        type='number'
-                        min='1'
-                        max='3600'
-                        value={localSettings.max_time_seconds || ""}
-                        onChange={(e) =>
+                      <NumberInput
+                        min={1}
+                        max={3600}
+                        value={localSettings.max_time_seconds || 1}
+                        onChange={(value) =>
                           updateSettings({
-                            max_time_seconds: parseInt(e.target.value) || null,
+                            max_time_seconds: value,
                           })
                         }
                       />
@@ -343,16 +341,15 @@ export function VideoGenerationSettings({
         {localSettings.video_generation_mode === "target" && (
           <div className='space-y-4'>
             <div className='space-y-2'>
-              <Label htmlFor='target_time'>Target Duration (seconds)</Label>
-              <Input
+              <NumberInput
                 id='target_time'
-                type='number'
-                min='1'
-                max='3600'
-                value={localSettings.target_time_seconds || ""}
-                onChange={(e) =>
+                label='Target Duration (seconds)'
+                min={1}
+                max={3600}
+                value={localSettings.target_time_seconds || 1}
+                onChange={(value) =>
                   updateSettings({
-                    target_time_seconds: parseInt(e.target.value) || null,
+                    target_time_seconds: value,
                   })
                 }
               />
@@ -363,31 +360,29 @@ export function VideoGenerationSettings({
 
             <div className='grid grid-cols-2 gap-4'>
               <div className='space-y-2'>
-                <Label htmlFor='fps_min'>Min FPS Bound</Label>
-                <Input
+                <NumberInput
                   id='fps_min'
-                  type='number'
-                  min='1'
-                  max='60'
+                  label='Min FPS Bound'
+                  min={1}
+                  max={60}
                   value={localSettings.fps_bounds_min}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     updateSettings({
-                      fps_bounds_min: parseInt(e.target.value) || 1,
+                      fps_bounds_min: value,
                     })
                   }
                 />
               </div>
               <div className='space-y-2'>
-                <Label htmlFor='fps_max'>Max FPS Bound</Label>
-                <Input
+                <NumberInput
                   id='fps_max'
-                  type='number'
-                  min='1'
-                  max='120'
+                  label='Max FPS Bound'
+                  min={1}
+                  max={120}
                   value={localSettings.fps_bounds_max}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     updateSettings({
-                      fps_bounds_max: parseInt(e.target.value) || 60,
+                      fps_bounds_max: value,
                     })
                   }
                 />

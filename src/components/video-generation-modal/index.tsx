@@ -4,6 +4,7 @@
 import { useState } from "react"
 import { X, Video, Settings, Palette } from "lucide-react"
 import { VideoOverlayConfig, OverlaySettings } from "../video-overlay-config"
+import { NumberInput } from "@/components/ui/number-input"
 import { Camera } from "@/types"
 
 interface VideoGenerationModalProps {
@@ -200,22 +201,19 @@ export function VideoGenerationModal({
 
                 {/* Framerate */}
                 <div>
-                  <label className='block mb-2 text-sm font-medium text-white'>
-                    Framerate: {settings.framerate} FPS
-                  </label>
-                  <input
-                    type='range'
-                    min='15'
-                    max='60'
-                    step='5'
+                  <NumberInput
+                    label='Framerate (FPS)'
                     value={settings.framerate}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setSettings((prev) => ({
                         ...prev,
-                        framerate: parseInt(e.target.value),
+                        framerate: value,
                       }))
                     }
-                    className='w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer'
+                    min={15}
+                    max={60}
+                    step={5}
+                    className='text-white'
                   />
                   <div className='flex justify-between mt-1 text-xs text-gray-400'>
                     <span>15 FPS (Slow)</span>
@@ -256,19 +254,14 @@ export function VideoGenerationModal({
 
                   <div className='grid grid-cols-2 gap-4'>
                     <div>
-                      <label className='block mb-2 text-sm font-medium text-white'>
-                        Start Day (Optional)
-                      </label>
-                      <input
-                        type='number'
-                        min='1'
-                        value={settings.day_start || ""}
-                        onChange={(e) =>
+                      <NumberInput
+                        label='Start Day (Optional)'
+                        min={1}
+                        value={settings.day_start || 1}
+                        onChange={(value) =>
                           setSettings((prev) => ({
                             ...prev,
-                            day_start: e.target.value
-                              ? parseInt(e.target.value)
-                              : undefined,
+                            day_start: value,
                           }))
                         }
                         placeholder='1'
@@ -277,19 +270,14 @@ export function VideoGenerationModal({
                     </div>
 
                     <div>
-                      <label className='block mb-2 text-sm font-medium text-white'>
-                        End Day (Optional)
-                      </label>
-                      <input
-                        type='number'
-                        min='1'
-                        value={settings.day_end || ""}
-                        onChange={(e) =>
+                      <NumberInput
+                        label='End Day (Optional)'
+                        min={1}
+                        value={settings.day_end || 30}
+                        onChange={(value) =>
                           setSettings((prev) => ({
                             ...prev,
-                            day_end: e.target.value
-                              ? parseInt(e.target.value)
-                              : undefined,
+                            day_end: value,
                           }))
                         }
                         placeholder='30'
