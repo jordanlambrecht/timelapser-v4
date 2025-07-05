@@ -97,4 +97,46 @@ alembic upgrade head                    # Apply migrations
 alembic revision --autogenerate -m ""   # Generate migration
 ```
 
+## Real-Time Event System (SSE)
+
+**Architecture**: PostgreSQL LISTEN/NOTIFY → FastAPI SSE → Next.js Proxy → Frontend
+
+### Event-Driven SSE Implementation
+
+The system uses PostgreSQL's native LISTEN/NOTIFY for truly event-driven real-time updates:
+
+1. **Service Layer** - Creates events in `sse_events` table when actions occur
+2. **PostgreSQL Trigger** - Automatically sends NOTIFY when events inserted
+3. **SSE Router** - Uses psycopg3 async LISTEN to wait for notifications
+4. **Frontend Proxy** - Next.js API route streams to client
+5. **Centralized Context** - Single SSE connection shared across all components
+
+### Key Benefits
+
+- **Zero Polling** - No constant database queries or `asyncio.sleep()` loops
+- **Instant Updates** - Events delivered immediately via PostgreSQL notifications
+- **Zero Load When Idle** - No database activity when no events occur
+- **Highly Scalable** - PostgreSQL handles notification distribution efficiently
+
+### Critical Files
+
+- `backend/app/routers/sse_routers.py` - LISTEN/NOTIFY SSE endpoint
+- `backend/alembic/versions/019_add_sse_notify_trigger.py` - Database trigger
+- `backend/app/database/sse_events_operations.py` - Event database operations
+- `src/contexts/sse-context.tsx` - Frontend centralized connection
+- `src/app/api/events/route.ts` - Next.js SSE proxy
+
+### Service Integration
+
+All service methods must create SSE events when actions occur:
+
+```python
+await self.sse_ops.create_event(
+    event_type="timelapse_started",
+    event_data={"camera_id": camera_id, "timelapse_id": timelapse_id},
+    priority="normal",
+    source="api"
+)
+```
+
 [... rest of the existing content remains unchanged ...]

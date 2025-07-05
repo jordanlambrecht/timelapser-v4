@@ -1,6 +1,6 @@
 # backend/app/routers/sse_routers.py
 """
-Server-Sent Events (SSE) HTTP endpoints.
+Server-Sent Events (SSE) HTTP endpoints using simple polling.
 
 Role: Real-time event streaming endpoints
 Responsibilities: Database-driven SSE streaming, event delivery, connection management
@@ -29,10 +29,10 @@ router = APIRouter(tags=["sse"])
 @handle_exceptions("SSE event stream")
 async def sse_event_stream(db: AsyncDatabaseDep):
     """
-    Server-Sent Events endpoint for real-time event streaming.
+    Server-Sent Events endpoint for real-time event streaming using database polling.
     
-    This endpoint streams events directly from the database, providing
-    reliable real-time updates without HTTP POST round-trips.
+    This endpoint polls the database every 3 seconds for new events, providing
+    reliable real-time updates with industry-standard polling approach.
     
     Returns:
         StreamingResponse: SSE-formatted event stream
@@ -40,7 +40,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
 
     async def event_generator() -> AsyncGenerator[str, None]:
         """
-        Generate SSE-formatted events from database.
+        Generate SSE-formatted events using database polling.
         
         Yields:
             SSE-formatted event strings
@@ -48,13 +48,41 @@ async def sse_event_stream(db: AsyncDatabaseDep):
         sse_ops = SSEEventsOperations(db)
         last_heartbeat = datetime.utcnow()
         
-        logger.info("SSE client connected, starting event stream")
+        logger.info("SSE client connected, starting event stream (polling mode)")
         
         try:
+            # Process any existing events first
+            existing_events = await sse_ops.get_pending_events(limit=50)
+            if existing_events:
+                for event in existing_events:
+                    # Format as SSE event
+                    event_data = {
+                        "type": event["type"],
+                        "data": event["data"],
+                        "timestamp": event["timestamp"]
+                    }
+                    
+                    # Trigger cache invalidation for this event
+                    try:
+                        await CacheInvalidationService.handle_sse_event(
+                            event["type"], event["data"]
+                        )
+                    except Exception as cache_error:
+                        logger.warning(f"Cache invalidation failed for {event['type']}: {cache_error}")
+                    
+                    # Yield SSE-formatted data
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                
+                # Mark events as processed
+                event_ids = [event["id"] for event in existing_events]
+                await sse_ops.mark_events_processed(event_ids)
+                logger.debug(f"Streamed {len(existing_events)} existing SSE events to client")
+
+            # Main polling loop
             while True:
                 try:
-                    # Get pending events from database
-                    events = await sse_ops.get_pending_events(limit=50)
+                    # Poll for new events every 3 seconds
+                    events = await sse_ops.get_pending_events(limit=10)
                     
                     if events:
                         # Stream each event to client
@@ -93,9 +121,10 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         }
                         yield f"data: {json.dumps(heartbeat_event)}\n\n"
                         last_heartbeat = now
+                        logger.debug("Sent SSE heartbeat")
                     
-                    # Wait before next poll (much faster than HTTP POST approach)
-                    await asyncio.sleep(0.5)
+                    # Wait 3 seconds before next poll (industry standard)
+                    await asyncio.sleep(3)
                     
                 except Exception as e:
                     logger.error(f"Error in SSE event generation: {e}")

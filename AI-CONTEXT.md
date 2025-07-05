@@ -96,6 +96,8 @@ All Components
 
 ### Real-time Event System Rules (CRITICAL - Performance Impact)
 
+**Event-Driven SSE Architecture (PostgreSQL LISTEN/NOTIFY)**:
+
 1. **NEVER create individual EventSource connections** - Each component using
    `new EventSource("/api/events")` creates separate connections
 2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>`
@@ -116,10 +118,26 @@ All Components
 connections with rapid cycling. Centralized system achieves 99% connection
 reduction while maintaining same real-time functionality.
 
+**Event-Driven Backend Architecture (NEW)**:
+
+- **PostgreSQL LISTEN/NOTIFY** - True event-driven, zero polling
+- **Database Trigger** - Automatically sends NOTIFY when events inserted
+- **psycopg3 Async LISTEN** - SSE endpoint waits for notifications
+- **Instant Event Delivery** - No polling delays, immediate UI updates
+- **Zero Database Load** - No constant SELECT queries when idle
+
+**SSE Backend Flow**:
+1. Service creates event → INSERT into sse_events table
+2. PostgreSQL trigger fires → NOTIFY 'sse_events' with event data
+3. SSE endpoint receives notification → Streams to frontend immediately
+4. Frontend updates UI → Real-time without polling
+
 **Files in Centralized SSE System**:
 
 - `/src/contexts/sse-context.tsx` - Single connection management
 - `/src/hooks/use-camera-sse.ts` - Specialized event hooks
+- `/backend/app/routers/sse_routers.py` - LISTEN/NOTIFY endpoint
+- `/backend/alembic/versions/019_add_sse_notify_trigger.py` - Database trigger
 - Components use hooks, never direct EventSource connections
 
 **SSE Event Structure (CRITICAL)**:
@@ -129,6 +147,14 @@ reduction while maintaining same real-time functionality.
   `event.data.status`
 - ❌ Wrong: `event.camera_id` (data directly on event object)
 - All events MUST nest data under the `data` property for consistency
+
+**Service Layer SSE Integration (CRITICAL)**:
+
+- **ALL service methods MUST create SSE events** when actions occur
+- **Use appropriate event types**: `timelapse_started`, `image_captured`, `video_completed`
+- **Include relevant data**: camera_id, timelapse_id, status, counts, etc.
+- **Set priority levels**: `high` (failures, completions), `normal` (operations), `low` (monitoring)
+- **Source attribution**: `api` (user actions), `worker` (background), `system` (automated)
 
 ### Corruption Detection System Rules (CRITICAL - Quality Control)
 
@@ -183,6 +209,8 @@ success, message, file_path = self.capture.capture_image(...)
 - **Simple browser-local time calculations** - Always use timezone-aware system
 - **Individual EventSource connections** - Creates connection spam (79+
   connections), use centralized SSE system only
+- **SSE polling loops** - Use PostgreSQL LISTEN/NOTIFY instead of constant database polling
+- **asyncio.sleep() in SSE endpoints** - Event-driven notifications eliminate need for polling
 - **Direct RTSP capture calls** - Always use corruption detection wrapper
 - **eventEmitter for corruption events** - Use SSE subscriptions only
 - **Manual corruption scoring** - Use CorruptionController.evaluate_frame()
@@ -2319,6 +2347,8 @@ functionality already in `video_operations.py`.
 
 ### Real-time Event System Rules (CRITICAL - Performance Impact)
 
+**Event-Driven SSE Architecture (PostgreSQL LISTEN/NOTIFY)**:
+
 1. **NEVER create individual EventSource connections** - Each component using
    `new EventSource("/api/events")` creates separate connections
 2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>`
@@ -2339,10 +2369,26 @@ functionality already in `video_operations.py`.
 connections with rapid cycling. Centralized system achieves 99% connection
 reduction while maintaining same real-time functionality.
 
+**Event-Driven Backend Architecture (NEW)**:
+
+- **PostgreSQL LISTEN/NOTIFY** - True event-driven, zero polling
+- **Database Trigger** - Automatically sends NOTIFY when events inserted
+- **psycopg3 Async LISTEN** - SSE endpoint waits for notifications
+- **Instant Event Delivery** - No polling delays, immediate UI updates
+- **Zero Database Load** - No constant SELECT queries when idle
+
+**SSE Backend Flow**:
+1. Service creates event → INSERT into sse_events table
+2. PostgreSQL trigger fires → NOTIFY 'sse_events' with event data
+3. SSE endpoint receives notification → Streams to frontend immediately
+4. Frontend updates UI → Real-time without polling
+
 **Files in Centralized SSE System**:
 
 - `/src/contexts/sse-context.tsx` - Single connection management
 - `/src/hooks/use-camera-sse.ts` - Specialized event hooks
+- `/backend/app/routers/sse_routers.py` - LISTEN/NOTIFY endpoint
+- `/backend/alembic/versions/019_add_sse_notify_trigger.py` - Database trigger
 - Components use hooks, never direct EventSource connections
 
 **SSE Event Structure (CRITICAL)**:
@@ -2352,6 +2398,14 @@ reduction while maintaining same real-time functionality.
   `event.data.status`
 - ❌ Wrong: `event.camera_id` (data directly on event object)
 - All events MUST nest data under the `data` property for consistency
+
+**Service Layer SSE Integration (CRITICAL)**:
+
+- **ALL service methods MUST create SSE events** when actions occur
+- **Use appropriate event types**: `timelapse_started`, `image_captured`, `video_completed`
+- **Include relevant data**: camera_id, timelapse_id, status, counts, etc.
+- **Set priority levels**: `high` (failures, completions), `normal` (operations), `low` (monitoring)
+- **Source attribution**: `api` (user actions), `worker` (background), `system` (automated)
 
 ### Corruption Detection System Rules (CRITICAL - Quality Control)
 

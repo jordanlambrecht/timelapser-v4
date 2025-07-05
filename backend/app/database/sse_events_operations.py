@@ -55,8 +55,8 @@ class SSEEventsOperations:
         """
         try:
             query = """
-                INSERT INTO sse_events (event_type, event_data, priority, source)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO sse_events (event_type, event_data, priority, source, retry_count)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
             """
 
@@ -64,11 +64,11 @@ class SSEEventsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         query,
-                        (event_type, json.dumps(event_data), priority, source),
+                        (event_type, json.dumps(event_data), priority, source, 0),
                     )
                     result = await cur.fetchone()
                     if result:
-                        event_id = result[0]
+                        event_id = result["id"] if isinstance(result, dict) else result[0]
                         logger.debug(
                             f"Created SSE event: {event_type} with ID {event_id}"
                         )
@@ -118,16 +118,17 @@ class SSEEventsOperations:
                     events = []
                     for row in rows:
                         event = {
-                            "id": row[0],
-                            "type": row[1],
-                            "data": json.loads(row[2]) if row[2] else {},
-                            "timestamp": row[3].isoformat() if row[3] else None,
-                            "priority": row[4],
-                            "source": row[5],
+                            "id": row["id"],
+                            "type": row["event_type"],
+                            "data": row["event_data"] if row["event_data"] else {},
+                            "timestamp": row["created_at"].isoformat() if row["created_at"] else None,
+                            "priority": row["priority"],
+                            "source": row["source"],
                         }
                         events.append(event)
 
-                    logger.debug(f"Retrieved {len(events)} pending SSE events")
+                    if events:
+                        logger.debug(f"Retrieved {len(events)} pending SSE events")
                     return events
 
         except Exception as e:
