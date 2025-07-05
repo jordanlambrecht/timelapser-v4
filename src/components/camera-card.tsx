@@ -46,7 +46,6 @@ import {
 } from "react"
 import { toast } from "@/lib/toast"
 import { useCameraCountdown } from "@/hooks/use-camera-countdown"
-import { useCaptureSettings } from "@/contexts/settings-context"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { isWithinTimeWindow } from "@/lib/time-utils"
 import { TimestampWithWarning } from "@/components/suspicious-timestamp-warning"
@@ -196,11 +195,12 @@ const CameraCardComponent = ({
   // ✅ FIX: Use useRef to store imageRefetch function to prevent infinite re-renders
   const imageRefetchRef = useRef<(() => Promise<void>) | null>(null)
 
-  // Hooks for countdown (simplified for now)
-  const { captureInterval } = useCaptureSettings()
+  // TODO: Get capture interval from active timelapse once backend is updated
+  // For now, use a default interval of 5 minutes (300 seconds)
+  const defaultCaptureInterval = 300
   const countdownState = useCameraCountdown({
     camera,
-    captureInterval,
+    captureInterval: defaultCaptureInterval,
   })
 
   // ✅ PERFORMANCE OPTIMIZATION: Memoized computed values

@@ -24,7 +24,7 @@ import {
 import { cn } from "@/lib/utils"
 import { formatDuration, formatDate } from "@/lib/time-utils"
 import { DeleteTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { useCaptureSettings } from "@/contexts/settings-context"
+import { useTimezoneSettings } from "@/contexts/settings-context"
 import { toast } from "@/lib/toast"
 import { Video } from "@/types"
 
@@ -53,7 +53,7 @@ export function TimelapseModal({
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   // Get timezone from settings
-  const { timezone } = useCaptureSettings()
+  const { timezone } = useTimezoneSettings()
 
   const fetchVideos = async () => {
     if (!isOpen || !cameraId) return
