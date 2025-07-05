@@ -60,7 +60,7 @@ export function CorruptionSettingsCard() {
             </div>
           </div>
           <SuperSwitch
-            variant="labeled"
+            variant='labeled'
             checked={corruptionDetectionEnabled}
             onCheckedChange={setCorruptionDetectionEnabled}
             trueLabel='ON'
@@ -88,7 +88,7 @@ export function CorruptionSettingsCard() {
                   </div>
                 </div>
                 <SuperSwitch
-                  variant="labeled"
+                  variant='labeled'
                   checked={corruptionHeavyDetectionEnabled}
                   onCheckedChange={setCorruptionHeavyDetectionEnabled}
                   trueLabel='ON'
@@ -146,7 +146,7 @@ export function CorruptionSettingsCard() {
                     </div>
                   </div>
                   <SuperSwitch
-                    variant="labeled"
+                    variant='labeled'
                     checked={corruptionAutoDiscardEnabled}
                     onCheckedChange={setCorruptionAutoDiscardEnabled}
                     trueLabel='ON'
@@ -162,7 +162,7 @@ export function CorruptionSettingsCard() {
                     </div>
                   </div>
                   <SuperSwitch
-                    variant="labeled"
+                    variant='labeled'
                     checked={corruptionAutoDisableDegraded}
                     onCheckedChange={setCorruptionAutoDisableDegraded}
                     trueLabel='ON'

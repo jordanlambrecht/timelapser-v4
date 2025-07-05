@@ -42,6 +42,7 @@ import signal
 import asyncio
 from pathlib import Path
 from datetime import datetime, time, date
+from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
@@ -76,6 +77,7 @@ from app.services.worker_corruption_integration_service import (
 )
 """
 from app.services.weather.service import WeatherManager, OpenWeatherService
+from app.models.weather_model import OpenWeatherApiData
 
 
 class AsyncTimelapseWorker:
@@ -156,9 +158,12 @@ class AsyncTimelapseWorker:
 
         # Legacy corruption integration is disabled (module missing)
 
-        # Initialize weather manager for sunrise/sunset and weather data
-        self.weather_manager = WeatherManager(sync_db)
-        logger.info("Weather manager initialized")
+        # Initialize weather manager with proper dependency injection
+        from app.database.weather_operations import SyncWeatherOperations
+
+        weather_ops = SyncWeatherOperations(sync_db)
+        self.weather_manager = WeatherManager(weather_ops, self.settings_service)
+        logger.info("Weather manager initialized with dependency injection")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -270,17 +275,37 @@ class AsyncTimelapseWorker:
     def _check_sun_based_window(self, settings_dict: dict) -> bool:
         """Check if current time is within sunrise/sunset window"""
         try:
-            # Check if we have required weather data
-            sunrise_timestamp = settings_dict.get("sunrise_timestamp")
-            sunset_timestamp = settings_dict.get("sunset_timestamp")
+            # Get weather data from weather_data table instead of settings
+            from app.database.weather_operations import SyncWeatherOperations
+
+            weather_ops = SyncWeatherOperations(sync_db)
+            latest_weather = weather_ops.get_latest_weather()
+
+            if not latest_weather:
+                logger.debug("No weather data available")
+                return True  # Allow capture if no data
+
+            sunrise_timestamp = latest_weather.get("sunrise_timestamp")
+            sunset_timestamp = latest_weather.get("sunset_timestamp")
 
             if not sunrise_timestamp or not sunset_timestamp:
                 logger.debug("No sunrise/sunset data available")
                 return True  # Allow capture if no data
 
-            # Get offsets
-            sunrise_offset_minutes = int(settings_dict.get("sunrise_offset_minutes", 0))
-            sunset_offset_minutes = int(settings_dict.get("sunset_offset_minutes", 0))
+            # Get offsets from settings
+            try:
+                sunrise_offset_minutes = int(
+                    settings_dict.get("sunrise_offset_minutes", 0)
+                )
+            except (ValueError, TypeError):
+                sunrise_offset_minutes = 0
+
+            try:
+                sunset_offset_minutes = int(
+                    settings_dict.get("sunset_offset_minutes", 0)
+                )
+            except (ValueError, TypeError):
+                sunset_offset_minutes = 0
 
             # Use weather service to check if within window
             service = OpenWeatherService(
@@ -292,9 +317,20 @@ class AsyncTimelapseWorker:
             # Get timezone for sun window calculation
             timezone_str = settings_dict.get("timezone", "UTC")
 
+            # Convert datetime objects to timestamps if needed
+            if isinstance(sunrise_timestamp, datetime):
+                sunrise_timestamp = int(sunrise_timestamp.timestamp())
+            else:
+                sunrise_timestamp = int(sunrise_timestamp)
+
+            if isinstance(sunset_timestamp, datetime):
+                sunset_timestamp = int(sunset_timestamp.timestamp())
+            else:
+                sunset_timestamp = int(sunset_timestamp)
+
             return service.is_within_sun_window(
-                sunrise_timestamp=int(sunrise_timestamp),
-                sunset_timestamp=int(sunset_timestamp),
+                sunrise_timestamp=sunrise_timestamp,
+                sunset_timestamp=sunset_timestamp,
                 sunrise_offset_minutes=sunrise_offset_minutes,
                 sunset_offset_minutes=sunset_offset_minutes,
                 timezone_str=timezone_str,
@@ -490,8 +526,12 @@ class AsyncTimelapseWorker:
                     self.sse_ops.create_image_captured_event,
                     camera_id,
                     getattr(updated_timelapse, "id", 0) if updated_timelapse else 0,
-                    getattr(updated_timelapse, "image_count", 0) if updated_timelapse else 0,
-                    0  # day_number - would need to be calculated from image data
+                    (
+                        getattr(updated_timelapse, "image_count", 0)
+                        if updated_timelapse
+                        else 0
+                    ),
+                    0,  # day_number - would need to be calculated from image data
                 )
 
                 logger.info(f"Successfully captured and saved image: {message}")
@@ -690,7 +730,11 @@ class AsyncTimelapseWorker:
             # Check if we have required settings
             latitude = settings_dict.get("latitude")
             longitude = settings_dict.get("longitude")
-            api_key = settings_dict.get("openweather_api_key")
+
+            # Get API key securely through settings service
+            api_key = await asyncio.get_event_loop().run_in_executor(
+                None, self.settings_service.get_openweather_api_key
+            )
 
             if not all([latitude, longitude, api_key]):
                 logger.warning(
@@ -701,19 +745,43 @@ class AsyncTimelapseWorker:
             # Type narrowing - at this point we know api_key is not None
             assert api_key is not None, "api_key should not be None after validation"
 
-            # Check if weather data is stale (not from today)
-            # Use timezone-aware date for proper comparison
-            today = get_timezone_aware_date_sync(self.settings_service)
-            weather_date_fetched = settings_dict.get("weather_date_fetched", "")
+            # Check if weather data is stale using the new weather_data table
+            # Get latest weather data from weather_data table (not settings!)
+            latest_weather = self.weather_manager.weather_ops.get_latest_weather()
 
-            if weather_date_fetched == today:
-                logger.debug("Weather data is current, skipping refresh")
-                return
+            if latest_weather:
+                # Get timezone-aware today for comparison
+                from app.utils.timezone_utils import get_timezone_from_settings
+                from zoneinfo import ZoneInfo
+
+                try:
+                    timezone_str = get_timezone_from_settings(settings_dict)
+                    tz = ZoneInfo(timezone_str)
+                    today = datetime.now(tz).date().isoformat()
+                except Exception as e:
+                    logger.warning(f"Failed to get timezone aware date: {e}")
+                    today = datetime.now().date().isoformat()
+
+                # Check if weather data is from today
+                weather_date = latest_weather.get("weather_date_fetched")
+                if weather_date:
+                    if isinstance(weather_date, datetime):
+                        weather_date_str = weather_date.date().isoformat()
+                    else:
+                        weather_date_str = str(weather_date)[
+                            :10
+                        ]  # Take first 10 chars (YYYY-MM-DD)
+
+                    if weather_date_str == today:
+                        logger.debug("Weather data is current, skipping refresh")
+                        return
 
             logger.info("Refreshing weather data...")
 
             # Call the async weather refresh method directly with plain text API key
-            weather_data = await self.weather_manager.refresh_weather_if_needed(api_key)
+            weather_data: Optional[OpenWeatherApiData] = (
+                await self.weather_manager.refresh_weather_if_needed(api_key)
+            )
 
             if weather_data:
                 logger.info(
@@ -733,7 +801,7 @@ class AsyncTimelapseWorker:
                         "date_fetched": weather_data.date_fetched.isoformat(),
                     },
                     "normal",
-                    "worker"
+                    "worker",
                 )
             else:
                 logger.warning("Failed to refresh weather data")
@@ -801,12 +869,11 @@ class AsyncTimelapseWorker:
             max_instances=1,
         )
 
-        # Schedule weather data refresh job (daily at 6 AM)
+        # Schedule weather data refresh job (hourly)
         self.scheduler.add_job(
             func=self.refresh_weather_data,
             trigger="cron",
-            hour=6,
-            minute=0,
+            minute=0,  # Run at the top of every hour
             id="weather_job",
             name="Refresh Weather Data",
             max_instances=1,

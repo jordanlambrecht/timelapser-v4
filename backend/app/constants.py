@@ -148,6 +148,32 @@ CORRUPTION_CRITICAL_THRESHOLD = 90
 CORRUPTION_FAST_CRITICAL_THRESHOLD = 95
 CORRUPTION_HEAVY_CRITICAL_THRESHOLD = 95
 
+# ====================================================================
+# WEATHER SYSTEM CONSTANTS
+# ====================================================================
+
+# OpenWeather API configuration
+OPENWEATHER_API_BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
+OPENWEATHER_API_TIMEOUT = 10  # seconds
+OPENWEATHER_API_UNITS = "metric"
+
+# Weather failure thresholds
+WEATHER_MAX_CONSECUTIVE_FAILURES = 4
+WEATHER_FAILURE_RETRY_INTERVAL = 300  # 5 minutes in seconds
+
+# Weather data refresh intervals
+WEATHER_REFRESH_INTERVAL_HOURS = 1
+WEATHER_CACHE_TTL_HOURS = 2
+
+# Weather validation messages
+WEATHER_API_KEY_VALID = "API key is valid"
+WEATHER_API_KEY_INVALID = "Invalid API key"
+WEATHER_LOCATION_INVALID = "Invalid location coordinates"
+WEATHER_CONNECTION_ERROR = "Connection error"
+WEATHER_REFRESH_SKIPPED_LOCATION = "Weather refresh skipped: Location not configured"
+WEATHER_REFRESH_SKIPPED_DISABLED = "Weather functionality disabled, skipping refresh"
+WEATHER_REFRESH_MISSING_SETTINGS = "Weather refresh skipped: Missing required settings (lat/lng/api_key)"
+
 # Health scoring penalties and thresholds
 HEALTH_DEGRADED_MODE_PENALTY = 50
 HEALTH_CONSECUTIVE_FAILURES_HIGH_THRESHOLD = 5
