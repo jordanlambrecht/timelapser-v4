@@ -18,7 +18,7 @@ class WeatherOperations:
     
     async def get_latest_weather(self) -> Optional[Dict[str, Any]]:
         """Get the most recent weather data."""
-        async with await self.db.get_connection() as conn:
+        async with self.db.get_connection() as conn:
             result = await conn.execute(
                 text("""
                     SELECT * FROM weather_data 
@@ -43,7 +43,7 @@ class WeatherOperations:
         last_error_message: Optional[str] = None
     ) -> int:
         """Insert new weather data record."""
-        async with await self.db.get_connection() as conn:
+        async with self.db.get_connection() as conn:
             result = await conn.execute(
                 text("""
                     INSERT INTO weather_data (
@@ -96,7 +96,7 @@ class WeatherOperations:
         last_error_message: Optional[str] = None
     ) -> None:
         """Update weather data with failure information."""
-        async with await self.db.get_connection() as conn:
+        async with self.db.get_connection() as conn:
             # Get current consecutive failures
             result = await conn.execute(
                 text("""
@@ -126,7 +126,7 @@ class WeatherOperations:
         # Round down to the hour
         hour_start = target_datetime.replace(minute=0, second=0, microsecond=0)
         
-        async with await self.db.get_connection() as conn:
+        async with self.db.get_connection() as conn:
             result = await conn.execute(
                 text("""
                     SELECT * FROM weather_data 

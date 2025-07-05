@@ -917,6 +917,43 @@ class SyncCameraOperations:
 
                 return cameras
 
+    def get_cameras_with_running_timelapses(self) -> List[Camera]:
+        """
+        Retrieve cameras that have active running timelapses.
+        
+        Returns:
+            List of Camera model instances with running timelapses
+            
+        Usage:
+            cameras = db.get_cameras_with_running_timelapses()
+        """
+        query = """
+        SELECT 
+            c.*,
+            t.id as active_timelapse_id,
+            t.status as timelapse_status
+        FROM cameras c
+        INNER JOIN timelapses t ON c.id = t.camera_id AND t.status = 'running'
+        WHERE c.enabled = true
+        ORDER BY c.id
+        """
+
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                results = cur.fetchall()
+
+                cameras = []
+                for row in results:
+                    try:
+                        camera_data = self._prepare_camera_data(row)
+                        cameras.append(Camera.model_validate(camera_data))
+                    except ValidationError as e:
+                        logger.error(f"Error creating Camera model for row {row}: {e}")
+                        continue
+
+                return cameras
+
     def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
         """
         Retrieve a specific camera by ID.
