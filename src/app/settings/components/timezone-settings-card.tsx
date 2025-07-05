@@ -14,7 +14,7 @@ import { useSettings } from "@/contexts/settings-context"
 import { Globe } from "lucide-react"
 
 export function TimezoneSettingsCard() {
-  const { timezone, saving, updateSetting } = useSettings()
+  const { timezone, saving, setTimezone } = useSettings()
   
   // Debug timezone changes
   const handleTimezoneChange = (newTimezone: string) => {
@@ -24,7 +24,7 @@ export function TimezoneSettingsCard() {
       "to",
       newTimezone
     )
-    updateSetting('timezone', newTimezone)
+    setTimezone(newTimezone)
   }
 
   return (
