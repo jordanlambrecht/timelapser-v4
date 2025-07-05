@@ -8,7 +8,7 @@ import {
   useRelativeTime,
   useCameraCountdown,
 } from "@/hooks/use-camera-countdown"
-import { useCaptureSettings } from "@/contexts/settings-context"
+import { useTimezoneSettings } from "@/contexts/settings-context"
 import { useCameraDetails } from "@/hooks/use-camera-details"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
@@ -74,7 +74,7 @@ export default function CameraDetailsPage() {
   } = useCameraDetails(cameraId)
 
   // Get timezone from settings
-  const { timezone } = useCaptureSettings()
+  const { timezone } = useTimezoneSettings()
 
   // UI state only - no more complex data management
   const [imageKey, setImageKey] = useState(Date.now()) // Force image refresh
@@ -126,7 +126,7 @@ export default function CameraDetailsPage() {
           use_time_window: false,
         },
     timelapse: activeTimelapse || undefined,
-    captureInterval: 300, // 5 minutes - you might want to get this from camera settings
+    captureInterval: 300, // TODO: Get from active timelapse when backend supports per-timelapse intervals
     enabled: isTimelapseRunning,
   })
 

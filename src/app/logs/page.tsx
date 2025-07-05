@@ -12,7 +12,7 @@ import {
   Bug,
   Sigma,
 } from "lucide-react"
-import { useCaptureSettings } from "@/contexts/settings-context"
+import { useTimezoneSettings } from "@/contexts/settings-context"
 
 interface Log {
   id: number
@@ -38,7 +38,7 @@ export default function LogsPage() {
   const [cameras, setCameras] = useState<Camera[]>([])
 
   // Get timezone from settings
-  const { timezone } = useCaptureSettings()
+  const { timezone } = useTimezoneSettings()
   const [stats, setStats] = useState<LogStats>({
     errors: 0,
     warnings: 0,

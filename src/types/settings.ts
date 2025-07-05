@@ -2,7 +2,6 @@ import { ReactNode } from "react"
 
 export interface SettingsState {
   // Core settings
-  captureInterval: number
   timezone: string
   generateThumbnails: boolean
   imageCaptureType: "PNG" | "JPG"
@@ -13,7 +12,8 @@ export interface SettingsState {
   originalApiKeyHash: string
 
   // Weather settings
-  weatherEnabled: boolean
+  weatherIntegrationEnabled: boolean
+  weatherRecordData: boolean
   sunriseSunsetEnabled: boolean
   latitude: number | null
   longitude: number | null
@@ -44,7 +44,6 @@ export interface SettingsState {
 
 export interface SettingsActions {
   // Core settings
-  setCaptureInterval: (value: number) => void
   setTimezone: (value: string) => void
   setGenerateThumbnails: (value: boolean) => void
   setImageCaptureType: (value: "PNG" | "JPG") => void
@@ -55,7 +54,8 @@ export interface SettingsActions {
   setOriginalApiKeyHash: (value: string) => void
 
   // Weather settings
-  setWeatherEnabled: (value: boolean) => void
+  setWeatherIntegrationEnabled: (value: boolean) => void
+  setWeatherRecordData: (value: boolean) => void
   setSunriseSunsetEnabled: (value: boolean) => void
   setLatitude: (value: number | null) => void
   setLongitude: (value: number | null) => void
@@ -94,8 +94,6 @@ export interface ApiKeySettingsCardProps {
 }
 
 export interface CaptureSettingsCardProps {
-  captureInterval: number
-  setCaptureInterval: (value: number) => void
   generateThumbnails: boolean
   setGenerateThumbnails: (value: boolean) => void
   imageCaptureType: "PNG" | "JPG"
@@ -155,8 +153,10 @@ export interface TimezoneSettingsCardProps {
 }
 
 export interface WeatherSettingsCardProps {
-  weatherEnabled: boolean
-  setWeatherEnabled: (value: boolean) => void
+  weatherIntegrationEnabled: boolean
+  setWeatherIntegrationEnabled: (value: boolean) => void
+  weatherRecordData: boolean
+  setWeatherRecordData: (value: boolean) => void
   sunriseSunsetEnabled: boolean
   setSunriseSunsetEnabled: (value: boolean) => void
   latitude: number | null

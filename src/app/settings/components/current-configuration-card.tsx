@@ -9,11 +9,10 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Settings, Clock, ImageIcon, Map, KeyIcon, Layers } from "lucide-react"
+import { Settings, ImageIcon, Map, KeyIcon, Layers } from "lucide-react"
 
 interface CurrentConfigurationCardProps {
   settings: {
-    captureInterval: number
     timezone: string
     openWeatherApiKey: string
     generateThumbnails: boolean
@@ -25,12 +24,6 @@ interface CurrentConfigurationCardProps {
 export function CurrentConfigurationCard({
   settings,
 }: CurrentConfigurationCardProps) {
-  const formatInterval = (seconds: number) => {
-    const sec = seconds
-    if (sec < 60) return `${sec} seconds`
-    if (sec < 3600) return `${Math.floor(sec / 60)} minutes`
-    return `${Math.floor(sec / 3600)} hours`
-  }
 
   return (
     <Card className='transition-all duration-300 glass hover:glow'>
@@ -45,16 +38,6 @@ export function CurrentConfigurationCard({
       </CardHeader>
       <CardContent className='space-y-4'>
         <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
-          <div className='flex items-center space-x-3 p-3 rounded-lg bg-background/30 border border-borderColor/30'>
-            <Clock className='w-4 h-4 text-blue-400' />
-            <div>
-              <p className='text-sm font-medium'>Capture Interval</p>
-              <p className='text-xs text-muted-foreground'>
-                {formatInterval(settings.captureInterval)}
-              </p>
-            </div>
-          </div>
-
           <div className='flex items-center space-x-3 p-3 rounded-lg bg-background/30 border border-borderColor/30'>
             <Map className='w-4 h-4 text-orange-400' />
             <div>

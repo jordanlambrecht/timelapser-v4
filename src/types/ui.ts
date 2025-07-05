@@ -75,6 +75,17 @@ export interface SwitchLabeledProps {
   id?: string
 }
 
+export interface ToggleGroupProps {
+  options: Array<{ label: string; value: string; disabled?: boolean }>
+  value: string
+  onValueChange: (value: string) => void
+  label: string
+  colorTheme?: "pink" | "yellow" | "cyan"
+  disabled?: boolean
+  className?: string
+  id?: string
+}
+
 export interface TimezoneSelectorProps {
   value?: string
   onChange: (timezone: string) => void

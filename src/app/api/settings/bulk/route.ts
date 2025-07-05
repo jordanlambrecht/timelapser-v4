@@ -28,6 +28,8 @@ export async function POST(request: NextRequest) {
     console.log(
       `Proxying to FastAPI: POST /api/settings/bulk with ${settingsCount} settings`
     )
+    console.log("Settings being sent to backend:", body)
+    console.log("Wrapped payload:", { settings: body })
 
     // Proxy to FastAPI backend
     const response = await proxyToFastAPI("/api/settings/bulk", {
@@ -50,7 +52,14 @@ export async function POST(request: NextRequest) {
     const data = await response.json()
 
     // Backend already broadcasts SSE event, no need to duplicate here
-    return NextResponse.json(data)
+    const nextResponse = NextResponse.json(data)
+    
+    // Add no-cache headers
+    nextResponse.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    nextResponse.headers.set('Pragma', 'no-cache')
+    nextResponse.headers.set('Expires', '0')
+    
+    return nextResponse
   } catch (error) {
     console.error("Failed to update settings in bulk:", error)
     return NextResponse.json(

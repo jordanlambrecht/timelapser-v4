@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Response
 
-from ..dependencies import SettingsServiceDep
+from ..dependencies import SettingsServiceDep, AsyncDatabaseDep
 from ..models import (
     Setting,
     SettingCreate,
@@ -27,6 +27,7 @@ from ..utils.cache_manager import (
     generate_content_hash_etag,
 )
 from ..constants import EVENT_SETTING_UPDATED, EVENT_SETTING_DELETED, WEATHER_SETTINGS_KEYS
+from ..database.weather_operations import WeatherOperations
 
 # TODO: CACHING STRATEGY - ETAG + CACHE (PERFECT USE CASE)
 # Settings are the perfect example for ETag + Cache-Control strategy:
@@ -43,10 +44,35 @@ router = APIRouter(tags=["settings"])
 @router.get("/settings")
 @router.get("")  # Add this line to handle /api/settings without trailing slash
 @handle_exceptions("get settings")
-async def get_settings(response: Response, settings_service: SettingsServiceDep):
+async def get_settings(
+    response: Response, 
+    settings_service: SettingsServiceDep,
+    db: AsyncDatabaseDep
+):
     """Get all settings as a dictionary"""
     # Get all settings from service
     settings_dict = await settings_service.get_all_settings()
+    
+    # Get actual API key for frontend display (security is maintained by hashed storage)
+    actual_key = await settings_service.get_openweather_api_key_for_display()
+    if actual_key:
+        settings_dict["openweather_api_key"] = actual_key
+    else:
+        # Ensure the key is not present if we can't retrieve it
+        settings_dict.pop("openweather_api_key", None)
+
+    # Get latest weather data from weather table
+    weather_ops = WeatherOperations(db)
+    weather_data = await weather_ops.get_latest_weather()
+    
+    if weather_data:
+        # Add weather data to settings dict for backward compatibility
+        settings_dict["weather_date_fetched"] = weather_data.get("weather_date_fetched", "").isoformat() if weather_data.get("weather_date_fetched") else ""
+        settings_dict["current_temp"] = str(weather_data.get("current_temp", "")) if weather_data.get("current_temp") is not None else ""
+        settings_dict["current_weather_icon"] = weather_data.get("current_weather_icon", "")
+        settings_dict["current_weather_description"] = weather_data.get("current_weather_description", "")
+        settings_dict["sunrise_timestamp"] = weather_data.get("sunrise_timestamp", "").isoformat() if weather_data.get("sunrise_timestamp") else ""
+        settings_dict["sunset_timestamp"] = weather_data.get("sunset_timestamp", "").isoformat() if weather_data.get("sunset_timestamp") else ""
 
     # Generate ETag based on the content of all settings
     etag = generate_content_hash_etag(settings_dict)

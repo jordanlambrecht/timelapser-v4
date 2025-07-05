@@ -15,7 +15,7 @@ import {
   type CaptureTimestamp,
   type TimeWindow,
 } from "@/lib/time-utils"
-import { useCaptureSettings as useGlobalCaptureSettings } from "@/contexts/settings-context"
+import { useTimezoneSettings } from "@/contexts/settings-context"
 
 interface CameraCountdownProps {
   camera: {
@@ -58,7 +58,7 @@ export function useCameraCountdown({
   const [nextCaptureAbsolute, setNextCaptureAbsolute] = useState<string>("")
 
   // Get timezone from centralized settings
-  const { timezone } = useGlobalCaptureSettings()
+  const { timezone } = useTimezoneSettings()
 
   // Parse capture interval and create timestamp data
   const timestampData = useMemo((): CaptureTimestamp => {
@@ -278,7 +278,7 @@ export function useRelativeTime(
   }
 ): string {
   const [relativeText, setRelativeText] = useState<string>("Never")
-  const { timezone } = useGlobalCaptureSettings()
+  const { timezone } = useTimezoneSettings()
 
   const refreshInterval = options?.refreshInterval || 30000 // 30 seconds default
 

@@ -3,7 +3,7 @@
 
 import { useState } from "react"
 import { useVideoQueue } from "@/hooks/use-video-automation"
-import { useCaptureSettings } from "@/contexts/settings-context"
+import { useTimezoneSettings } from "@/contexts/settings-context"
 import {
   formatRelativeTime,
   formatAbsoluteTimeForCounter,
@@ -43,7 +43,7 @@ export function VideoQueueMonitor({
   className = "",
 }: VideoQueueMonitorProps) {
   const { status, jobs, isLoading, error, cancelJob, refresh } = useVideoQueue()
-  const { timezone } = useCaptureSettings()
+  const { timezone } = useTimezoneSettings()
   const [selectedStatus, setSelectedStatus] = useState<string>("all")
 
   const getStatusIcon = (status: string) => {

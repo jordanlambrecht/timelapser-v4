@@ -4,7 +4,14 @@ import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 export async function GET() {
   // Proxy to FastAPI backend
-  return proxyToFastAPI("/api/settings")
+  const response = await proxyToFastAPI("/api/settings")
+  
+  // Add no-cache headers
+  response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+  response.headers.set('Pragma', 'no-cache')
+  response.headers.set('Expires', '0')
+  
+  return response
 }
 
 export async function PUT(request: NextRequest) {
