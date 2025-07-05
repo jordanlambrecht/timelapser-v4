@@ -16,49 +16,9 @@ import { Cloud } from "lucide-react"
 import { useSettings } from "@/contexts/settings-context"
 
 export function ApiKeySettingsCard() {
-  const {
-    openWeatherApiKey,
-    setOpenWeatherApiKey,
-    apiKeyModified,
-    setApiKeyModified,
-    originalApiKeyHash,
-  } = useSettings()
-  // Handler for API key input changes
-  const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setOpenWeatherApiKey(value)
-    setApiKeyModified(true) // Mark as modified when user starts typing
-  }
-
-  // Handler for when user focuses on the API key field
-  const handleApiKeyFocus = () => {
-    if (!apiKeyModified && originalApiKeyHash) {
-      // Clear the masked value when user focuses to type new key
-      setOpenWeatherApiKey("")
-      setApiKeyModified(true)
-    }
-  }
-
-  // Get the display value for the API key input
-  const getApiKeyDisplayValue = () => {
-    if (apiKeyModified || !originalApiKeyHash) {
-      return openWeatherApiKey // Show actual input when modified or no existing key
-    }
-    // For existing unmodified keys, show a readable placeholder instead of empty
-    return (
-      "••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••" +
-      originalApiKeyHash.slice(-4)
-    )
-  }
-
-  // Get the placeholder for the API key input
-  const getApiKeyPlaceholder = () => {
-    if (originalApiKeyHash && !apiKeyModified) {
-      return "Click to enter new API key"
-    }
-    return "Enter your OpenWeather API key"
-  }
-
+  // This card is now reserved for future external API integrations
+  // OpenWeather API key has been moved to Weather Settings
+  
   return (
     <Card className='transition-all duration-300 glass hover:glow'>
       <CardHeader>
@@ -67,24 +27,15 @@ export function ApiKeySettingsCard() {
           <span>External Services</span>
         </CardTitle>
         <CardDescription>
-          Configure external API integrations for enhanced functionality
+          Additional API integrations will be available here in future updates
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
-        <div className='space-y-3'>
-          <Label htmlFor='openweather-key' className='text-sm font-medium'>
-            OpenWeather API Key
-          </Label>
-          <PasswordInput
-            id='openweather-key'
-            value={getApiKeyDisplayValue()}
-            onChange={handleApiKeyChange}
-            onFocus={handleApiKeyFocus}
-            placeholder={getApiKeyPlaceholder()}
-            className='bg-background/50 border-borderColor/50 focus:border-primary/50'
-          />
+        <div className='p-6 rounded-lg bg-background/30 border border-borderColor/30 text-center'>
+          <Cloud className='w-8 h-8 text-muted-foreground mx-auto mb-3' />
+          <p className='text-sm text-muted-foreground mb-2'>No additional services configured</p>
           <p className='text-xs text-muted-foreground'>
-            Used for weather overlay data on timelapses
+            OpenWeather API key is now managed in Weather Integration settings
           </p>
         </div>
       </CardContent>

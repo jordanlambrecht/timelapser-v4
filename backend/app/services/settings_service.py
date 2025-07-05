@@ -17,6 +17,8 @@ from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
 from ..database.sse_events_operations import SSEEventsOperations
 from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
+from ..utils.hashing import hash_api_key, mask_api_key
+from .api_key_service import APIKeyService, SyncAPIKeyService
 from ..constants import (
     EVENT_SETTING_UPDATED,
     EVENT_SETTING_DELETED,
@@ -52,6 +54,7 @@ class SettingsService:
         self.db = db
         self.settings_ops = SettingsOperations(db)
         self.sse_ops = SSEEventsOperations(db)
+        self.api_key_service = APIKeyService(self.settings_ops)
 
     async def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""
@@ -69,33 +72,76 @@ class SettingsService:
             logger.error(f"Failed to get setting {key}: {e}")
             raise
 
+    async def get_openweather_api_key(self) -> Optional[str]:
+        """Get the actual OpenWeather API key for use by weather service."""
+        return await self.api_key_service.get_api_key_for_service()
+
+    async def get_openweather_api_key_for_display(self) -> Optional[str]:
+        """Get the actual OpenWeather API key for frontend display."""
+        return await self.api_key_service.get_api_key_for_display()
+
     async def set_setting(self, key: str, value: str) -> bool:
-        """Set a setting value."""
+        """Set a setting value with special handling for API keys."""
         try:
-            result = await self.settings_ops.set_setting(key, value)
-            
-            if result:
-                # Create SSE event for setting changes
-                await self.sse_ops.create_event(
-                    event_type=EVENT_SETTING_UPDATED,
-                    event_data={
-                        "key": key,
-                        "value": value,
-                        "operation": "update",
-                    },
-                    priority="normal",
-                    source="api"
-                )
+            # Special handling for OpenWeather API key
+            if key == "openweather_api_key":
+                result = await self.api_key_service.store_api_key(value)
                 
-            return result
+                if result:
+                    # Create SSE event (use masked value for security)
+                    await self.sse_ops.create_event(
+                        event_type=EVENT_SETTING_UPDATED,
+                        event_data={
+                            "key": "openweather_api_key",
+                            "value": mask_api_key(value) if value.strip() else "",
+                            "operation": "update",
+                        },
+                        priority="normal",
+                        source="api"
+                    )
+                    
+                return result
+            else:
+                # Normal setting handling
+                result = await self.settings_ops.set_setting(key, value)
+                
+                if result:
+                    # Create SSE event for setting changes
+                    await self.sse_ops.create_event(
+                        event_type=EVENT_SETTING_UPDATED,
+                        event_data={
+                            "key": key,
+                            "value": value,
+                            "operation": "update",
+                        },
+                        priority="normal",
+                        source="api"
+                    )
+                    
+                return result
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
 
     async def set_multiple_settings(self, settings_dict: Dict[str, str]) -> bool:
-        """Set multiple settings in a single transaction."""
+        """Set multiple settings in a single transaction with API key hashing."""
         try:
-            result = await self.settings_ops.set_multiple_settings(settings_dict)
+            # Process settings to handle API key hashing
+            processed_settings = {}
+            processed_keys = []
+            
+            for key, value in settings_dict.items():
+                if key == "openweather_api_key":
+                    # Handle API key through dedicated service
+                    await self.api_key_service.store_api_key(value)
+                    processed_keys.append("openweather_api_key")
+                    logger.info("Updated OpenWeather API key in bulk update")
+                else:
+                    # Normal setting
+                    processed_settings[key] = value
+                    processed_keys.append(key)
+            
+            result = await self.settings_ops.set_multiple_settings(processed_settings)
             
             if result:
                 # Create SSE event for bulk setting changes
@@ -103,8 +149,8 @@ class SettingsService:
                     event_type=EVENT_SETTING_UPDATED,
                     event_data={
                         "operation": "bulk_update",
-                        "updated_keys": list(settings_dict.keys()),
-                        "count": len(settings_dict),
+                        "updated_keys": processed_keys,
+                        "count": len(processed_settings),
                     },
                     priority="normal",
                     source="api"
@@ -661,6 +707,7 @@ class SyncSettingsService:
         """Initialize service with sync database instance."""
         self.db = db
         self.settings_ops = SyncSettingsOperations(db)
+        self.api_key_service = SyncAPIKeyService(self.settings_ops)
 
     def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""
@@ -701,3 +748,11 @@ class SyncSettingsService:
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
+
+    def get_openweather_api_key(self) -> Optional[str]:
+        """Get the actual OpenWeather API key for use by weather service."""
+        return self.api_key_service.get_api_key_for_service()
+
+    def get_openweather_api_key_for_display(self) -> Optional[str]:
+        """Get the actual OpenWeather API key for frontend display."""
+        return self.api_key_service.get_api_key_for_display()
