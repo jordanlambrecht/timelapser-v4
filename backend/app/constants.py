@@ -380,6 +380,7 @@ EVENT_SETTING_UPDATED = "setting_updated"
 EVENT_SETTING_DELETED = "setting_deleted"
 EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
 EVENT_SUNRISE_SUNSET_UPDATED = "sunrise_sunset_updated"
+EVENT_WEATHER_UPDATED = "weather_updated"
 EVENT_AUDIT_TRAIL_CREATED = "audit_trail_created"
 
 # Time window events
@@ -429,6 +430,41 @@ OVERLAY_FORMAT_DAY_ONLY = "Day {day}"
 OVERLAY_FORMAT_DAY_TEMP = "Day {day} • {temperature}°C"
 OVERLAY_FORMAT_DAY_WEATHER = "Day {day} • {temperature}°C • {weather}"
 OVERLAY_FORMAT_WEATHER_DETAILED = "{temperature}°C • {weather} • {humidity}% • {pressure}hPa"
+
+# ====================================================================
+# WORKER CONFIGURATION CONSTANTS
+# ====================================================================
+
+# Scheduler job configuration
+SCHEDULER_MAX_INSTANCES = 1
+HEALTH_CHECK_INTERVAL_SECONDS = 60
+WEATHER_REFRESH_MINUTE = 0
+VIDEO_AUTOMATION_INTERVAL_SECONDS = 120
+SCHEDULER_UPDATE_INTERVAL_SECONDS = 300
+STANDARD_JOBS_COUNT = 6
+
+# Worker loop configuration
+WORKER_MAIN_LOOP_SLEEP_SECONDS = 1
+
+# Weather worker configuration
+WEATHER_DATA_STALE_THRESHOLD_HOURS = 25
+DATE_STRING_LENGTH = 10
+DUMMY_API_KEY = "dummy"
+
+# Setting keys and defaults
+SETTING_KEY_WEATHER_ENABLED = "weather_enabled"
+SETTING_KEY_GENERATE_THUMBNAILS = "generate_thumbnails"
+DEFAULT_WEATHER_ENABLED = "false"
+DEFAULT_GENERATE_THUMBNAILS = "true"
+BOOLEAN_TRUE_STRING = "true"
+
+# SSE event configuration
+SSE_PRIORITY_NORMAL = "normal"
+SSE_SOURCE_WORKER = "worker"
+
+# Logging configuration
+LOG_ROTATION_SIZE = "10 MB"
+LOG_RETENTION_PERIOD = "30 days"
 
 # ====================================================================
 # VALIDATION CONSTANTS
