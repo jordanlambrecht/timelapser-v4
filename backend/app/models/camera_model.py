@@ -2,8 +2,7 @@
 
 from pydantic import BaseModel, field_validator, Field, ConfigDict
 from typing import Optional, Literal, Sequence, Any
-from datetime import datetime
-import re
+from datetime import datetime, time
 
 # Import shared components to eliminate duplication
 from .shared_models import (
@@ -16,6 +15,19 @@ from .shared_models import (
 from ..models.timelapse_model import TimelapseWithDetails
 from ..models.image_model import ImageWithDetails
 from ..models.log_model import Log
+from ..utils.validation_helpers import (
+    validate_rtsp_url,
+    validate_camera_name,
+    validate_time_window_format,
+    validate_fps_bounds,
+    validate_time_bounds,
+)
+from ..constants import (
+    MIN_FPS,
+    MAX_FPS,
+    MAX_TIME_BOUNDS_SECONDS,
+    TIME_WINDOW_PATTERN,
+)
 
 
 class CameraBase(BaseModel):
@@ -41,7 +53,7 @@ class CameraBase(BaseModel):
         default=VideoGenerationMode.STANDARD, description="Video generation mode"
     )
     standard_fps: int = Field(
-        default=12, ge=1, le=120, description="Standard FPS for video generation"
+        default=12, ge=MIN_FPS, le=MAX_FPS, description="Standard FPS for video generation"
     )
     enable_time_limits: bool = Field(
         default=False, description="Enable time limits for standard FPS mode"
@@ -56,10 +68,10 @@ class CameraBase(BaseModel):
         None, ge=1, description="Target video duration in seconds"
     )
     fps_bounds_min: int = Field(
-        default=1, ge=1, le=60, description="Minimum FPS bound for target mode"
+        default=MIN_FPS, ge=MIN_FPS, le=60, description="Minimum FPS bound for target mode"
     )
     fps_bounds_max: int = Field(
-        default=60, ge=1, le=120, description="Maximum FPS bound for target mode"
+        default=60, ge=MIN_FPS, le=MAX_FPS, description="Maximum FPS bound for target mode"
     )
 
     # Video automation settings
@@ -94,62 +106,43 @@ class CameraBase(BaseModel):
     @classmethod
     def validate_rtsp_url(_cls, v: str) -> str:
         """Validate RTSP URL format and prevent injection"""
-        if not v:
-            raise ValueError("RTSP URL cannot be empty")
-
-        # Must start with rtsp:// or rtsps://
-        if not v.startswith(("rtsp://", "rtsps://")):
-            raise ValueError("URL must start with rtsp:// or rtsps://")
-
-        # Prevent injection attacks - no dangerous characters
-        dangerous_chars = [";", "&", "|", "`", "$", "(", ")", "<", ">", '"', "'"]
-        if any(char in v for char in dangerous_chars):
-            raise ValueError("RTSP URL contains invalid characters")
-
-        # Basic URL format validation
-        url_pattern = r"^rtsps?://[^\s/$.?#].[^\s]*$"
-        if not re.match(url_pattern, v):
-            raise ValueError("Invalid RTSP URL format")
-
-        return v
+        return validate_rtsp_url(v, allow_none=False)
 
     @field_validator("name")
     @classmethod
     def validate_name(_cls, v: str) -> str:
         """Validate camera name"""
-        if not v.strip():
-            raise ValueError("Camera name cannot be empty or just whitespace")
-        return v.strip()
+        return validate_camera_name(v, allow_none=False)
 
     @field_validator("min_time_seconds", "max_time_seconds")
     @classmethod
-    def validate_time_bounds(_cls, v: Optional[int]) -> Optional[int]:
+    def validate_time_bounds_field(_cls, v: Optional[int]) -> Optional[int]:
         """Validate time bounds are reasonable"""
-        if v is not None and v > 3600:  # 1 hour max
-            raise ValueError("Time limit cannot exceed 3600 seconds (1 hour)")
-        return v
+        return validate_time_bounds(v, MAX_TIME_BOUNDS_SECONDS)
 
     @field_validator("fps_bounds_min", "fps_bounds_max")
     @classmethod
-    def validate_fps_bounds(_cls, v: int) -> int:
+    def validate_fps_bounds_field(_cls, v: int) -> int:
         """Validate FPS bounds are reasonable"""
-        if v < 1 or v > 120:
-            raise ValueError("FPS bounds must be between 1 and 120")
-        return v
+        return validate_fps_bounds(v, MIN_FPS, MAX_FPS)
+
+    @field_validator("time_window_start", "time_window_end", mode='before')
+    @classmethod
+    def convert_time_to_string(cls, v: Optional[str | time]) -> Optional[str]:
+        """Convert datetime.time objects to HH:MM:SS string format"""
+        if v is None:
+            return v
+        if isinstance(v, time):
+            return v.strftime('%H:%M:%S')
+        if isinstance(v, str):
+            return v
+        return str(v)
 
     @field_validator("time_window_start", "time_window_end")
     @classmethod
     def validate_time_window(_cls, v: Optional[str]) -> Optional[str]:
         """Validate time window format (HH:MM:SS)"""
-        if v is None:
-            return v
-
-        # Check format using regex
-        time_pattern = r"^([01]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
-        if not re.match(time_pattern, v):
-            raise ValueError("Time must be in HH:MM:SS format (24-hour)")
-
-        return v
+        return validate_time_window_format(v)
 
     def validate_video_settings(self) -> None:
         """Validate video generation settings consistency"""
@@ -192,13 +185,13 @@ class CameraUpdate(BaseModel):
 
     # Video generation settings (all optional)
     video_generation_mode: Optional[VideoGenerationMode] = None
-    standard_fps: Optional[int] = Field(None, ge=1, le=120)
+    standard_fps: Optional[int] = Field(None, ge=MIN_FPS, le=MAX_FPS)
     enable_time_limits: Optional[bool] = None
     min_time_seconds: Optional[int] = Field(None, ge=1)
     max_time_seconds: Optional[int] = Field(None, ge=1)
     target_time_seconds: Optional[int] = Field(None, ge=1)
-    fps_bounds_min: Optional[int] = Field(None, ge=1, le=60)
-    fps_bounds_max: Optional[int] = Field(None, ge=1, le=120)
+    fps_bounds_min: Optional[int] = Field(None, ge=MIN_FPS, le=60)
+    fps_bounds_max: Optional[int] = Field(None, ge=MIN_FPS, le=MAX_FPS)
 
     # Video automation settings (all optional)
     video_automation_mode: Optional[VideoAutomationMode] = None
@@ -214,37 +207,13 @@ class CameraUpdate(BaseModel):
     @classmethod
     def validate_rtsp_url(cls, v: Optional[str]) -> Optional[str]:
         """Validate RTSP URL format and prevent injection"""
-        if v is None:
-            return v
-
-        if not v:
-            raise ValueError("RTSP URL cannot be empty")
-
-        # Must start with rtsp:// or rtsps://
-        if not v.startswith(("rtsp://", "rtsps://")):
-            raise ValueError("URL must start with rtsp:// or rtsps://")
-
-        # Prevent injection attacks - no dangerous characters
-        dangerous_chars = [";", "&", "|", "`", "$", "(", ")", "<", ">", '"', "'"]
-        if any(char in v for char in dangerous_chars):
-            raise ValueError("RTSP URL contains invalid characters")
-
-        # Basic URL format validation
-        url_pattern = r"^rtsps?://[^\s/$.?#].[^\s]*$"
-        if not re.match(url_pattern, v):
-            raise ValueError("Invalid RTSP URL format")
-
-        return v
+        return validate_rtsp_url(v, allow_none=True)
 
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate camera name"""
-        if v is None:
-            return v
-        if not v.strip():
-            raise ValueError("Camera name cannot be empty or just whitespace")
-        return v.strip()
+        return validate_camera_name(v, allow_none=True)
 
 
 class Camera(CameraBase):
@@ -252,21 +221,31 @@ class Camera(CameraBase):
 
     id: int
     health_status: Literal["online", "offline", "unknown"] = "unknown"
-    last_capture_at: Optional[datetime] = None
+    last_capture_at: Optional[datetime] = Field(
+        None, description="Last successful capture timestamp (timezone-aware)"
+    )
     last_capture_success: Optional[bool] = None
     consecutive_failures: int = 0
-    next_capture_at: Optional[datetime] = None  # When next capture is scheduled
+    next_capture_at: Optional[datetime] = Field(
+        None, description="Next scheduled capture timestamp (timezone-aware)"
+    )
     active_timelapse_id: Optional[int] = None  # Currently active timelapse
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(description="Creation timestamp (timezone-aware)")
+    updated_at: datetime = Field(description="Last update timestamp (timezone-aware)")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        # Configure timezone-aware datetime handling
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class CameraWithTimelapse(Camera):
     """Camera model with associated timelapse information"""
 
-    timelapse_status: Optional[Literal["running", "stopped", "paused"]] = None
+    timelapse_status: Optional[Literal["running", "paused"]] = None
     timelapse_id: Optional[int] = None
 
 
@@ -284,8 +263,8 @@ class CameraWithLastImage(CameraWithTimelapse):
     def preview_image_url(self) -> Optional[str]:
         """Get the preview image URL if available"""
         if self.last_image:
-            # 🎯 FIXED: Use correct camera-based thumbnail endpoint, not forbidden /api/images/{id}/thumbnail
-            return f"/api/cameras/{self.id}/latest-thumbnail"
+            # ✅ FIXED: Use unified latest-image system endpoint
+            return f"/api/cameras/{self.id}/latest-image/thumbnail"
         return None
 
 
@@ -311,7 +290,7 @@ class ImageForCamera(BaseModel):
     """Simplified image model for camera relationships"""
 
     id: int
-    captured_at: datetime
+    captured_at: datetime = Field(description="Image capture timestamp (timezone-aware)")
     file_path: str
     file_size: Optional[int] = None
     day_number: int
@@ -320,7 +299,12 @@ class ImageForCamera(BaseModel):
     small_path: Optional[str] = None
     small_size: Optional[int] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 # Update forward reference
@@ -331,12 +315,17 @@ class LogForCamera(BaseModel):
     """Simplified log model for camera relationships"""
 
     id: int
-    timestamp: datetime
+    timestamp: datetime = Field(description="Log timestamp (timezone-aware)")
     level: str
     message: str
     camera_id: Optional[int] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class CameraDetailsResponse(BaseModel):

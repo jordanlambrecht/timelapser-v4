@@ -8,8 +8,8 @@ This module handles all log-related database operations including:
 - Log management operations
 """
 
-from typing import List, Optional, Dict, Any, Union
-from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 from loguru import logger
 
 # Import database core for composition
@@ -17,10 +17,32 @@ from .core import AsyncDatabase, SyncDatabase
 from ..models.log_model import Log
 from ..models.log_summary_model import (
     LogSourceModel,
-    LogLevelModel,
     LogSummaryModel,
     ErrorCountBySourceModel,
 )
+from ..constants import (
+    DEFAULT_LOG_RETENTION_DAYS,
+    DEFAULT_CORRUPTION_HISTORY_HOURS,
+    DEFAULT_DASHBOARD_QUALITY_TREND_DAYS,
+)
+
+
+def _row_to_log_shared(row: Dict[str, Any]) -> Log:
+    """
+    Shared helper function for converting database row to Log model.
+    
+    This eliminates duplicate logic between async and sync classes.
+    Filters fields that belong to Log model and creates proper instance.
+    
+    Args:
+        row: Database row data as dictionary
+        
+    Returns:
+        Log model instance
+    """
+    # Filter fields that belong to Log model
+    log_fields = {k: v for k, v in row.items() if k in Log.model_fields}
+    return Log(**log_fields)
 
 
 class LogOperations:
@@ -32,9 +54,7 @@ class LogOperations:
 
     def _row_to_log(self, row: Dict[str, Any]) -> Log:
         """Convert database row to Log model."""
-        # Filter fields that belong to Log model
-        log_fields = {k: v for k, v in row.items() if k in Log.model_fields}
-        return Log(**log_fields)
+        return _row_to_log_shared(row)
 
     async def get_logs(
         self,
@@ -156,7 +176,7 @@ class LogOperations:
             COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
             COUNT(CASE WHEN level = 'WARNING' THEN 1 END) as warning_count
         FROM logs
-        WHERE timestamp > NOW() - INTERVAL '7 days'
+        WHERE timestamp > NOW() - INTERVAL '{DEFAULT_DASHBOARD_QUALITY_TREND_DAYS} days'
         GROUP BY source
         ORDER BY source 
         """
@@ -167,68 +187,10 @@ class LogOperations:
                 rows = await cur.fetchall()
                 return [LogSourceModel(**row) for row in rows]
 
-    async def get_log_levels(self) -> List[LogLevelModel]:
-        """
-        Get all available log levels with counts.
+    # DEPRECATED: get_log_levels() method removed - use static LOG_LEVELS constant from constants.py
+    # Log levels are hardcoded constants and don't require database queries
 
-        Returns:
-            List of log level models with counts
-        """
-        query = """
-        SELECT 
-            level,
-            COUNT(*) as log_count,
-            COUNT(CASE WHEN timestamp > NOW() - INTERVAL '24 hours' THEN 1 END) as count_last_24h
-        FROM logs
-        WHERE timestamp > NOW() - INTERVAL '7 days'
-        GROUP BY level
-        ORDER BY 
-            CASE level
-                WHEN 'CRITICAL' THEN 1
-                WHEN 'ERROR' THEN 2
-                WHEN 'WARNING' THEN 3
-                WHEN 'INFO' THEN 4
-                WHEN 'DEBUG' THEN 5
-                ELSE 6
-            END
-        """
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query)
-                rows = await cur.fetchall()
-                return [LogLevelModel(**row) for row in rows]
-
-    async def get_recent_errors(self, hours: int = 24, limit: int = 50) -> List[Log]:
-        """
-        Get recent error and critical logs.
-
-        Args:
-            hours: Number of hours to look back
-            limit: Maximum number of errors to return
-
-        Returns:
-            List of recent error Log models
-        """
-        query = """
-        SELECT 
-            l.*,
-            c.name as camera_name
-        FROM logs l
-        LEFT JOIN cameras c ON l.camera_id = c.id
-        WHERE l.level IN ('ERROR', 'CRITICAL')
-        AND l.timestamp > NOW() - INTERVAL '%s hours'
-        ORDER BY l.timestamp DESC
-        LIMIT %s
-        """
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (hours, limit))
-                results = await cur.fetchall()
-                return [self._row_to_log(row) for row in results]
-
-    async def get_log_summary(self, hours: int = 24) -> LogSummaryModel:
+    async def get_log_summary(self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS) -> LogSummaryModel:
         """
         Get log summary statistics for a time period.
 
@@ -273,12 +235,12 @@ class LogOperations:
                     last_log_at=None,
                 )
 
-    async def delete_old_logs(self, days_to_keep: int = 90) -> int:
+    async def delete_old_logs(self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS) -> int:
         """
         Delete old logs based on retention policy.
 
         Args:
-            days_to_keep: Number of days to keep logs (default: 90)
+            days_to_keep: Number of days to keep logs (default: from constants)
 
         Returns:
             Number of logs deleted
@@ -293,32 +255,9 @@ class LogOperations:
                 await cur.execute(query, (days_to_keep,))
                 affected = cur.rowcount
 
-                if affected and affected > 0:
-                    await self.db.broadcast_event(
-                        "logs_cleaned_up",
-                        {
-                            "deleted_count": affected,
-                            "retention_days": days_to_keep,
-                        },
-                    )
-
                 return affected or 0
 
-
-class SyncLogOperations:
-    """Sync log database operations for worker processes."""
-
-    def __init__(self, db: SyncDatabase) -> None:
-        """Initialize with sync database instance."""
-        self.db = db
-
-    def _row_to_log(self, row: Dict[str, Any]) -> Log:
-        """Convert database row to Log model."""
-        # Filter fields that belong to Log model
-        log_fields = {k: v for k, v in row.items() if k in Log.model_fields}
-        return Log(**log_fields)
-
-    def write_log_entry(
+    async def add_log_entry(
         self,
         level: str,
         message: str,
@@ -328,7 +267,7 @@ class SyncLogOperations:
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> Log:
         """
-        Write a log entry to the database.
+        Add a log entry to the database (async version).
 
         Args:
             level: Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
@@ -349,9 +288,9 @@ class SyncLogOperations:
         ) RETURNING *
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
                     query,
                     (
                         level.upper(),
@@ -362,62 +301,88 @@ class SyncLogOperations:
                         extra_data,
                     ),
                 )
+                results = await cur.fetchall()
+
+                if results:
+                    log_entry_row = results[0]
+                    log_entry = self._row_to_log(log_entry_row)
+
+                    return log_entry
+
+                raise Exception("Failed to write log entry")
+
+
+class SyncLogOperations:
+    """Sync log database operations for worker processes."""
+
+    def __init__(self, db: SyncDatabase) -> None:
+        """Initialize with sync database instance."""
+        self.db = db
+
+    def _row_to_log(self, row: Dict[str, Any]) -> Log:
+        """Convert database row to Log model."""
+        return _row_to_log_shared(row)
+
+    def add_log_entry(
+        self,
+        level: str,
+        message: str,
+        source: str = "system",
+        camera_id: Optional[int] = None,
+        **kwargs,  # Accept additional args for compatibility
+    ) -> Log:
+        """Alias for write_log_entry for compatibility."""
+        return self.write_log_entry(
+            level=level, message=message, source=source, camera_id=camera_id
+        )
+
+    def write_log_entry(
+        self,
+        level: str,
+        message: str,
+        source: str = "system",
+        camera_id: Optional[int] = None,
+    ) -> Log:
+        """
+        Write a log entry to the database using the actual table schema.
+
+        Args:
+            level: Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+            message: Log message
+            source: Source of the log (e.g., 'system', 'camera_1', 'worker')
+            camera_id: Optional camera ID if log is camera-specific
+
+        Returns:
+            Created Log model instance
+        """
+        # Use the actual logs table schema: id, level, message, camera_id, timestamp
+        query = """
+        INSERT INTO logs (level, message, camera_id, timestamp) 
+        VALUES (%s, %s, %s, NOW())
+        RETURNING *
+        """
+
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    query,
+                    (
+                        level.upper(),
+                        message,
+                        camera_id,
+                    ),
+                )
                 results = cur.fetchall()
 
                 if results:
                     log_entry_row = results[0]
                     log_entry = self._row_to_log(log_entry_row)
 
-                    # Broadcast critical and error logs immediately
-                    if level.upper() in ["CRITICAL", "ERROR"]:
-                        self.db.broadcast_event(
-                            "critical_log_entry",
-                            {
-                                "log_entry": log_entry_row,  # Keep as dict for SSE
-                                "camera_id": camera_id,
-                                "source": source,
-                            },
-                        )
-
                     return log_entry
 
                 raise Exception("Failed to write log entry")
 
-    def get_recent_logs(
-        self, source: Optional[str] = None, limit: int = 100
-    ) -> List[Log]:
-        """
-        Get recent log entries.
-
-        Args:
-            source: Optional source to filter by
-            limit: Maximum number of logs to return
-
-        Returns:
-            List of recent Log models
-        """
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                if source:
-                    query = """
-                    SELECT * FROM logs
-                    WHERE source = %s
-                    ORDER BY timestamp DESC
-                    LIMIT %s
-                    """
-                    cur.execute(query, (source, limit))
-                else:
-                    query = """
-                    SELECT * FROM logs
-                    ORDER BY timestamp DESC
-                    LIMIT %s
-                    """
-                    cur.execute(query, (limit,))
-
-                results = cur.fetchall()
-                return [self._row_to_log(row) for row in results]
-
-    def get_camera_logs(self, camera_id: int, hours: int = 24) -> List[Log]:
+    def get_camera_logs(self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS) -> List[Log]:
         """
         Get logs for a specific camera.
 
@@ -441,12 +406,12 @@ class SyncLogOperations:
                 results = cur.fetchall()
                 return [self._row_to_log(row) for row in results]
 
-    def cleanup_old_logs(self, days_to_keep: int = 90) -> int:
+    def cleanup_old_logs(self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS) -> int:
         """
         Clean up old log entries.
 
         Args:
-            days_to_keep: Number of days to keep logs (default: 90)
+            days_to_keep: Number of days to keep logs (default: from constants)
 
         Returns:
             Number of logs deleted
@@ -463,18 +428,11 @@ class SyncLogOperations:
 
                 if affected and affected > 0:
                     logger.info(f"Cleaned up {affected} old log entries")
-                    self.db.broadcast_event(
-                        "logs_cleaned_up",
-                        {
-                            "deleted_count": affected,
-                            "retention_days": days_to_keep,
-                        },
-                    )
 
                 return affected or 0
 
     def get_error_count_by_source(
-        self, hours: int = 24
+        self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
     ) -> List[ErrorCountBySourceModel]:
         """
         Get error count by source for monitoring.

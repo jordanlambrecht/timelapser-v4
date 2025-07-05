@@ -1,12 +1,8 @@
-# backend/app/utils/__init__.py
 """
-Utility modules for Timelapser v4
+Utility functions for Timelapser V4
 
-Common helper functions and decorators to reduce code duplication
-across the backend application.
+This module provides utility functions for various system components including
+corruption detection, file management, and other helper functions.
 """
 
-from .video_helpers import VideoSettingsHelper
-
-
-__all__ = ["VideoSettingsHelper"]
+# Corruption detection utilities are in corruption_detection_utils.py

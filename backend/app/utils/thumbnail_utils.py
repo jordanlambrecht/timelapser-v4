@@ -90,22 +90,19 @@ def generate_single_thumbnail(
         # Generate thumbnail bytes
         thumbnail_bytes = generate_thumbnail_pil(pil_image, size, quality)
 
-        # Determine path based on size type
+        # Determine path based on size type using config-driven paths
+        from ..config import settings
+        base_dir = Path(settings.data_directory)
+        
         if size_type == "thumbnail":
-            directories = {
-                "thumbnails": Path(f"cameras/camera-{camera_id}/thumbnails/{today}")
-            }
-            directories["thumbnails"].mkdir(parents=True, exist_ok=True)
-            thumbnail_path = directories["thumbnails"] / filename
-            relative_path = (
-                f"cameras/camera-{camera_id}/thumbnails/{today}/{filename}"
-            )
+            size_dir = base_dir / "cameras" / f"camera-{camera_id}" / "thumbnails" / today
+            size_dir.mkdir(parents=True, exist_ok=True)
+            thumbnail_path = size_dir / filename
+            relative_path = f"cameras/camera-{camera_id}/thumbnails/{today}/{filename}"
         else:  # small
-            directories = {
-                "small": Path(f"cameras/camera-{camera_id}/small/{today}")
-            }
-            directories["small"].mkdir(parents=True, exist_ok=True)
-            thumbnail_path = directories["small"] / filename
+            size_dir = base_dir / "cameras" / f"camera-{camera_id}" / "small" / today
+            size_dir.mkdir(parents=True, exist_ok=True)
+            thumbnail_path = size_dir / filename
             relative_path = f"cameras/camera-{camera_id}/small/{today}/{filename}"
 
         # Save thumbnail

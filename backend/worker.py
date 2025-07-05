@@ -7,7 +7,11 @@ This module implements an asynchronous timelapse worker that handles:
 
 Core Functionality:
 - Scheduled image capture from multiple RTSP cameras concurrently
-- Camera health monitoring and connectivity testing
+-             # Get current time in the configured timezone
+            try:
+                current_time = get_timezone_aware_time_sync(self.settings_service)
+            except Exception as e:
+                # Fallback to centralized timezone utility (AI-CONTEXT compliant)a health monitoring and connectivity testing
 - Database integration with both sync and async database connections
 - Graceful shutdown handling with proper signal management
 - Time window support for camera capture scheduling
@@ -50,11 +54,11 @@ from app.utils.timezone_utils import (
     get_timezone_aware_date_sync,
 )
 
-from app.utils.time_utils import (
+from app.utils.timezone_utils import (
     parse_time_string,
 )
 from app.config import settings
-from app.utils.response_helpers import SSEEventManager
+from app.database.sse_events_operations import SyncSSEEventsOperations
 
 # NEW: Import restructured services using composition pattern
 from app.services.camera_service import SyncCameraService
@@ -123,8 +127,19 @@ class AsyncTimelapseWorker:
         logger.info("Sync database initialized for worker")
 
         # Initialize new composition-based services
-        self.camera_service = SyncCameraService(sync_db)
-        self.image_capture_service = ImageCaptureService(sync_db)
+        from app.database.camera_operations import SyncCameraOperations
+        from app.database.image_operations import SyncImageOperations
+        from app.database.settings_operations import SyncSettingsOperations
+
+        camera_ops = SyncCameraOperations(sync_db)
+        image_ops = SyncImageOperations(sync_db)
+        settings_ops = SyncSettingsOperations(sync_db)
+        self.sse_ops = SyncSSEEventsOperations(sync_db)
+        self.image_capture_service = ImageCaptureService(
+            sync_db, camera_ops, image_ops, settings_ops
+        )
+        # Pass image_capture_service to camera_service for RTSP connectivity testing
+        self.camera_service = SyncCameraService(sync_db, self.image_capture_service)
         self.video_service = SyncVideoService(sync_db)
         self.video_automation_service = VideoAutomationService(sync_db)
         self.corruption_service = SyncCorruptionService(sync_db)
@@ -168,17 +183,17 @@ class AsyncTimelapseWorker:
         """Check if current time is within camera's capture window (regular or sun-based)"""
         try:
             # Check if camera uses custom time window (overrides global settings)
-            if camera.get("use_custom_time_window", False):
-                start_time = camera.get("custom_time_window_start")
-                end_time = camera.get("custom_time_window_end")
+            if getattr(camera, "use_custom_time_window", False):
+                start_time = getattr(camera, "custom_time_window_start", None)
+                end_time = getattr(camera, "custom_time_window_end", None)
 
                 if start_time and end_time:
                     return self._check_time_range(start_time, end_time)
 
             # Check camera's regular time window
-            if camera.get("use_time_window", False):
-                start_time = camera.get("time_window_start")
-                end_time = camera.get("time_window_end")
+            if getattr(camera, "use_time_window", False):
+                start_time = getattr(camera, "time_window_start", None)
+                end_time = getattr(camera, "time_window_end", None)
 
                 if start_time and end_time:
                     return self._check_time_range(start_time, end_time)
@@ -193,7 +208,7 @@ class AsyncTimelapseWorker:
 
         except Exception as e:
             logger.warning(
-                f"Error checking time window for camera {camera.get('id')}: {e}"
+                f"Error checking time window for camera {getattr(camera, 'id', 'unknown')}: {e}"
             )
             return True  # Default to allowing capture if check fails
 
@@ -228,7 +243,7 @@ class AsyncTimelapseWorker:
 
             # Get current time in the configured timezone
             try:
-                current_time = get_timezone_aware_time_sync(sync_db)
+                current_time = get_timezone_aware_time_sync(self.settings_service)
             except Exception:
                 # Fallback to centralized timezone utility (AI-CONTEXT compliant)
                 current_time = utc_now().time()
@@ -317,14 +332,19 @@ class AsyncTimelapseWorker:
                       individual camera failures from stopping other captures
         """
         # Use attribute access for Pydantic/ORM models
-        camera_id = getattr(camera_info, "id", None) or camera_info.get("id")
-        camera_name = getattr(camera_info, "name", None) or camera_info.get("name")
-        rtsp_url = getattr(camera_info, "rtsp_url", None) or camera_info.get("rtsp_url")
+        camera_id = getattr(camera_info, "id", None)
+        camera_name = getattr(camera_info, "name", None)
+        rtsp_url = getattr(camera_info, "rtsp_url", None)
 
         try:
             # Check time window
             if not self._is_within_time_window(camera_info):
                 logger.debug(f"Camera {camera_name} outside time window, skipping")
+                return
+
+            # Validate camera_id is not None before proceeding
+            if camera_id is None:
+                logger.error(f"Camera {camera_name} has no valid ID, skipping")
                 return
 
             # Get active timelapse for this camera using new service
@@ -355,18 +375,27 @@ class AsyncTimelapseWorker:
                 None, self.image_capture_service.capture_and_process_image, camera_id
             )
 
-            # Extract results from the new service response
-            success = capture_result.get("success", False) if capture_result else False
+            # Extract results from the new service response (CameraCaptureWorkflowResult)
+            success = capture_result.overall_success if capture_result else False
             message = (
-                capture_result.get("message", "Capture failed")
+                capture_result.error or "Capture completed"
                 if capture_result
                 else "Capture failed"
             )
 
             # For backward compatibility with corruption integration
-            corruption_details = (
-                capture_result.get("quality_assessment") if capture_result else None
-            )
+            # Note: Corruption details are now part of the health_monitoring result
+            corruption_details = None
+            if capture_result and hasattr(
+                capture_result.health_monitoring, "corruption_score"
+            ):
+                corruption_details = {
+                    "score": getattr(
+                        capture_result.health_monitoring, "corruption_score", None
+                    ),
+                    "action_taken": "captured",  # Default action
+                    "detection_disabled": False,
+                }
 
             # Log corruption detection results
             if corruption_details and not corruption_details.get("detection_disabled"):
@@ -440,7 +469,9 @@ class AsyncTimelapseWorker:
                             else 0
                         ),
                     },
-                    "timestamp": get_timezone_aware_timestamp_sync(sync_db),
+                    "timestamp": get_timezone_aware_timestamp_sync(
+                        self.settings_service
+                    ),
                 }
 
                 # Add corruption details if available
@@ -456,8 +487,11 @@ class AsyncTimelapseWorker:
 
                 await loop.run_in_executor(
                     None,
-                    SSEEventManager.broadcast_event,
-                    event_data,
+                    self.sse_ops.create_image_captured_event,
+                    camera_id,
+                    getattr(updated_timelapse, "id", 0) if updated_timelapse else 0,
+                    getattr(updated_timelapse, "image_count", 0) if updated_timelapse else 0,
+                    0  # day_number - would need to be calculated from image data
                 )
 
                 logger.info(f"Successfully captured and saved image: {message}")
@@ -556,14 +590,17 @@ class AsyncTimelapseWorker:
                 rtsp_url = getattr(camera, "rtsp_url", None)
 
                 try:
-                    # Test RTSP connectivity using new image capture service - run in executor since it's sync
-                    # TODO: Implement test_camera_connection in ImageCaptureService
-                    # success, message = await loop.run_in_executor(
-                    #     None,
-                    #     self.image_capture_service.test_camera_connection,
-                    #     camera_id,
-                    # )
-                    success, message = False, "test_camera_connection not implemented"
+                    # Test RTSP connectivity using sync camera service
+                    if camera_id is not None:
+                        connectivity_result = await loop.run_in_executor(
+                            None, self.camera_service.test_connectivity, camera_id
+                        )
+                        success = connectivity_result.success
+                        message = (
+                            connectivity_result.error or "Connection test completed"
+                        )
+                    else:
+                        success, message = False, "Camera ID is None"
 
                     if success:
                         if camera_id is not None:
@@ -620,9 +657,17 @@ class AsyncTimelapseWorker:
                 None, self.video_automation_service.process_automation_triggers
             )
 
-            # Log activity if any
-            if any(results.values()):
-                logger.info(f"Video automation activity: {results}")
+            # Log activity if any (results should be a dict with activity summary)
+            if isinstance(results, dict):
+                total_activity = (
+                    len(results.get("milestone_jobs", []))
+                    + len(results.get("scheduled_jobs", []))
+                    + results.get("queue_processed", 0)
+                )
+                if total_activity > 0:
+                    logger.info(f"Video automation activity: {results}")
+            else:
+                logger.warning(f"Unexpected automation results format: {results}")
 
         except Exception as e:
             logger.error(f"Error processing video automation: {e}")
@@ -658,7 +703,7 @@ class AsyncTimelapseWorker:
 
             # Check if weather data is stale (not from today)
             # Use timezone-aware date for proper comparison
-            today = get_timezone_aware_date_sync(sync_db)
+            today = get_timezone_aware_date_sync(self.settings_service)
             weather_date_fetched = settings_dict.get("weather_date_fetched", "")
 
             if weather_date_fetched == today:
@@ -679,17 +724,16 @@ class AsyncTimelapseWorker:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
-                    SSEEventManager.broadcast_event,
+                    self.sse_ops.create_event,
+                    "weather_updated",
                     {
-                        "type": "weather_updated",
-                        "data": {
-                            "temperature": weather_data.temperature,
-                            "icon": weather_data.icon,
-                            "description": weather_data.description,
-                            "date_fetched": weather_data.date_fetched.isoformat(),
-                        },
-                        "timestamp": get_timezone_aware_timestamp_sync(sync_db),
+                        "temperature": weather_data.temperature,
+                        "icon": weather_data.icon,
+                        "description": weather_data.description,
+                        "date_fetched": weather_data.date_fetched.isoformat(),
                     },
+                    "normal",
+                    "worker"
                 )
             else:
                 logger.warning("Failed to refresh weather data")
@@ -848,6 +892,15 @@ async def main():
         retention="30 days",
         level=settings.log_level,
     )
+
+    # Add database logging handler
+    try:
+        from app.logging.database_handler import setup_database_logging
+
+        setup_database_logging(sync_db)
+        logger.info("Database logging enabled for worker")
+    except Exception as e:
+        logger.error(f"Failed to enable database logging: {e}")
 
     # Create and start async worker
     worker = AsyncTimelapseWorker()

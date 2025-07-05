@@ -1,12 +1,3 @@
-# Per-camera corruption settings model for DB operations (used in camera_operations.py)
-from pydantic import BaseModel
-from typing import Optional
-
-class CorruptionSettingsModel(BaseModel):
-    corruption_detection_heavy: bool
-    lifetime_glitch_count: int
-    consecutive_corruption_failures: int
-    degraded_mode_active: bool
 # backend/app/models/corruption_model.py
 """
 Pydantic Models for Corruption Detection System
@@ -15,21 +6,47 @@ Type-safe models for corruption detection data structures,
 following Timelapser's existing architectural patterns.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+
+# Import corruption detection constants
+from ..constants import (
+    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
+)
 
 
 class CorruptionSettings(BaseModel):
     """Global corruption detection settings"""
 
     corruption_detection_enabled: bool = True
-    corruption_score_threshold: int = Field(default=70, ge=0, le=100)
+    corruption_score_threshold: int = Field(
+        default=DEFAULT_CORRUPTION_DISCARD_THRESHOLD, 
+        ge=0, 
+        le=100,
+        description="Corruption score threshold for image rejection"
+    )
     corruption_auto_discard_enabled: bool = False
     corruption_auto_disable_degraded: bool = False
-    corruption_degraded_consecutive_threshold: int = Field(default=10, ge=1)
-    corruption_degraded_time_window_minutes: int = Field(default=30, ge=5)
-    corruption_degraded_failure_percentage: int = Field(default=50, ge=10, le=100)
+    corruption_degraded_consecutive_threshold: int = Field(
+        default=DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD, 
+        ge=1,
+        description="Consecutive failures before degraded mode"
+    )
+    corruption_degraded_time_window_minutes: int = Field(
+        default=DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES, 
+        ge=5,
+        description="Time window for degraded mode evaluation"
+    )
+    corruption_degraded_failure_percentage: int = Field(
+        default=DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE, 
+        ge=10, 
+        le=100,
+        description="Failure percentage threshold for degraded mode"
+    )
 
 
 class CameraCorruptionSettings(BaseModel):
@@ -50,11 +67,23 @@ class CorruptionLogEntry(BaseModel):
     detection_details: Dict[str, Any]
     action_taken: str
     processing_time_ms: Optional[int] = None
-    created_at: Optional[datetime] = None
+    created_at: Optional[datetime] = Field(
+        None, 
+        description="Log entry timestamp (timezone-aware)"
+    )
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 # Paginated corruption logs response model
 class CorruptionLogsPage(BaseModel):
+    """Paginated response for corruption logs"""
+
     logs: List[CorruptionLogEntry]
     total_count: int
     page: int
@@ -69,7 +98,16 @@ class CorruptionStats(BaseModel):
     recent_average_score: float = 100.0
     consecutive_corruption_failures: int = 0
     degraded_mode_active: bool = False
-    last_degraded_at: Optional[datetime] = None
+    last_degraded_at: Optional[datetime] = Field(
+        None,
+        description="Last degraded mode activation timestamp (timezone-aware)"
+    )
+
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class CameraWithCorruption(BaseModel):
@@ -86,7 +124,17 @@ class CameraWithCorruption(BaseModel):
     consecutive_corruption_failures: int = 0
     corruption_detection_heavy: bool = False
     degraded_mode_active: bool = False
-    last_degraded_at: Optional[datetime] = None
+    last_degraded_at: Optional[datetime] = Field(
+        None,
+        description="Last degraded mode activation timestamp (timezone-aware)"
+    )
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class ImageWithCorruption(BaseModel):
@@ -96,13 +144,22 @@ class ImageWithCorruption(BaseModel):
     camera_id: int
     timelapse_id: Optional[int] = None
     file_path: str
-    captured_at: datetime
+    captured_at: datetime = Field(
+        description="Image capture timestamp (timezone-aware)"
+    )
     day_number: int
 
     # Corruption detection fields
     corruption_score: int = Field(default=100, ge=0, le=100)
     is_flagged: bool = False
     corruption_details: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class TimelapseWithCorruption(BaseModel):
@@ -112,11 +169,20 @@ class TimelapseWithCorruption(BaseModel):
     camera_id: int
     name: str
     status: str
-    start_date: datetime
+    start_date: datetime = Field(
+        description="Timelapse start timestamp (timezone-aware)"
+    )
 
     # Corruption detection fields
     glitch_count: int = 0
     total_corruption_score: int = 0
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class CorruptionDetectionRequest(BaseModel):
@@ -159,8 +225,17 @@ class CorruptionHealthUpdate(BaseModel):
     camera_id: int
     consecutive_failures: int
     degraded_mode_active: bool
-    last_failure_at: Optional[datetime] = None
+    last_failure_at: Optional[datetime] = Field(
+        None,
+        description="Last failure timestamp (timezone-aware)"
+    )
     failure_reason: Optional[str] = None
+
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class CorruptionEventData(BaseModel):
@@ -186,7 +261,16 @@ class CorruptionAnalysisStats(BaseModel):
     max_corruption_score: int = 100
     avg_processing_time_ms: float = 0.0
     unique_cameras: int = 0
-    most_recent_detection: Optional[datetime] = None
+    most_recent_detection: Optional[datetime] = Field(
+        None,
+        description="Most recent detection timestamp (timezone-aware)"
+    )
+
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 # API Response Models
@@ -209,8 +293,79 @@ class CorruptionHistoryResponse(BaseModel):
     limit: int
 
 
+class CorruptionTestResponse(BaseModel):
+    """Response model for image corruption testing endpoint"""
+    
+    filename: str
+    file_size_bytes: int
+    image_dimensions: Dict[str, int] = Field(description="Image width and height")
+    corruption_analysis: Dict[str, Any] = Field(description="Detailed corruption analysis results")
+    recommendation: Dict[str, str] = Field(description="Action recommendation and reasoning")
+    settings_used: Dict[str, Any] = Field(description="Corruption detection settings used")
+    error: Optional[str] = Field(default=None, description="Error message if analysis failed")
+
+
+class CameraHealthAssessment(BaseModel):
+    """Camera health assessment results"""
+    
+    camera_id: int
+    health_score: int = Field(ge=0, le=100)
+    health_status: str  # "healthy", "warning", "degraded", "critical"
+    issues: List[str]
+    recommendations: List[str]
+    assessment_timestamp: datetime = Field(
+        description="Assessment timestamp (timezone-aware)"
+    )
+    metrics: Dict[str, Any]
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
+
+
 class CorruptionSettingsResponse(BaseModel):
     """Response for corruption settings endpoint"""
 
     global_settings: CorruptionSettings
     camera_settings: Dict[int, CameraCorruptionSettings]
+
+
+# Legacy model for backward compatibility (if needed by existing code)
+class CorruptionEvaluationResult(BaseModel):
+    """Result model for corruption detection evaluation"""
+    
+    is_valid: bool
+    corruption_score: int = Field(ge=0, le=100)
+    action_taken: str
+    fast_score: Optional[int] = Field(default=None, ge=0, le=100)
+    heavy_score: Optional[int] = Field(default=None, ge=0, le=100)
+    failed_checks: List[str] = Field(default_factory=list)
+    processing_time_ms: float = 0.0
+    detection_disabled: bool = False
+    error: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CorruptionRetryResult(BaseModel):
+    """Result model for corruption detection with retry logic"""
+    
+    success: bool
+    message: str
+    file_path: str
+    evaluation_result: CorruptionEvaluationResult
+    retry_attempted: bool = False
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CorruptionSettingsModel(BaseModel):
+    """Legacy model for backward compatibility"""
+    
+    corruption_detection_heavy: bool
+    lifetime_glitch_count: int
+    consecutive_corruption_failures: int
+    degraded_mode_active: bool

@@ -18,12 +18,27 @@ from app.models.statistics_model import (
     TimelapseStatsModel,
     ImageStatsModel,
     VideoStatsModel,
+    AutomationStatsModel,
     RecentActivityModel,
     DashboardStatsModel,
     CameraPerformanceModel,
     QualityTrendDataPoint,
     StorageStatsModel,
     SystemHealthScoreModel,
+)
+from app.constants import (
+    VIDEO_QUEUE_WARNING_THRESHOLD,
+    VIDEO_QUEUE_ERROR_THRESHOLD,
+    HEALTH_CAMERA_WEIGHT,
+    HEALTH_QUALITY_WEIGHT,
+    HEALTH_ACTIVITY_WEIGHT,
+    HEALTH_DEGRADED_PENALTY,
+    HEALTH_FLAGGED_PENALTY,
+    HEALTH_ACTIVITY_PERFECT_SCORE,
+    DEFAULT_STATISTICS_RETENTION_DAYS,
+)
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_sync,
 )
 
 # Import database core for composition
@@ -93,14 +108,42 @@ class StatisticsOperations:
                         COUNT(*) as total_videos,
                         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_videos,
                         COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_videos,
+                        COUNT(CASE WHEN status = 'canceled' THEN 1 END) as canceled_videos,
                         COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_videos,
                         COALESCE(SUM(CASE WHEN status = 'completed' THEN file_size END), 0) as total_file_size,
-                        COALESCE(AVG(CASE WHEN status = 'completed' THEN duration END), 0) as avg_duration
+                        COALESCE(AVG(CASE WHEN status = 'completed' THEN duration_seconds END), 0) as avg_duration
                     FROM videos
                     """
                     )
                     video_stats = await cur.fetchone()
                     video_model = VideoStatsModel(**video_stats)
+
+                    await cur.execute(
+                        """
+                    SELECT
+                        COUNT(*) as total_jobs,
+                        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_jobs,
+                        COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_jobs,
+                        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_jobs,
+                        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_jobs
+                    FROM video_generation_jobs
+                    """
+                    )
+                    automation_stats = await cur.fetchone()
+                    
+                    # Calculate queue health using constants
+                    pending_jobs = automation_stats["pending_jobs"]
+                    if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
+                        queue_health = "unhealthy"
+                    elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
+                        queue_health = "degraded"
+                    else:
+                        queue_health = "healthy"
+                    
+                    automation_model = AutomationStatsModel(
+                        **automation_stats,
+                        queue_health=queue_health
+                    )
 
                     await cur.execute(
                         """
@@ -118,6 +161,7 @@ class StatisticsOperations:
                         timelapse=timelapse_model,
                         image=image_model,
                         video=video_model,
+                        automation=automation_model,
                         recent_activity=recent_activity_model,
                     )
         except Exception as e:
@@ -150,6 +194,14 @@ class StatisticsOperations:
                     canceled_videos=0,
                     total_file_size=0,
                     avg_duration=0,
+                ),
+                automation=AutomationStatsModel(
+                    total_jobs=0,
+                    pending_jobs=0,
+                    processing_jobs=0,
+                    completed_jobs=0,
+                    failed_jobs=0,
+                    queue_health="healthy",
                 ),
                 recent_activity=RecentActivityModel(
                     captures_last_hour=0, captures_last_24h=0
@@ -322,34 +374,31 @@ class StatisticsOperations:
                     camera_score = 100
                     if camera_health["total_cameras"] > 0:
                         enabled_ratio = (
-                            camera_health["enabled_cameras"]
-                            / camera_health["total_cameras"]
-                        )
+                            camera_health["enabled_cameras"] or 0
+                        ) / camera_health["total_cameras"]
                         degraded_ratio = (
-                            camera_health["degraded_cameras"]
-                            / camera_health["total_cameras"]
-                        )
+                            camera_health["degraded_cameras"] or 0
+                        ) / camera_health["total_cameras"]
                         camera_score = max(
-                            0, (enabled_ratio * 100) - (degraded_ratio * 50)
+                            0, (enabled_ratio * 100) - (degraded_ratio * HEALTH_DEGRADED_PENALTY)
                         )
 
-                    quality_score = quality_health.get("avg_quality_score", 100)
+                    quality_score = quality_health.get("avg_quality_score") or 100
                     if quality_health["total_images"] > 0:
                         flagged_ratio = (
-                            quality_health["flagged_images"]
-                            / quality_health["total_images"]
-                        )
-                        quality_score = max(0, quality_score - (flagged_ratio * 30))
+                            quality_health["flagged_images"] or 0
+                        ) / quality_health["total_images"]
+                        quality_score = max(0, quality_score - (flagged_ratio * HEALTH_FLAGGED_PENALTY))
 
                     activity_score = min(
-                        100, activity_health["captures_last_hour"] * 10
-                    )  # Assume 10 captures/hour is perfect
+                        100, (activity_health["captures_last_hour"] or 0) * HEALTH_ACTIVITY_PERFECT_SCORE
+                    )  # Configurable perfect score threshold
 
                     # Weighted overall health score
                     overall_score = (
-                        (camera_score * 0.3)
-                        + (quality_score * 0.4)
-                        + (activity_score * 0.3)
+                        (camera_score * HEALTH_CAMERA_WEIGHT)
+                        + (quality_score * HEALTH_QUALITY_WEIGHT)
+                        + (activity_score * HEALTH_ACTIVITY_WEIGHT)
                     )
 
                     return SystemHealthScoreModel(
@@ -421,7 +470,7 @@ class SyncStatisticsOperations:
                 return {
                     **active_metrics,
                     **recent_metrics,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
                 }
 
     def update_camera_statistics(self, camera_id: int) -> bool:
@@ -477,12 +526,12 @@ class SyncStatisticsOperations:
             )
             return 0.0
 
-    def cleanup_old_statistics(self, days_to_keep: int = 365) -> int:
+    def cleanup_old_statistics(self, days_to_keep: int = DEFAULT_STATISTICS_RETENTION_DAYS) -> int:
         """
         Clean up old statistical data.
 
         Args:
-            days_to_keep: Number of days to keep statistics (default: 365)
+            days_to_keep: Number of days to keep statistics (default: from constants)
 
         Returns:
             Number of records cleaned up

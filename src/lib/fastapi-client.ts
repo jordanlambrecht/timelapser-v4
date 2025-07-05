@@ -266,19 +266,36 @@ export const api = {
       apiRequest<{ message: string }>(`/api/cameras/${id}`, {
         method: "DELETE",
       }),
+    // Camera-centric timelapse management
+    startTimelapse: (cameraId: number, data?: any) =>
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/start-timelapse`, {
+        method: "POST",
+        body: JSON.stringify(data || {}),
+      }),
+    pauseTimelapse: (cameraId: number) =>
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/pause-timelapse`, {
+        method: "POST",
+      }),
+    resumeTimelapse: (cameraId: number) =>
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/resume-timelapse`, {
+        method: "POST",
+      }),
+    stopTimelapse: (cameraId: number) =>
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/stop-timelapse`, {
+        method: "POST",
+      }),
+    completeTimelapse: (cameraId: number) =>
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/complete-timelapse`, {
+        method: "POST",
+      }),
   },
-
-  // Timelapse endpoints
+  
+  // Timelapse data endpoints (for querying, not lifecycle management)
   timelapses: {
     list: (cameraId?: number) => {
       const params = cameraId ? `?camera_id=${cameraId}` : ""
       return apiRequest<TimelapseWithDetails[]>(`/api/timelapses${params}`)
     },
-    create: (data: TimelapseCreate) =>
-      apiRequest<{ timelapse_id: number; status: string }>("/api/timelapses", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
     updateStatus: (cameraId: number, data: TimelapseUpdate) =>
       apiRequest<{ timelapse_id: number; status: string }>(
         `/api/timelapses/${cameraId}`,

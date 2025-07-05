@@ -5,7 +5,6 @@ import {
   VideoQueueStatus,
   VideoGenerationJob,
   AutomationStats,
-  CameraAutomationSettings,
   TimelapseAutomationSettings,
   ManualTriggerRequest,
 } from "@/types/video-automation"
@@ -202,78 +201,8 @@ export function useAutomationStats() {
   return { stats, isLoading, error, refresh: fetchStats }
 }
 
-export function useCameraAutomation(cameraId: number) {
-  const [settings, setSettings] = useState<CameraAutomationSettings | null>(
-    null
-  )
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const fetchSettings = async () => {
-    try {
-      setIsLoading(true)
-      const response = await fetch(
-        `/api/video-automation/cameras/${cameraId}/automation`
-      )
-      if (!response.ok)
-        throw new Error("Failed to fetch camera automation settings")
-
-      const data = await response.json()
-      setSettings(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
-      console.error("Error fetching camera automation settings:", err)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const updateSettings = async (newSettings: CameraAutomationSettings) => {
-    try {
-      const response = await fetch(
-        `/api/video-automation/cameras/${cameraId}/automation`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newSettings),
-        }
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(
-          errorData.detail || "Failed to update automation settings"
-        )
-      }
-
-      const result = await response.json()
-      setSettings(newSettings)
-      toast.success("Camera automation settings updated")
-
-      return result
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to update settings"
-      toast.error(message)
-      throw err
-    }
-  }
-
-  useEffect(() => {
-    if (cameraId) {
-      fetchSettings()
-    }
-  }, [cameraId])
-
-  return {
-    settings,
-    isLoading,
-    error,
-    updateSettings,
-    refresh: fetchSettings,
-  }
-}
+// Camera automation settings hook removed per architecture decision:
+// Automation settings now only exist at timelapse level for cleaner design
 
 export function useTimelapseAutomation(timelapseId: number) {
   const [settings, setSettings] = useState<TimelapseAutomationSettings | null>(
@@ -286,7 +215,7 @@ export function useTimelapseAutomation(timelapseId: number) {
     try {
       setIsLoading(true)
       const response = await fetch(
-        `/api/video-automation/timelapses/${timelapseId}/automation`
+        `/api/video-automation/timelapse/${timelapseId}/settings`
       )
       if (!response.ok)
         throw new Error("Failed to fetch timelapse automation settings")
@@ -305,7 +234,7 @@ export function useTimelapseAutomation(timelapseId: number) {
   const updateSettings = async (newSettings: TimelapseAutomationSettings) => {
     try {
       const response = await fetch(
-        `/api/video-automation/timelapses/${timelapseId}/automation`,
+        `/api/video-automation/timelapse/${timelapseId}/settings`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

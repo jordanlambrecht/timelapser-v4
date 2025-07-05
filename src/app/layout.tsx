@@ -8,6 +8,7 @@ import { SpirographLogo } from "@/components/spirograph-logo"
 import { Toaster } from "sonner"
 import Footer from "@/components/footer"
 import { SSEProvider } from "@/contexts/sse-context"
+import { SettingsProvider } from "@/contexts/settings-context"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -73,11 +74,13 @@ export default function RootLayout({
         </nav>
 
         {/* Main content */}
-        <SSEProvider>
-          <main className='relative z-10'>
-            <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
-          </main>
-        </SSEProvider>
+        <SettingsProvider>
+          <SSEProvider>
+            <main className='relative z-10'>
+              <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
+            </main>
+          </SSEProvider>
+        </SettingsProvider>
         <Footer />
 
         {/* Toast notifications */}

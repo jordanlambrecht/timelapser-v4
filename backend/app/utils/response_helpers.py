@@ -530,122 +530,16 @@ class MetricsHelper:
         return max(0, int((health_ratio * 100) - degraded_penalty))
 
 
-class SSEEventManager:
-    """
-    Centralized manager for Server-Sent Events (SSE) broadcasting.
-
-    Eliminates duplication between AsyncDatabase and SyncDatabase classes
-    by providing a single implementation of SSE event broadcasting.
-    """
-
-    @staticmethod
-    def broadcast_event(event_data: Dict[str, Any]) -> None:
-        """
-        Broadcast real-time events via Server-Sent Events (SSE) to connected frontend clients.
-
-        This method sends events to the Next.js frontend via HTTP POST to the SSE endpoint.
-        The frontend maintains persistent connections and broadcasts these events to all
-        connected dashboard clients for real-time updates.
-
-        Args:
-            event_data: Dictionary containing event information:
-                - type: Event type (e.g., 'image_captured', 'camera_status_changed')
-                - Additional fields specific to event type
-                - timestamp: ISO formatted timestamp (added automatically if not present)
-
-        Event Types:
-            - image_captured: New image was captured for a camera/timelapse
-            - camera_status_changed: Camera online/offline status changed
-            - timelapse_status_changed: Timelapse started/stopped/paused
-
-        Note:
-            This method handles network failures gracefully and logs errors without
-            raising exceptions to avoid disrupting database operations.
-        """
-        try:
-            # Import here to avoid circular imports
-            from ..config import settings
-            import requests
-
-            # Send event to Next.js SSE endpoint (POST method for broadcasting)
-            sse_url = f"{settings.frontend_url}/api/events"
-            response = requests.post(
-                sse_url,
-                json=event_data,  # Send as JSON
-                timeout=5,
-                headers={"Content-Type": "application/json"},
-            )
-
-            if response.status_code == 200:
-                response_data = response.json()
-                client_count = response_data.get("clients", 0)
-                logger.debug(
-                    f"Broadcasted SSE event: {event_data['type']} to {client_count} clients"
-                )
-            else:
-                logger.warning(
-                    f"Failed to broadcast SSE event: {response.status_code} - {response.text}"
-                )
-
-        except Exception as e:
-            # Use generic exception to handle both requests.RequestException and others
-            logger.warning(f"Failed to send SSE event to Next.js: {e}")
-
-    @staticmethod
-    def notify_image_captured(
-        camera_id: int, image_count: int, day_number: int, timestamp: str
-    ) -> None:
-        """Notify frontend that a new image was captured"""
-        SSEEventManager.broadcast_event(
-            {
-                "type": "image_captured",
-                "data": {
-                    "camera_id": camera_id,
-                    "image_count": image_count,
-                    "day_number": day_number,
-                },
-                "timestamp": timestamp,
-            }
-        )
-
-    @staticmethod
-    def notify_camera_status_changed(
-        camera_id: int,
-        status: str,
-        health_status: Optional[str] = None,
-        timestamp: Optional[str] = None,
-    ) -> None:
-        """Notify frontend that camera status changed"""
-        event_data = {
-            "type": "camera_status_changed",
-            "data": {
-                "camera_id": camera_id,
-                "status": status,
-            },
-            "timestamp": timestamp or datetime.now().isoformat(),
-        }
-
-        if health_status:
-            event_data["data"]["health_status"] = health_status
-
-        SSEEventManager.broadcast_event(event_data)
-
-    @staticmethod
-    def notify_timelapse_status_changed(
-        camera_id: int, timelapse_id: int, status: str, timestamp: Optional[str] = None
-    ) -> None:
-        """Notify frontend that timelapse status changed"""
-        SSEEventManager.broadcast_event(
-            {
-                "type": "timelapse_status_changed",
-                "data": {
-                    "camera_id": camera_id,
-                    "timelapse_id": timelapse_id,
-                    "status": status,
-                },
-                "timestamp": timestamp or datetime.now().isoformat(),
-            }
-        )
+# NOTE: SSEEventManager class removed - replaced with database-driven SSE architecture
+# Events are now handled through:
+# 1. Services create events using SSEEventsOperations.create_event()
+# 2. FastAPI streams events from database via /api/events endpoint
+# 3. Next.js proxy streams events to frontend clients
+#
+# This eliminates the architectural violations:
+# - Utils layer making HTTP requests (violates pure functions)
+# - Synchronous HTTP in async context (performance bottleneck)
+# - In-memory queue without persistence (data loss risk)
 
 
 class LoggingHelper:

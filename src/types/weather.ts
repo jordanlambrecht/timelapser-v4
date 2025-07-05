@@ -15,17 +15,6 @@ export interface WeatherData {
   sunset_timestamp: number | null
 }
 
-export interface WeatherApiKeyValidation {
-  api_key: string
-  latitude?: number
-  longitude?: number
-}
-
-export interface WeatherApiKeyValidationResponse {
-  valid: boolean
-  message: string
-}
-
 export interface WeatherRefreshResponse {
   success: boolean
   message: string

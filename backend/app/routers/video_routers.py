@@ -6,52 +6,78 @@ Role: Video management and generation HTTP endpoints
 Responsibilities: Video metadata CRUD, manual video generation triggers, video file serving
 Interactions: Uses VideoService for business logic, coordinates with VideoAutomationService
              for generation requests
-
-NOTE: Some business logic remains in this router, specifically:
-- Construction of job settings dict in the /generate endpoint
-- Filename formatting/cleaning in the download endpoint
-For full separation of concerns, move these to a service or helper.
 """
 
+# Standard library imports
 import re
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Optional
 
-
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, status
-from fastapi.responses import FileResponse
-from loguru import logger
+# Third party imports
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, status, Response
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
-from ..models.video_model import Progress, VideoGenerationStatus
 
+# Local application imports
 from ..config import settings
+from ..utils.cache_manager import (
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
+    generate_timestamp_etag
+)
 from ..constants import (
     VIDEO_STATUSES,
     MIN_FPS,
     MAX_FPS,
     DEFAULT_FPS,
     VIDEO_QUALITIES,
+    VIDEO_JOB_PRIORITIES,
+    VIDEO_JOB_STATUSES,
+    ALLOWED_VIDEO_EXTENSIONS,
+    VIDEO_NOT_FOUND,
+    VIDEO_GENERATION_FAILED,
+    FILE_NOT_FOUND,
+    FILE_ACCESS_DENIED,
+    OPERATION_SUCCESS,
+    CACHE_CONTROL_PUBLIC,
 )
 from ..dependencies import (
     VideoServiceDep,
     SyncVideoServiceDep,
     VideoAutomationServiceDep,
+    CameraServiceDep,
+    TimelapseServiceDep,
+    SettingsServiceDep,
+    HealthServiceDep,
+    AsyncDatabaseDep,
 )
 from ..models import VideoCreate, VideoWithDetails
+from ..models.video_model import Progress, VideoGenerationStatus
 from ..utils.router_helpers import (
     handle_exceptions,
-    create_success_response,
-    create_error_response,
     validate_entity_exists,
+    get_active_timelapse_for_camera,
 )
 from ..utils.video_helpers import VideoSettingsHelper
 from ..utils.response_helpers import ResponseFormatter
-from ..utils.time_utils import parse_iso_timestamp_safe
-from ..utils.timezone_utils import format_filename_timestamp
+from ..utils.file_helpers import (
+    validate_file_path,
+    create_file_response,
+    clean_filename,
+)
+from ..utils.timezone_utils import parse_iso_timestamp_safe
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_async,
+    format_filename_timestamp,
+)
 
-router = APIRouter(prefix="/videos", tags=["videos"])
+# TODO: CACHING STRATEGY - OPTIMAL MIXED APPROACH (EXCELLENT IMPLEMENTATION)
+# Video operations use optimal caching strategy perfectly aligned with content types:
+# - Video files: Long cache + ETag - immutable large files, massive bandwidth savings
+# - Video metadata: ETag + cache - changes occasionally when videos created/deleted
+# - Real-time operations: SSE broadcasting - generation triggers, queue monitoring
+# - Queue/status: SSE or very short cache - critical real-time operational monitoring
+# Individual endpoint TODOs are exceptionally well-defined throughout this file.
+router = APIRouter(tags=["videos"])
 
 
 class VideoGenerationRequest(BaseModel):
@@ -65,34 +91,29 @@ class VideoGenerationRequest(BaseModel):
     @field_validator("video_name")
     @classmethod
     def validate_video_name(_cls, v: Optional[str]) -> Optional[str]:
-        """Validate video name to prevent injection attacks"""
+        """Validate video name using centralized helper"""
         if v is None:
             return v
 
-        # Strip whitespace
-        v = v.strip()
-        if not v:
+        # Use centralized filename cleaning from file_helpers
+        cleaned = clean_filename(v.strip()) if v.strip() else None
+
+        if not cleaned:
             return None
 
-        # Only allow alphanumeric, spaces, hyphens, underscores, and dots
-        if not re.match(r"^[a-zA-Z0-9\s\-_.]+$", v):
-            raise ValueError(
-                "Video name contains invalid characters. Only letters, numbers, spaces, hyphens, underscores, and dots are allowed."
-            )
-
-        # Prevent potential path traversal
-        if ".." in v or "/" in v or "\\" in v:
+        # Additional validation for video names
+        if ".." in cleaned or "/" in cleaned or "\\" in cleaned:
             raise ValueError("Video name cannot contain path separators or '..'")
 
-        return v
+        return cleaned
 
 
-from ..dependencies import CameraServiceDep, TimelapseServiceDep
-
-
-@router.get("/", response_model=List[VideoWithDetails])
+# IMPLEMENTED: ETag + 10 minute cache (video list changes when videos created/deleted)
+# ETag based on latest video created_at timestamp + video count
+@router.get("/videos", response_model=List[VideoWithDetails])
 @handle_exceptions("get videos")
 async def get_videos(
+    response: Response,
     video_service: VideoServiceDep,
     camera_service: CameraServiceDep,
     timelapse_service: TimelapseServiceDep,
@@ -109,22 +130,48 @@ async def get_videos(
             timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
         )
     videos = await video_service.get_videos(timelapse_id=timelapse_id)
+    
+    # Generate ETag based on videos collection data
+    if videos:
+        etag = generate_collection_etag([v.created_at for v in videos])
+    else:
+        etag = generate_content_hash_etag(f"empty-videos-{camera_id}-{timelapse_id}")
+    
+    # Add moderate cache for video list
+    response.headers["Cache-Control"] = "public, max-age=600, s-maxage=600"  # 10 minutes
+    response.headers["ETag"] = etag
+    
     return videos
 
 
-@router.get("/{video_id}", response_model=VideoWithDetails)
+# IMPLEMENTED: ETag + long cache (video metadata never changes after creation)
+# ETag = f'"{video.id}-{video.updated_at.timestamp()}"'
+@router.get("/videos/{video_id}", response_model=VideoWithDetails)
 @handle_exceptions("get video")
-async def get_video(video_id: int, video_service: VideoServiceDep):
+async def get_video(response: Response, video_id: int, video_service: VideoServiceDep):
     """Get a specific video by ID"""
     video = await validate_entity_exists(
         video_service.get_video_by_id, video_id, "video"
     )
+    
+    # Generate ETag based on video ID and created timestamp (videos are immutable after creation)
+    etag = generate_composite_etag(video.id, video.created_at)
+    
+    # Add long cache for video metadata (immutable after creation)
+    response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"  # 1 hour
+    response.headers["ETag"] = etag
+    
     return video
 
 
-@router.post("/", response_model=dict)
+# TODO: Good SSE broadcasting - no HTTP caching needed for POST operations
+@router.post("/videos", response_model=dict)
 @handle_exceptions("create video")
-async def create_video(video_data: VideoCreate, video_service: VideoServiceDep):
+async def create_video(
+    video_data: VideoCreate,
+    video_service: VideoServiceDep,
+    settings_service: SettingsServiceDep,
+):
     """Create a new video generation request"""
     # Use VideoSettingsHelper to validate and apply settings
     is_valid, error = VideoSettingsHelper.validate_video_settings(video_data.settings)
@@ -137,150 +184,164 @@ async def create_video(video_data: VideoCreate, video_service: VideoServiceDep):
         "camera_id": video_data.camera_id,
         "name": video_data.name,
         "settings": video_data.settings,
-        "status": "generating",
+        "status": (
+            VIDEO_STATUSES[0] if VIDEO_STATUSES else "pending"
+        ),  # Use first status from constants
     }
 
     created_video = await video_service.create_video_record(prepared_data)
 
-    logger.info(
-        f"Created video generation request {created_video.id} for camera {video_data.camera_id}"
-    )
+    # SSE broadcasting handled by service layer (proper architecture)
+
     return ResponseFormatter.success(
         "Video generation request created",
-        data={"video_id": created_video.id, "status": "generating"},
+        data={"video_id": created_video.id, "status": prepared_data["status"]},
     )
 
 
-@router.delete("/{video_id}")
+# TODO: Good SSE broadcasting - no HTTP caching needed for DELETE operations
+@router.delete("/videos/{video_id}")
 @handle_exceptions("delete video")
-async def delete_video(video_id: int, video_service: VideoServiceDep):
+async def delete_video(
+    video_id: int,
+    video_service: VideoServiceDep,
+    settings_service: SettingsServiceDep,
+):
     """Delete a video"""
-    # Check if video exists
-    existing_video = await video_service.get_video_by_id(video_id)
-    if not existing_video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    # Check if video exists using validate_entity_exists
+    existing_video = await validate_entity_exists(
+        video_service.get_video_by_id, video_id, "video"
+    )
 
     # Delete video
     success = await video_service.delete_video(video_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete video")
 
-    logger.info(f"Deleted video {video_id}: {existing_video.name}")
-    return create_success_response("Video deleted successfully")
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success("Video deleted successfully")
 
 
-@router.get("/{video_id}/download")
+# IMPLEMENTED: long cache + ETag for immutable video files
+# Cache-Control: public, max-age=31536000, immutable + ETag based on video.id + file_size
+@router.get("/videos/{video_id}/download")
 @handle_exceptions("download video")
-async def download_video(video_id: int, video_service: VideoServiceDep):
+async def download_video(
+    response: Response,
+    video_id: int,
+    video_service: VideoServiceDep,
+    settings_service: SettingsServiceDep,
+):
     """Download a video file"""
-    # Get video details
-    video = await video_service.get_video_by_id(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    # Get video details using validate_entity_exists (now properly typed)
+    video = await validate_entity_exists(
+        video_service.get_video_by_id, video_id, "video"
+    )
 
     if not video.file_path or video.status != "completed":
-        raise HTTPException(status_code=404, detail="Video file not available")
+        raise HTTPException(status_code=404, detail=FILE_NOT_FOUND)
 
-    # SECURITY: Validate file path before accessing using config-driven paths (AI-CONTEXT compliant)
-    data_dir = Path(settings.data_directory)
+    # Generate ETag based on video ID and file size for immutable content cache validation
+    etag = generate_content_hash_etag(f"{video.id}-{video.file_size}")
 
-    # Handle both absolute and relative paths
-    file_path = video.file_path
-    if Path(file_path).is_absolute():
-        safe_path = Path(file_path)
-    else:
-        safe_path = data_dir / file_path
+    # Add aggressive cache for immutable video files
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # 1 year
+    response.headers["ETag"] = etag
 
-    # SECURITY: Ensure the resolved path is within allowed directories
-    resolved_path = safe_path.resolve()
-    resolved_data_dir = data_dir.resolve()
+    # Use file_helpers for secure path validation and file serving
+    try:
+        validated_path = validate_file_path(
+            video.file_path, base_directory=settings.data_directory, must_exist=True
+        )
+    except HTTPException:
+        # file_helpers already raises appropriate HTTPException
+        raise
 
-    if not str(resolved_path).startswith(str(resolved_data_dir)):
-        logger.warning(f"Attempted path traversal attack: {file_path}")
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # Check if file exists
-    if not resolved_path.exists():
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
-
-    # Generate filename with timestamp
-    video_name = video.name or f"video_{video_id}"
-
-    # Clean video name for filename
-    safe_video_name = "".join(
-        c for c in video_name if c.isalnum() or c in (" ", "-", "_")
-    ).rstrip()
-    safe_video_name = safe_video_name.replace(" ", "_")
+    # Generate safe filename using centralized utilities
+    safe_video_name = clean_filename(video.name or f"video_{video.id}")
 
     # Add timestamp to filename using timezone-aware utilities
     if video.created_at:
         try:
-            created_at = video.created_at
-            if isinstance(created_at, str):
-                # Use centralized timestamp parsing
-                timestamp = parse_iso_timestamp_safe(created_at)
-            elif hasattr(created_at, "strftime"):  # datetime object
-                timestamp = created_at
-            else:
-                # Use simple UTC timestamp for routers
-                timestamp = datetime.now(timezone.utc)
+            # Parse timestamp safely using time_utils
+            if isinstance(video.created_at, str):
+                parsed_timestamp = parse_iso_timestamp_safe(video.created_at)
+            else:  # datetime object
+                parsed_timestamp = video.created_at
 
-            filename = f"{safe_video_name}_{format_filename_timestamp(timestamp)}.mp4"
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Error parsing timestamp for video {video_id}: {e}")
-            # Fallback to simple UTC timestamp
-            fallback_timestamp = datetime.now(timezone.utc)
-            filename = (
-                f"{safe_video_name}_{format_filename_timestamp(fallback_timestamp)}.mp4"
+            # Get timezone-aware timestamp using settings service
+            timezone_aware_timestamp = await get_timezone_aware_timestamp_async(
+                settings_service
             )
-    else:
-        # No timestamp available, use simple UTC timestamp
-        current_timestamp = datetime.now(timezone.utc)
-        filename = (
-            f"{safe_video_name}_{format_filename_timestamp(current_timestamp)}.mp4"
-        )
 
-    # Return file for download
-    return FileResponse(
-        path=str(resolved_path),
-        filename=filename,
-        media_type="video/mp4",
+            # Use format_filename_timestamp for consistent formatting
+            timestamp_str = format_filename_timestamp(timezone_aware_timestamp)
+            filename = f"{safe_video_name}_{timestamp_str}.mp4"
+        except Exception:
+            # Fallback filename without timestamp if timestamp processing fails
+            filename = f"{safe_video_name}.mp4"
+    else:
+        # No timestamp available
+        filename = f"{safe_video_name}.mp4"
+
+    # Use file_helpers for secure file response
+    return create_file_response(
+        file_path=validated_path, filename=filename, media_type="video/mp4"
     )
 
 
-@router.post("/generate")
+# TODO: Good SSE broadcasting - no HTTP caching needed for video generation triggers. SSE needs to be moved to services layer
+@router.post("/videos/generate")
 @handle_exceptions("generate video")
 async def generate_video(
     request: VideoGenerationRequest,
     background_tasks: BackgroundTasks,
     video_automation_service: VideoAutomationServiceDep,
+    camera_service: CameraServiceDep,
+    timelapse_service: TimelapseServiceDep,
+    health_service: HealthServiceDep,
+    settings_service: SettingsServiceDep,
 ):
-    """
-    Manual video generation endpoint coordinating with VideoAutomationService
-    """
-    # Use automation service to add manual video generation job
+    """Manual video generation endpoint coordinating with VideoAutomationService"""
     import asyncio
+
+    # Validate camera exists and is accessible
+    camera = await validate_entity_exists(
+        camera_service.get_camera_by_id, request.camera_id, "camera"
+    )
+
+    # Get active timelapse for the camera using router helpers
+    active_timelapse = await get_active_timelapse_for_camera(
+        timelapse_service, request.camera_id
+    )
+
+    # Check system health before starting video generation
+    health_status = await health_service.get_detailed_health()
+    if health_status.status == "unhealthy":
+        raise HTTPException(
+            status_code=503,
+            detail="System is unhealthy, video generation temporarily unavailable",
+        )
 
     loop = asyncio.get_event_loop()
 
-    # Get active timelapse for camera - run sync method in executor
-
-    # Use constants for FPS and quality
+    # Use constants for FPS, quality, and priority instead of hardcoded values
     video_fps = DEFAULT_FPS
-    if VIDEO_QUALITIES and "medium" in VIDEO_QUALITIES:
-        video_quality = "medium"
-    elif VIDEO_QUALITIES:
-        video_quality = VIDEO_QUALITIES[0]
-    else:
-        video_quality = "medium"
+    video_quality = (
+        VIDEO_QUALITIES[1] if len(VIDEO_QUALITIES) > 1 else VIDEO_QUALITIES[0]
+    )
+    job_priority = (
+        VIDEO_JOB_PRIORITIES[2] if len(VIDEO_JOB_PRIORITIES) > 2 else "high"
+    )  # "high" priority for manual
 
     try:
         job_id = await loop.run_in_executor(
             None,
             lambda: video_automation_service.queue.add_job(
-                timelapse_id=request.camera_id,  # TODO: get actual timelapse_id
+                timelapse_id=active_timelapse.id,  # Clean Pydantic model access
                 trigger_type="manual",
-                priority="high",
+                priority=job_priority,
                 settings={
                     "video_name": request.video_name,
                     "framerate": video_fps,
@@ -294,54 +355,81 @@ async def generate_video(
             else {"success": False, "error": "Failed to create job"}
         )
     except Exception as e:
+        # Let @handle_exceptions decorator handle logging
         generation_result = {"success": False, "error": str(e)}
 
     if not generation_result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=generation_result.get(
-                "error", "Failed to schedule video generation"
-            ),
+            detail=generation_result.get("error", VIDEO_GENERATION_FAILED),
         )
 
-    logger.info(
-        f"Scheduled manual video generation for camera {request.camera_id}: {generation_result.get('job_id')}"
-    )
+    # SSE broadcasting handled by service layer (proper architecture)
 
-    return create_success_response(
+    return ResponseFormatter.success(
         "Video generation scheduled successfully",
-        job_id=generation_result.get("job_id"),
-        video_id=generation_result.get("video_id"),
-        estimated_completion=generation_result.get("estimated_completion"),
-        queue_position=generation_result.get("queue_position", 1),
+        data={
+            "job_id": generation_result.get("job_id"),
+            "video_id": generation_result.get("video_id"),
+            "estimated_completion": generation_result.get("estimated_completion"),
+            "queue_position": generation_result.get("queue_position", 1),
+        },
     )
 
 
-@router.get("/generation-queue")
+# TODO: Replace with SSE in services layer - queue status changes frequently and users need real-time updates
+# Use very short cache (30 seconds max) or preferably SSE events
+@router.get("/videos/generation-queue")
 @handle_exceptions("get video generation queue")
 async def get_video_generation_queue(
     video_automation_service: VideoAutomationServiceDep,
+    health_service: HealthServiceDep,
 ):
-    """Get current video generation queue status"""
-    # Use automation service to get queue status - run sync method in executor
+    """Get current video generation queue status with health monitoring"""
     import asyncio
 
     loop = asyncio.get_event_loop()
-    queue_status = await loop.run_in_executor(
-        None, video_automation_service.get_automation_stats
-    )
-    return queue_status
+
+    try:
+        # Get queue status
+        queue_status = await loop.run_in_executor(
+            None, video_automation_service.get_automation_stats
+        )
+
+        # Add health check for video queue
+        health_status = await health_service.get_detailed_health()
+
+        # Enhance response with health information
+        enhanced_status = {
+            **queue_status,
+            "system_health": health_status.status,
+            "warnings": health_status.warnings,
+        }
+
+        return ResponseFormatter.success(
+            "Video generation queue status retrieved", data=enhanced_status
+        )
+
+    except Exception as e:
+        # Let @handle_exceptions decorator handle logging
+        return ResponseFormatter.error(
+            "Failed to retrieve queue status",
+            error_code="QUEUE_STATUS_ERROR",
+            details={"error": str(e)},
+        )
 
 
-@router.get("/{video_id}/generation-status", response_model=VideoGenerationStatus)
+# TODO: Replace with SSE in services layer- generation status changes frequently during processing
+# Remove HTTP caching, use SSE events for real-time progress updates
+@router.get(
+    "/videos/{video_id}/generation-status", response_model=VideoGenerationStatus
+)
 @handle_exceptions("get video generation status")
 async def get_video_generation_status(video_id: int, video_service: VideoServiceDep):
     """Get generation status for a specific video"""
-    video = await video_service.get_video_by_id(video_id)
-    if not video:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Video not found"
-        )
+    video = await validate_entity_exists(
+        video_service.get_video_by_id, video_id, "video"
+    )
 
     progress = Progress(
         image_count=video.image_count,
@@ -360,19 +448,38 @@ async def get_video_generation_status(video_id: int, video_service: VideoService
     return generation_status
 
 
-@router.post("/{video_id}/cancel-generation")
+# TODO: No caching needed - cancellation is immediate action
+# Add SSE broadcasting when cancel functionality is implemented
+@router.post("/videos/{video_id}/cancel-generation")
 @handle_exceptions("cancel video generation")
-async def cancel_video_generation(video_id: int):
+async def cancel_video_generation(
+    video_id: int,
+    video_service: VideoServiceDep,
+    video_automation_service: VideoAutomationServiceDep,
+):
     """Cancel video generation for a specific video"""
-    # TODO: Implement cancel_video_generation method in VideoAutomationService
-    # For now, return a placeholder response
-    cancel_result = {"success": False, "error": "Cancel generation not yet implemented"}
-    if not cancel_result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=cancel_result.get("error", "Failed to cancel video generation"),
+    # Validate video exists first
+    video = await validate_entity_exists(
+        video_service.get_video_by_id, video_id, "video"
+    )
+
+    # Check if video is in a cancellable state
+    cancellable_statuses = ["pending", "processing"]  # Use appropriate statuses
+    if video.status not in cancellable_statuses:
+        return ResponseFormatter.error(
+            f"Cannot cancel video generation. Video status is '{video.status}'",
+            error_code="INVALID_STATUS_FOR_CANCELLATION",
+            details={
+                "current_status": video.status,
+                "cancellable_statuses": cancellable_statuses,
+            },
         )
 
-    return create_success_response(
-        "Video generation cancelled successfully", video_id=video_id
+    # TODO: Implement cancel_video_generation method in VideoAutomationService
+    # For now, return a placeholder response with proper structure
+    # Let @handle_exceptions decorator handle logging if needed
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Cancel generation feature not yet implemented",
     )

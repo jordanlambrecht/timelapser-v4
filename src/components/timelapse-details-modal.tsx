@@ -643,7 +643,7 @@ export const TimelapseDetailsModal = memo(
         const imageIds = Array.from(selectedImages)
 
         // Create the request
-        const response = await fetch("/api/images/bulk-download", {
+        const response = await fetch("/api/images/bulk/download", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

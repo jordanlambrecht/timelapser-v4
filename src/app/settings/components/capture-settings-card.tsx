@@ -19,26 +19,16 @@ import { ThumbnailRegenerationModal } from "@/components/thumbnail-regeneration-
 import SwitchLabeled from "@/components/ui/switch-labeled"
 import { Clock, Image as ImageIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useSettings } from "@/contexts/settings-context"
 
-interface CaptureSettingsCardProps {
-  captureInterval: number
-  setCaptureInterval: (value: number) => void
-  generateThumbnails: boolean
-  setGenerateThumbnails: (value: boolean) => void
-  imageCaptureType: "PNG" | "JPG"
-  setImageCaptureType: (value: "PNG" | "JPG") => void
-  saving: boolean
-}
-
-export function CaptureSettingsCard({
-  captureInterval,
-  setCaptureInterval,
-  generateThumbnails,
-  setGenerateThumbnails,
-  imageCaptureType,
-  setImageCaptureType,
-  saving,
-}: CaptureSettingsCardProps) {
+export function CaptureSettingsCard() {
+  const {
+    captureInterval,
+    generateThumbnails,
+    imageCaptureType,
+    saving,
+    updateSetting
+  } = useSettings()
   // Local state for thumbnail modal and confirmation
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false)
   const [thumbnailConfirmOpen, setThumbnailConfirmOpen] = useState(false)
@@ -66,13 +56,13 @@ export function CaptureSettingsCard({
 
   const handleImageFormatConfirm = () => {
     setImageFormatChangeDialogOpen(false)
-    setImageCaptureType(pendingImageFormat)
+    updateSetting('image_capture_type', pendingImageFormat)
     setImageConversionDialogOpen(true)
   }
 
   const handleImageFormatCancel = () => {
     setImageFormatChangeDialogOpen(false)
-    setImageCaptureType(pendingImageFormat) // Still change the format, just don't convert existing
+    updateSetting('image_capture_type', pendingImageFormat) // Still change the format, just don't convert existing
   }
 
   return (
@@ -95,7 +85,7 @@ export function CaptureSettingsCard({
                   id='interval'
                   label='Interval (seconds)'
                   value={captureInterval}
-                  onChange={setCaptureInterval}
+                  onChange={(value) => updateSetting('capture_interval', value)}
                   min={1}
                   max={86400}
                   step={1}
@@ -133,7 +123,7 @@ export function CaptureSettingsCard({
                       type='button'
                       variant='outline'
                       size='sm'
-                      onClick={() => setCaptureInterval(preset.value)}
+                      onClick={() => updateSetting('capture_interval', preset.value)}
                       className={cn(
                         "text-xs h-8 px-2 border-borderColor/50 hover:border-primary/50 transition-all duration-300 ease-in-out",
                         captureInterval === preset.value
@@ -170,7 +160,7 @@ export function CaptureSettingsCard({
                   falseLabel='disabled'
                   trueLabel='enabled'
                   checked={generateThumbnails}
-                  onCheckedChange={setGenerateThumbnails}
+                  onCheckedChange={(value) => updateSetting('generate_thumbnails', value)}
                 />
               </div>
               <div className='p-3 rounded-lg bg-background/30 border border-borderColor/30'>

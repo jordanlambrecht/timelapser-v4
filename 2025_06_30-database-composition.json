@@ -1,0 +1,549 @@
+[{
+  "table_name": "alembic_version",
+  "column_name": "version_num",
+  "data_type": "character varying"
+}, {
+  "table_name": "cameras",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "name",
+  "data_type": "character varying"
+}, {
+  "table_name": "cameras",
+  "column_name": "rtsp_url",
+  "data_type": "text"
+}, {
+  "table_name": "cameras",
+  "column_name": "status",
+  "data_type": "character varying"
+}, {
+  "table_name": "cameras",
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "updated_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "time_window_start",
+  "data_type": "time without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "time_window_end",
+  "data_type": "time without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "use_time_window",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "health_status",
+  "data_type": "character varying"
+}, {
+  "table_name": "cameras",
+  "column_name": "last_capture_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "last_capture_success",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "consecutive_failures",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "next_capture_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "active_timelapse_id",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "video_automation_mode",
+  "data_type": "USER-DEFINED"
+}, {
+  "table_name": "cameras",
+  "column_name": "standard_fps",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "enable_time_limits",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "min_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "max_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "target_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "fps_bounds_min",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "fps_bounds_max",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "lifetime_glitch_count",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "consecutive_corruption_failures",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "corruption_detection_heavy",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "last_degraded_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "cameras",
+  "column_name": "degraded_mode_active",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "video_generation_mode",
+  "data_type": "character varying"
+}, {
+  "table_name": "cameras",
+  "column_name": "enabled",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "is_connected",
+  "data_type": "boolean"
+}, {
+  "table_name": "cameras",
+  "column_name": "last_error",
+  "data_type": "text"
+}, {
+  "table_name": "cameras",
+  "column_name": "last_error_message",
+  "data_type": "text"
+}, {
+  "table_name": "cameras",
+  "column_name": "corruption_score",
+  "data_type": "integer"
+}, {
+  "table_name": "cameras",
+  "column_name": "milestone_config",
+  "data_type": "jsonb"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "camera_id",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "image_id",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "corruption_score",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "fast_score",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "heavy_score",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "detection_details",
+  "data_type": "jsonb"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "action_taken",
+  "data_type": "character varying"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "processing_time_ms",
+  "data_type": "integer"
+}, {
+  "table_name": "corruption_logs",
+  "column_name": "created_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "images",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "images",
+  "column_name": "camera_id",
+  "data_type": "integer"
+}, {
+  "table_name": "images",
+  "column_name": "timelapse_id",
+  "data_type": "integer"
+}, {
+  "table_name": "images",
+  "column_name": "file_path",
+  "data_type": "text"
+}, {
+  "table_name": "images",
+  "column_name": "captured_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "images",
+  "column_name": "day_number",
+  "data_type": "integer"
+}, {
+  "table_name": "images",
+  "column_name": "file_size",
+  "data_type": "bigint"
+}, {
+  "table_name": "images",
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "images",
+  "column_name": "date_directory",
+  "data_type": "character varying"
+}, {
+  "table_name": "images",
+  "column_name": "file_name",
+  "data_type": "character varying"
+}, {
+  "table_name": "images",
+  "column_name": "thumbnail_path",
+  "data_type": "text"
+}, {
+  "table_name": "images",
+  "column_name": "small_path",
+  "data_type": "text"
+}, {
+  "table_name": "images",
+  "column_name": "thumbnail_size",
+  "data_type": "bigint"
+}, {
+  "table_name": "images",
+  "column_name": "small_size",
+  "data_type": "bigint"
+}, {
+  "table_name": "images",
+  "column_name": "updated_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "images",
+  "column_name": "corruption_score",
+  "data_type": "integer"
+}, {
+  "table_name": "images",
+  "column_name": "is_flagged",
+  "data_type": "boolean"
+}, {
+  "table_name": "images",
+  "column_name": "corruption_details",
+  "data_type": "jsonb"
+}, {
+  "table_name": "logs",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "logs",
+  "column_name": "level",
+  "data_type": "character varying"
+}, {
+  "table_name": "logs",
+  "column_name": "message",
+  "data_type": "text"
+}, {
+  "table_name": "logs",
+  "column_name": "camera_id",
+  "data_type": "integer"
+}, {
+  "table_name": "logs",
+  "column_name": "timestamp",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "logs",
+  "column_name": "source",
+  "data_type": "text"
+}, {
+  "table_name": "settings",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "settings",
+  "column_name": "key",
+  "data_type": "character varying"
+}, {
+  "table_name": "settings",
+  "column_name": "value",
+  "data_type": "text"
+}, {
+  "table_name": "settings",
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "settings",
+  "column_name": "updated_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "camera_id",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "status",
+  "data_type": "character varying"
+}, {
+  "table_name": "timelapses",
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "updated_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "start_date",
+  "data_type": "date"
+}, {
+  "table_name": "timelapses",
+  "column_name": "image_count",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "last_capture_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "auto_stop_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "name",
+  "data_type": "character varying"
+}, {
+  "table_name": "timelapses",
+  "column_name": "time_window_start",
+  "data_type": "time without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "time_window_end",
+  "data_type": "time without time zone"
+}, {
+  "table_name": "timelapses",
+  "column_name": "use_custom_time_window",
+  "data_type": "boolean"
+}, {
+  "table_name": "timelapses",
+  "column_name": "video_automation_mode",
+  "data_type": "USER-DEFINED"
+}, {
+  "table_name": "timelapses",
+  "column_name": "standard_fps",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "enable_time_limits",
+  "data_type": "boolean"
+}, {
+  "table_name": "timelapses",
+  "column_name": "min_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "max_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "target_time_seconds",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "fps_bounds_min",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "fps_bounds_max",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "glitch_count",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "total_corruption_score",
+  "data_type": "bigint"
+}, {
+  "table_name": "timelapses",
+  "column_name": "time_window_type",
+  "data_type": "character varying"
+}, {
+  "table_name": "timelapses",
+  "column_name": "sunrise_offset_minutes",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "sunset_offset_minutes",
+  "data_type": "integer"
+}, {
+  "table_name": "timelapses",
+  "column_name": "generation_schedule",
+  "data_type": "jsonb"
+}, {
+  "table_name": "timelapses",
+  "column_name": "milestone_config",
+  "data_type": "jsonb"
+}, {
+  "table_name": "timelapses",
+  "column_name": "video_generation_mode",
+  "data_type": "character varying"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "timelapse_id",
+  "data_type": "integer"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "trigger_type",
+  "data_type": "character varying"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "status",
+  "data_type": "character varying"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "priority",
+  "data_type": "character varying"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "created_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "started_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "completed_at",
+  "data_type": "timestamp with time zone"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "error_message",
+  "data_type": "text"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "video_path",
+  "data_type": "character varying"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "video_id",
+  "data_type": "integer"
+}, {
+  "table_name": "video_generation_jobs",
+  "column_name": "settings",
+  "data_type": "jsonb"
+}, {
+  "table_name": "videos",
+  "column_name": "id",
+  "data_type": "integer"
+}, {
+  "table_name": "videos",
+  "column_name": "camera_id",
+  "data_type": "integer"
+}, {
+  "table_name": "videos",
+  "column_name": "name",
+  "data_type": "character varying"
+}, {
+  "table_name": "videos",
+  "column_name": "file_path",
+  "data_type": "text"
+}, {
+  "table_name": "videos",
+  "column_name": "status",
+  "data_type": "character varying"
+}, {
+  "table_name": "videos",
+  "column_name": "settings",
+  "data_type": "jsonb"
+}, {
+  "table_name": "videos",
+  "column_name": "image_count",
+  "data_type": "integer"
+}, {
+  "table_name": "videos",
+  "column_name": "file_size",
+  "data_type": "bigint"
+}, {
+  "table_name": "videos",
+  "column_name": "duration_seconds",
+  "data_type": "numeric"
+}, {
+  "table_name": "videos",
+  "column_name": "images_start_date",
+  "data_type": "date"
+}, {
+  "table_name": "videos",
+  "column_name": "images_end_date",
+  "data_type": "date"
+}, {
+  "table_name": "videos",
+  "column_name": "created_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "videos",
+  "column_name": "updated_at",
+  "data_type": "timestamp without time zone"
+}, {
+  "table_name": "videos",
+  "column_name": "calculated_fps",
+  "data_type": "numeric"
+}, {
+  "table_name": "videos",
+  "column_name": "target_duration",
+  "data_type": "integer"
+}, {
+  "table_name": "videos",
+  "column_name": "actual_duration",
+  "data_type": "numeric"
+}, {
+  "table_name": "videos",
+  "column_name": "fps_was_adjusted",
+  "data_type": "boolean"
+}, {
+  "table_name": "videos",
+  "column_name": "adjustment_reason",
+  "data_type": "text"
+}, {
+  "table_name": "videos",
+  "column_name": "timelapse_id",
+  "data_type": "integer"
+}, {
+  "table_name": "videos",
+  "column_name": "trigger_type",
+  "data_type": "character varying"
+}, {
+  "table_name": "videos",
+  "column_name": "job_id",
+  "data_type": "integer"
+}]

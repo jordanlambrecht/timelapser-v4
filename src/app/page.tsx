@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, memo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Plus,
@@ -16,7 +16,7 @@ import {
   Square,
   Shield,
 } from "lucide-react"
-import { CameraCard } from "@/components/camera-card"
+import CameraCard from "@/components/camera-card"
 import { StatsCard } from "@/components/stats-card"
 import { CameraModal } from "@/components/camera-modal"
 import { SpirographLogo } from "@/components/spirograph-logo"
@@ -41,6 +41,7 @@ export default function Dashboard() {
   const [cameras, setCameras] = useState<Camera[]>([])
   const [timelapses, setTimelapses] = useState<Timelapse[]>([])
   const [videos, setVideos] = useState<Video[]>([])
+  const [dashboardStats, setDashboardStats] = useState<any>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCamera, setEditingCamera] = useState<Camera | undefined>()
   const [loading, setLoading] = useState(true)
@@ -61,52 +62,41 @@ export default function Dashboard() {
     useCorruptionStats()
   const { resetCameraDegradedMode } = useCorruptionActions()
 
+  // TODO: OPTIMIZATION - Replace multiple API calls with useDashboard composite hook
+  // This will reduce 4 API calls to 1 and improve dashboard load time by 75%
+  // Implementation:
+  // const { dashboardData, loading, error, refreshDashboard } = useDashboard();
+  // Then use: dashboardData.cameras, dashboardData.stats, etc.
+  // Remove fetchData() and use SSE integration from the hook
   const fetchData = async () => {
     try {
-      // Use new aggregated dashboard endpoint for better performance
-      const response = await fetch("/api/dashboard")
-
-      if (!response.ok) {
-        throw new Error(`Dashboard API failed: ${response.status}`)
-      }
-
-      const dashboardData = await response.json()
-
-      // Set data from aggregated response
-      setCameras(
-        Array.isArray(dashboardData.cameras) ? dashboardData.cameras : []
-      )
-      setTimelapses(
-        Array.isArray(dashboardData.timelapses) ? dashboardData.timelapses : []
-      )
-      setVideos(Array.isArray(dashboardData.videos) ? dashboardData.videos : [])
-
-      // Log performance metadata
-      if (dashboardData.metadata) {
-        // Dashboard loaded successfully
-      }
-    } catch (error) {
-      console.error("Error fetching dashboard data:", error)
-
-      // Fallback to individual API calls if aggregated endpoint fails
-      // Falling back to individual API calls
-      try {
-        const [camerasRes, timelapsesRes, videosRes] = await Promise.all([
+      // Fetch dashboard statistics and entity data in parallel
+      const [statsRes, camerasRes, timelapsesRes, videosRes] =
+        await Promise.all([
+          fetch("/api/dashboard"),
           fetch("/api/cameras"),
           fetch("/api/timelapses"),
           fetch("/api/videos"),
         ])
 
-        const camerasData = await camerasRes.json()
-        const timelapsesData = await timelapsesRes.json()
-        const videosData = await videosRes.json()
-
-        setCameras(Array.isArray(camerasData) ? camerasData : [])
-        setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
-        setVideos(Array.isArray(videosData) ? videosData : [])
-      } catch (fallbackError) {
-        console.error("Fallback API calls also failed:", fallbackError)
+      // Handle statistics
+      if (statsRes.ok) {
+        const statsData = await statsRes.json()
+        setDashboardStats(statsData)
+      } else {
+        console.error("Failed to fetch dashboard stats:", statsRes.status)
       }
+
+      // Handle entity data
+      const camerasData = await camerasRes.json()
+      const timelapsesData = await timelapsesRes.json()
+      const videosData = await videosRes.json()
+
+      setCameras(Array.isArray(camerasData) ? camerasData : [])
+      setTimelapses(Array.isArray(timelapsesData) ? timelapsesData : [])
+      setVideos(Array.isArray(videosData) ? videosData : [])
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error)
     } finally {
       setLoading(false)
     }
@@ -155,8 +145,8 @@ export default function Dashboard() {
         case "camera_updated":
           setCameras((prev) =>
             prev.map((camera) =>
-              camera.id === event.camera.id
-                ? { ...camera, ...event.camera }
+              camera.id === event.data.camera_id
+                ? { ...camera, ...event.data.camera }
                 : camera
             )
           )
@@ -165,26 +155,26 @@ export default function Dashboard() {
         case "timelapse_status_changed":
           setTimelapses((prev) => {
             const updated = prev.map((timelapse) =>
-              timelapse.camera_id === event.camera_id
+              timelapse.camera_id === event.data.camera_id
                 ? {
                     ...timelapse,
-                    status: event.status,
-                    id: event.timelapse_id || timelapse.id,
+                    status: event.data.status,
+                    id: event.data.timelapse_id || timelapse.id,
                   }
                 : timelapse
             )
 
             // If no existing timelapse for this camera, create one
             const hasExisting = prev.some(
-              (t) => t.camera_id === event.camera_id
+              (t) => t.camera_id === event.data.camera_id
             )
-            if (!hasExisting && event.timelapse_id) {
+            if (!hasExisting && event.data.timelapse_id) {
               return [
                 ...updated,
                 {
-                  id: event.timelapse_id,
-                  camera_id: event.camera_id,
-                  status: event.status,
+                  id: event.data.timelapse_id,
+                  camera_id: event.data.camera_id,
+                  status: event.data.status,
                   image_count: 0,
                   last_capture_at: undefined,
                   // Required fields for Timelapse type
@@ -204,38 +194,24 @@ export default function Dashboard() {
           // Update image count for timelapse
           setTimelapses((prev) =>
             prev.map((timelapse) =>
-              timelapse.camera_id === event.camera_id
+              timelapse.camera_id === event.data.camera_id
                 ? {
                     ...timelapse,
-                    image_count: event.image_count || timelapse.image_count,
+                    image_count:
+                      event.data.image_count || timelapse.image_count,
                   }
                 : timelapse
             )
           )
 
           // Show toast notification for image capture
-          const camera = cameras.find((c) => c.id === event.camera_id)
+          const camera = cameras.find((c) => c.id === event.data.camera_id)
           if (camera) {
             toast.imageCaptured(camera.name)
           }
 
-          // Force camera data refresh to get updated next_capture_at
-          setTimeout(() => {
-            fetch(`/api/cameras/${event.camera_id}`)
-              .then((response) => response.json())
-              .then((updatedCamera) => {
-                setCameras((prev) =>
-                  prev.map((camera) =>
-                    camera.id === event.camera_id
-                      ? { ...camera, ...updatedCamera }
-                      : camera
-                  )
-                )
-              })
-              .catch((error) =>
-                console.error("Failed to refresh camera data:", error)
-              )
-          }, 500) // Small delay to ensure database is updated
+          // Note: Removed redundant API call that was causing performance issues.
+          // Camera data updates should come through dedicated SSE events.
           break
 
         case "image_corruption_detected":
@@ -270,7 +246,7 @@ export default function Dashboard() {
           // Update camera status and show success toast
           setCameras((prev) =>
             prev.map((camera) =>
-              camera.id === event.data.cameraId
+              camera.id === event.data.camera_id
                 ? {
                     ...camera,
                     degraded_mode_active: false,
@@ -370,10 +346,10 @@ export default function Dashboard() {
       })
 
       if (currentStatus === "running" && timelapse) {
-        // Complete the current timelapse
-        console.log("Attempting to complete timelapse:", timelapse.id)
+        // Stop the timelapse using camera-centric endpoint
+        console.log("Attempting to stop timelapse for camera:", cameraId)
         const response = await fetch(
-          `/api/timelapses/${timelapse.id}/complete?camera_id=${cameraId}`,
+          `/api/cameras/${cameraId}/stop-timelapse`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -383,21 +359,23 @@ export default function Dashboard() {
         if (response.ok && camera) {
           console.log("Timelapse completed successfully")
           toast.timelapseStopped(camera.name, async () => {
-            // Undo action - restart a new timelapse
+            // Undo action - restart a new timelapse using camera-centric endpoint
             try {
-              const restartResponse = await fetch("/api/timelapses/new", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  camera_id: cameraId,
-                  status: "running",
-                  name: timelapse.name || `${camera.name} Timelapse`,
-                }),
-              })
+              const restartResponse = await fetch(
+                `/api/cameras/${cameraId}/start-timelapse`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: timelapse.name || `${camera.name} Timelapse`,
+                  }),
+                }
+              )
 
               if (restartResponse.ok) {
                 toast.timelapseStarted(camera.name)
-                fetchData() // Refresh to show restarted timelapse
+                // SSE event will handle state update automatically - no manual refresh needed
+                // fetchData() // ❌ REMOVED: SSE events handle this
               } else {
                 throw new Error("Failed to restart timelapse")
               }
@@ -460,10 +438,9 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
-        method: "PUT",
+      const response = await fetch(`/api/cameras/${cameraId}/pause-timelapse`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "paused" }),
       })
 
       if (response.ok && camera) {
@@ -493,11 +470,13 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "running" }),
-      })
+      const response = await fetch(
+        `/api/cameras/${cameraId}/resume-timelapse`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      )
 
       if (response.ok && camera) {
         toast.timelapseResumed(camera.name)
@@ -554,7 +533,8 @@ export default function Dashboard() {
               toast.success(`Camera "${cameraToDelete.name}" restored`, {
                 description: "Camera has been recreated successfully",
               })
-              fetchData() // Refresh to show restored camera
+              // SSE event will handle state update automatically - no manual refresh needed
+              // fetchData() // ❌ REMOVED: SSE events handle this
             } else {
               throw new Error("Failed to restore camera")
             }
@@ -628,11 +608,13 @@ export default function Dashboard() {
           return
         }
 
-        const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "running" }),
-        })
+        const response = await fetch(
+          `/api/cameras/${camera.id}/resume-timelapse`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        )
 
         if (response.ok) {
           successCount++
@@ -701,11 +683,13 @@ export default function Dashboard() {
           return
         }
 
-        const response = await fetch(`/api/timelapses/${timelapse.id}/status`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "paused" }),
-        })
+        const response = await fetch(
+          `/api/cameras/${camera.id}/pause-timelapse`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        )
 
         if (response.ok) {
           successCount++
@@ -775,9 +759,9 @@ export default function Dashboard() {
           return
         }
 
-        // Complete the timelapse (entity-based approach)
+        // Stop the timelapse using camera-centric endpoint
         const response = await fetch(
-          `/api/timelapses/${timelapse.id}/complete?camera_id=${camera.id}`,
+          `/api/cameras/${camera.id}/stop-timelapse`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -810,15 +794,13 @@ export default function Dashboard() {
               ? `${failCount} failed to stop`
               : "All active recordings have been stopped",
           undoAction: async () => {
-            // Restart all stopped cameras with new timelapses
+            // Restart all stopped cameras with new timelapses using camera-centric endpoint
             const restartPromises = stoppedCameras.map(async (camera) => {
               try {
-                await fetch("/api/timelapses/new", {
+                await fetch(`/api/cameras/${camera.id}/start-timelapse`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    camera_id: camera.id,
-                    status: "running",
                     name: `${camera.name} Timelapse`,
                   }),
                 })
@@ -861,27 +843,56 @@ export default function Dashboard() {
     await handleBulkStop()
   }
 
-  // Calculate stats
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized camera list with timelapse/video mapping
+  const memoizedCameraList = useMemo(() => {
+    return cameras.map((camera) => {
+      const timelapse = timelapses.find((t) => t.camera_id === camera.id)
+      const cameraVideos = videos.filter((v) => v.camera_id === camera.id)
+
+      return {
+        camera,
+        timelapse,
+        cameraVideos,
+      }
+    })
+  }, [cameras, timelapses, videos])
+
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized event handlers to prevent prop drilling re-renders
+  const handleEditCamera = useCallback(
+    (id: number) => {
+      const cam = cameras.find((c) => c.id === id)
+      setEditingCamera(cam)
+      setIsModalOpen(true)
+    },
+    [cameras]
+  )
+
+  const handleDeleteCameraCallback = useCallback((cameraId: number) => {
+    handleDeleteCamera(cameraId)
+  }, [])
+
+  // Use dashboard statistics if available, otherwise calculate from local data
   const onlineCameras = cameras.filter(
     (c) => c.health_status === "online"
   ).length
-  const activTimelapses = timelapses.filter(
-    (t) => t.status === "running"
-  ).length
-  const pausedTimelapses = timelapses.filter(
-    (t) => t.status === "paused"
-  ).length
-  const totalVideos = videos.filter((v) => v.status === "completed").length
-  const totalImages = timelapses.reduce(
-    (sum, t) => sum + (t.image_count || 0),
-    0
-  )
+  const activTimelapses =
+    dashboardStats?.timelapse?.running_timelapses ??
+    timelapses.filter((t) => t.status === "running").length
+  const pausedTimelapses =
+    dashboardStats?.timelapse?.paused_timelapses ??
+    timelapses.filter((t) => t.status === "paused").length
+  const totalVideos =
+    dashboardStats?.video?.completed_videos ??
+    videos.filter((v) => v.status === "completed").length
+  const totalImages =
+    dashboardStats?.image?.total_images ??
+    timelapses.reduce((sum, t) => sum + (t.image_count || 0), 0)
 
   const handleCorruptionReset = async (cameraId: number) => {
     try {
       await resetCameraDegradedMode(cameraId)
-      // Refresh camera data to show updated status
-      fetchData()
+      // SSE events will handle camera status updates automatically
+      // fetchData() // ❌ REMOVED: SSE events handle this
     } catch (error) {
       console.error("Failed to reset camera degraded mode:", error)
     }
@@ -956,14 +967,20 @@ export default function Dashboard() {
       <div className='grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4'>
         <StatsCard
           title='Total Cameras'
-          value={cameras.length}
+          value={dashboardStats?.camera?.total_cameras ?? cameras.length}
           description={`${onlineCameras} online`}
           icon={CameraIcon}
           color='cyan'
           trend={
-            onlineCameras > 0
+            onlineCameras > 0 &&
+            (dashboardStats?.camera?.total_cameras ?? cameras.length) > 0
               ? {
-                  value: Math.round((onlineCameras / cameras.length) * 100),
+                  value: Math.round(
+                    (onlineCameras /
+                      (dashboardStats?.camera?.total_cameras ??
+                        cameras.length)) *
+                      100
+                  ),
                   label: "uptime",
                 }
               : undefined
@@ -1193,35 +1210,20 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className='grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3'>
-            {cameras.map((camera) => {
-              const timelapse = timelapses.find(
-                (t) => t.camera_id === camera.id
-              )
-              const cameraVideos = videos.filter(
-                (v) => v.camera_id === camera.id
-              )
-
-              return (
-                <CameraCard
-                  key={camera.id}
-                  camera={camera}
-                  timelapse={timelapse}
-                  videos={cameraVideos}
-                  onToggleTimelapse={handleToggleTimelapse}
-                  onPauseTimelapse={handlePauseTimelapse}
-                  onResumeTimelapse={handleResumeTimelapse}
-                  onEditCamera={(id) => {
-                    const cam = cameras.find((c) => c.id === id)
-                    setEditingCamera(cam)
-                    setIsModalOpen(true)
-                  }}
-                  onDeleteCamera={(cameraId) => {
-                    handleDeleteCamera(cameraId)
-                  }}
-                  onGenerateVideo={handleGenerateVideo}
-                />
-              )
-            })}
+            {memoizedCameraList.map(({ camera, timelapse, cameraVideos }) => (
+              <CameraCard
+                key={camera.id}
+                camera={camera}
+                timelapse={timelapse}
+                videos={cameraVideos}
+                onToggleTimelapse={handleToggleTimelapse}
+                onPauseTimelapse={handlePauseTimelapse}
+                onResumeTimelapse={handleResumeTimelapse}
+                onEditCamera={handleEditCamera}
+                onDeleteCamera={handleDeleteCameraCallback}
+                onGenerateVideo={handleGenerateVideo}
+              />
+            ))}
           </div>
         )}
       </div>

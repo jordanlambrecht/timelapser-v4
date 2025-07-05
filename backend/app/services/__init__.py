@@ -3,40 +3,72 @@ Services module for Timelapser v4.
 
 This module contains all business logic services that coordinate between
 the data layer and API layer. Services handle complex operations and
-orchestrate multiple database operations.
+orchestrate multiple database operations following composition pattern.
 
 Available Services:
-- ImageCaptureService: Handles RTSP image capture with corruption detection
-- VideoGenerationService: Creates timelapse videos from images
-- VideoAutomationService: Manages automated video generation workflows
-- CorruptionDetection: Analyzes image quality and corruption (in corruption_detection/)
-- WeatherService: Manages weather data integration (in weather/)
+- CameraService: Camera lifecycle and health management
+- VideoService: Video metadata and generation coordination
+- VideoAutomationService: Automated video generation workflows
+- TimelapseService: Timelapse entity lifecycle management
+- ImageService: Image metadata and serving
+- ImageCaptureService: RTSP image capture coordination
+- CorruptionService: Image quality analysis
+- SettingsService: System configuration management
+- StatisticsService: System-wide metrics aggregation
+- HealthService: System health monitoring
+- LogService: Application logging
+- SchedulingService: Task scheduling coordination
+- TimeWindowService: Time window calculations
+- WorkerCorruptionIntegrationService: Worker process corruption integration
+- RTSPCaptureService: High-level RTSP capture orchestration
+
+Subdirectory Services:
+- CorruptionDetection: Advanced corruption analysis (in corruption_detection/)
+- WeatherService: Weather data integration (in weather/)
 """
 
-# Service exports for easy importing
-from .image_capture_service import ImageCaptureService as image_capture
-from .video_service import VideoService, SyncVideoService
-from .video_automation_service import VideoAutomationService as video_automation
-from .rtsp_capture_service import RTSPCapture
+# Core business logic services
 from .camera_service import CameraService, SyncCameraService
-from .corruption_service import CorruptionService
+from .video_service import VideoService, SyncVideoService
+from .video_automation_service import VideoAutomationService
 from .timelapse_service import TimelapseService
 from .image_service import ImageService
+from .image_capture_service import ImageCaptureService
+from .corruption_service import CorruptionService
+from .settings_service import SettingsService, SyncSettingsService
+from .statistics_service import StatisticsService, SyncStatisticsService
+from .health_service import HealthService
+from .log_service import LogService
+from .scheduling_service import SchedulingService
+from .time_window_service import TimeWindowService
 
-# Note: Corruption detection and weather services are in their respective subdirectories
-# Import them as:
-# from app.services.corruption_detection import CorruptionController
-# from app.services.weather.service import WeatherManager
+from .rtsp_capture_service import RTSPCaptureService
+
+# Service aliases for backward compatibility
+image_capture = ImageCaptureService
+video_automation = VideoAutomationService
 
 __all__ = [
-    "image_capture", 
-    "VideoService", 
-    "SyncVideoService",
-    "video_automation", 
-    "RTSPCapture",
+    # Core services
     "CameraService",
     "SyncCameraService",
-    "CorruptionService",
+    "VideoService",
+    "SyncVideoService",
+    "VideoAutomationService",
     "TimelapseService",
-    "ImageService"
+    "ImageService",
+    "ImageCaptureService",
+    "CorruptionService",
+    "SettingsService",
+    "SyncSettingsService",
+    "StatisticsService",
+    "SyncStatisticsService",
+    "HealthService",
+    "LogService",
+    "SchedulingService",
+    "TimeWindowService",
+    "RTSPCaptureService",
+    # Aliases
+    "image_capture",
+    "video_automation",
 ]

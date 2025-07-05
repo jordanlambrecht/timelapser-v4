@@ -12,7 +12,7 @@ import {
   Bug,
   Sigma,
 } from "lucide-react"
-import { useCaptureSettings } from "@/hooks/use-camera-countdown"
+import { useCaptureSettings } from "@/contexts/settings-context"
 
 interface Log {
   id: number
@@ -109,8 +109,10 @@ export default function LogsPage() {
 
       const data = await response.json()
 
-      // Handle different response structures
-      if (data && data.logs) {
+      // Handle standardized API response structure
+      if (data && data.success && data.data && data.data.logs) {
+        setLogs(Array.isArray(data.data.logs) ? data.data.logs : [])
+      } else if (data && data.logs) {
         setLogs(Array.isArray(data.logs) ? data.logs : [])
       } else if (Array.isArray(data)) {
         setLogs(data)

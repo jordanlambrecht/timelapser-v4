@@ -1,498 +1,460 @@
-# backend/rtsp_capture.py
+# backend/app/services/rtsp_capture_service.py
+"""
+RTSP Capture Service - High-level RTSP capture orchestration.
 
-import cv2
-import logging
-from pathlib import Path
-from typing import Optional, Tuple, Any, Dict
+This service coordinates RTSP capture operations using the established
+architectural patterns. It orchestrates between utils, other services,
+and the database operations layer.
+
+Responsibilities:
+- RTSP capture workflow coordination
+- Integration with ImageCaptureService
+- Coordination with CorruptionService
+- File path management using FileHelpers
+- Event broadcasting via SSE
+
+Dependencies:
+- RTSPUtils for low-level capture operations
+- ImageCaptureService for capture workflow
+- CorruptionService for quality analysis
+- FileHelpers for path operations
+- Database operations via composition
+"""
+
 import time
-import sys
+from pathlib import Path
+from typing import Optional, Tuple, Dict, Any
+from datetime import datetime
+from loguru import logger
 
-# Add the app directory to Python path for imports
-current_dir = Path(__file__).parent
-app_dir = current_dir / "app"
-sys.path.insert(0, str(app_dir))
+from ..database.core import AsyncDatabase, SyncDatabase
+from ..database.image_operations import SyncImageOperations
+from ..database.camera_operations import SyncCameraOperations
+from ..database.timelapse_operations import SyncTimelapseOperations
+from ..database.settings_operations import SyncSettingsOperations
 
-from ..utils import thumbnail_utils
-from ..utils.timezone_utils import format_date_string, format_filename_timestamp, utc_now
+from ..models.shared_models import (
+    RTSPCaptureResult,
+    CameraConnectivityTestResult,
+    CorruptionDetectionResult,
+    ThumbnailGenerationResult,
+)
+from ..models.image_model import ImageCreate
 
-logger = logging.getLogger(__name__)
+from ..utils import rtsp_utils, file_helpers, thumbnail_utils, timezone_utils
+from ..exceptions import RTSPConnectionError, RTSPCaptureError
+
+from ..constants import (
+    DEFAULT_MAX_RETRIES,
+    CAMERA_CONNECTION_SUCCESS,
+    CAMERA_CONNECTION_FAILED,
+    CAMERA_CAPTURE_SUCCESS,
+    CAMERA_CAPTURE_FAILED,
+    EVENT_IMAGE_CAPTURED,
+    CORRUPTION_ACTION_SAVED,
+    CORRUPTION_ACTION_DISCARDED,
+    DEFAULT_IMAGE_EXTENSION,
+    THUMBNAIL_DIMENSIONS,
+    DEFAULT_RTSP_QUALITY,
+    DEFAULT_RTSP_TIMEOUT_SECONDS,
+    DEFAULT_CORRUPTION_SCORE,
+    DEFAULT_IS_FLAGGED,
+)
 
 
-class RTSPCapture:
-    def __init__(self, base_data_dir: str = "/data"):
-        self.base_data_dir = Path(base_data_dir)
-        self.timeout_seconds = 10
-        self.retry_attempts = 3
-        self.retry_delay = 2  # seconds between retries
+class RTSPCaptureService:
+    """
+    High-level RTSP capture service following architectural patterns.
 
-        # Thumbnail processing now uses utility functions
+    Uses composition pattern with dependency injection for database access.
+    Coordinates with other services for complete capture workflow.
+    """
 
-        # Suppress ffmpeg/OpenCV codec warnings for cleaner logs
-        self._suppress_codec_warnings()
+    def __init__(self, db: SyncDatabase):
+        """Initialize service with database dependency injection."""
+        self.db = db
+        self.image_ops = SyncImageOperations(db)
+        self.camera_ops = SyncCameraOperations(db)
+        self.timelapse_ops = SyncTimelapseOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
 
-    def ensure_timelapse_directory(self, camera_id: int, timelapse_id: int) -> Path:
-        """Create and return timelapse-specific directory structure (entity-based)"""
-        # Use config-driven camera directory structure (AI-CONTEXT compliant)
-        frames_dir = (
-            self.base_data_dir
-            / "cameras"  # This is acceptable as it's a subfolder of the configurable base
-            / f"camera-{camera_id}"
-            / f"timelapse-{timelapse_id}"
-            / "frames"
-        )
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        return frames_dir
+        # Cache commonly used settings
+        self._capture_quality = None
+        self._timeout_seconds = None
 
-    def ensure_camera_directories(self, camera_id: int) -> Dict[str, Path]:
-        """Create and return camera-specific directory structure with separate folders for different sizes"""
-        # Use centralized timezone utility for date formatting (AI-CONTEXT compliant)
-        # Note: This should ideally get timezone from database, but for now using UTC fallback
-        today = format_date_string()
-        # Use config-driven base directory (AI-CONTEXT compliant)
-        base_dir = self.base_data_dir / "cameras" / f"camera-{camera_id}"
-
-        directories = {
-            "images": base_dir / "images" / today,
-            "thumbnails": base_dir / "thumbnails" / today,
-            "small": base_dir / "small" / today,
-        }
-
-        # Create all directories
-        for dir_path in directories.values():
-            dir_path.mkdir(parents=True, exist_ok=True)
-
-        return directories
-
-    def save_frame_with_quality(
-        self, frame, filepath: Path, quality: int = 85
-    ) -> Tuple[bool, int]:
-        """Save frame to disk with specified JPEG quality. Returns (success, file_size)"""
+    def _get_capture_settings(self) -> Dict[str, Any]:
+        """Get capture settings from database using proper operations layer."""
         try:
-            encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
-            success = cv2.imwrite(str(filepath), frame, encode_params)
+            # Use settings operations to get settings
+            quality_setting = self.settings_ops.get_setting("image_quality")
+            timeout_setting = self.settings_ops.get_setting("rtsp_timeout_seconds")
 
-            if success:
-                file_size = filepath.stat().st_size
-                logger.debug("Saved image: %s (%d bytes)", filepath, file_size)
-                return True, file_size
+            quality = int(quality_setting) if quality_setting else DEFAULT_RTSP_QUALITY
+            timeout = int(timeout_setting) if timeout_setting else DEFAULT_RTSP_TIMEOUT_SECONDS
 
-            logger.error("Failed to save image: %s", filepath)
-            return False, 0
-
+            return {
+                "quality": quality,
+                "timeout": timeout,
+            }
         except Exception as e:
-            logger.error("Exception saving frame: %s", e)
-            return False, 0
+            logger.warning(f"Failed to get capture settings, using defaults: {e}")
+            return {
+                "quality": DEFAULT_RTSP_QUALITY,
+                "timeout": DEFAULT_RTSP_TIMEOUT_SECONDS,
+            }
 
-    def generate_entity_filename(self, day_number: int) -> str:
-        """Generate day-based filename for entity-based structure"""
-        # Use centralized timezone utility for timestamp (AI-CONTEXT compliant)
-        timestamp = format_filename_timestamp().split("_")[1]  # Get just the time part
-        return f"day{day_number:03d}_{timestamp}.jpg"
-
-    def ensure_camera_directory(self, camera_id: int) -> Path:
-        """Create and return camera-specific directory structure (LEGACY - for backward compatibility)"""
-        # Use centralized timezone utility for date formatting (AI-CONTEXT compliant)
-        today = format_date_string()
-        # Use config-driven base directory (AI-CONTEXT compliant)
-        camera_dir = (
-            self.base_data_dir / "cameras" / f"camera-{camera_id}" / "images" / today
-        )
-        camera_dir.mkdir(parents=True, exist_ok=True)
-        return camera_dir
-
-    def generate_filename(self, _camera_id: int) -> str:
-        """Generate timestamped filename for captured image"""
-        # Use centralized timezone utility for timestamp (AI-CONTEXT compliant)
-        timestamp = format_filename_timestamp()
-        return f"capture_{timestamp}.jpg"
-
-    def capture_frame_from_stream(self, rtsp_url: str) -> Optional[Any]:
+    def test_rtsp_connection(
+        self, camera_id: int, rtsp_url: str
+    ) -> CameraConnectivityTestResult:
         """
-        Capture a single frame from RTSP stream with timeout handling and HEVC optimization.
-
-        Configures OpenCV to handle HEVC/H.265 streams more robustly and suppress
-        common codec warnings like "PPS id out of range".
-        """
-        cap = None
-        try:
-            logger.debug("Attempting to connect to RTSP stream: %s", rtsp_url)
-
-            # Configure OpenCV for RTSP with HEVC/H.265 optimization
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-
-            # Apply RTSP configuration
-            self._configure_rtsp_capture(cap)
-
-            if not cap.isOpened():
-                logger.error("Failed to open RTSP stream: %s", rtsp_url)
-                return None
-
-            # Skip a few frames to get past any initial codec issues
-            for _ in range(3):
-                ret, _ = cap.read()
-                if not ret:
-                    break
-
-            # Read the actual frame we want
-            start_time = time.time()
-            ret, frame = cap.read()
-            elapsed_time = time.time() - start_time
-
-            if not ret or frame is None:
-                logger.error(
-                    f"Failed to read frame from stream (took {elapsed_time:.2f}s)"
-                )
-                return None
-
-            logger.debug("Successfully captured frame (%.2fs)", elapsed_time)
-            return frame
-
-        except Exception as e:
-            logger.error("Exception during frame capture: %s", e)
-            return None
-        finally:
-            if cap is not None:
-                cap.release()
-
-    def save_frame(self, frame, filepath: Path) -> bool:
-        """Save frame to disk with JPEG compression (legacy method for compatibility)"""
-        success, _ = self.save_frame_with_quality(frame, filepath, quality=85)
-        return success
-
-    def capture_image(
-        self,
-        camera_id: int,
-        camera_name: str,
-        rtsp_url: str,
-        database=None,
-        timelapse_id: Optional[int] = None,
-        generate_thumbnails: bool = True,
-    ) -> Tuple[bool, str, Optional[str]]:
-        """
-        Capture image from camera with retry logic and database tracking
-        Uses entity-based file structure when timelapse_id is provided
-        Generates thumbnails when enabled
-        Returns (success: bool, message: str, filepath: Optional[str])
-        """
-        logger.info("Starting capture for camera %d (%s)", camera_id, camera_name)
-
-        # Determine if we're using entity-based structure
-        use_entity_structure = timelapse_id is not None
-
-        for attempt in range(self.retry_attempts):
-            try:
-                if attempt > 0:
-                    logger.info("Retry attempt %d/%d", attempt + 1, self.retry_attempts)
-                    time.sleep(self.retry_delay)
-
-                # Capture frame
-                frame = self.capture_frame_from_stream(rtsp_url)
-                if frame is None:
-                    continue
-
-                # Prepare file path based on structure type
-                if use_entity_structure and database:
-                    # Get timelapse info to calculate day number
-                    try:
-                        # Get timelapse start date from database
-                        query_result = database.get_connection()
-                        with query_result as conn:
-                            with conn.cursor() as cur:
-                                cur.execute(
-                                    "SELECT start_date FROM timelapses WHERE id = %s",
-                                    (timelapse_id,),
-                                )
-                                timelapse_row = cur.fetchone()
-
-                        if not timelapse_row or not timelapse_row.get("start_date"):
-                            logger.error(
-                                f"Timelapse {timelapse_id} not found or missing start_date"
-                            )
-                            continue
-
-                        # Calculate day number (1-based)
-                        from datetime import date
-
-                        start_date = timelapse_row["start_date"]
-                        current_date = date.today()
-                        day_number = (current_date - start_date).days + 1
-
-                        # Use entity-based structure
-                        frames_dir = self.ensure_timelapse_directory(
-                            camera_id, timelapse_id
-                        )
-                        filename = self.generate_entity_filename(day_number)
-                        filepath = frames_dir / filename
-
-                        # Store relative path for database (entity-based)
-                        relative_db_path = f"data/cameras/camera-{camera_id}/timelapse-{timelapse_id}/frames/{filename}"
-
-                        # Entity-based structure doesn't use thumbnails yet - would need separate implementation
-                        # For now, just save the main image
-                        if self.save_frame(frame, filepath):
-                            file_size = filepath.stat().st_size
-
-                            # Record in database
-                            image_id = database.record_captured_image(
-                                camera_id=camera_id,
-                                timelapse_id=timelapse_id,
-                                file_path=relative_db_path,
-                                file_size=file_size,
-                            )
-
-                            if image_id:
-                                logger.info("Recorded image %d in database", image_id)
-
-                            message = (
-                                f"Successfully captured and saved image: {filename}"
-                            )
-                            logger.info(message)
-                            return True, message, str(filepath)
-
-                    except Exception as e:
-                        logger.error("Error setting up entity-based path: %s", e)
-                        continue
-                else:
-                    # Use legacy date-based structure with thumbnail support
-                    directories = self.ensure_camera_directories(camera_id)
-                    filename = self.generate_filename(camera_id)
-                    filepath = directories["images"] / filename
-
-                    # Store relative path for database (legacy) using centralized timezone utility (AI-CONTEXT compliant)
-                    today_str = utc_now().strftime("%Y-%m-%d")
-                    relative_db_path = (
-                        f"data/cameras/camera-{camera_id}/images/{today_str}/{filename}"
-                    )
-
-                    # Save main image
-                    success, file_size = self.save_frame_with_quality(
-                        frame, filepath, quality=85
-                    )
-                    if not success:
-                        continue
-
-                    # Generate thumbnails if enabled
-                    thumbnail_paths = (
-                        {}
-                    )  # Empty dictionary to store thumbnail paths and sizes
-                    if generate_thumbnails:
-                        # Use optimized Pillow-based thumbnail utilities
-                        thumbnail_results = (
-                            thumbnail_utils.generate_thumbnails_from_opencv(
-                                frame, filename, directories, database
-                            )
-                        )
-
-                        # Extract paths and sizes
-                        if thumbnail_results["thumbnail"]:
-                            thumbnail_paths["thumbnail"] = thumbnail_results[
-                                "thumbnail"
-                            ]
-
-                        if thumbnail_results["small"]:
-                            thumbnail_paths["small"] = thumbnail_results["small"]
-
-                    # Record in database if provided
-                    image_id = None
-                    if database:
-                        # Prepare thumbnail data for database
-                        thumbnail_path = (
-                            thumbnail_paths.get("thumbnail", (None, None))[0]
-                            if "thumbnail" in thumbnail_paths
-                            else None
-                        )
-                        thumbnail_size = (
-                            thumbnail_paths.get("thumbnail", (None, None))[1]
-                            if "thumbnail" in thumbnail_paths
-                            else None
-                        )
-                        small_path = (
-                            thumbnail_paths.get("small", (None, None))[0]
-                            if "small" in thumbnail_paths
-                            else None
-                        )
-                        small_size = (
-                            thumbnail_paths.get("small", (None, None))[1]
-                            if "small" in thumbnail_paths
-                            else None
-                        )
-
-                        # This is the legacy path - need to find active timelapse for this camera
-                        try:
-                            with database.get_connection() as conn:
-                                with conn.cursor() as cur:
-                                    cur.execute(
-                                        """
-                                        SELECT t.id 
-                                        FROM cameras c
-                                        INNER JOIN timelapses t ON c.active_timelapse_id = t.id
-                                        WHERE c.id = %s AND t.status = 'running'
-                                        """,
-                                        (camera_id,),
-                                    )
-                                    active_timelapse_row = cur.fetchone()
-
-                            if active_timelapse_row:
-                                active_timelapse_id = active_timelapse_row["id"]
-
-                                # Call the enhanced database method with thumbnail data
-                                image_id = database.record_captured_image(
-                                    camera_id=camera_id,
-                                    timelapse_id=active_timelapse_id,
-                                    file_path=relative_db_path,
-                                    file_size=file_size,
-                                    thumbnail_path=thumbnail_path,
-                                    thumbnail_size=thumbnail_size,
-                                    small_path=small_path,
-                                    small_size=small_size,
-                                )
-
-                                if image_id:
-                                    logger.info(
-                                        "Recorded image %d in database with thumbnails",
-                                        image_id,
-                                    )
-                            else:
-                                logger.warning(
-                                    "No active timelapse found for camera %d - legacy capture mode",
-                                    camera_id,
-                                )
-
-                        except Exception as e:
-                            logger.error(
-                                "Error recording image with thumbnails for camera %d: %s",
-                                camera_id,
-                                e,
-                            )
-
-                    message = f"Successfully captured and saved image: {filename}"
-                    if generate_thumbnails:
-                        thumbnail_count = sum(
-                            1 for x in thumbnail_paths.values() if x is not None
-                        )
-                        message += f" (+ {thumbnail_count} thumbnails)"
-
-                    logger.info(message)
-                    return True, message, str(filepath)
-
-            except Exception as e:
-                message = f"Capture attempt {attempt + 1} failed: {str(e)}"
-                logger.error(message)
-                if attempt == self.retry_attempts - 1:  # Last attempt
-                    return False, message, None
-                continue
-
-        final_message = f"All {self.retry_attempts} capture attempts failed"
-        logger.error(final_message)
-        return False, final_message, None
-
-    def test_rtsp_connection(self, rtsp_url: str) -> Tuple[bool, str]:
-        """Test RTSP connection without saving image"""
-        try:
-            frame = self.capture_frame_from_stream(rtsp_url)
-            if frame is not None:
-                height, width = frame.shape[:2]
-                return True, f"Connection successful - Resolution: {width}x{height}"
-            else:
-                return False, "Failed to capture test frame"
-        except Exception as e:
-            return False, f"Connection test failed: {str(e)}"
-
-    def _suppress_codec_warnings(self):
-        """
-        Suppress common ffmpeg/OpenCV codec warnings for cleaner logs.
-
-        This helps reduce noise from HEVC "PPS id out of range" and similar
-        codec-related warnings that don't affect functionality.
-        """
-        import os
-
-        # Set ffmpeg log level to suppress codec warnings
-        os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"  # Suppress most ffmpeg logs
-        # Alternative approach - set cv2 log level if available
-        try:
-            cv2.setLogLevel(3)  # 3 = ERROR level, suppress INFO and DEBUG
-        except AttributeError:
-            # Older OpenCV versions may not have this
-            pass
-
-    def _configure_rtsp_capture(self, cap) -> None:
-        """
-        Configure VideoCapture object for optimal RTSP/HEVC performance.
+        Test RTSP connection using utilities layer.
 
         Args:
-            cap: OpenCV VideoCapture object to configure
+            camera_id: ID of camera to test
+            rtsp_url: RTSP URL to test
+
+        Returns:
+            CameraConnectivityTestResult with test results
         """
-        # Set timeout and buffer size
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, self.timeout_seconds * 1000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, self.timeout_seconds * 1000)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
-
-        # Set video codec preference (helps with HEVC streams)
-        cap.set(cv2.CAP_PROP_CODEC_PIXEL_FORMAT, -1)  # Let OpenCV choose best format
-
-        # Reduce frame rate for more stable capture
-        cap.set(cv2.CAP_PROP_FPS, 5)
-
-        # Additional settings that may help with problematic streams
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)  # Suggest resolution
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-
-    def capture_frame_with_fallback(self, rtsp_url: str) -> Optional[Any]:
-        """
-        Capture frame with multiple fallback strategies for problematic HEVC streams.
-
-        This method tries different OpenCV backends and configurations to handle
-        streams that produce codec warnings or fail with the default settings.
-        """
-        # Strategy 1: Standard FFMPEG backend (already implemented above)
-        frame = self.capture_frame_from_stream(rtsp_url)
-        if frame is not None:
-            return frame
-
-        logger.debug("Standard capture failed, trying fallback strategies")
-
-        # Strategy 2: Try with GSTREAMER backend if available
         try:
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_GSTREAMER)
-            self._configure_rtsp_capture(cap)
+            start_time = time.time()
 
-            if cap.isOpened():
-                # Skip frames and read
-                for _ in range(3):
-                    ret, _ = cap.read()
-                    if not ret:
-                        break
+            settings = self._get_capture_settings()
+            success, message = rtsp_utils.test_rtsp_connection(
+                rtsp_url, timeout_seconds=settings["timeout"]
+            )
 
-                ret, frame = cap.read()
-                cap.release()
+            response_time_ms = (time.time() - start_time) * 1000
 
-                if ret and frame is not None:
-                    logger.debug("GStreamer backend successful")
-                    return frame
+            return CameraConnectivityTestResult(
+                success=success,
+                camera_id=camera_id,
+                rtsp_url=rtsp_url,
+                response_time_ms=response_time_ms,
+                connection_status="online" if success else "offline",
+                error=None if success else message,
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+            )
+
         except Exception as e:
-            logger.debug(f"GStreamer fallback failed: {e}")
+            logger.error(f"Error testing RTSP connection for camera {camera_id}: {e}")
+            return CameraConnectivityTestResult(
+                success=False,
+                camera_id=camera_id,
+                rtsp_url=rtsp_url,
+                response_time_ms=None,
+                connection_status="error",
+                error=str(e),
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+            )
 
-        # Strategy 3: Try with different pixel format
+    def capture_image_entity_based(
+        self,
+        camera_id: int,
+        timelapse_id: int,
+        rtsp_url: str,
+        camera_name: Optional[str] = None,
+    ) -> RTSPCaptureResult:
+        """
+        Capture image using entity-based file structure.
+
+        Args:
+            camera_id: ID of camera
+            timelapse_id: ID of active timelapse
+            rtsp_url: RTSP stream URL
+            camera_name: Optional camera name for logging
+
+        Returns:
+            RTSPCaptureResult with capture results
+        """
         try:
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, self.timeout_seconds * 1000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, self.timeout_seconds * 1000)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Slightly larger buffer
-            cap.set(cv2.CAP_PROP_FORMAT, cv2.CV_8UC3)  # Force RGB format
+            logger.info(
+                f"Starting entity-based capture for camera {camera_id}, timelapse {timelapse_id}"
+            )
 
-            if cap.isOpened():
-                # Read multiple frames to stabilize stream
-                for _ in range(5):
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        cap.release()
-                        logger.debug("Alternative format capture successful")
-                        return frame
+            # Get timelapse info for day number calculation
+            timelapse = self.timelapse_ops.get_timelapse_by_id(timelapse_id)
+            if not timelapse:
+                return RTSPCaptureResult(
+                    success=False, error=f"Timelapse {timelapse_id} not found"
+                )
 
-            cap.release()
+            # Calculate day number using timezone utilities
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+            start_date = (
+                timelapse.get("start_date")
+                if isinstance(timelapse, dict)
+                else getattr(timelapse, "start_date", None)
+            )
+            if not start_date:
+                logger.warning(
+                    f"Timelapse {timelapse_id} has no start_date, defaulting day_number to 1"
+                )
+                day_number = 1
+            else:
+                day_number = (current_date - start_date).days + 1
+
+            # Generate entity-based file paths using file helpers
+            frames_dir = file_helpers.ensure_entity_directory(
+                camera_id=camera_id, timelapse_id=timelapse_id, subdirectory="frames"
+            )
+
+            # Generate filename using timezone utilities
+            timestamp_str = timezone_utils.get_timezone_aware_timestamp_string_sync(
+                self.db
+            )
+            filename = f"day{day_number:03d}_{timestamp_str}{DEFAULT_IMAGE_EXTENSION}"
+            filepath = frames_dir / filename
+
+            # Capture frame using RTSP utilities
+            settings = self._get_capture_settings()
+            frame = rtsp_utils.capture_with_retry(
+                rtsp_url=rtsp_url,
+                max_retries=DEFAULT_MAX_RETRIES,
+                timeout_seconds=settings["timeout"],
+            )
+
+            if frame is None:
+                return RTSPCaptureResult(
+                    success=False, error="Failed to capture frame from RTSP stream"
+                )
+
+            # Save frame using RTSP utilities
+            success, file_size = rtsp_utils.save_frame_to_file(
+                frame=frame, filepath=filepath, quality=settings["quality"]
+            )
+
+            if not success:
+                return RTSPCaptureResult(
+                    success=False, error="Failed to save captured frame"
+                )
+
+            # Create relative path for database storage
+            relative_path = file_helpers.get_relative_path(filepath)
+
+            # Create image record using Pydantic model validation
+            image_create = ImageCreate(
+                camera_id=camera_id,
+                timelapse_id=timelapse_id,
+                file_path=str(relative_path),
+                day_number=day_number,
+                file_size=file_size,
+                corruption_score=DEFAULT_CORRUPTION_SCORE,  # Will be updated by corruption service
+                is_flagged=DEFAULT_IS_FLAGGED,
+            )
+
+            image_record = self.image_ops.record_captured_image(image_create.model_dump())
+            image_id = image_record.id
+
+            # SSE broadcasting handled by higher-level service layer
+
+            return RTSPCaptureResult(
+                success=True,
+                message=CAMERA_CAPTURE_SUCCESS or "",
+                image_id=image_id,
+                image_path=str(filepath) if filepath else "",
+                file_size=file_size,
+                metadata={
+                    "day_number": day_number,
+                    "entity_based": True,
+                    "timelapse_id": timelapse_id,
+                },
+            )
+
         except Exception as e:
-            logger.debug(f"Alternative format fallback failed: {e}")
+            logger.error(f"Error in entity-based capture for camera {camera_id}: {e}")
+            return RTSPCaptureResult(
+                success=False, error=str(e) if e else "Unknown error"
+            )
 
-        logger.warning("All capture fallback strategies failed")
-        return None
+    def capture_image_with_thumbnails(
+        self,
+        camera_id: int,
+        rtsp_url: str,
+        camera_name: Optional[str] = None,
+        generate_thumbnails: bool = True,
+    ) -> RTSPCaptureResult:
+        """
+        Capture image with thumbnail generation (legacy date-based structure).
+
+        Args:
+            camera_id: ID of camera
+            rtsp_url: RTSP stream URL
+            camera_name: Optional camera name for logging
+            generate_thumbnails: Whether to generate thumbnails
+
+        Returns:
+            RTSPCaptureResult with capture results
+        """
+        try:
+            logger.info(f"Starting capture with thumbnails for camera {camera_id}")
+
+            # Find active timelapse for this camera
+            camera = self.camera_ops.get_camera_by_id(camera_id)
+            if not camera or not getattr(camera, "active_timelapse_id", None):
+                return RTSPCaptureResult(
+                    success=False, error="No active timelapse found for camera"
+                )
+            timelapse_id = getattr(camera, "active_timelapse_id", None)
+            # Calculate day number
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+            start_date = getattr(camera, "timelapse_start_date", None)
+            if not start_date:
+                logger.warning(
+                    f"Camera {camera_id} has no timelapse_start_date, defaulting day_number to 1"
+                )
+                day_number = 1
+            else:
+                day_number = (current_date - start_date).days + 1
+
+            # Generate date-based file paths using file helpers
+            date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            directories = file_helpers.ensure_camera_directories(
+                camera_id=camera_id, date_str=date_str
+            )
+
+            # Generate filename using timezone utilities
+            timestamp_str = timezone_utils.get_timezone_aware_timestamp_string_sync(
+                self.db
+            )
+            filename = f"capture_{timestamp_str}{DEFAULT_IMAGE_EXTENSION}"
+            filepath = directories["images"] / filename
+
+            # Capture frame using RTSP utilities
+            settings = self._get_capture_settings()
+            frame = rtsp_utils.capture_with_retry(
+                rtsp_url=rtsp_url,
+                max_retries=DEFAULT_MAX_RETRIES,
+                timeout_seconds=settings["timeout"],
+            )
+
+            if frame is None:
+                return RTSPCaptureResult(
+                    success=False, error="Failed to capture frame from RTSP stream"
+                )
+
+            # Save main frame
+            success, file_size = rtsp_utils.save_frame_to_file(
+                frame=frame, filepath=filepath, quality=settings["quality"]
+            )
+
+            if not success:
+                return RTSPCaptureResult(
+                    success=False, error="Failed to save captured frame"
+                )
+
+            # Generate thumbnails if requested - FIXED: use correct function name
+            thumbnail_data = {}
+            if generate_thumbnails:
+                thumbnail_result = thumbnail_utils.generate_thumbnails_from_opencv(
+                    cv_frame=frame, base_filename=filename, directories=directories
+                )
+
+                thumb = thumbnail_result.get("thumbnail")
+                if thumb is not None:
+                    thumbnail_data["thumbnail_path"] = thumb[0]
+                    thumbnail_data["thumbnail_size"] = thumb[1]
+
+                small = thumbnail_result.get("small")
+                if small is not None:
+                    thumbnail_data["small_path"] = small[0]
+                    thumbnail_data["small_size"] = small[1]
+
+            # Create relative path for database storage
+            relative_path = file_helpers.get_relative_path(filepath)
+
+            # Create image record with thumbnail data using Pydantic model validation
+            image_create = ImageCreate(
+                camera_id=camera_id,
+                timelapse_id=timelapse_id,
+                file_path=str(relative_path),
+                day_number=day_number,
+                file_size=file_size,
+                corruption_score=DEFAULT_CORRUPTION_SCORE,  # Will be updated by corruption service
+                is_flagged=DEFAULT_IS_FLAGGED,
+                # Add thumbnail data if available
+                thumbnail_path=thumbnail_data.get("thumbnail_path"),
+                thumbnail_size=thumbnail_data.get("thumbnail_size"),
+                small_path=thumbnail_data.get("small_path"),
+                small_size=thumbnail_data.get("small_size"),
+            )
+
+            image_record = self.image_ops.record_captured_image(image_create.model_dump())
+            image_id = image_record.id
+
+            # SSE broadcasting handled by higher-level service layer
+
+            return RTSPCaptureResult(
+                success=True,
+                message=CAMERA_CAPTURE_SUCCESS,
+                image_id=image_id,
+                image_path=str(filepath),
+                file_size=file_size,
+                metadata={
+                    "day_number": day_number,
+                    "entity_based": False,
+                    "timelapse_id": timelapse_id,
+                    "thumbnails_generated": bool(thumbnail_data),
+                },
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Error in capture with thumbnails for camera {camera_id}: {e}"
+            )
+            return RTSPCaptureResult(success=False, error=str(e))
+
+    def capture_image_manual(
+        self, camera_id: int, rtsp_url: str, camera_name: Optional[str] = None
+    ) -> RTSPCaptureResult:
+        """
+        Manually triggered image capture.
+
+        Determines capture method based on camera configuration and
+        delegates to appropriate capture method.
+
+        Args:
+            camera_id: ID of camera
+            rtsp_url: RTSP stream URL
+            camera_name: Optional camera name for logging
+
+        Returns:
+            RTSPCaptureResult with capture results
+        """
+        try:
+            # Get camera configuration to determine capture method
+            camera = self.camera_ops.get_camera_by_id(camera_id)
+            if not camera:
+                return RTSPCaptureResult(
+                    success=False, error=f"Camera {camera_id} not found"
+                )
+
+            # Check if camera has active timelapse
+            active_timelapse_id = (
+                camera.get("active_timelapse_id")
+                if isinstance(camera, dict)
+                else getattr(camera, "active_timelapse_id", None)
+            )
+
+            if active_timelapse_id:
+                # Use entity-based capture for active timelapse
+                return self.capture_image_entity_based(
+                    camera_id=camera_id,
+                    timelapse_id=active_timelapse_id,
+                    rtsp_url=rtsp_url,
+                    camera_name=camera_name,
+                )
+            else:
+                # Use legacy capture with thumbnails
+                return self.capture_image_with_thumbnails(
+                    camera_id=camera_id,
+                    rtsp_url=rtsp_url,
+                    camera_name=camera_name,
+                    generate_thumbnails=True,
+                )
+
+        except Exception as e:
+            logger.error(f"Error in manual capture for camera {camera_id}: {e}")
+            return RTSPCaptureResult(success=False, error=str(e))

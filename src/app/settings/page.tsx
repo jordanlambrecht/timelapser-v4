@@ -3,7 +3,7 @@
 
 import { Button } from "@/components/ui/button"
 import { Save, RefreshCw } from "lucide-react"
-import { useSettings } from "./hooks/use-settings"
+import { useSettings, useSettingsActions } from "@/contexts/settings-context"
 import { DangerZoneCard } from "./components/danger-zone-card"
 import { TimezoneSettingsCard } from "./components/timezone-settings-card"
 import { LoggingSettingsCard } from "./components/logging-settings-card"
@@ -19,74 +19,17 @@ import { toast } from "@/lib/toast"
 import CorruptionTestComponent from "@/components/corruption-test-component"
 
 export default function Settings() {
-  const {
-    // State
-    captureInterval,
-    setCaptureInterval,
-    timezone,
-    setTimezone,
-    generateThumbnails,
-    setGenerateThumbnails,
-    imageCaptureType,
-    setImageCaptureType,
-    openWeatherApiKey,
-    setOpenWeatherApiKey,
-    apiKeyModified,
-    setApiKeyModified,
-    originalApiKeyHash,
-    weatherEnabled,
-    setWeatherEnabled,
-    sunriseSunsetEnabled,
-    setSunriseSunsetEnabled,
-    latitude,
-    setLatitude,
-    longitude,
-    setLongitude,
-    logRetentionDays,
-    setLogRetentionDays,
-    maxLogFileSize,
-    setMaxLogFileSize,
-    enableDebugLogging,
-    setEnableDebugLogging,
-    logLevel,
-    setLogLevel,
-    enableLogRotation,
-    setEnableLogRotation,
-    enableLogCompression,
-    setEnableLogCompression,
-    maxLogFiles,
-    setMaxLogFiles,
-    corruptionDetectionEnabled,
-    setCorruptionDetectionEnabled,
-    corruptionScoreThreshold,
-    setCorruptionScoreThreshold,
-    corruptionAutoDiscardEnabled,
-    setCorruptionAutoDiscardEnabled,
-    corruptionAutoDisableDegraded,
-    setCorruptionAutoDisableDegraded,
-    corruptionDegradedConsecutiveThreshold,
-    setCorruptionDegradedConsecutiveThreshold,
-    corruptionDegradedTimeWindowMinutes,
-    setCorruptionDegradedTimeWindowMinutes,
-    corruptionDegradedFailurePercentage,
-    setCorruptionDegradedFailurePercentage,
-    corruptionHeavyDetectionEnabled,
-    setCorruptionHeavyDetectionEnabled,
-
-    loading,
-    saving,
-
-    // Actions
-    saveSettings,
-  } = useSettings()
+  // Get all settings from global context
+  const settings = useSettings()
+  const { saveAllSettings, saving } = useSettingsActions()
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
-    await saveSettings()
+    await saveAllSettings()
   }
 
   // TODO: This needs to be moved to a layout file
-  if (loading) {
+  if (settings.loading) {
     return (
       <div className='flex items-center justify-center min-h-[60vh]'>
         <div className='space-y-6 text-center'>
@@ -130,101 +73,25 @@ export default function Settings() {
       {/* Unified Settings Form */}
       <form onSubmit={handleSaveSettings} className='space-y-6'>
         {/* Capture Settings*/}
-        <CaptureSettingsCard
-          captureInterval={captureInterval}
-          setCaptureInterval={setCaptureInterval}
-          generateThumbnails={generateThumbnails}
-          setGenerateThumbnails={setGenerateThumbnails}
-          imageCaptureType={imageCaptureType}
-          setImageCaptureType={setImageCaptureType}
-          saving={saving}
-        />
+        <CaptureSettingsCard />
 
         {/* Timezone Settings - Full Width */}
-        <TimezoneSettingsCard
-          timezone={timezone}
-          saving={saving}
-          onTimezoneChange={setTimezone}
-        />
+        <TimezoneSettingsCard />
 
         {/* Weather Settings - Full Width */}
-        <WeatherSettingsCard
-          weatherEnabled={weatherEnabled}
-          setWeatherEnabled={setWeatherEnabled}
-          sunriseSunsetEnabled={sunriseSunsetEnabled}
-          setSunriseSunsetEnabled={setSunriseSunsetEnabled}
-          latitude={latitude}
-          setLatitude={setLatitude}
-          longitude={longitude}
-          setLongitude={setLongitude}
-          openWeatherApiKey={openWeatherApiKey}
-          apiKeyModified={apiKeyModified}
-          originalApiKeyHash={originalApiKeyHash}
-        />
+        <WeatherSettingsCard />
 
         {/* Additional Settings Grid */}
         <div className='grid gap-6 lg:grid-cols-2'>
           {/* External Services */}
-          <ApiKeySettingsCard
-            openWeatherApiKey={openWeatherApiKey}
-            setOpenWeatherApiKey={setOpenWeatherApiKey}
-            apiKeyModified={apiKeyModified}
-            setApiKeyModified={setApiKeyModified}
-            originalApiKeyHash={originalApiKeyHash}
-          />
+          <ApiKeySettingsCard />
 
           {/* System Maintenance */}
-          <LoggingSettingsCard
-            logRetentionDays={logRetentionDays}
-            setLogRetentionDays={setLogRetentionDays}
-            maxLogFileSize={maxLogFileSize}
-            setMaxLogFileSize={setMaxLogFileSize}
-            enableDebugLogging={enableDebugLogging}
-            setEnableDebugLogging={setEnableDebugLogging}
-            logLevel={logLevel}
-            setLogLevel={setLogLevel}
-            enableLogRotation={enableLogRotation}
-            setEnableLogRotation={setEnableLogRotation}
-            enableLogCompression={enableLogCompression}
-            setEnableLogCompression={setEnableLogCompression}
-            maxLogFiles={maxLogFiles}
-            setMaxLogFiles={setMaxLogFiles}
-          />
+          <LoggingSettingsCard />
         </div>
 
         {/* Corruption Detection Settings - Full Width */}
-        <CorruptionSettingsCard
-          corruptionDetectionEnabled={corruptionDetectionEnabled}
-          setCorruptionDetectionEnabled={setCorruptionDetectionEnabled}
-          corruptionScoreThreshold={corruptionScoreThreshold}
-          setCorruptionScoreThreshold={setCorruptionScoreThreshold}
-          corruptionAutoDiscardEnabled={corruptionAutoDiscardEnabled}
-          setCorruptionAutoDiscardEnabled={setCorruptionAutoDiscardEnabled}
-          corruptionAutoDisableDegraded={corruptionAutoDisableDegraded}
-          setCorruptionAutoDisableDegraded={setCorruptionAutoDisableDegraded}
-          corruptionDegradedConsecutiveThreshold={
-            corruptionDegradedConsecutiveThreshold
-          }
-          setCorruptionDegradedConsecutiveThreshold={
-            setCorruptionDegradedConsecutiveThreshold
-          }
-          corruptionDegradedTimeWindowMinutes={
-            corruptionDegradedTimeWindowMinutes
-          }
-          setCorruptionDegradedTimeWindowMinutes={
-            setCorruptionDegradedTimeWindowMinutes
-          }
-          corruptionDegradedFailurePercentage={
-            corruptionDegradedFailurePercentage
-          }
-          setCorruptionDegradedFailurePercentage={
-            setCorruptionDegradedFailurePercentage
-          }
-          corruptionHeavyDetectionEnabled={corruptionHeavyDetectionEnabled}
-          setCorruptionHeavyDetectionEnabled={
-            setCorruptionHeavyDetectionEnabled
-          }
-        />
+        <CorruptionSettingsCard />
         <CorruptionTestComponent />
         {/*  Save Button */}
         <div className='flex justify-center pt-4 pb-2'>
@@ -254,12 +121,12 @@ export default function Settings() {
       {/* Current Configuration - Full Width */}
       <CurrentConfigurationCard
         settings={{
-          captureInterval,
-          timezone,
-          openWeatherApiKey,
-          generateThumbnails,
-          imageCaptureType,
-          logLevel,
+          captureInterval: settings.captureInterval,
+          timezone: settings.timezone,
+          openWeatherApiKey: settings.openWeatherApiKey,
+          generateThumbnails: settings.generateThumbnails,
+          imageCaptureType: settings.imageCaptureType,
+          logLevel: settings.logLevel,
         }}
       />
 

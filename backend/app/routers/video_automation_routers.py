@@ -13,13 +13,26 @@ Follows AI-CONTEXT patterns:
 - Timezone-aware scheduling
 - SSE event broadcasting
 - Proper error handling
+- AsyncDatabaseDep for dependency injection
 """
 
-
+# Standard library imports
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from loguru import logger
+
+# Third party imports
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+
+
+# Local application imports
+from ..dependencies import (
+    AsyncDatabaseDep,
+    SettingsServiceDep,
+    VideoAutomationServiceDep,
+    CameraServiceDep,
+    TimelapseServiceDep,
+)
 from ..models.shared_models import (
     VideoAutomationMode,
     VideoGenerationMode,
@@ -27,273 +40,330 @@ from ..models.shared_models import (
     VideoAutomationSettingsOptional,
     GenerationSchedule,
     MilestoneConfig,
+    VideoGenerationJobWithDetails,
 )
 
-from ..dependencies import (
-    VideoAutomationServiceDep,
-    CameraServiceDep,
-    TimelapseServiceDep,
-)
-from ..database import async_db
-from ..models.video_model import VideoGenerationJob
-from ..models.camera_model import CameraUpdate
 from ..models.timelapse_model import TimelapseUpdate
 
 # Router and validation helpers
 from ..utils.router_helpers import (
     handle_exceptions,
-    create_success_response,
     validate_entity_exists,
+    run_sync_service_method,
 )
+
+# Response formatting
+from ..utils.response_helpers import ResponseFormatter
+from ..database.sse_events_operations import SSEEventsOperations
 
 # Video settings business logic
 from ..utils.video_helpers import VideoSettingsHelper
 
-# Response formatting
-from ..utils.response_helpers import ResponseFormatter
-
-from ..utils.timezone_utils import get_timezone_aware_timestamp_async, utc_now
-from ..constants import (
-    HEALTH_STATUSES,
-    VIDEO_GENERATION_MODES,
-    MIN_FPS,
-    MAX_FPS,
-    DEFAULT_FPS,
+# Timezone utilities for proper time handling
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_async,
+    get_timezone_aware_timestamp_string_async,
 )
 
-router = APIRouter(prefix="/video-automation", tags=["video-automation"])
+# Constants for consistency
+from ..constants import (
+    VIDEO_AUTOMATION_MODES,
+    VIDEO_GENERATION_MODES,
+    VIDEO_JOB_STATUSES,
+    VIDEO_JOB_PRIORITIES,
+    VIDEO_QUEUE_WARNING_THRESHOLD,
+    VIDEO_QUEUE_ERROR_THRESHOLD,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+)
+
+# TODO: CACHING STRATEGY - MINIMAL CACHE + SSE
+# Video automation is critical operational monitoring requiring real-time updates:
+# - Queue/stats: Very short cache (30-60 seconds max) or SSE broadcasting
+# - Settings: ETag + 5-10 min cache - configuration changes occasionally
+# - Manual triggers: No cache + SSE broadcasting (already implemented)
+# Queue monitoring is essential for video generation pipeline management.
+router = APIRouter(tags=["video-automation"])
 
 
-# Use shared models for settings responses and updates
-class CameraAutomationSettings(
-    VideoAutomationSettingsOptional, VideoGenerationSettingsOptional
-):
-    camera_id: int
+# Request/Response Models
+# CameraAutomationSettings removed - camera-level automation deprecated
 
 
 class TimelapseAutomationSettings(
     VideoAutomationSettingsOptional, VideoGenerationSettingsOptional
 ):
+    """Timelapse automation settings response model"""
+
     timelapse_id: int
 
 
 class AutomationSettingsUpdate(
     VideoAutomationSettingsOptional, VideoGenerationSettingsOptional
 ):
+    """Automation settings update request model"""
+
     pass
 
 
-# Use VideoGenerationJobWithDetails as the response model for job queue endpoints
-from ..models.shared_models import VideoGenerationJobWithDetails
-
-
 class ManualGenerationRequest(BaseModel):
-    """Model for manual video generation request"""
+    """Manual video generation request model"""
 
     timelapse_id: int = Field(
         ..., description="ID of the timelapse to generate video from"
     )
     video_name: Optional[str] = Field(None, description="Optional custom video name")
+    priority: Optional[str] = Field(
+        "high",
+        description=f"Job priority. Must be one of: {', '.join(VIDEO_JOB_PRIORITIES)}",
+    )
     settings: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="Custom video generation settings"
     )
 
 
-async def _run_sync_in_executor(func, *args):
-    """Helper to run sync functions in executor with consistent error handling"""
-    import asyncio
+class QueueStatsResponse(BaseModel):
+    """Video generation queue statistics response model"""
 
-    try:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func, *args)
-    except Exception as e:
-        logger.error(f"Error running {func.__name__} in executor: {e}")
-        raise
+    total_jobs: int
+    pending_jobs: int
+    processing_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    queue_health: str
+    timestamp: str
 
 
-@router.get("/queue", response_model=List[VideoGenerationJobWithDetails])
+# API Endpoints
+
+@router.get(
+    "/video-automation/queue", response_model=List[VideoGenerationJobWithDetails]
+)
 @handle_exceptions("get video generation queue")
 async def get_video_generation_queue(
     video_automation_service: VideoAutomationServiceDep,
+    db: AsyncDatabaseDep,
     status: Optional[str] = None,
-    limit: Optional[int] = 50,
+    limit: Optional[int] = DEFAULT_PAGE_SIZE,
 ):
-    """Get current video generation job queue"""
-    # Use the correct method name from VideoQueue class
-    jobs = await _run_sync_in_executor(
-        video_automation_service.queue.get_queue_jobs, status, limit
-    )
+    """
+    Get current video generation job queue
 
-    # Convert to response model format
-    response_jobs = []
-    for job in jobs:
-        response_jobs.append(
-            VideoGenerationJobWithDetails(
-                id=job.id,
-                timelapse_id=job.timelapse_id,
-                trigger_type=job.trigger_type,
-                status=job.status,
-                # priority field removed; not present in model
-                created_at=job.created_at.isoformat(),
-                settings=job.settings,
-                camera_name=getattr(job, "camera_name", None),
-                timelapse_name=getattr(job, "timelapse_name", None),
-            )
+    Args:
+        status: Optional filter by job status
+        limit: Maximum number of jobs to return
+    """
+    # Validate status if provided
+    if status and status not in VIDEO_JOB_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of: {', '.join(VIDEO_JOB_STATUSES)}",
         )
 
-    return response_jobs
+    # Validate limit
+    if limit and (limit < 1 or limit > MAX_PAGE_SIZE):
+        raise HTTPException(
+            status_code=400, detail=f"Limit must be between 1 and {MAX_PAGE_SIZE}"
+        )
+
+    try:
+        # Use async service call with executor
+        jobs = await run_sync_service_method(
+            video_automation_service.queue.get_queue_jobs, status, limit
+        )
+
+        # Convert to response model format
+        response_jobs = []
+        for job in jobs:
+            response_jobs.append(
+                VideoGenerationJobWithDetails(
+                    id=job.id,
+                    timelapse_id=job.timelapse_id,
+                    trigger_type=job.trigger_type,
+                    status=job.status,
+                    created_at=job.created_at.isoformat(),
+                    settings=job.settings or {},
+                    camera_name=getattr(job, "camera_name", None),
+                    timelapse_name=getattr(job, "timelapse_name", None),
+                )
+            )
+
+        return response_jobs
+
+    except Exception as e:
+        # Let @handle_exceptions decorator handle logging
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch video generation queue"
+        )
 
 
-@router.get("/queue/stats")
+
+
+@router.get("/video-automation/queue/stats", response_model=QueueStatsResponse)
 @handle_exceptions("get queue statistics")
-async def get_queue_stats(video_automation_service: VideoAutomationServiceDep):
+async def get_queue_stats(
+    video_automation_service: VideoAutomationServiceDep,
+    db: AsyncDatabaseDep,
+):
     """Get video generation queue statistics"""
-    stats = await _run_sync_in_executor(video_automation_service.get_automation_stats)
+    try:
+        # Get queue statistics
+        stats = await run_sync_service_method(
+            video_automation_service.get_automation_stats
+        )
 
-    # Add timezone-aware timestamp using the imported async_db
-    timestamp = await get_timezone_aware_timestamp_async(async_db)
+        # Add timezone-aware timestamp
+        timestamp = await get_timezone_aware_timestamp_async(db)
 
-    return {"statistics": stats, "timestamp": timestamp.isoformat()}
+        # Determine queue health
+        total_jobs = stats.get("total_jobs", 0)
+        pending_jobs = stats.get("pending_jobs", 0)
+
+        if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
+            queue_health = "unhealthy"
+        elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
+            queue_health = "degraded"
+        else:
+            queue_health = "healthy"
+
+        return QueueStatsResponse(
+            total_jobs=total_jobs,
+            pending_jobs=pending_jobs,
+            processing_jobs=stats.get("processing_jobs", 0),
+            completed_jobs=stats.get("completed_jobs", 0),
+            failed_jobs=stats.get("failed_jobs", 0),
+            queue_health=queue_health,
+            timestamp=timestamp.isoformat(),
+        )
+
+    except Exception as e:
+        # Let @handle_exceptions decorator handle logging
+        raise HTTPException(status_code=500, detail="Failed to fetch queue statistics")
 
 
-@router.post("/generate/manual")
+
+
+@router.post("/video-automation/generate/manual")
 @handle_exceptions("trigger manual video generation")
 async def trigger_manual_generation(
     request: ManualGenerationRequest,
     video_automation_service: VideoAutomationServiceDep,
+    timelapse_service: TimelapseServiceDep,
+    settings_service: SettingsServiceDep,
+    db: AsyncDatabaseDep,
 ):
     """Manually trigger video generation for a timelapse"""
+    # Validate timelapse exists
+    timelapse = await validate_entity_exists(
+        timelapse_service.get_timelapse_by_id, request.timelapse_id, "timelapse"
+    )
+
+    # Validate priority if provided
+    if request.priority and request.priority not in VIDEO_JOB_PRIORITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid priority. Must be one of: {', '.join(VIDEO_JOB_PRIORITIES)}",
+        )
+
     try:
-        job_id = await _run_sync_in_executor(
+        # Create video generation job using the queue
+        job_id = await run_sync_service_method(
             video_automation_service.queue.add_job,
             request.timelapse_id,
             "manual",
-            "high",
+            request.priority or "high",
             request.settings,
         )
 
-        if job_id:
-            return create_success_response(
-                "Video generation job created successfully",
-                job_id=job_id,
-                timelapse_id=request.timelapse_id,
-                trigger_type="manual",
-            )
-        else:
-            raise HTTPException(
-                status_code=500, detail="Failed to create video generation job"
-            )
+        # Create SSE event for real-time updates
+        sse_ops = SSEEventsOperations(db)
+        await sse_ops.create_event(
+            event_type="video_generation_job_created",
+            event_data={
+                "job_id": job_id,
+                "timelapse_id": request.timelapse_id,
+                "trigger_type": "manual",
+                "priority": request.priority or "high",
+                "video_name": request.video_name,
+            },
+            priority="normal",
+            source="api"
+        )
+
+        return ResponseFormatter.success(
+            "Video generation job created successfully",
+            data={
+                "job_id": job_id,
+                "timelapse_id": request.timelapse_id,
+                "trigger_type": "manual",
+                "video_name": request.video_name,
+            },
+        )
 
     except Exception as e:
-        logger.error(f"Error creating manual video generation job: {e}")
+        # Let @handle_exceptions decorator handle logging
         raise HTTPException(
             status_code=500, detail=f"Failed to create video generation job: {str(e)}"
         )
 
 
-@router.get("/camera/{camera_id}/settings", response_model=CameraAutomationSettings)
-@handle_exceptions("get camera automation settings")
-async def get_camera_automation_settings(
-    camera_id: int, camera_service: CameraServiceDep
-):
-    """Get automation settings for a camera"""
-    camera = await validate_entity_exists(
-        camera_service.get_camera_by_id, camera_id, "camera"
-    )
-
-    # Use VideoSettingsHelper for settings inheritance if needed (here just pass camera settings)
-    effective_settings = VideoSettingsHelper.get_effective_video_settings(
-        timelapse_settings=None, camera_settings=camera
-    )
-
-    return CameraAutomationSettings(
-        camera_id=camera_id,
-        **{
-            k: effective_settings.get(k)
-            for k in CameraAutomationSettings.model_fields
-            if k != "camera_id"
-        },
-    )
-
-
-@router.put("/camera/{camera_id}/settings")
-@handle_exceptions("update camera automation settings")
-async def update_camera_automation_settings(
-    camera_id: int, settings: AutomationSettingsUpdate, camera_service: CameraServiceDep
-):
-    """Update automation settings for a camera"""
-    # Verify camera exists
-    camera = await validate_entity_exists(
-        camera_service.get_camera_by_id, camera_id, "camera"
-    )
-
-    update_data = settings.model_dump(exclude_unset=True, exclude_none=True)
-    if not update_data:
-        return ResponseFormatter.success("No settings to update", camera_id=camera_id)
-
-    # Validate settings using VideoSettingsHelper
-    is_valid, error = VideoSettingsHelper.validate_video_settings(update_data)
-    if not is_valid:
-        return ResponseFormatter.error(
-            f"Invalid settings: {error}", error_code="invalid_settings"
-        )
-
-    try:
-        camera_update = CameraUpdate(**update_data)
-        updated_camera = await camera_service.update_camera(camera_id, camera_update)
-        return ResponseFormatter.success(
-            "Camera automation settings updated successfully",
-            camera_id=camera_id,
-            updated_fields=list(update_data.keys()),
-        )
-    except Exception as e:
-        logger.error(f"Failed to update camera {camera_id} automation settings: {e}")
-        return ResponseFormatter.error(
-            "Failed to update automation settings", error_code="update_failed"
-        )
+# Camera-level automation settings removed per architecture decision:
+# Automation settings should only exist at timelapse level for cleaner design
 
 
 @router.get(
-    "/timelapse/{timelapse_id}/settings", response_model=TimelapseAutomationSettings
+    "/video-automation/timelapse/{timelapse_id}/settings",
+    response_model=TimelapseAutomationSettings,
 )
 @handle_exceptions("get timelapse automation settings")
 async def get_timelapse_automation_settings(
-    timelapse_id: int, timelapse_service: TimelapseServiceDep
+    timelapse_id: int,
+    timelapse_service: TimelapseServiceDep,
+    camera_service: CameraServiceDep,
 ):
     """Get automation settings for a timelapse (including inherited camera settings)"""
     timelapse = await validate_entity_exists(
         timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
     )
 
-    # Inherit settings: timelapse overrides camera
-    camera_id = getattr(timelapse, "camera_id", None)
+    # Convert Pydantic model to dict for VideoSettingsHelper
+    timelapse_dict = timelapse.model_dump()
+
+    # Get camera settings for inheritance
     camera = None
-    if (
-        camera_id is not None
-        and hasattr(timelapse_service, "camera_service")
-        and timelapse_service.camera_service
-    ):
-        camera = await timelapse_service.camera_service.get_camera_by_id(camera_id)
+    if timelapse.camera_id:
+        try:
+            camera = await camera_service.get_camera_by_id(timelapse.camera_id)
+        except Exception as e:
+            # Could not fetch camera for inheritance - continue without it
+            # Router layer should not do direct logging
+            pass
+
+    # Convert camera to dict if found
+    camera_dict = camera.model_dump() if camera else None
+
+    # Apply settings inheritance
     effective_settings = VideoSettingsHelper.get_effective_video_settings(
-        timelapse_settings=timelapse, camera_settings=camera
+        timelapse_settings=timelapse_dict, camera_settings=camera_dict
     )
 
     return TimelapseAutomationSettings(
         timelapse_id=timelapse_id,
         **{
-            k: effective_settings.get(k)
+            k: effective_settings.get(k) or getattr(timelapse, k, None)
             for k in TimelapseAutomationSettings.model_fields
             if k != "timelapse_id"
         },
     )
 
 
-@router.put("/timelapse/{timelapse_id}/settings")
+@router.put("/video-automation/timelapse/{timelapse_id}/settings")
 @handle_exceptions("update timelapse automation settings")
 async def update_timelapse_automation_settings(
     timelapse_id: int,
     settings: AutomationSettingsUpdate,
     timelapse_service: TimelapseServiceDep,
+    db: AsyncDatabaseDep,
 ):
     """Update automation settings for a timelapse"""
     # Verify timelapse exists
@@ -304,8 +374,23 @@ async def update_timelapse_automation_settings(
     update_data = settings.model_dump(exclude_unset=True, exclude_none=True)
     if not update_data:
         return ResponseFormatter.success(
-            "No settings to update", timelapse_id=timelapse_id
+            "No settings to update", data={"timelapse_id": timelapse_id}
         )
+
+    # Validate automation modes using constants
+    if "video_automation_mode" in update_data:
+        if update_data["video_automation_mode"] not in VIDEO_AUTOMATION_MODES:
+            return ResponseFormatter.error(
+                f"Invalid automation mode. Must be one of: {', '.join(VIDEO_AUTOMATION_MODES)}",
+                error_code="invalid_automation_mode",
+            )
+
+    if "video_generation_mode" in update_data:
+        if update_data["video_generation_mode"] not in VIDEO_GENERATION_MODES:
+            return ResponseFormatter.error(
+                f"Invalid generation mode. Must be one of: {', '.join(VIDEO_GENERATION_MODES)}",
+                error_code="invalid_generation_mode",
+            )
 
     # Validate settings using VideoSettingsHelper
     is_valid, error = VideoSettingsHelper.validate_video_settings(update_data)
@@ -319,109 +404,30 @@ async def update_timelapse_automation_settings(
         updated_timelapse = await timelapse_service.update_timelapse(
             timelapse_id, timelapse_update
         )
+
+        # Create SSE event for real-time updates
+        sse_ops = SSEEventsOperations(db)
+        await sse_ops.create_event(
+            event_type="timelapse_automation_settings_updated",
+            event_data={
+                "timelapse_id": timelapse_id,
+                "updated_fields": list(update_data.keys()),
+                "settings": update_data,
+            },
+            priority="normal",
+            source="api"
+        )
+
         return ResponseFormatter.success(
             "Timelapse automation settings updated successfully",
-            timelapse_id=timelapse_id,
-            updated_fields=list(update_data.keys()),
+            data={
+                "timelapse_id": timelapse_id,
+                "updated_fields": list(update_data.keys()),
+            },
         )
+
     except Exception as e:
-        logger.error(
-            f"Failed to update timelapse {timelapse_id} automation settings: {e}"
-        )
+        # Let @handle_exceptions decorator handle logging
         return ResponseFormatter.error(
             "Failed to update automation settings", error_code="update_failed"
         )
-
-
-@router.get("/statistics")
-@handle_exceptions("get automation statistics")
-async def get_automation_statistics(
-    video_automation_service: VideoAutomationServiceDep,
-):
-    """Get comprehensive automation statistics"""
-    stats = await _run_sync_in_executor(video_automation_service.get_automation_stats)
-
-    # Add timezone-aware timestamp using the imported async_db
-    timestamp = await get_timezone_aware_timestamp_async(async_db)
-
-    return {"statistics": stats, "timestamp": timestamp.isoformat()}
-
-
-@router.post("/process-queue")
-@handle_exceptions("process automation queue")
-async def process_automation_queue(
-    background_tasks: BackgroundTasks,
-    video_automation_service: VideoAutomationServiceDep,
-):
-    """Manually trigger processing of the automation queue"""
-
-    async def run_queue_processing():
-        """Background task to process the automation queue"""
-        await _run_sync_in_executor(
-            video_automation_service.process_automation_triggers
-        )
-
-    background_tasks.add_task(run_queue_processing)
-
-    # Fixed: Remove duplicate "message" parameter
-    return create_success_response(
-        "Queue processing triggered",
-        status="started",
-        background_task="automation_queue_processing",
-    )
-
-
-# Note: Removed cancel_job and get_job endpoints since these methods don't exist in VideoQueue class
-# TODO: job cancellation will be needed in the future, it should be implemented in the VideoQueue class first
-
-
-@router.get("/health")
-@handle_exceptions("get automation health")
-async def get_automation_health(video_automation_service: VideoAutomationServiceDep):
-    """Get automation system health status"""
-    try:
-        # Get queue status for health check
-        queue_stats = await _run_sync_in_executor(
-            video_automation_service.queue.get_queue_status
-        )
-
-        # Get general automation stats
-        automation_stats = await _run_sync_in_executor(
-            video_automation_service.get_automation_stats
-        )
-
-        # Add timezone-aware timestamp using the imported async_db
-        timestamp = await get_timezone_aware_timestamp_async(async_db)
-
-        # Determine health status
-        total_jobs = sum(queue_stats.values())
-        failed_jobs = queue_stats.get("failed", 0)
-        processing_jobs = queue_stats.get("processing", 0)
-
-        # Use HEALTH_STATUSES for status values
-        health_status = HEALTH_STATUSES[0]  # 'healthy'
-        if total_jobs > 0:
-            failure_rate = failed_jobs / total_jobs
-            if failure_rate > 0.5:
-                health_status = HEALTH_STATUSES[1]  # 'degraded'
-            elif failure_rate > 0.8:
-                health_status = HEALTH_STATUSES[2]  # 'unhealthy'
-
-        if processing_jobs > automation_stats.get("max_concurrent", 3):
-            health_status = "overloaded"  # Not in HEALTH_STATUSES, but used for clarity
-
-        return {
-            "health_status": health_status,
-            "queue_stats": queue_stats,
-            "automation_stats": automation_stats,
-            "checked_at": timestamp.isoformat(),
-        }
-
-    except Exception as e:
-        logger.error(f"Error checking automation health: {e}")
-        # Fallback timestamp without dependency injection
-        return {
-            "health_status": "unknown",
-            "error": str(e),
-            "checked_at": utc_now().isoformat(),
-        }

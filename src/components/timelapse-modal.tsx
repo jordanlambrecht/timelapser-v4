@@ -24,7 +24,7 @@ import {
 import { cn } from "@/lib/utils"
 import { formatDuration, formatDate } from "@/lib/time-utils"
 import { DeleteTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { useCaptureSettings } from "@/hooks/use-camera-countdown"
+import { useCaptureSettings } from "@/contexts/settings-context"
 import { toast } from "@/lib/toast"
 import { Video } from "@/types"
 
@@ -388,7 +388,9 @@ export function TimelapseModal({
                                 {formatDate(video.created_at, timezone)}
                               </span>
                               <span>•</span>
-                              <span>{formatDuration(video.duration_seconds)}</span>
+                              <span>
+                                {formatDuration(video.duration_seconds)}
+                              </span>
                               <span>•</span>
                               <span>{formatFileSize(video.file_size)}</span>
                             </div>

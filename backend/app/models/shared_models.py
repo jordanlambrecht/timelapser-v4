@@ -3,10 +3,44 @@
 Shared model components to eliminate duplication across models.
 """
 
-from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, Literal, List
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, date
+from pydantic import BaseModel, Field, ConfigDict
+
+
+class ImageStatisticsResponse(BaseModel):
+    """Response model for image statistics endpoints"""
+
+    message: str
+    data: Optional[Dict[str, Any]] = None
+    camera_id: Optional[int] = None
+    timelapse_id: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BulkDownloadResponse(BaseModel):
+    """Response model for bulk image download endpoint"""
+
+    requested_images: int
+    included_images: int
+    filename: str
+    total_size: Optional[int] = None
+    zip_data: Optional[bytes] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailRegenerationResponse(BaseModel):
+    """Response model for thumbnail regeneration endpoint"""
+
+    success: bool
+    regenerated: int = 0
+    failed: int = 0
+    errors: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
+    timestamp: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VideoGenerationMode(str, Enum):
@@ -19,6 +53,16 @@ class VideoAutomationMode(str, Enum):
     PER_CAPTURE = "per_capture"
     SCHEDULED = "scheduled"
     MILESTONE = "milestone"
+
+
+class ImageCapturedEvent(BaseModel):
+    """Event data for image captured SSE events"""
+
+    camera_id: int = Field(..., description="ID of the camera that captured the image")
+    image_id: Optional[int] = Field(None, description="ID of the captured image")
+    image_path: Optional[str] = Field(None, description="Path to the captured image")
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VideoGenerationSettings(BaseModel):
@@ -168,6 +212,7 @@ class VideoGenerationJob(BaseModel):
     id: int
     timelapse_id: int
     trigger_type: str
+    priority: str = Field(default="medium", description="Job priority (low, medium, high)")
     status: str = "pending"
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -184,6 +229,7 @@ class VideoGenerationJobWithDetails(VideoGenerationJob):
 
     timelapse_name: Optional[str] = None
     camera_name: Optional[str] = None
+    camera_id: Optional[int] = None
 
 
 class VideoGenerationJobCreate(BaseModel):
@@ -269,7 +315,6 @@ class CorruptionSettings(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-
 class ThumbnailGenerationResult(BaseModel):
     """Result of thumbnail generation operation"""
 
@@ -328,4 +373,288 @@ class ThumbnailOperationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
     timestamp: Optional[datetime] = None
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Camera Service Operation Result Models
+class CameraHealthMonitoringResult(BaseModel):
+    """Result of camera health monitoring operation"""
+
+    success: bool
+    camera_id: int
+    basic_health: Optional[CameraHealthStatus] = None
+    corruption_analysis: Optional[Dict[str, Any]] = None
+    monitoring_timestamp: datetime
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraCaptureScheduleResult(BaseModel):
+    """Result of camera capture scheduling operation"""
+
+    success: bool
+    camera_id: int
+    scheduled_at: Optional[datetime] = None
+    next_capture_at: Optional[datetime] = None
+    message: str = "Capture scheduled successfully"
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraConnectivityTestResult(BaseModel):
+    """Result of camera RTSP connectivity test"""
+
+    success: bool
+    camera_id: int
+    rtsp_url: str
+    response_time_ms: Optional[float] = None
+    connection_status: str = "unknown"
+    error: Optional[str] = None
+    test_timestamp: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraCaptureWorkflowResult(BaseModel):
+    """Result of complete camera capture workflow"""
+
+    workflow_status: str  # "completed", "failed", "partial"
+    camera_id: int
+    connectivity: CameraConnectivityTestResult
+    health_monitoring: CameraHealthMonitoringResult
+    capture_scheduling: CameraCaptureScheduleResult
+    overall_success: bool
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraLatestImageUrls(BaseModel):
+    """URLs for different variants of camera's latest image"""
+
+    full: str = Field(..., description="URL for full resolution image")
+    small: str = Field(..., description="URL for small/medium image (800x600)")
+    thumbnail: str = Field(..., description="URL for thumbnail image (200x150)")
+    download: str = Field(..., description="URL for downloading image with proper filename")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraLatestImageMetadata(BaseModel):
+    """Metadata about camera's latest image variants"""
+
+    camera_id: int = Field(..., description="ID of the camera")
+    has_thumbnail: bool = Field(..., description="Whether thumbnail variant exists")
+    has_small: bool = Field(..., description="Whether small variant exists")
+    thumbnail_size: Optional[int] = Field(None, description="Thumbnail file size in bytes")
+    small_size: Optional[int] = Field(None, description="Small variant file size in bytes")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraLatestImageData(BaseModel):
+    """Core data for camera's latest image"""
+
+    image_id: int = Field(..., description="ID of the latest image")
+    captured_at: str = Field(..., description="ISO timestamp when image was captured")
+    day_number: int = Field(..., description="Day number in timelapse sequence")
+    timelapse_id: int = Field(..., description="ID of associated timelapse")
+    file_size: Optional[int] = Field(None, description="Original file size in bytes")
+    corruption_score: int = Field(..., description="Image quality score (0-100)")
+    is_flagged: bool = Field(..., description="Whether image is flagged as corrupted")
+    urls: CameraLatestImageUrls = Field(..., description="URLs for image variants")
+    metadata: CameraLatestImageMetadata = Field(..., description="Additional metadata")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraLatestImageResponse(BaseModel):
+    """Standardized response for camera latest image metadata endpoint"""
+
+    success: bool = Field(True, description="Whether the request succeeded")
+    message: str = Field(..., description="Response message")
+    data: CameraLatestImageData = Field(..., description="Latest image data")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Additional models for ImageCaptureService
+class RTSPCaptureResult(BaseModel):
+    """Result of RTSP image capture operation"""
+
+    success: bool
+    message: Optional[str] = None
+    image_id: Optional[int] = None
+    image_path: Optional[str] = None
+    file_size: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CorruptionDetectionResult(BaseModel):
+    """Result of corruption detection analysis"""
+
+    success: bool
+    camera_id: int
+    image_path: str
+    quality_score: Optional[int] = None
+    is_corrupted: Optional[bool] = None
+    action_taken: Optional[str] = None
+    detection_details: Optional[Dict[str, Any]] = None
+    processing_time_ms: Optional[int] = None
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BulkCaptureResult(BaseModel):
+    """Result of bulk capture operation for multiple cameras"""
+
+    total_cameras: int
+    successful_captures: int
+    failed_captures: int
+    capture_results: List[Dict[str, Any]] = []
+    processing_time_ms: Optional[int] = None
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ====================================================================
+# SCHEDULING MODELS
+# ====================================================================
+
+class NextCaptureResult(BaseModel):
+    """Result of next capture time calculation"""
+    
+    camera_id: int
+    next_capture_time: datetime
+    last_capture_time: Optional[datetime] = None
+    interval_seconds: int
+    time_window_start: Optional[str] = None  # HH:MM:SS format
+    time_window_end: Optional[str] = None    # HH:MM:SS format
+    is_due: bool
+    time_until_next_seconds: Optional[int] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaptureValidationResult(BaseModel):
+    """Result of capture interval validation"""
+    
+    original_interval_seconds: int
+    validated_interval_seconds: int
+    is_valid: bool
+    validation_error: Optional[str] = None
+    adjusted: bool = False
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaptureDueCheckResult(BaseModel):
+    """Result of capture due check"""
+    
+    camera_id: int
+    is_due: bool
+    last_capture_time: Optional[datetime] = None
+    next_capture_time: Optional[datetime] = None
+    interval_seconds: int
+    grace_period_seconds: int
+    time_since_last_seconds: Optional[int] = None
+    reason: Optional[str] = None  # Why capture is/isn't due
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaptureCountEstimate(BaseModel):
+    """Estimate of capture count for a time period"""
+    
+    start_time: datetime
+    end_time: datetime
+    interval_seconds: int
+    estimated_captures: int
+    total_period_seconds: int
+    time_window_start: Optional[str] = None
+    time_window_end: Optional[str] = None
+    window_restricted: bool = False
+    captures_per_day: Optional[float] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ====================================================================
+# TIME WINDOW MODELS
+# ====================================================================
+
+class TimeWindowStatus(BaseModel):
+    """Time window operational status model"""
+    
+    is_active: bool = Field(..., description="Whether camera should be capturing now")
+    has_window: bool = Field(..., description="Whether time window is configured")
+    next_start: Optional[datetime] = Field(default=None, description="When window will next start")
+    next_end: Optional[datetime] = Field(default=None, description="When window will next end")
+    window_duration: Optional[int] = Field(default=None, description="Daily window duration in seconds")
+    current_time: datetime = Field(..., description="Current timestamp")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TimeWindowValidationResult(BaseModel):
+    """Time window validation result model"""
+    
+    is_valid: bool = Field(..., description="Whether the time window configuration is valid")
+    start_time: Optional[str] = Field(default=None, description="Validated start time (HH:MM:SS)")
+    end_time: Optional[str] = Field(default=None, description="Validated end time (HH:MM:SS)")
+    error_message: Optional[str] = Field(default=None, description="Validation error message if invalid")
+    is_overnight: bool = Field(default=False, description="Whether this is an overnight window")
+    duration_seconds: Optional[int] = Field(default=None, description="Window duration in seconds")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TimeWindowCalculationRequest(BaseModel):
+    """Request model for time window calculations"""
+    
+    current_time: datetime = Field(..., description="Current datetime for calculations")
+    window_start: Optional[str] = Field(default=None, description="Window start time (HH:MM:SS)")
+    window_end: Optional[str] = Field(default=None, description="Window end time (HH:MM:SS)")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaptureCountEstimateRequest(BaseModel):
+    """Request model for capture count estimation"""
+    
+    start_time: datetime = Field(..., description="Period start time")
+    end_time: datetime = Field(..., description="Period end time")
+    interval_seconds: int = Field(..., ge=1, description="Capture interval in seconds")
+    time_window_start: Optional[str] = Field(default=None, description="Daily window start (HH:MM:SS)")
+    time_window_end: Optional[str] = Field(default=None, description="Daily window end (HH:MM:SS)")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActiveTimePeriodRequest(BaseModel):
+    """Request model for active time calculation"""
+    
+    start_date: date = Field(..., description="Period start date")
+    end_date: date = Field(..., description="Period end date")
+    window_start: Optional[str] = Field(default=None, description="Daily window start (HH:MM:SS)")
+    window_end: Optional[str] = Field(default=None, description="Daily window end (HH:MM:SS)")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActiveTimePeriodResult(BaseModel):
+    """Result model for active time calculation"""
+    
+    total_days: int = Field(..., description="Total days in period")
+    active_duration_seconds: int = Field(..., description="Total active time in seconds")
+    daily_window_seconds: Optional[int] = Field(default=None, description="Daily window duration in seconds")
+    has_time_restrictions: bool = Field(..., description="Whether time window restrictions apply")
+    
     model_config = ConfigDict(from_attributes=True)

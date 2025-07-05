@@ -1,7 +1,7 @@
 // src/hooks/use-camera-countdown.ts
 /**
- * React hook for camera capture countdown with smart refresh intervals
- * Uses the centralized time utility for consistent formatting
+ * Simplified camera countdown hook - focuses only on countdown logic
+ * Uses centralized settings context for configuration
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react"
@@ -15,6 +15,7 @@ import {
   type CaptureTimestamp,
   type TimeWindow,
 } from "@/lib/time-utils"
+import { useCaptureSettings as useGlobalCaptureSettings } from "@/contexts/settings-context"
 
 interface CameraCountdownProps {
   camera: {
@@ -56,8 +57,8 @@ export function useCameraCountdown({
   const [lastCaptureAbsolute, setLastCaptureAbsolute] = useState<string>("")
   const [nextCaptureAbsolute, setNextCaptureAbsolute] = useState<string>("")
 
-  // Get timezone from settings
-  const { timezone } = useCaptureSettings()
+  // Get timezone from centralized settings
+  const { timezone } = useGlobalCaptureSettings()
 
   // Parse capture interval and create timestamp data
   const timestampData = useMemo((): CaptureTimestamp => {
@@ -267,16 +268,17 @@ export function useCameraCountdown({
 
 /**
  * Simplified hook for just relative time formatting
+ * Now uses centralized settings
  */
 export function useRelativeTime(
   timestamp: string | null | undefined,
   options?: {
     includeAbsolute?: boolean
     refreshInterval?: number
-    timezone?: string
   }
 ): string {
   const [relativeText, setRelativeText] = useState<string>("Never")
+  const { timezone } = useGlobalCaptureSettings()
 
   const refreshInterval = options?.refreshInterval || 30000 // 30 seconds default
 
@@ -284,10 +286,10 @@ export function useRelativeTime(
     const text = formatRelativeTime(timestamp, {
       includeAbsolute: options?.includeAbsolute || false,
       includeSeconds: true,
-      timezone: options?.timezone,
+      timezone,
     })
     setRelativeText(text)
-  }, [timestamp, options?.includeAbsolute, options?.timezone])
+  }, [timestamp, options?.includeAbsolute, timezone])
 
   useEffect(() => {
     updateText()
@@ -296,49 +298,4 @@ export function useRelativeTime(
   }, [updateText, refreshInterval])
 
   return relativeText
-}
-
-/**
- * Hook for settings management with caching
- */
-export function useCaptureSettings() {
-  const [captureInterval, setCaptureInterval] = useState<number>(300)
-  const [timezone, setTimezone] = useState<string>("America/Chicago")
-  const [loading, setLoading] = useState<boolean>(true)
-  const [lastFetch, setLastFetch] = useState<number>(0)
-
-  const fetchSettings = useCallback(
-    async (force = false) => {
-      const now = Date.now()
-      // Only fetch if forced or if it's been more than 5 minutes since last fetch
-      if (!force && now - lastFetch < 300000 && !loading) return
-
-      try {
-        const response = await fetch("/api/settings")
-        if (response.ok) {
-          const settings = await response.json()
-          const interval = parseCaptureInterval(settings.capture_interval)
-          setCaptureInterval(interval)
-          setTimezone(settings.timezone || "America/Chicago")
-          setLastFetch(now)
-        }
-      } catch (error) {
-        console.error("Failed to fetch capture settings:", error)
-      } finally {
-        setLoading(false)
-      }
-    },
-    [lastFetch, loading]
-  )
-
-  useEffect(() => {
-    fetchSettings()
-  }, [fetchSettings])
-
-  return {
-    captureInterval,
-    timezone,
-    loading,
-    refetch: () => fetchSettings(true),
-  }
 }

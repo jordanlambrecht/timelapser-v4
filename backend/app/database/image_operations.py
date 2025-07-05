@@ -11,6 +11,32 @@ from loguru import logger
 
 from .core import AsyncDatabase, SyncDatabase
 from ..models.image_model import Image, ImageWithDetails
+from ..constants import (
+    DEFAULT_PAGE_SIZE,
+    MAX_BULK_OPERATION_ITEMS,
+    DEFAULT_LOG_RETENTION_DAYS,
+)
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_sync,
+)
+
+
+def _row_to_image_shared(row: Dict[str, Any]) -> Image:
+    """
+    Shared helper function for converting database row to Image model.
+    
+    This eliminates duplicate logic between async and sync classes.
+    Filters fields that belong to Image model and creates proper instance.
+    
+    Args:
+        row: Database row data as dictionary
+        
+    Returns:
+        Image model instance
+    """
+    # Filter fields that belong to Image model
+    image_fields = {k: v for k, v in row.items() if k in Image.model_fields}
+    return Image(**image_fields)
 
 
 class ImageOperations:
@@ -32,9 +58,7 @@ class ImageOperations:
 
     def _row_to_image(self, row: Dict[str, Any]) -> Image:
         """Convert database row to Image model."""
-        # Filter fields that belong to Image model
-        image_fields = {k: v for k, v in row.items() if k in Image.model_fields}
-        return Image(**image_fields)
+        return _row_to_image_shared(row)
 
     def _row_to_image_with_details(self, row: Dict[str, Any]) -> ImageWithDetails:
         """Convert database row to ImageWithDetails model."""
@@ -50,12 +74,29 @@ class ImageOperations:
 
         return ImageWithDetails(**details_fields)
 
+    async def set_image_corruption_score(self, image_id: int, score: float) -> bool:
+        """
+        Update the corruption_score (quality score) for an image.
+        
+        Args:
+            image_id: ID of the image to update
+            score: New quality/corruption score
+            
+        Returns:
+            True if update was successful
+        """
+        query = "UPDATE images SET corruption_score = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s"
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (score, image_id))
+                return cur.rowcount > 0
+
     async def get_images(
         self,
         timelapse_id: Optional[int] = None,
         camera_id: Optional[int] = None,
         page: int = 1,
-        page_size: int = 50,
+        page_size: int = DEFAULT_PAGE_SIZE,
         order_by: str = "captured_at",
         order_dir: str = "DESC",
     ) -> Dict[str, Any]:
@@ -125,7 +166,7 @@ class ImageOperations:
                 # Get total count
                 await cur.execute(count_query, params)
                 count_result = await cur.fetchone()
-                total_count = count_result[0] if count_result else 0
+                total_count = count_result["total_count"] if count_result else 0
 
                 # Get images
                 await cur.execute(images_query, images_params)
@@ -335,9 +376,6 @@ class ImageOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    await self.db.broadcast_event(
-                        "image_deleted", {"image_id": image_id}
-                    )
                     return True
                 return False
 
@@ -359,12 +397,6 @@ class ImageOperations:
             async with conn.cursor() as cur:
                 await cur.execute(query, (timelapse_id,))
                 affected = cur.rowcount or 0
-
-                if affected > 0:
-                    await self.db.broadcast_event(
-                        "images_deleted",
-                        {"timelapse_id": timelapse_id, "count": affected},
-                    )
 
                 return affected
 
@@ -404,10 +436,6 @@ class ImageOperations:
                 if results:
                     image_row = results[0]
                     image = self._row_to_image(image_row)
-                    # Keep dict version for SSE event compatibility
-                    await self.db.broadcast_event(
-                        "image_captured", {"image": dict(image_row)}
-                    )
                     return image
                 raise Exception("Failed to record captured image")
 
@@ -432,7 +460,7 @@ class ImageOperations:
                 return result["count"] if result else 0
 
     async def get_images_without_thumbnails(
-        self, limit: int = 100
+        self, limit: int = MAX_BULK_OPERATION_ITEMS
     ) -> List[ImageWithDetails]:
         """
         Get images that are missing thumbnail files.
@@ -444,7 +472,7 @@ class ImageOperations:
             List of ImageWithDetails models missing thumbnails
 
         Usage:
-            images = await image_ops.get_images_without_thumbnails(50)
+            images = await image_ops.get_images_without_thumbnails(DEFAULT_PAGE_SIZE)
         """
         query = """
         SELECT
@@ -511,12 +539,6 @@ class ImageOperations:
             async with conn.cursor() as cur:
                 await cur.execute(query, update_fields)
                 success = cur.rowcount > 0
-
-                if success:
-                    await self.db.broadcast_event(
-                        "image_thumbnails_updated",
-                        {"image_id": image_id, "thumbnail_data": thumbnail_data},
-                    )
 
                 return success
 
@@ -670,9 +692,7 @@ class SyncImageOperations:
 
     def _row_to_image(self, row: Dict[str, Any]) -> Image:
         """Convert database row to Image model."""
-        # Filter fields that belong to Image model
-        image_fields = {k: v for k, v in row.items() if k in Image.model_fields}
-        return Image(**image_fields)
+        return _row_to_image_shared(row)
 
     def record_captured_image(self, image_data: Dict[str, Any]) -> Image:
         """
@@ -706,10 +726,6 @@ class SyncImageOperations:
                 if results:
                     image_row = results[0]
                     image = self._row_to_image(image_row)
-                    # Keep dict version for SSE event compatibility
-                    self.db.broadcast_event(
-                        "image_captured", {"image": dict(image_row)}
-                    )
                     return image
                 raise Exception("Failed to record captured image")
 
@@ -745,7 +761,7 @@ class SyncImageOperations:
             Day number (1-based)
 
         Usage:
-            day_num = image_ops.calculate_day_number(1, datetime.now())
+            day_num = image_ops.calculate_day_number(1, get_timezone_aware_timestamp_sync(db))
         """
         query = """
         SELECT DATE(created_at) as start_date 
@@ -786,12 +802,12 @@ class SyncImageOperations:
                 results = cur.fetchall()
                 return [self._row_to_image(row) for row in results]
 
-    def cleanup_old_images(self, days_to_keep: int = 30) -> int:
+    def cleanup_old_images(self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS) -> int:
         """
         Clean up old images based on retention policy.
 
         Args:
-            days_to_keep: Number of days to keep images (default: 30)
+            days_to_keep: Number of days to keep images (default: from constants)
 
         Returns:
             Number of images deleted
@@ -859,15 +875,29 @@ class SyncImageOperations:
                 cur.execute(query, update_fields)
                 success = cur.rowcount > 0
 
-                if success:
-                    self.db.broadcast_event(
-                        "image_thumbnails_updated",
-                        {"image_id": image_id, "thumbnail_data": thumbnail_data},
-                    )
-
                 return success
 
-    def get_images_without_thumbnails(self, limit: int = 100) -> List[Image]:
+    def get_image_by_id(self, image_id: int) -> Optional[Image]:
+        """
+        Retrieve a specific image by ID (sync version).
+
+        Args:
+            image_id: ID of the image to retrieve
+
+        Returns:
+            Image model instance, or None if not found
+
+        Usage:
+            image = image_ops.get_image_by_id(1)
+        """
+        query = "SELECT * FROM images WHERE id = %s"
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (image_id,))
+                results = cur.fetchall()
+                return self._row_to_image(results[0]) if results else None
+
+    def get_images_without_thumbnails(self, limit: int = MAX_BULK_OPERATION_ITEMS) -> List[Image]:
         """
         Get images that are missing thumbnail files (sync version).
 
@@ -878,7 +908,7 @@ class SyncImageOperations:
             List of Image models missing thumbnails
 
         Usage:
-            images = image_ops.get_images_without_thumbnails(50)
+            images = image_ops.get_images_without_thumbnails(DEFAULT_PAGE_SIZE)
         """
         query = """
         SELECT i.*

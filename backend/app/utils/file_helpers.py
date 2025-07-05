@@ -16,6 +16,25 @@ import os
 from ..config import settings
 
 
+# Utility to safely delete a file with logging
+def delete_file_safe(file_path: str) -> bool:
+    """
+    Safely delete a file, logging any errors. Returns True if deleted, False otherwise.
+    """
+    try:
+        path = Path(file_path).resolve()
+        if path.exists():
+            path.unlink()
+            logger.info(f"🗑️ Deleted file: {path}")
+            return True
+        else:
+            logger.warning(f"⚠️ File not found for deletion: {path}")
+            return False
+    except Exception as e:
+        logger.warning(f"❌ Failed to delete file {file_path}: {e}")
+        return False
+
+
 def validate_file_path(
     file_path: str, base_directory: Optional[str] = None, must_exist: bool = True
 ) -> Path:
@@ -360,3 +379,57 @@ class FileOperationMixin:
             media_type = validate_media_type(file_path, {extension})
 
         return create_file_response(file_path, filename, media_type)
+
+
+def ensure_entity_directory(
+    camera_id: int, timelapse_id: int, subdirectory: str = "frames"
+) -> Path:
+    """
+    Create and return entity-based directory structure.
+
+    Args:
+        camera_id: Camera ID
+        timelapse_id: Timelapse ID
+        subdirectory: Subdirectory within timelapse (e.g., 'frames', 'videos')
+
+    Returns:
+        Path to the entity directory
+    """
+    from ..config import settings
+
+    entity_dir = (
+        settings.data_path
+        / "cameras"
+        / f"camera-{camera_id}"
+        / f"timelapse-{timelapse_id}"
+        / subdirectory
+    )
+    entity_dir.mkdir(parents=True, exist_ok=True)
+    return entity_dir
+
+
+def ensure_camera_directories(camera_id: int, date_str: str) -> Dict[str, Path]:
+    """
+    Create and return camera-specific directory structure for date-based storage.
+
+    Args:
+        camera_id: Camera ID
+        date_str: Date string (YYYY-MM-DD format)
+
+    Returns:
+        Dictionary mapping directory types to paths
+    """
+    from ..config import settings
+
+    base_dir = settings.data_path / "cameras" / f"camera-{camera_id}"
+
+    directories = {
+        "images": base_dir / "images" / date_str,
+        "thumbnails": base_dir / "thumbnails" / date_str,
+        "small": base_dir / "small" / date_str,
+    }
+
+    for dir_path in directories.values():
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+    return directories

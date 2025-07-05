@@ -8,7 +8,6 @@ without mixin inheritance, eliminating type safety issues.
 """
 
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime
 from typing import Dict, Optional, Any, AsyncGenerator, Generator
 import time
 import asyncio
@@ -19,7 +18,8 @@ from psycopg_pool import ConnectionPool, AsyncConnectionPool
 import psycopg
 
 from ..config import settings
-from ..utils.response_helpers import SSEEventManager
+from ..utils.timezone_utils import utc_now
+
 
 
 class AsyncDatabaseCore:
@@ -61,7 +61,7 @@ class AsyncDatabaseCore:
                 open=False,
             )
             await self._pool.open()
-            self._pool_created_at = datetime.utcnow()
+            self._pool_created_at = utc_now()
             logger.info(f"Async database pool initialized (min: 2, max: {settings.db_pool_size}, overflow: {settings.db_max_overflow})")
         except Exception as e:
             logger.error(f"Failed to initialize async database pool: {e}")
@@ -108,7 +108,7 @@ class AsyncDatabaseCore:
         except Exception as e:
             self._failed_connections += 1
             connection_time = time.time() - start_time
-            logger.error(f"Database connection failed after {connection_time:.3f}s: {e}")
+            logger.error(f"Database connection failed after {connection_time:.3f}s: {str(e) or type(e).__name__}")
             raise
 
     async def get_pool_stats(self) -> Dict[str, Any]:
@@ -126,7 +126,7 @@ class AsyncDatabaseCore:
             stats = {
                 "status": "healthy",
                 "pool_created_at": self._pool_created_at.isoformat() if self._pool_created_at else None,
-                "uptime_seconds": (datetime.utcnow() - self._pool_created_at).total_seconds() if self._pool_created_at else 0,
+                "uptime_seconds": (utc_now() - self._pool_created_at).total_seconds() if self._pool_created_at else 0,
                 "connection_attempts": self._connection_attempts,
                 "failed_connections": self._failed_connections,
                 "success_rate": (self._connection_attempts - self._failed_connections) / max(self._connection_attempts, 1) * 100,
@@ -190,7 +190,7 @@ class AsyncDatabaseCore:
                         result = await cur.fetchone()
                     
             connection_time = time.time() - start_time
-            self._last_health_check = datetime.utcnow()
+            self._last_health_check = utc_now()
             
             return {
                 "status": "healthy",
@@ -212,27 +212,7 @@ class AsyncDatabaseCore:
                 "response_time_ms": round((time.time() - start_time) * 1000, 2),
             }
 
-    async def broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
-        """
-        Broadcast a real-time event to connected SSE clients.
 
-        Args:
-            event_type: Type of event (e.g., 'camera_updated', 'image_captured')
-            data: Event data to broadcast
-
-        Usage:
-            await db.broadcast_event('camera_updated', {'camera_id': 1, 'status': 'active'})
-        """
-        try:
-            # Format event data for SSEEventManager.broadcast_event
-            event_data = {
-                "type": event_type,
-                "data": data,
-                "timestamp": datetime.now().isoformat(),
-            }
-            SSEEventManager.broadcast_event(event_data)
-        except Exception as e:
-            logger.error(f"Failed to broadcast SSE event: {e}")
 
 
 class SyncDatabaseCore:
@@ -310,27 +290,7 @@ class SyncDatabaseCore:
             with conn.transaction():
                 yield conn
 
-    def broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
-        """
-        Broadcast a real-time event to connected SSE clients.
 
-        Args:
-            event_type: Type of event (e.g., 'camera_updated', 'image_captured')
-            data: Event data to broadcast
-
-        Usage:
-            db.broadcast_event('camera_updated', {'camera_id': 1, 'status': 'active'})
-        """
-        try:
-            # Format event data for SSEEventManager.broadcast_event
-            event_data = {
-                "type": event_type,
-                "data": data,
-                "timestamp": datetime.now().isoformat(),
-            }
-            SSEEventManager.broadcast_event(event_data)
-        except Exception as e:
-            logger.error(f"Failed to broadcast SSE event: {e}")
 
 
 # Composition-based database classes for services and routers

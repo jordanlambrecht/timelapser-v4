@@ -20,75 +20,75 @@ class DatabaseQueryBuilder:
     and security considerations.
     """
 
-    @staticmethod
-    def build_select_query(
-        table_name: str,
-        fields: List[str] = None,
-        joins: List[str] = None,
-        where_conditions: Dict[str, Any] = None,
-        order_by: str = None,
-        limit: int = None,
-        offset: int = None,
-    ) -> Tuple[str, Dict[str, Any]]:
-        """
-        Build a SELECT query with dynamic conditions.
+    # @staticmethod
+    # def build_select_query(
+    #     table_name: str,
+    #     fields: List[str] = None,
+    #     joins: List[str] = None,
+    #     where_conditions: Dict[str, Any] = None,
+    #     order_by: str = None,
+    #     limit: int = None,
+    #     offset: int = None,
+    # ) -> Tuple[str, Dict[str, Any]]:
+    #     """
+    #     Build a SELECT query with dynamic conditions.
 
-        Args:
-            table_name: Primary table name
-            fields: List of fields to select (defaults to *)
-            joins: List of JOIN clauses
-            where_conditions: Dictionary of WHERE conditions
-            order_by: ORDER BY clause
-            limit: LIMIT value
-            offset: OFFSET value
+    #     Args:
+    #         table_name: Primary table name
+    #         fields: List of fields to select (defaults to *)
+    #         joins: List of JOIN clauses
+    #         where_conditions: Dictionary of WHERE conditions
+    #         order_by: ORDER BY clause
+    #         limit: LIMIT value
+    #         offset: OFFSET value
 
-        Returns:
-            Tuple of (query_string, parameters_dict)
-        """
-        # Build SELECT clause
-        if fields:
-            select_clause = ", ".join(fields)
-        else:
-            select_clause = "*"
+    #     Returns:
+    #         Tuple of (query_string, parameters_dict)
+    #     """
+    #     # Build SELECT clause
+    #     if fields:
+    #         select_clause = ", ".join(fields)
+    #     else:
+    #         select_clause = "*"
 
-        query_parts = [f"SELECT {select_clause} FROM {table_name}"]
-        params = {}
+    #     query_parts = [f"SELECT {select_clause} FROM {table_name}"]
+    #     params = {}
 
-        # Add JOINs
-        if joins:
-            query_parts.extend(joins)
+    #     # Add JOINs
+    #     if joins:
+    #         query_parts.extend(joins)
 
-        # Add WHERE conditions
-        if where_conditions:
-            where_clauses = []
-            for field, value in where_conditions.items():
-                if value is not None:
-                    where_clauses.append(f"{field} = %({field})s")
-                    params[field] = value
-                else:
-                    where_clauses.append(f"{field} IS NULL")
+    #     # Add WHERE conditions
+    #     if where_conditions:
+    #         where_clauses = []
+    #         for field, value in where_conditions.items():
+    #             if value is not None:
+    #                 where_clauses.append(f"{field} = %({field})s")
+    #                 params[field] = value
+    #             else:
+    #                 where_clauses.append(f"{field} IS NULL")
 
-            if where_clauses:
-                query_parts.append(f"WHERE {' AND '.join(where_clauses)}")
+    #         if where_clauses:
+    #             query_parts.append(f"WHERE {' AND '.join(where_clauses)}")
 
-        # Add ORDER BY
-        if order_by:
-            query_parts.append(f"ORDER BY {order_by}")
+    #     # Add ORDER BY
+    #     if order_by:
+    #         query_parts.append(f"ORDER BY {order_by}")
 
-        # Add LIMIT and OFFSET
-        if limit:
-            query_parts.append(f"LIMIT {limit}")
-        if offset:
-            query_parts.append(f"OFFSET {offset}")
+    #     # Add LIMIT and OFFSET
+    #     if limit:
+    #         query_parts.append(f"LIMIT {limit}")
+    #     if offset:
+    #         query_parts.append(f"OFFSET {offset}")
 
-        return " ".join(query_parts), params
+    #     return " ".join(query_parts), params
 
     @staticmethod
     def build_update_query(
         table_name: str,
         updates: Dict[str, Any],
         where_conditions: Dict[str, Any],
-        allowed_fields: set = None,
+        allowed_fields: Optional[set[str]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Build an UPDATE query with dynamic fields and conditions.
@@ -145,7 +145,7 @@ class DatabaseQueryBuilder:
     def build_insert_query(
         table_name: str,
         data: Dict[str, Any],
-        allowed_fields: set = None,
+        allowed_fields: Optional[set[str]] = None,
         returning_field: str = "id",
     ) -> Tuple[str, Dict[str, Any]]:
         """
@@ -192,9 +192,9 @@ class DatabaseStatsHelper:
     def build_stats_query(
         base_table: str,
         metrics: Dict[str, str],
-        joins: List[str] = None,
-        where_conditions: Dict[str, Any] = None,
-        group_by: List[str] = None,
+        joins: Optional[List[str]] = None,
+        where_conditions: Optional[Dict[str, Any]] = None,
+        group_by: Optional[List[str]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Build a statistics aggregation query.
@@ -292,7 +292,9 @@ class DatabaseUtilities:
             return {}
 
     @staticmethod
-    def calculate_day_number(start_date: date, current_date: date = None) -> int:
+    def calculate_day_number(
+        start_date: date, current_date: Optional[date] = None
+    ) -> int:
         """
         Calculate day number relative to a start date.
 

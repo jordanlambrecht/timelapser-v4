@@ -15,6 +15,70 @@ from loguru import logger
 from .core import AsyncDatabase, SyncDatabase
 from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
+from ..constants import (
+    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
+    DEFAULT_CAPTURE_INTERVAL_SECONDS,
+    MAX_SETTING_KEY_LENGTH,
+    MAX_SETTING_VALUE_LENGTH,
+)
+
+
+def _process_corruption_settings_shared(settings_dict: Dict[str, str]) -> CorruptionSettings:
+    """
+    Shared helper function for processing corruption settings from database.
+    
+    This eliminates massive code duplication between async and sync get_corruption_settings methods.
+    Handles type conversion, defaults, and validation for corruption settings.
+    
+    Args:
+        settings_dict: Dictionary of raw settings from database (key-value strings)
+        
+    Returns:
+        CorruptionSettings model instance with proper types
+    """
+    # Convert string values to appropriate types with defaults
+    defaults = {
+        "corruption_detection_enabled": True,
+        "corruption_score_threshold": DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+        "corruption_auto_discard_enabled": False,
+        "corruption_auto_disable_degraded": False,
+        "corruption_degraded_consecutive_threshold": DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
+        "corruption_degraded_time_window_minutes": DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
+        "corruption_degraded_failure_percentage": DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
+    }
+
+    # Apply type conversions and defaults
+    result = {}
+    boolean_keys = [
+        "corruption_detection_enabled",
+        "corruption_auto_discard_enabled",
+        "corruption_auto_disable_degraded",
+    ]
+    integer_keys = [
+        "corruption_score_threshold",
+        "corruption_degraded_consecutive_threshold",
+        "corruption_degraded_time_window_minutes",
+        "corruption_degraded_failure_percentage",
+    ]
+
+    for key, default_value in defaults.items():
+        if key in settings_dict:
+            if key in boolean_keys:
+                result[key] = settings_dict[key].lower() in ("true", "1", "yes")
+            elif key in integer_keys:
+                try:
+                    result[key] = int(settings_dict[key])
+                except (ValueError, TypeError):
+                    result[key] = default_value
+            else:
+                result[key] = settings_dict[key]
+        else:
+            result[key] = default_value
+
+    return CorruptionSettings.model_validate(result)
 
 
 class SettingsOperations:
@@ -140,9 +204,6 @@ class SettingsOperations:
                         (key, value),
                     )
 
-                    await self.db.broadcast_event(
-                        "setting_updated", {"key": key, "value": value}
-                    )
                     return True
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
@@ -173,9 +234,6 @@ class SettingsOperations:
                         """
                         await cur.execute(query, (key, value))
 
-                    await self.db.broadcast_event(
-                        "settings_bulk_updated", {"settings": settings_dict}
-                    )
                     return True
         except Exception as e:
             logger.error(f"Failed to set multiple settings: {e}")
@@ -198,7 +256,6 @@ class SettingsOperations:
                     affected = cur.rowcount
 
                     if affected and affected > 0:
-                        await self.db.broadcast_event("setting_deleted", {"key": key})
                         return True
                     return False
         except Exception as e:
@@ -224,51 +281,8 @@ class SettingsOperations:
                     )
                     results = await cur.fetchall()
                     settings_dict = {row["key"]: row["value"] for row in results}
-
-                    # Convert string values to appropriate types with defaults
-                    defaults = {
-                        "corruption_detection_enabled": True,
-                        "corruption_score_threshold": 70,
-                        "corruption_auto_discard_enabled": False,
-                        "corruption_auto_disable_degraded": False,
-                        "corruption_degraded_consecutive_threshold": 10,
-                        "corruption_degraded_time_window_minutes": 30,
-                        "corruption_degraded_failure_percentage": 50,
-                    }
-
-                    # Apply type conversions and defaults
-                    result = {}
-                    boolean_keys = [
-                        "corruption_detection_enabled",
-                        "corruption_auto_discard_enabled",
-                        "corruption_auto_disable_degraded",
-                    ]
-                    integer_keys = [
-                        "corruption_score_threshold",
-                        "corruption_degraded_consecutive_threshold",
-                        "corruption_degraded_time_window_minutes",
-                        "corruption_degraded_failure_percentage",
-                    ]
-
-                    for key, default_value in defaults.items():
-                        if key in settings_dict:
-                            if key in boolean_keys:
-                                result[key] = settings_dict[key].lower() in (
-                                    "true",
-                                    "1",
-                                    "yes",
-                                )
-                            elif key in integer_keys:
-                                try:
-                                    result[key] = int(settings_dict[key])
-                                except (ValueError, TypeError):
-                                    result[key] = default_value
-                            else:
-                                result[key] = settings_dict[key]
-                        else:
-                            result[key] = default_value
-
-                    return CorruptionSettings.model_validate(result)
+                    
+                    return _process_corruption_settings_shared(settings_dict)
         except Exception as e:
             logger.error(f"Failed to get corruption settings: {e}")
             raise
@@ -314,14 +328,14 @@ class SettingsOperations:
         if not key or not key.strip():
             return False, "Setting key cannot be empty"
 
-        if len(key) > 255:
-            return False, "Setting key cannot exceed 255 characters"
+        if len(key) > MAX_SETTING_KEY_LENGTH:
+            return False, f"Setting key cannot exceed {MAX_SETTING_KEY_LENGTH} characters"
 
         if value is None:
             return False, "Setting value cannot be None"
 
-        if len(value) > 10000:  # Reasonable limit for setting values
-            return False, "Setting value too long (max 10000 characters)"
+        if len(value) > MAX_SETTING_VALUE_LENGTH:
+            return False, f"Setting value too long (max {MAX_SETTING_VALUE_LENGTH} characters)"
 
         return True, None
 
@@ -382,14 +396,14 @@ class SyncSettingsOperations:
         Get the capture interval setting as an integer.
 
         Returns:
-            Capture interval in seconds (default: 300)
+            Capture interval in seconds (default: from constants)
         """
-        value = self.get_setting("capture_interval", "300")
+        value = self.get_setting("capture_interval", str(DEFAULT_CAPTURE_INTERVAL_SECONDS))
         try:
             # value is guaranteed to be a string due to the default
-            return int(value) if value is not None else 300
+            return int(value) if value is not None else DEFAULT_CAPTURE_INTERVAL_SECONDS
         except (ValueError, TypeError):
-            return 300
+            return DEFAULT_CAPTURE_INTERVAL_SECONDS
 
     def get_corruption_settings(self) -> CorruptionSettings:
         """
@@ -410,51 +424,8 @@ class SyncSettingsOperations:
                     )
                     results = cur.fetchall()
                     settings_dict = {row["key"]: row["value"] for row in results}
-
-                    # Convert string values to appropriate types with defaults
-                    defaults = {
-                        "corruption_detection_enabled": True,
-                        "corruption_score_threshold": 70,
-                        "corruption_auto_discard_enabled": False,
-                        "corruption_auto_disable_degraded": False,
-                        "corruption_degraded_consecutive_threshold": 10,
-                        "corruption_degraded_time_window_minutes": 30,
-                        "corruption_degraded_failure_percentage": 50,
-                    }
-
-                    # Apply type conversions and defaults
-                    result = {}
-                    boolean_keys = [
-                        "corruption_detection_enabled",
-                        "corruption_auto_discard_enabled",
-                        "corruption_auto_disable_degraded",
-                    ]
-                    integer_keys = [
-                        "corruption_score_threshold",
-                        "corruption_degraded_consecutive_threshold",
-                        "corruption_degraded_time_window_minutes",
-                        "corruption_degraded_failure_percentage",
-                    ]
-
-                    for key, default_value in defaults.items():
-                        if key in settings_dict:
-                            if key in boolean_keys:
-                                result[key] = settings_dict[key].lower() in (
-                                    "true",
-                                    "1",
-                                    "yes",
-                                )
-                            elif key in integer_keys:
-                                try:
-                                    result[key] = int(settings_dict[key])
-                                except (ValueError, TypeError):
-                                    result[key] = default_value
-                            else:
-                                result[key] = settings_dict[key]
-                        else:
-                            result[key] = default_value
-
-                    return CorruptionSettings.model_validate(result)
+                    
+                    return _process_corruption_settings_shared(settings_dict)
         except Exception as e:
             logger.error(f"Failed to get corruption settings: {e}")
             raise
@@ -489,9 +460,6 @@ class SyncSettingsOperations:
                         (key, value),
                     )
 
-                    self.db.broadcast_event(
-                        "setting_updated", {"key": key, "value": value}
-                    )
                     return True
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")

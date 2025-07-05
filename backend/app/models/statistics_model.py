@@ -2,8 +2,34 @@
 """
 Pydantic models for system health and statistics data.
 """
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, field_validator
+from typing import Optional, List
+from datetime import datetime
+
+
+class SystemOverviewModel(BaseModel):
+    """Model for system overview metadata"""
+
+    total_entities: int
+    active_operations: int
+    system_status: str
+    last_updated: str
+
+
+class EnhancedDashboardStatsModel(BaseModel):
+    """Enhanced dashboard model with system overview, storage data, quality trends, camera performance, and health score"""
+
+    camera: "CameraStatsModel"
+    timelapse: "TimelapseStatsModel"
+    image: "ImageStatsModel"
+    video: "VideoStatsModel"
+    automation: "AutomationStatsModel"
+    recent_activity: "RecentActivityModel"
+    system_overview: SystemOverviewModel
+    storage: "StorageStatsModel"
+    quality_trends: List["QualityTrendDataPoint"]
+    camera_performance: List["CameraPerformanceModel"]
+    health_score: "SystemHealthScoreModel"
 
 
 class CameraStatsModel(BaseModel):
@@ -38,6 +64,15 @@ class VideoStatsModel(BaseModel):
     avg_duration: float
 
 
+class AutomationStatsModel(BaseModel):
+    total_jobs: int
+    pending_jobs: int
+    processing_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    queue_health: str
+
+
 class RecentActivityModel(BaseModel):
     captures_last_hour: int
     captures_last_24h: int
@@ -48,6 +83,7 @@ class DashboardStatsModel(BaseModel):
     timelapse: TimelapseStatsModel
     image: ImageStatsModel
     video: VideoStatsModel
+    automation: AutomationStatsModel
     recent_activity: RecentActivityModel
 
 
@@ -66,6 +102,18 @@ class CameraPerformanceModel(BaseModel):
     last_capture_at: Optional[str]
     total_videos: int
     total_storage_bytes: Optional[int]
+
+    @field_validator("last_capture_at", mode="before")
+    @classmethod
+    def convert_datetime_to_string(cls, v):
+        """Convert datetime objects to ISO string format"""
+        if v is None:
+            return v
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, str):
+            return v
+        return str(v)
 
 
 class QualityTrendDataPoint(BaseModel):
@@ -90,3 +138,7 @@ class SystemHealthScoreModel(BaseModel):
     quality_health_score: float
     activity_health_score: float
     component_details: dict
+
+
+# Rebuild models to resolve forward references
+EnhancedDashboardStatsModel.model_rebuild()

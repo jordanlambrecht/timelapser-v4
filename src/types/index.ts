@@ -26,8 +26,8 @@ export type {
   VideoProgressModalProps,
   ThumbnailRegenerationModalProps,
 } from "./modals"
-export type { 
-  SettingsState, 
+export type {
+  SettingsState,
   SettingsActions,
   ApiKeySettingsCardProps,
   CaptureSettingsCardProps,
@@ -110,8 +110,6 @@ export type {
 export type {
   WeatherSettings,
   WeatherData,
-  WeatherApiKeyValidation,
-  WeatherApiKeyValidationResponse,
   WeatherRefreshResponse,
   SunTimeWindow,
   TimeWindowMode,

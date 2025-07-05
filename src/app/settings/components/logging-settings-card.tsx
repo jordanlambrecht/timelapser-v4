@@ -24,40 +24,25 @@ import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { toast } from "@/lib/toast"
 import SwitchLabeled from "@/components/ui/switch-labeled"
 import { FileText } from "lucide-react"
+import { useSettings } from "@/contexts/settings-context"
 
-interface LoggingSettingsCardProps {
-  logRetentionDays: number
-  setLogRetentionDays: (value: number) => void
-  maxLogFileSize: number
-  setMaxLogFileSize: (value: number) => void
-  enableDebugLogging: boolean
-  setEnableDebugLogging: (value: boolean) => void
-  logLevel: string
-  setLogLevel: (value: string) => void
-  enableLogRotation: boolean
-  setEnableLogRotation: (value: boolean) => void
-  enableLogCompression: boolean
-  setEnableLogCompression: (value: boolean) => void
-  maxLogFiles: number
-  setMaxLogFiles: (value: number) => void
-}
-
-export function LoggingSettingsCard({
-  logRetentionDays,
-  setLogRetentionDays,
-  maxLogFileSize,
-  setMaxLogFileSize,
-  enableDebugLogging,
-  setEnableDebugLogging,
-  logLevel,
-  setLogLevel,
-  enableLogRotation,
-  setEnableLogRotation,
-  enableLogCompression,
-  setEnableLogCompression,
-  maxLogFiles,
-  setMaxLogFiles,
-}: LoggingSettingsCardProps) {
+export function LoggingSettingsCard() {
+  const {
+    logRetentionDays,
+    setLogRetentionDays,
+    maxLogFileSize,
+    setMaxLogFileSize,
+    enableDebugLogging,
+    setEnableDebugLogging,
+    logLevel,
+    setLogLevel,
+    enableLogRotation,
+    setEnableLogRotation,
+    enableLogCompression,
+    setEnableLogCompression,
+    maxLogFiles,
+    setMaxLogFiles,
+  } = useSettings()
   // Local state for confirmation dialog
   const [cleanLogsConfirmOpen, setCleanLogsConfirmOpen] = useState(false)
 

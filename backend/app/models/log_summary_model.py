@@ -16,11 +16,7 @@ class LogSourceModel(BaseModel):
     warning_count: int
 
 
-class LogLevelModel(BaseModel):
-    """Model for log level statistics"""
-    level: str
-    log_count: int
-    count_last_24h: int
+# DEPRECATED: LogLevelModel removed - log levels are static constants in constants.py
 
 
 class LogSummaryModel(BaseModel):

@@ -173,9 +173,10 @@ class TimelapseOperations:
             async with conn.cursor() as cur:
                 await cur.execute(query, (timelapse_id,))
                 results = await cur.fetchall()
-                return (
-                    self._row_to_timelapse_with_details(results[0]) if results else None
-                )
+                if results:
+                    row = results[0]
+                    return self._row_to_timelapse_with_details(dict(row))
+                return None
 
     async def create_new_timelapse(
         self, camera_id: int, timelapse_data: TimelapseCreate
@@ -190,8 +191,8 @@ class TimelapseOperations:
         Returns:
             Created Timelapse model instance
         """
-        # Convert Pydantic model to dict for database insertion
-        insert_data = timelapse_data.model_dump(exclude_unset=True)
+        # Convert Pydantic model to dict for database insertion, including defaults
+        insert_data = timelapse_data.model_dump(exclude_unset=False)
         insert_data["camera_id"] = camera_id
 
         # Create the timelapse record
@@ -298,7 +299,7 @@ class TimelapseOperations:
                                 "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
                                 (timelapse_id, row["camera_id"]),
                             )
-                        elif row["status"] in ("stopped", "completed"):
+                        elif row["status"] == "completed":
                             await cur.execute(
                                 "UPDATE cameras SET active_timelapse_id = NULL WHERE id = %s",
                                 (row["camera_id"],),
@@ -411,7 +412,6 @@ class TimelapseOperations:
         query = """
         UPDATE timelapses 
         SET status = 'completed', 
-            completed_at = NOW(),
             updated_at = NOW()
         WHERE id = %s 
         RETURNING *
@@ -432,25 +432,11 @@ class TimelapseOperations:
                         (timelapse_id,),
                     )
 
-                    await self.db.broadcast_event(
-                        "timelapse_completed",
-                        {"timelapse": completed_timelapse.model_dump()},
-                    )
+                    # Note: SSE events should be handled by the service layer, not database layer
+                    # This will be removed once all SSE events are properly centralized
                     return completed_timelapse
 
-                raise Exception(f"Failed to complete timelapse {timelapse_id}")
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
-                results = await cur.fetchall()
-                if results:
-                    try:
-                        return TimelapseStatistics.model_validate(dict(results[0]))
-                    except ValidationError as e:
-                        logger.error(f"Error creating TimelapseStatistics model: {e}")
-                        return None
-                return None
+                raise ValueError(f"Timelapse {timelapse_id} not found or already completed")
 
     async def cleanup_completed_timelapses(self, retention_days: int = 90) -> int:
         """
@@ -465,7 +451,7 @@ class TimelapseOperations:
         query = """
         DELETE FROM timelapses 
         WHERE status = 'completed' 
-        AND completed_at < NOW() - INTERVAL '%s days'
+        AND updated_at < NOW() - INTERVAL '%s days'
         """
 
         async with self.db.get_connection() as conn:
@@ -539,7 +525,7 @@ class SyncTimelapseOperations:
 
         Args:
             timelapse_id: ID of the timelapse
-            status: New status ('running', 'paused', 'stopped', 'completed')
+            status: New status ('running', 'paused', 'completed')
 
         Returns:
             True if update was successful
@@ -619,8 +605,8 @@ class SyncTimelapseOperations:
         FROM timelapses t
         JOIN cameras c ON t.camera_id = c.id
         WHERE t.status = 'completed'
-        AND t.completed_at < NOW() - INTERVAL '%s days'
-        ORDER BY t.completed_at ASC
+        AND t.updated_at < NOW() - INTERVAL '%s days'
+        ORDER BY t.updated_at ASC
         """
 
         with self.db.get_connection() as conn:
@@ -652,7 +638,7 @@ class SyncTimelapseOperations:
         query = """
         DELETE FROM timelapses
         WHERE status = 'completed'
-        AND completed_at < NOW() - INTERVAL '%s days'
+        AND updated_at < NOW() - INTERVAL '%s days'
         """
 
         with self.db.get_connection() as conn:

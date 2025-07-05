@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
         body,
       })
     } else if (isStatusUpdate) {
-      // Updating status of existing timelapse - use entity-based endpoint
-      fastApiEndpoint = `/api/timelapses/${body.timelapse_id}/status`
+      // Updating status of existing timelapse - use main timelapse endpoint
+      fastApiEndpoint = `/api/timelapses/${body.timelapse_id}`
       response = await proxyToFastAPI(fastApiEndpoint, {
         method: "PUT",
         body: { status: body.status },

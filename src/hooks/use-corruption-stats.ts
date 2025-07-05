@@ -62,7 +62,8 @@ export function useCorruptionStats() {
   useSSESubscription(
     (event) => event.type === "image_corruption_detected",
     useCallback(() => {
-      // Refresh stats when corruption events occur
+      // 🚨 ARCHITECTURAL ISSUE: Should use React Query cache invalidation instead of manual fetch
+      // TODO: Convert to React Query pattern when this hook is refactored
       fetchSystemStats()
     }, [fetchSystemStats])
   )
@@ -70,6 +71,7 @@ export function useCorruptionStats() {
   useSSESubscription(
     (event) => event.type === "camera_degraded_mode_triggered",
     useCallback(() => {
+      // 🚨 ARCHITECTURAL ISSUE: Should use React Query cache invalidation instead of manual fetch
       fetchSystemStats()
     }, [fetchSystemStats])
   )
@@ -77,6 +79,7 @@ export function useCorruptionStats() {
   useSSESubscription(
     (event) => event.type === "camera_corruption_reset",
     useCallback(() => {
+      // 🚨 ARCHITECTURAL ISSUE: Should use React Query cache invalidation instead of manual fetch
       fetchSystemStats()
     }, [fetchSystemStats])
   )
@@ -99,7 +102,7 @@ export function useCameraCorruptionStats(cameraId: number) {
   const fetchCameraStats = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await fetch(`/api/corruption/cameras/${cameraId}/stats`)
+      const response = await fetch(`/api/corruption/camera/${cameraId}/stats`)
       if (!response.ok)
         throw new Error("Failed to fetch camera corruption stats")
 
@@ -150,7 +153,7 @@ export function useCameraCorruptionStats(cameraId: number) {
   const resetDegradedMode = useCallback(async () => {
     try {
       const response = await fetch(
-        `/api/corruption/cameras/${cameraId}/reset-degraded`,
+        `/api/corruption/camera/${cameraId}/reset-degraded`,
         {
           method: "POST",
         }
@@ -237,7 +240,7 @@ export function useCorruptionActions() {
   const resetCameraDegradedMode = useCallback(async (cameraId: number) => {
     try {
       const response = await fetch(
-        `/api/corruption/cameras/${cameraId}/reset-degraded`,
+        `/api/corruption/camera/${cameraId}/reset-degraded`,
         {
           method: "POST",
           headers: {

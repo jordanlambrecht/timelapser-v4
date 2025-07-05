@@ -88,11 +88,19 @@ export interface SettingsActions {
 export interface ApiKeySettingsCardProps {
   openWeatherApiKey: string
   setOpenWeatherApiKey: (value: string) => void
+  apiKeyModified: boolean
+  setApiKeyModified: (value: boolean) => void
+  originalApiKeyHash: string
 }
 
 export interface CaptureSettingsCardProps {
   captureInterval: number
   setCaptureInterval: (value: number) => void
+  generateThumbnails: boolean
+  setGenerateThumbnails: (value: boolean) => void
+  imageCaptureType: "PNG" | "JPG"
+  setImageCaptureType: (value: "PNG" | "JPG") => void
+  saving: boolean
 }
 
 export interface CorruptionSettingsCardProps {
@@ -142,7 +150,7 @@ export interface SettingsProviderProps {
 
 export interface TimezoneSettingsCardProps {
   timezone: string
-  setTimezone: (value: string) => void
+  onTimezoneChange: (value: string) => void
   saving: boolean
 }
 
@@ -155,4 +163,7 @@ export interface WeatherSettingsCardProps {
   setLatitude: (value: number | null) => void
   longitude: number | null
   setLongitude: (value: number | null) => void
+  openWeatherApiKey: string
+  apiKeyModified: boolean
+  originalApiKeyHash: string
 }

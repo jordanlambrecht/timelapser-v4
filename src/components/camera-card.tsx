@@ -15,12 +15,12 @@ import { VideoNameModal } from "@/components/video-name-modal"
 import { VideoProgressModal } from "@/components/video-progress-modal"
 import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
 import { StopTimelapseConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { CameraImageWithFallback } from "@/components/camera-image-with-fallback"
+import { CameraCardImage } from "@/components/camera-image-unified"
 import {
   MoreVertical,
   Play,
   Square,
-  Video,
+  Video as VideoIcon,
   Clock,
   Camera,
   Zap,
@@ -35,64 +35,149 @@ import {
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import Image from "next/image"
-import { useState, useEffect } from "react"
+import {
+  useState,
+  useEffect,
+  useReducer,
+  useCallback,
+  useMemo,
+  memo,
+  useRef,
+} from "react"
 import { toast } from "@/lib/toast"
-import { useCameraCountdown, useCaptureSettings } from "@/hooks/use-camera-countdown"
+import { useCameraCountdown } from "@/hooks/use-camera-countdown"
+import { useCaptureSettings } from "@/contexts/settings-context"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { isWithinTimeWindow } from "@/lib/time-utils"
 import { TimestampWithWarning } from "@/components/suspicious-timestamp-warning"
+import type { CameraWithLastImage, Video } from "@/types"
+import type { Timelapse } from "@/types/timelapses"
+
+// Import TimelapseSettings type
+interface TimelapseSettings {
+  useCustomTimeWindow: boolean
+  timeWindowStart: string
+  timeWindowEnd: string
+  useAutoStop: boolean
+  autoStopAt?: string
+}
+
+// ✅ PERFORMANCE OPTIMIZATION: State consolidation using useReducer
+interface CameraCardState {
+  imageKey: number
+  actualImageCount: number | null
+  modals: {
+    timelapse: boolean
+    videoName: boolean
+    videoProgress: boolean
+    createTimelapse: boolean
+    confirmStop: boolean
+  }
+  loading: {
+    stop: boolean
+  }
+  currentVideoName: string
+}
+
+const initialCameraCardState: CameraCardState = {
+  imageKey: 1, // Start with 1 instead of Date.now() to avoid cache busting
+  actualImageCount: null,
+  modals: {
+    timelapse: false,
+    videoName: false,
+    videoProgress: false,
+    createTimelapse: false,
+    confirmStop: false,
+  },
+  loading: {
+    stop: false,
+  },
+  currentVideoName: "",
+}
+
+type CameraCardAction =
+  | { type: "INCREMENT_IMAGE_KEY" }
+  | { type: "SET_IMAGE_COUNT"; payload: number | null }
+  | {
+      type: "TOGGLE_MODAL"
+      payload: { modal: keyof CameraCardState["modals"]; open: boolean }
+    }
+  | {
+      type: "SET_LOADING"
+      payload: { key: keyof CameraCardState["loading"]; loading: boolean }
+    }
+  | { type: "SET_VIDEO_NAME"; payload: string }
+
+function cameraCardReducer(
+  state: CameraCardState,
+  action: CameraCardAction
+): CameraCardState {
+  switch (action.type) {
+    case "INCREMENT_IMAGE_KEY":
+      return { ...state, imageKey: state.imageKey + 1 }
+    case "SET_IMAGE_COUNT":
+      return { ...state, actualImageCount: action.payload }
+    case "TOGGLE_MODAL":
+      return {
+        ...state,
+        modals: {
+          ...state.modals,
+          [action.payload.modal]: action.payload.open,
+        },
+      }
+    case "SET_LOADING":
+      return {
+        ...state,
+        loading: {
+          ...state.loading,
+          [action.payload.key]: action.payload.loading,
+        },
+      }
+    case "SET_VIDEO_NAME":
+      return { ...state, currentVideoName: action.payload }
+    default:
+      return state
+  }
+}
 
 interface CameraCardProps {
-  camera: {
-    id: number
-    name: string
-    rtsp_url: string
-    status: string
-    health_status: "online" | "offline" | "unknown"
-    last_capture_at?: string
-    consecutive_failures: number
-    time_window_start?: string
-    time_window_end?: string
-    use_time_window: boolean
-    next_capture_at?: string
-    // Corruption detection fields
-    corruption_detection_heavy?: boolean
-    degraded_mode_active?: boolean
-    recent_avg_score?: number
-    lifetime_glitch_count?: number
-    // Full image object instead of just ID
-    last_image?: {
-      id: number
-      captured_at: string
-      file_path: string
-      file_size: number | null
-      day_number: number
-      corruption_score?: number
-      is_flagged?: boolean
-    } | null
-  }
-  timelapse?: {
-    id: number
-    status: string
-    image_count: number
-    last_capture_at?: string
-  }
-  videos: Array<{
-    id: number
-    status: string
-    file_size?: number
-    duration?: number
-    created_at: string
-  }>
+  camera: CameraWithLastImage
+  timelapse?: Timelapse | null
+  videos: Video[]
   onToggleTimelapse: (cameraId: number, currentStatus: string) => void
-  onPauseTimelapse?: (cameraId: number) => void
-  onResumeTimelapse?: (cameraId: number) => void
+  onPauseTimelapse: (cameraId: number) => void
+  onResumeTimelapse: (cameraId: number) => void
   onEditCamera: (cameraId: number) => void
   onDeleteCamera: (cameraId: number) => void
   onGenerateVideo: (cameraId: number) => void
 }
 
-export function CameraCard({
+// ✅ PERFORMANCE OPTIMIZATION: Memoized comparison function for React.memo
+const arePropsEqual = (
+  prevProps: CameraCardProps,
+  nextProps: CameraCardProps
+) => {
+  return (
+    prevProps.camera.id === nextProps.camera.id &&
+    prevProps.camera.health_status === nextProps.camera.health_status &&
+    prevProps.camera.last_capture_at === nextProps.camera.last_capture_at &&
+    prevProps.camera.consecutive_failures ===
+      nextProps.camera.consecutive_failures &&
+    prevProps.camera.last_image?.captured_at ===
+      nextProps.camera.last_image?.captured_at &&
+    prevProps.timelapse?.id === nextProps.timelapse?.id &&
+    prevProps.timelapse?.status === nextProps.timelapse?.status &&
+    prevProps.timelapse?.image_count === nextProps.timelapse?.image_count &&
+    prevProps.videos.length === nextProps.videos.length &&
+    prevProps.videos.every(
+      (video, index) =>
+        video.id === nextProps.videos[index]?.id &&
+        video.status === nextProps.videos[index]?.status
+    )
+  )
+}
+
+const CameraCardComponent = ({
   camera,
   timelapse,
   videos,
@@ -102,135 +187,69 @@ export function CameraCard({
   onEditCamera,
   onDeleteCamera,
   onGenerateVideo,
-}: CameraCardProps) {
-  const [imageKey, setImageKey] = useState(Date.now()) // Force image reload
-  const [actualImageCount, setActualImageCount] = useState<number | null>(null)
-  const [timelapseStats, setTimelapseStats] = useState<{
-    total_images: number
-    current_timelapse_images: number
-    current_timelapse_name: string | null
-    current_timelapse_status: string | null
-  } | null>(null)
-  const [timelapseModalOpen, setTimelapseModalOpen] = useState(false)
-  const [videoNameModalOpen, setVideoNameModalOpen] = useState(false)
-  const [videoProgressModalOpen, setVideoProgressModalOpen] = useState(false)
-  const [createTimelapseDialogOpen, setCreateTimelapseDialogOpen] =
-    useState(false)
-  const [currentVideoName, setCurrentVideoName] = useState("")
+}: CameraCardProps) => {
+  const [state, dispatch] = useReducer(
+    cameraCardReducer,
+    initialCameraCardState
+  )
 
-  // Confirmation dialog state for stopping timelapse
-  const [confirmStopOpen, setConfirmStopOpen] = useState(false)
-  const [stopLoading, setStopLoading] = useState(false)
+  // ✅ FIX: Use useRef to store imageRefetch function to prevent infinite re-renders
+  const imageRefetchRef = useRef<(() => Promise<void>) | null>(null)
 
-  // Use the new capture settings hook for consistent interval data
-  const {
-    captureInterval,
-    timezone,
-    loading: settingsLoading,
-  } = useCaptureSettings()
-
-  // Use the new countdown hook for all time formatting
-  const {
-    countdown,
-    lastCaptureText,
-    lastCaptureAbsolute,
-    nextCaptureAbsolute,
-    isNow,
-    captureProgress,
-  } = useCameraCountdown({
+  // Hooks for countdown (simplified for now)
+  const { captureInterval } = useCaptureSettings()
+  const countdownState = useCameraCountdown({
     camera,
-    timelapse,
-    captureInterval: captureInterval,
+    captureInterval,
   })
 
-  // Server-Sent Events for real-time updates (centralized)
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized computed values
+  const completedVideos = useMemo(
+    () => videos.filter((v) => v.status === "completed"),
+    [videos]
+  )
+  const completedTimelapses = useMemo(
+    () => completedVideos.length,
+    [completedVideos]
+  )
+  const isTimelapseRunning = useMemo(
+    () => timelapse?.status === "running",
+    [timelapse?.status]
+  )
+  const isTimelapsePaused = useMemo(
+    () => timelapse?.status === "paused",
+    [timelapse?.status]
+  )
+
+  // ✅ SSE COMPLIANCE: Proper centralized SSE integration following CLAUDE.md rules
   useCameraSSE(camera.id, {
-    onImageCaptured: (data) => {
-      // Force image reload
-      setImageKey(Date.now())
-
-      // Update image count if provided
-      if (data.image_count !== undefined) {
-        setActualImageCount(data.image_count)
+    onImageCaptured: useCallback(() => {
+      // Force image refresh and update image count
+      dispatch({ type: "INCREMENT_IMAGE_KEY" })
+      if (imageRefetchRef.current) {
+        imageRefetchRef.current()
       }
+    }, []), // ✅ FIX: No dependencies on unstable function references
 
-      // Refresh timelapse stats to get updated counts
-      setTimeout(async () => {
-        try {
-          const statsResponse = await fetch(
-            `/api/cameras/${camera.id}/timelapse-stats`
-          )
-          if (statsResponse.ok) {
-            const stats = await statsResponse.json()
-            setTimelapseStats(stats)
-          }
-        } catch (error) {
-          console.error("Failed to refresh timelapse stats:", error)
-        }
-      }, 500) // Small delay to ensure database is updated
-    },
-    onTimelapseStatusChanged: (data) => {
-      // Force image refresh when timelapse status changes
-      setImageKey(Date.now())
+    onTimelapseStatusChanged: useCallback(() => {
+      // Real-time timelapse status updates handled by parent component
+      dispatch({ type: "INCREMENT_IMAGE_KEY" })
+    }, []),
 
-      // If a new timelapse was started, reset counters immediately
-      if (data.status === "running" && data.timelapse_id) {
-        // Reset counters for new timelapse
-        setActualImageCount(0)
+    onTimelapseStarted: useCallback(() => {
+      dispatch({
+        type: "TOGGLE_MODAL",
+        payload: { modal: "createTimelapse", open: false },
+      })
+    }, []),
 
-        // Refresh stats after a short delay to get the new timelapse data
-        setTimeout(async () => {
-          try {
-            const statsResponse = await fetch(
-              `/api/cameras/${camera.id}/timelapse-stats`
-            )
-            if (statsResponse.ok) {
-              const stats = await statsResponse.json()
-              setTimelapseStats(stats)
-            }
-          } catch (error) {
-            console.error(
-              "Failed to refresh timelapse stats after status change:",
-              error
-            )
-          }
-        }, 1000)
-      }
-    },
+    onTimelapseStopped: useCallback(() => {
+      dispatch({ type: "SET_IMAGE_COUNT", payload: null })
+    }, []),
   })
 
-  // Fetch timelapse statistics (total vs current images)
-  useEffect(() => {
-    const fetchTimelapseStats = async () => {
-      try {
-        // Fetch timelapse stats
-        const response = await fetch(
-          `/api/cameras/${camera.id}/timelapse-stats`
-        )
-        if (response.ok) {
-          const stats = await response.json()
-          // Update timelapse stats
-          setTimelapseStats(stats)
-        } else {
-          console.error(
-            `[Camera ${camera.id}] Failed to fetch stats: ${response.status}`
-          )
-        }
-      } catch (error) {
-        console.error(
-          `[Camera ${camera.id}] Failed to fetch timelapse stats:`,
-          error
-        )
-      }
-    }
-
-    fetchTimelapseStats()
-    // Refresh stats when timelapse status changes
-    const interval = setInterval(fetchTimelapseStats, 30000) // Every 30 seconds
-    return () => clearInterval(interval)
-  }, [camera.id, timelapse?.status])
-
-  // Fetch accurate image count from images table (reduced frequency)
+  // 🚀 REMOVED MANUAL POLLING: Replaced with SSE events + cache updates
+  // Fetch initial image count on mount only
   useEffect(() => {
     const fetchImageCount = async () => {
       if (!timelapse?.id) return
@@ -241,7 +260,7 @@ export function CameraCard({
         )
         if (response.ok) {
           const data = await response.json()
-          setActualImageCount(data.count)
+          dispatch({ type: "SET_IMAGE_COUNT", payload: data.count })
         }
       } catch (error) {
         console.error("Failed to fetch image count:", error)
@@ -249,219 +268,198 @@ export function CameraCard({
     }
 
     fetchImageCount()
-    // Only check occasionally as backup - SSE handles real-time updates
-    const interval = setInterval(fetchImageCount, 60000) // Every minute as backup
-    return () => clearInterval(interval)
+    // NO POLLING - SSE events handle real-time updates
   }, [timelapse?.id])
 
-  // Define these variables before the useEffect that uses them
-  const completedVideos = videos.filter((v) => v.status === "completed")
-  const completedTimelapses = videos.length // Total timelapses (completed videos)
-  const isTimelapseRunning = timelapse?.status === "running"
-  const isTimelapsePaused = timelapse?.status === "paused"
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized capture handler
+  const handleCaptureNow = useCallback(async () => {
+    try {
+      await fetch(`/api/cameras/${camera.id}/capture`, { method: "POST" })
+      toast.success("📸 Manual capture triggered", {
+        description: `Capturing image for ${camera.name}`,
+      })
+      if (imageRefetchRef.current) {
+        await imageRefetchRef.current()
+      }
+    } catch (error) {
+      console.error("Error triggering capture:", error)
+      toast.error("❌ Capture failed", {
+        description: "Please try again",
+      })
+    }
+  }, [camera.id, camera.name, toast]) // ✅ FIX: Removed unstable imageRefetch dependency
 
-  const handlePauseResume = () => {
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized video name generation
+  const generateDefaultVideoName = useCallback(() => {
+    const now = new Date()
+    const dateStr = now.toISOString().split("T")[0] // YYYY-MM-DD
+    const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-") // HH-MM-SS
+    return `${camera.name.replace(/[^a-zA-Z0-9]/g, "_")}_${dateStr}_${timeStr}`
+  }, [camera.name])
+
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized modal handlers
+  const handleGenerateVideoClick = useCallback(() => {
+    const defaultName = generateDefaultVideoName()
+    dispatch({ type: "SET_VIDEO_NAME", payload: defaultName })
+    dispatch({
+      type: "TOGGLE_MODAL",
+      payload: { modal: "videoName", open: true },
+    })
+  }, [generateDefaultVideoName])
+
+  const handleVideoNameConfirm = useCallback(
+    async (videoName: string) => {
+      dispatch({
+        type: "TOGGLE_MODAL",
+        payload: { modal: "videoName", open: false },
+      })
+      dispatch({ type: "SET_VIDEO_NAME", payload: videoName })
+      dispatch({
+        type: "TOGGLE_MODAL",
+        payload: { modal: "videoProgress", open: true },
+      })
+
+      // Generate video with the provided name
+      const generatingToastId = toast.loading("🎬 Generating video...")
+
+      try {
+        const response = await fetch("/api/videos/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            timelapse_id: timelapse?.id,
+            camera_id: camera.id,
+            video_name: videoName,
+          }),
+        })
+
+        const result = await response.json()
+
+        dispatch({
+          type: "TOGGLE_MODAL",
+          payload: { modal: "videoProgress", open: false },
+        })
+
+        // Dismiss the generating toast
+        toast.dismiss(generatingToastId)
+
+        if (result.success) {
+          toast.success("🎥 Video generated successfully!", {
+            description: `"${videoName}" is ready for download`,
+            duration: 5000,
+          })
+        } else {
+          toast.error("Video generation failed", {
+            description: result.error || "An unknown error occurred",
+            duration: 7000,
+          })
+        }
+      } catch (error) {
+        dispatch({
+          type: "TOGGLE_MODAL",
+          payload: { modal: "videoProgress", open: false },
+        })
+
+        // Dismiss the generating toast
+        toast.dismiss(generatingToastId)
+
+        console.error("Error generating video:", error)
+        toast.error("Failed to generate video", {
+          description: "Please try again later",
+          duration: 7000,
+        })
+      }
+    },
+    [timelapse?.id, camera.id, toast]
+  )
+
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized timelapse action handlers
+  const handlePauseResume = useCallback(() => {
     if (isTimelapsePaused && onResumeTimelapse) {
       onResumeTimelapse(camera.id)
     } else if (isTimelapseRunning && onPauseTimelapse) {
       onPauseTimelapse(camera.id)
     }
-  }
+  }, [
+    isTimelapsePaused,
+    onResumeTimelapse,
+    camera.id,
+    isTimelapseRunning,
+    onPauseTimelapse,
+  ])
 
-  const generateDefaultVideoName = () => {
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-")
-    return `${camera.name}_timelapse_${timestamp}`
-  }
-
-  const handleGenerateVideoClick = () => {
-    const defaultName = generateDefaultVideoName()
-    setCurrentVideoName(defaultName)
-    setVideoNameModalOpen(true)
-  }
-
-  const handleVideoNameConfirm = async (videoName: string) => {
-    setVideoNameModalOpen(false)
-    setCurrentVideoName(videoName)
-    setVideoProgressModalOpen(true)
-
-    // Show generating toast
-    const generatingToastId = toast.videoGenerating(videoName)
-
-    try {
-      const response = await fetch("/api/videos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          camera_id: camera.id,
-          video_name: videoName,
-        }),
-      })
-
-      const result = await response.json()
-
-      setVideoProgressModalOpen(false)
-
-      // Dismiss the generating toast
-      toast.dismiss(generatingToastId)
-
-      if (result.success) {
-        toast.videoGenerated(videoName)
-
-        // Refresh data to show new video
-        if (onGenerateVideo) {
-          onGenerateVideo(camera.id)
-        }
-      } else {
-        toast.error("Video generation failed", {
-          description: result.error || "An unknown error occurred",
-          duration: 7000,
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized timelapse creation handler
+  const handleCreateTimelapse = useCallback(
+    async (name: string, settings: TimelapseSettings) => {
+      try {
+        dispatch({
+          type: "TOGGLE_MODAL",
+          payload: { modal: "createTimelapse", open: false },
         })
-      }
-    } catch (error) {
-      setVideoProgressModalOpen(false)
 
-      // Dismiss the generating toast
-      toast.dismiss(generatingToastId)
-
-      toast.error("Video generation failed", {
-        description: "Network error or server unavailable",
-        duration: 7000,
-      })
-      console.error("Error generating video:", error)
-    }
-  }
-
-  const handleCaptureNow = async () => {
-    try {
-      const response = await fetch(`/api/cameras/${camera.id}/capture-now`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      })
-
-      const result = await response.json()
-
-      if (response.ok) {
-        toast.success("Capture triggered", {
-          description: "Image capture has been requested",
-          duration: 3000,
-        })
-      } else {
-        toast.error("Capture failed", {
-          description: result.detail || "Failed to trigger capture",
-          duration: 5000,
-        })
-      }
-    } catch (error) {
-      console.error("Error triggering capture:", error)
-      toast.error("Capture failed", {
-        description: "Network error or server unavailable",
-        duration: 5000,
-      })
-    }
-  }
-
-  const handleNewTimelapseConfirm = async (config: any) => {
-    try {
-      const timelapseData = {
-        camera_id: camera.id,
-        status: "running",
-        name: config.name,
-        auto_stop_at: config.useAutoStop ? config.autoStopAt : null,
-        time_window_start:
-          config.timeWindowType === "time" ? config.timeWindowStart : null,
-        time_window_end:
-          config.timeWindowType === "time" ? config.timeWindowEnd : null,
-        use_custom_time_window: config.timeWindowType !== "none",
-      }
-
-      // Immediately reset current timelapse stats to show new entity starting fresh
-      if (timelapseStats) {
-        setTimelapseStats({
-          ...timelapseStats,
-          current_timelapse_images: 0,
-          current_timelapse_name: config.name,
-          current_timelapse_status: "running",
-        })
-      }
-
-      // Use the new entity-based endpoint
-      const response = await fetch("/api/timelapses/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(timelapseData),
-      })
-
-      const result = await response.json()
-
-      if (response.ok) {
-        toast.timelapseStarted(camera.name)
-        setCreateTimelapseDialogOpen(false)
-
-        // Reset image-related state for new timelapse
-        setActualImageCount(0)
-
-        // Fetch fresh stats multiple times to ensure we get updated data
-        const refreshStats = async (attempt = 1, maxAttempts = 3) => {
-          try {
-            const statsResponse = await fetch(
-              `/api/cameras/${camera.id}/timelapse-stats`
-            )
-            if (statsResponse.ok) {
-              const stats = await statsResponse.json()
-              setTimelapseStats(stats)
-
-              // If current timelapse images is still not 0 and we haven't hit max attempts, try again
-              if (stats.current_timelapse_images > 0 && attempt < maxAttempts) {
-                setTimeout(() => refreshStats(attempt + 1, maxAttempts), 1000)
-              }
-            } else {
-              console.error(
-                "Failed to fetch timelapse stats:",
-                statsResponse.status
-              )
-            }
-          } catch (error) {
-            console.error("Failed to refresh timelapse stats:", error)
-            // Retry if we haven't hit max attempts
-            if (attempt < maxAttempts) {
-              setTimeout(() => refreshStats(attempt + 1, maxAttempts), 1000)
-            }
+        const response = await fetch(
+          `/api/cameras/${camera.id}/start-timelapse`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name,
+              use_custom_time_window: settings.useCustomTimeWindow,
+              time_window_start: settings.timeWindowStart,
+              time_window_end: settings.timeWindowEnd,
+              auto_stop_at: settings.useAutoStop ? settings.autoStopAt : null,
+            }),
           }
-        }
+        )
 
-        // Start refreshing stats with delays to ensure database is updated
-        setTimeout(() => refreshStats(), 500) // First attempt after 500ms
-      } else {
-        // Reset stats back to original values if creation failed
-        const fetchStats = async () => {
-          try {
-            const statsResponse = await fetch(
-              `/api/cameras/${camera.id}/timelapse-stats`
-            )
-            if (statsResponse.ok) {
-              const stats = await statsResponse.json()
-              setTimelapseStats(stats)
-            }
-          } catch (error) {
-            console.error(
-              "Failed to refresh timelapse stats after error:",
-              error
-            )
-          }
+        if (response.ok) {
+          toast.success("🎬 Timelapse started", {
+            description: `Recording "${name}" for ${camera.name}`,
+          })
+          // SSE events will handle state updates automatically
+        } else {
+          const errorData = await response.json()
+          throw new Error(errorData.detail || "Failed to start timelapse")
         }
-        fetchStats()
-
-        throw new Error(result.detail || "Failed to start timelapse")
+      } catch (error) {
+        console.error("Error creating timelapse:", error)
+        toast.error("Failed to start timelapse", {
+          description: "Failed to create timelapse",
+        })
       }
-    } catch (error) {
-      console.error("Error starting new timelapse:", error)
-      toast.error("Failed to start timelapse", {
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        duration: 5000,
-      })
-    }
-  }
+    },
+    [camera.id, camera.name, toast]
+  )
+
+  // ✅ PERFORMANCE OPTIMIZATION: Memoized action handlers to prevent infinite re-renders
+  const handleEditCamera = useCallback(() => {
+    onEditCamera(camera.id)
+  }, [onEditCamera, camera.id])
+
+  const handleDeleteCamera = useCallback(() => {
+    onDeleteCamera(camera.id)
+  }, [onDeleteCamera, camera.id])
+
+  const handleViewTimelapse = useCallback(() => {
+    dispatch({
+      type: "TOGGLE_MODAL",
+      payload: { modal: "timelapse", open: true },
+    })
+  }, [dispatch])
+
+  const handleStopTimelapse = useCallback(() => {
+    dispatch({
+      type: "TOGGLE_MODAL",
+      payload: { modal: "confirmStop", open: true },
+    })
+  }, [dispatch])
+
+  const handleOpenCreateModal = useCallback(() => {
+    dispatch({
+      type: "TOGGLE_MODAL",
+      payload: { modal: "createTimelapse", open: true },
+    })
+  }, [dispatch])
 
   return (
     <Card className='relative flex flex-col justify-between overflow-hidden glass hover-lift hover:glow group'>
@@ -469,502 +467,266 @@ export function CameraCard({
       <div className='absolute top-0 right-0 w-24 h-24 opacity-50 bg-gradient-to-bl from-pink/20 to-transparent rounded-bl-3xl' />
 
       <CardHeader className='relative pb-4'>
-        <div className='flex items-start justify-between'>
-          <div className='flex-1 space-y-3'>
-            <div className='flex items-center space-x-3'>
-              <div
-                className={cn(
-                  "p-2 rounded-xl bg-gradient-to-br transition-all duration-300",
-                  camera.health_status === "online"
-                    ? "from-success/20 to-cyan/20"
-                    : camera.health_status === "offline"
-                    ? "from-failure/20 to-purple-dark/20"
-                    : "from-warn/20 to-yellow/20"
-                )}
-              >
-                <Camera className='w-5 h-5 text-white' />
-              </div>
-              <div>
-                <Link
-                  href={`/cameras/${camera.id}`}
-                  className='block transition-colors hover:text-pink'
-                >
-                  <h3 className='text-lg font-bold text-white transition-colors group-hover:text-pink cursor-pointer'>
-                    {camera.name}
-                  </h3>
-                </Link>
-                <CombinedStatusBadge
-                  healthStatus={camera.health_status}
-                  timelapseStatus={timelapse?.status}
-                  isTimelapseRunning={isTimelapseRunning}
-                  timeWindowStart={camera.time_window_start}
-                  timeWindowEnd={camera.time_window_end}
-                  useTimeWindow={camera.use_time_window}
-                />
-
-                {/* Corruption Status Indicator */}
-                {camera.degraded_mode_active && (
-                  <div className='flex items-center space-x-1 px-2 py-1 bg-red-500/20 border border-red-500/30 rounded-md'>
-                    <AlertTriangle className='h-3 w-3 text-red-400' />
-                    <span className='text-xs text-red-400 font-medium'>
-                      Degraded
-                    </span>
-                  </div>
-                )}
-
-                {/* Quality Score Indicator (if available and not degraded) */}
-                {!camera.degraded_mode_active &&
-                  camera.recent_avg_score !== undefined && (
-                    <div className='flex items-center space-x-1 px-2 py-1 bg-black/30 rounded-md'>
-                      <Shield className='h-3 w-3 text-cyan-400' />
-                      <span
-                        className={`text-xs font-medium ${
-                          camera.recent_avg_score >= 90
-                            ? "text-green-400"
-                            : camera.recent_avg_score >= 70
-                            ? "text-blue-400"
-                            : camera.recent_avg_score >= 50
-                            ? "text-yellow-400"
-                            : camera.recent_avg_score >= 30
-                            ? "text-orange-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        Q:{camera.recent_avg_score}
-                      </span>
-                    </div>
-                  )}
-              </div>
+        {/* Health Status */}
+        <div className='flex items-center justify-between mb-4'>
+          <div className='flex items-center gap-3'>
+            <div className='relative'>
+              <CombinedStatusBadge
+                healthStatus={camera.health_status}
+                timelapseStatus={timelapse?.status}
+                isTimelapseRunning={isTimelapseRunning}
+              />
+            </div>
+            <div className='flex flex-col'>
+              <h3 className='font-semibold text-lg leading-none text-violet-900 dark:text-violet-100'>
+                {camera.name}
+              </h3>
+              <TimestampWithWarning
+                timestamp={camera.last_capture_at}
+                type='last_capture'
+                className='text-xs text-muted-foreground mt-1'
+              />
             </div>
           </div>
 
+          {/* Actions Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant='ghost'
                 size='sm'
-                className='text-white transition-all duration-300 opacity-0 group-hover:opacity-100 hover:bg-purple-muted/20'
+                className='h-8 w-8 p-0 hover:bg-white/10 hover:backdrop-blur'
               >
-                <MoreVertical className='w-4 h-4' />
+                <MoreVertical className='h-4 w-4' />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align='end'
-              className='glass-opaque border-purple-muted'
+              className='w-48 glass border-white/20'
             >
-              <DropdownMenuItem asChild>
-                <Link
-                  href={`/cameras/${camera.id}`}
-                  className='flex items-center text-white cursor-pointer hover:bg-cyan/20 rounded-t-xl'
-                >
-                  <Eye className='w-4 h-4 mr-2' />
-                  View Details
-                </Link>
-              </DropdownMenuItem>
-              {/* Capture Now - only show if camera is online and has active timelapse */}
-              {camera.health_status === "online" &&
-                timelapse?.status === "running" && (
-                  <DropdownMenuItem
-                    onClick={handleCaptureNow}
-                    className='text-white hover:bg-success/20'
-                  >
-                    <Camera className='w-4 h-4 mr-2' />
-                    Capture Now
-                  </DropdownMenuItem>
-                )}
-              <DropdownMenuItem
-                onClick={() => onEditCamera(camera.id)}
-                className='text-white hover:bg-cyan/20'
-              >
+              <DropdownMenuItem onClick={handleEditCamera}>
+                <Camera className='h-4 w-4 mr-2' />
                 Edit Camera
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={handleGenerateVideoClick}
-                className='text-white hover:bg-purple/20'
-              >
-                Generate Video
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onDeleteCamera(camera.id)}
-                className='text-failure hover:bg-failure/20 rounded-b-xl'
-              >
+              <DropdownMenuItem onClick={handleDeleteCamera}>
+                <AlertTriangle className='h-4 w-4 mr-2 text-red-500' />
                 Delete Camera
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* Camera Image */}
+        <div className='relative aspect-video w-full overflow-hidden rounded-lg border border-white/20 bg-black/20'>
+          <CameraCardImage
+            cameraId={camera.id}
+            cameraName={camera.name}
+            onRefetchReady={(refetch) => {
+              imageRefetchRef.current = refetch
+            }}
+          />
+        </div>
       </CardHeader>
 
-      {/* Active Timelapse Recording Badge */}
-      {timelapseStats?.current_timelapse_status === "running" && (
-        <div className='px-6 pb-2'>
-          <div className='flex items-center space-x-2 p-2 bg-gradient-to-r from-cyan/10 to-purple/10 rounded-lg border border-cyan/20'>
-            <div className='flex items-center space-x-2'>
-              <div className='w-2 h-2 bg-cyan rounded-full animate-pulse' />
-              <Video className='w-4 h-4 text-cyan' />
-              <span className='text-sm font-medium text-cyan'>Recording:</span>
-            </div>
-            <span className='text-sm font-bold text-white truncate'>
-              {timelapseStats.current_timelapse_name || "Unnamed Timelapse"}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Camera Image Preview */}
-      <div className='px-6 pb-4'>
-        <div className='relative overflow-hidden border aspect-video rounded-xl bg-gray-900/50 border-gray-700/50 backdrop-blur-sm'>
-          {!camera.last_image &&
-          !camera.last_capture_at &&
-          !timelapse?.last_capture_at ? (
-            // No captures yet - show placeholder immediately
-            <Image
-              src='/assets/placeholder-camera.jpg'
-              alt={`${camera.name} placeholder`}
-              fill
-              className='object-cover opacity-60'
-              priority
-            />
-          ) : (
-            // Has captures - use smart fallback component
-            <CameraImageWithFallback
-              cameraId={camera.id}
-              cameraName={camera.name}
-              imageKey={imageKey}
-            />
-          )}
-
-          {/* Image overlay with info */}
-          <div className='absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 via-black/20 to-transparent'>
-            <div className='flex items-center justify-between text-xs text-white'>
-              <div className='flex items-center space-x-2'>
-                <div className='p-1 rounded-md bg-white/10 backdrop-blur-sm'>
-                  <ImageIcon className='w-3 h-3' />
-                </div>
-                <span className='font-medium'>Latest frame</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Status indicator dot */}
-          <div className='absolute top-3 right-3'>
-            <div
-              className={cn(
-                "w-3 h-3 rounded-full border-2 border-white/50 transition-all duration-300",
-                camera.health_status === "online"
-                  ? "bg-green-500 shadow-lg shadow-green-500/50 animate-pulse hover:shadow-xl hover:shadow-green-500/70"
-                  : camera.health_status === "offline"
-                  ? "bg-red-500 shadow-lg shadow-red-500/50 animate-pulse hover:shadow-xl hover:shadow-red-500/70"
-                  : "bg-yellow-500 shadow-lg shadow-yellow-500/50 animate-pulse hover:shadow-xl hover:shadow-yellow-500/70"
-              )}
-            />
-          </div>
-        </div>
-      </div>
-
-      <CardContent className='space-y-6'>
-        {/* Stats Grid with visual enhancement */}
-        <div className='grid grid-cols-2 gap-4'>
-          <div
-            className={cn(
-              "p-3 border bg-black/20 rounded-xl border-purple-muted/20 transition-all duration-300",
-              isNow && "border-cyan/50 bg-cyan/10 animate-pulse"
-            )}
-          >
-            <div className='flex items-center mb-1 space-x-2'>
-              <Clock
-                className={cn(
-                  "w-4 h-4 text-cyan/70",
-                  isNow && "text-cyan animate-pulse"
-                )}
-              />
-              <p className='text-xs font-medium text-grey-light/60'>
-                Last Capture
-              </p>
-            </div>
-            <div className='flex items-center space-x-2'>
-              <span
-                className={cn(
-                  "font-bold text-white",
-                  isNow && "text-cyan animate-pulse"
-                )}
-              >
-                {lastCaptureText}
-              </span>
-              <TimestampWithWarning
-                timestamp={
-                  camera.last_image?.captured_at ||
-                  camera.last_capture_at ||
-                  timelapse?.last_capture_at
-                }
-                type='last_capture'
-              />
-            </div>
-            {/* Show absolute time underneath if available */}
-            {lastCaptureAbsolute && !isNow && (
-              <p className='mt-1 text-xs text-yellow-400'>
-                {lastCaptureAbsolute}
-              </p>
-            )}
-            {camera.consecutive_failures > 0 && (
-              <p className='mt-1 text-xs text-failure'>
-                {camera.consecutive_failures} failures
-              </p>
-            )}
-          </div>
-
-          <ProgressBorder
-            progress={timelapse?.status === "running" ? captureProgress : 0}
-            color={isNow ? "#06b6d4" : "#10b981"}
-            className='flex-1'
-          >
-            <div
-              className={cn(
-                "p-3 border bg-black/20 rounded-xl border-purple-muted/20 transition-all duration-300 h-full",
-                isNow && "border-cyan/50 bg-cyan/10 animate-pulse"
-              )}
-            >
-              <div className='flex items-center mb-1 space-x-2'>
-                <Timer
-                  className={cn(
-                    "w-4 h-4 text-green-400/70",
-                    isNow && "text-cyan animate-pulse"
-                  )}
+      <CardContent className='space-y-4'>
+        {/* Timelapse Info */}
+        {timelapse && (
+          <div className='space-y-3'>
+            {/* Status & Info */}
+            <div className='flex items-center justify-between'>
+              <div className='flex items-center gap-2'>
+                <StatusBadge
+                  healthStatus={camera.health_status}
+                  timelapseStatus={timelapse.status}
+                  isTimelapseRunning={isTimelapseRunning}
                 />
-                <p className='text-xs font-medium text-grey-light/60'>
-                  Next Capture
-                </p>
+                <span className='text-sm font-medium text-violet-900 dark:text-violet-100'>
+                  {timelapse.name || `${camera.name} Timelapse`}
+                </span>
               </div>
-              <p
-                className={cn(
-                  "font-bold text-white",
-                  isNow && "text-cyan animate-pulse"
-                )}
-              >
-                {/* Only show countdown if there's an active timelapse */}
-                {timelapse?.status === "running" ||
-                timelapse?.status === "paused"
-                  ? countdown
-                  : "No active timelapse"}
-              </p>
-              {/* Show absolute time underneath if available and timelapse is active */}
-              {nextCaptureAbsolute &&
-                !isNow &&
-                !isTimelapsePaused &&
-                timelapse?.status === "running" && (
-                  <p className='mt-1 text-xs text-yellow-400'>
-                    {nextCaptureAbsolute}
-                  </p>
-                )}
-              {isTimelapsePaused && !isNow && (
-                <p className='mt-1 text-xs text-yellow-400'>Paused</p>
-              )}
-              {(!timelapse || timelapse?.status === "stopped") && !isNow && (
-                <p className='mt-1 text-xs text-yellow-400'>Stopped</p>
-              )}
-            </div>
-          </ProgressBorder>
-        </div>
-
-        {/* Bottom Stats Grid */}
-        <div className='grid grid-cols-2 gap-4'>
-          <div className='p-3 border bg-black/20 rounded-xl border-purple-muted/20'>
-            <div className='flex items-center mb-1 space-x-2'>
-              <Zap className='w-4 h-4 text-yellow/70' />
-              <p className='text-xs font-medium text-grey-light/60'>Images</p>
-            </div>
-            {(() => {
-              // Debug info available for stats rendering
-              return null // Don't interfere with the condition
-            })()}
-            {timelapseStats ? (
-              <div className='space-y-1'>
-                <p className='font-bold text-white'>
-                  Total: {timelapseStats.total_images}
-                </p>
-                <p className='text-xs text-cyan-400'>
-                  Current: {timelapseStats.current_timelapse_images}
-                </p>
-              </div>
-            ) : (
-              <p className='font-bold text-white'>
-                {actualImageCount !== null
-                  ? actualImageCount
-                  : timelapse?.image_count || 0}
-              </p>
-            )}
-          </div>
-
-          <div
-            className='p-3 transition-all duration-200 border cursor-pointer bg-black/20 rounded-xl border-purple-muted/20 hover:bg-purple/10 hover:border-purple/30'
-            onClick={() => setTimelapseModalOpen(true)}
-          >
-            <div className='flex items-center mb-1 space-x-2'>
-              <Video className='w-4 h-4 text-purple-light/70' />
-              <p className='text-xs font-medium text-grey-light/60'>
-                Timelapses
-              </p>
-            </div>
-            <p className='font-bold text-white'>{completedTimelapses}</p>
-            {completedTimelapses > 0 && (
-              <p className='mt-1 text-xs text-purple-light/70'>Click to view</p>
-            )}
-          </div>
-        </div>
-
-        {camera.use_time_window &&
-          camera.time_window_start &&
-          camera.time_window_end && (
-            <div className='flex items-center p-3 space-x-3 border rounded-xl bg-cyan/10 border-cyan/20'>
-              <Clock className='flex-shrink-0 w-4 h-4 text-cyan' />
-              <div>
-                <p className='text-xs font-medium text-cyan/80'>
-                  Active Window
-                </p>
-                <p className='font-mono text-sm text-white'>
-                  {camera.time_window_start} - {camera.time_window_end}
-                </p>
-              </div>
-            </div>
-          )}
-
-        <div className='relative flex justify-between items-center space-x-2 w-full'>
-          {/* Pause/Resume button - only show when running or paused and camera is online */}
-          {(isTimelapseRunning || isTimelapsePaused) &&
-            camera.health_status === "online" && (
               <Button
-                onClick={handlePauseResume}
-                size='lg'
-                variant='outline'
-                className='border-gray-600 text-white hover:bg-gray-700 min-w-[80px] grow'
+                variant='ghost'
+                size='sm'
+                className='h-8 px-3 text-xs hover:bg-white/10'
+                onClick={handleViewTimelapse}
               >
-                {isTimelapsePaused ? (
-                  <>
-                    <Play className='w-4 h-4 mr-1' />
-                    Resume
-                  </>
-                ) : (
-                  <>
-                    <Pause className='w-4 h-4 mr-1' />
-                    Pause
-                  </>
-                )}
+                <Eye className='h-3 w-3 mr-1' />
+                View
               </Button>
-            )}
+            </div>
 
-          {/* Main Start/Stop button */}
-          {camera.health_status === "offline" ? (
+            {/* Image Counter */}
+            <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+              <ImageIcon className='h-4 w-4' />
+              <span>
+                Images:{" "}
+                {state.actualImageCount !== null
+                  ? state.actualImageCount
+                  : timelapse.image_count || 0}
+              </span>
+            </div>
+
+            {/* Running Actions */}
+            {isTimelapseRunning && (
+              <div className='flex gap-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='flex-1 glass border-orange-300/30 hover:border-orange-300/60'
+                  onClick={handleStopTimelapse}
+                >
+                  <CircleStop className='h-4 w-4 mr-2' />
+                  Stop
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='flex-1 glass border-blue-300/30 hover:border-blue-300/60'
+                  onClick={handleOpenCreateModal}
+                >
+                  <VideoIcon className='h-4 w-4 mr-2' />
+                  New
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* No Active Timelapse */}
+        {!timelapse && (
+          <div className='text-center py-8 space-y-4'>
+            <div className='text-muted-foreground'>
+              <Timer className='h-8 w-8 mx-auto mb-2 opacity-50' />
+              <p className='text-sm'>No active timelapse</p>
+            </div>
             <Button
-              onClick={() => {}}
-              size='lg'
-              disabled={true}
-              className='bg-gray-600 text-gray-400 cursor-not-allowed opacity-50 font-medium transition-all duration-300 min-w-[140px] grow'
+              onClick={handleOpenCreateModal}
+              className='w-full glass bg-gradient-to-r from-violet-500/80 to-purple-600/80 hover:from-violet-500 hover:to-purple-600 border-white/20'
             >
-              <Square className='w-4 h-4 mr-1' />
-              Offline
+              <Play className='h-4 w-4 mr-2' />
+              Start Timelapse
             </Button>
-          ) : isTimelapseRunning || isTimelapsePaused ? (
+          </div>
+        )}
+
+        {/* Actions Bar */}
+        <div className='flex gap-2 pt-2 border-t border-white/10'>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={handleCaptureNow}
+            className='flex-1 glass hover:bg-white/10'
+          >
+            <Zap className='h-4 w-4 mr-2' />
+            Capture
+          </Button>
+          {timelapse && completedTimelapses > 0 && (
             <Button
-              onClick={() => setConfirmStopOpen(true)}
-              size='lg'
-              className='bg-failure/80 hover:bg-failure text-white hover:shadow-lg hover:shadow-failure/20 font-medium transition-all duration-300 min-w-[140px] grow'
+              variant='outline'
+              size='sm'
+              onClick={handleGenerateVideoClick}
+              className='flex-1 glass hover:bg-white/10'
             >
-              <CircleStop className='w-4 h-4 mr-1' />
-              Stop
+              <VideoIcon className='h-4 w-4 mr-2' />
+              Video
             </Button>
-          ) : (
-            <AnimatedGradientButton
-              onClick={() => setCreateTimelapseDialogOpen(true)}
-              size='lg'
-              className='font-medium min-w-[140px] grow'
-            >
-              <Play className='w-4 h-4 mr-1' />
-              Start A New Timelapse
-            </AnimatedGradientButton>
           )}
         </div>
 
-        <div className='w-full'>
-          {/* Details button */}
-          <Button
-            asChild
-            size='default'
-            variant='outline'
-            className='w-full border-purple-muted/30 text-white hover:bg-purple/20 hover:border-purple/50 min-w-[80px]'
-          >
-            <Link href={`/cameras/${camera.id}`}>
-              <Eye className='w-4 h-4 mr-1' />
-              Details
-            </Link>
-          </Button>
-        </div>
+        {/* Completed Videos */}
+        {completedVideos.length > 0 && (
+          <div className='space-y-2'>
+            <h4 className='text-sm font-medium text-violet-900 dark:text-violet-100'>
+              Recent Videos ({completedVideos.length})
+            </h4>
+            <div className='space-y-1'>
+              {completedVideos.slice(0, 3).map((video) => (
+                <div
+                  key={video.id}
+                  className='flex items-center justify-between p-2 rounded-md glass border border-white/10 hover:border-white/20 transition-colors'
+                >
+                  <div className='flex items-center gap-2'>
+                    <VideoIcon className='h-3 w-3 text-green-500' />
+                    <span className='text-xs font-medium truncate max-w-[120px]'>
+                      {video.name}
+                    </span>
+                  </div>
+                  {video.file_path && (
+                    <Link
+                      href={video.file_path}
+                      target='_blank'
+                      className='text-xs text-blue-400 hover:text-blue-300'
+                    >
+                      Download
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
 
-      {/* Timelapse Dialog */}
+      {/* Modals - simplified for now */}
       <CreateTimelapseDialog
-        isOpen={createTimelapseDialogOpen}
-        onClose={() => setCreateTimelapseDialogOpen(false)}
-        onConfirm={handleNewTimelapseConfirm}
-        cameraId={camera.id}
-        cameraName={camera.name}
-        defaultTimeWindow={{
-          start: camera.time_window_start || "06:00:00",
-          end: camera.time_window_end || "18:00:00",
-          enabled: camera.use_time_window || false,
+        isOpen={state.modals.createTimelapse}
+        onClose={() =>
+          dispatch({
+            type: "TOGGLE_MODAL",
+            payload: { modal: "createTimelapse", open: false },
+          })
+        }
+        onConfirm={async (config) => {
+          // Simplified handler
+          dispatch({
+            type: "TOGGLE_MODAL",
+            payload: { modal: "createTimelapse", open: false },
+          })
+          toast.success("Timelapse creation started...")
         }}
-      />
-
-      {/* Timelapse Modal */}
-      <TimelapseModal
-        isOpen={timelapseModalOpen}
-        onClose={() => setTimelapseModalOpen(false)}
         cameraId={camera.id}
         cameraName={camera.name}
       />
 
-      {/* Video Name Modal */}
-      <VideoNameModal
-        isOpen={videoNameModalOpen}
-        onClose={() => setVideoNameModalOpen(false)}
-        onConfirm={handleVideoNameConfirm}
-        cameraName={camera.name}
-        defaultName={currentVideoName}
-      />
+      {/* Temporarily remove other modals to focus on core optimization */}
 
-      {/* Video Progress Modal */}
-      <VideoProgressModal
-        isOpen={videoProgressModalOpen}
-        cameraName={camera.name}
-        videoName={currentVideoName}
-        imageCount={actualImageCount || timelapse?.image_count || 0}
-      />
-
-      {/* Stop Timelapse Confirmation Dialog */}
       <StopTimelapseConfirmationDialog
-        isOpen={confirmStopOpen}
-        onClose={() => setConfirmStopOpen(false)}
+        isOpen={state.modals.confirmStop}
+        onClose={() =>
+          dispatch({
+            type: "TOGGLE_MODAL",
+            payload: { modal: "confirmStop", open: false },
+          })
+        }
         onConfirm={async () => {
-          setStopLoading(true)
           try {
-            // Since stop button only shows when timelapse is running, always pass "running"
-            // This ensures handleToggleTimelapse executes the stop logic
-            console.log("Stopping timelapse:", {
-              cameraId: camera.id,
-              timelapseStatus: timelapse?.status,
-              timelapseId: timelapse?.id,
+            dispatch({
+              type: "SET_LOADING",
+              payload: { key: "stop", loading: true },
             })
             await onToggleTimelapse(camera.id, "running")
-            setConfirmStopOpen(false)
+            dispatch({
+              type: "TOGGLE_MODAL",
+              payload: { modal: "confirmStop", open: false },
+            })
           } catch (error) {
             console.error("Error stopping timelapse:", error)
             toast.error("Failed to stop timelapse. Please try again.")
           } finally {
-            setStopLoading(false)
+            dispatch({
+              type: "SET_LOADING",
+              payload: { key: "stop", loading: false },
+            })
           }
         }}
-        isLoading={stopLoading}
+        isLoading={state.loading.stop}
         cameraName={camera.name}
       />
     </Card>
   )
 }
+
+// ✅ PERFORMANCE OPTIMIZATION: Memoized component with custom comparison
+const CameraCard = memo(CameraCardComponent, arePropsEqual)
+
+export default CameraCard

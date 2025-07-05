@@ -9,7 +9,7 @@ while maintaining security by not exposing internal details.
 import traceback
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timezone
 from ..utils.timezone_utils import get_timezone_aware_timestamp_from_settings, utc_now
 
 from fastapi import Request, Response, HTTPException
@@ -155,7 +155,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
         response_data = {
             "error": {
                 "type": "validation_error",
@@ -190,7 +190,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
         response_data = {
             "error": {
                 "type": "database_error",
@@ -220,7 +220,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
         response_data = {
             "error": {
                 "type": "internal_error",

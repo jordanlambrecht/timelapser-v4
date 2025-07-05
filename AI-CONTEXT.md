@@ -19,7 +19,8 @@ All Components
 
 **Why This Architecture**:
 
-- **Centralized SSE Real-time Updates**: Single SSE connection via React Context, shared across all components (prevents 79+ connection spam)
+- **Centralized SSE Real-time Updates**: Single SSE connection via React
+  Context, shared across all components (prevents 79+ connection spam)
 - **SSE Proxy Pattern**: Frontend → Next.js API → FastAPI SSE avoids CORS issues
 - **Dual Database Pattern**: Async (FastAPI web requests) + Sync (Worker
   background tasks)
@@ -30,11 +31,25 @@ All Components
 
 ### Time Calculation Rules
 
-1. **Always use `useCaptureSettings()` hook** to get timezone in components
+1. **Always use `useCaptureSettings()` hook from settings context** to get ALL
+   settings in components (timezone, capture_interval, etc.)
 2. **Never use raw `new Date()` or browser timezone** for display calculations
 3. **All countdown and relative time calculations must pass timezone parameter**
 4. **Time windows are calculated in database-configured timezone, not browser
    local**
+
+### Settings Context Rules
+
+1. **Always use centralized `useCaptureSettings()` from
+   `@/contexts/settings-context`** - Never fetch settings directly in components
+2. **Settings context provides single source of truth** - Automatic caching with
+   5-minute TTL
+3. **Never import settings hooks from individual components** - Use the
+   centralized context only
+4. **Settings context handles error gracefully** - Provides fallback values when
+   API fails
+5. **All settings-dependent components must be wrapped** - Ensure
+   `<SettingsProvider>` wraps the app layout
 
 ### Entity-Based Architecture Rules
 
@@ -81,49 +96,68 @@ All Components
 
 ### Real-time Event System Rules (CRITICAL - Performance Impact)
 
-1. **NEVER create individual EventSource connections** - Each component using `new EventSource("/api/events")` creates separate connections
-2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>` in app layout
+1. **NEVER create individual EventSource connections** - Each component using
+   `new EventSource("/api/events")` creates separate connections
+2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>`
+   in app layout
 3. **Use specialized hooks for event subscriptions**:
    - `useCameraSSE(cameraId, callbacks)` - Camera-specific events
-   - `useDashboardSSE(callbacks)` - Global dashboard events  
+   - `useDashboardSSE(callbacks)` - Global dashboard events
    - `useSSESubscription(filter, callback)` - Custom event filtering
-4. **No console.log spam** - SSE connections should be silent after initial establishment
-5. **Connection sharing principle** - All components share one SSE connection, never create multiple
-6. **Event filtering at component level** - Filter by camera_id or event type in hooks, not in API
+4. **No console.log spam** - SSE connections should be silent after initial
+   establishment
+5. **Connection sharing principle** - All components share one SSE connection,
+   never create multiple
+6. **Event filtering at component level** - Filter by camera_id or event type in
+   hooks, not in API
 7. **Proper cleanup** - Hooks handle subscription/unsubscription automatically
 
-**Why This Matters**: Multiple EventSource connections caused 79+ simultaneous connections with rapid cycling. Centralized system achieves 99% connection reduction while maintaining same real-time functionality.
+**Why This Matters**: Multiple EventSource connections caused 79+ simultaneous
+connections with rapid cycling. Centralized system achieves 99% connection
+reduction while maintaining same real-time functionality.
 
 **Files in Centralized SSE System**:
+
 - `/src/contexts/sse-context.tsx` - Single connection management
 - `/src/hooks/use-camera-sse.ts` - Specialized event hooks
 - Components use hooks, never direct EventSource connections
 
 **SSE Event Structure (CRITICAL)**:
+
 - **ALWAYS use proper event structure**: `{ type, data: {...}, timestamp }`
-- ✅ Correct: `event.data.camera_id`, `event.data.image_count`, `event.data.status`
+- ✅ Correct: `event.data.camera_id`, `event.data.image_count`,
+  `event.data.status`
 - ❌ Wrong: `event.camera_id` (data directly on event object)
 - All events MUST nest data under the `data` property for consistency
 
 ### Corruption Detection System Rules (CRITICAL - Quality Control)
 
-1. **NEVER bypass corruption integration** - All image captures must go through corruption detection pipeline
-2. **ALWAYS use WorkerCorruptionIntegration.evaluate_with_retry()** - Never call RTSPCapture.capture_image() directly
-3. **Use per-camera heavy detection settings** - Respect `corruption_detection_heavy` flag from database
-4. **NEVER skip corruption scoring** - Every captured image must receive a corruption score (0-100)
-5. **Proper retry logic** - Failed corruption checks trigger automatic retry when auto-discard enabled
-6. **Database logging required** - All corruption evaluations must be logged to `corruption_logs` table
-7. **SSE events for corruption** - Broadcast corruption events for real-time UI updates
-8. **Graceful degradation** - System continues if corruption detection fails, with error logging
+1. **NEVER bypass corruption integration** - All image captures must go through
+   corruption detection pipeline
+2. **ALWAYS use WorkerCorruptionIntegration.evaluate_with_retry()** - Never call
+   RTSPCapture.capture_image() directly
+3. **Use per-camera heavy detection settings** - Respect
+   `corruption_detection_heavy` flag from database
+4. **NEVER skip corruption scoring** - Every captured image must receive a
+   corruption score (0-100)
+5. **Proper retry logic** - Failed corruption checks trigger automatic retry
+   when auto-discard enabled
+6. **Database logging required** - All corruption evaluations must be logged to
+   `corruption_logs` table
+7. **SSE events for corruption** - Broadcast corruption events for real-time UI
+   updates
+8. **Graceful degradation** - System continues if corruption detection fails,
+   with error logging
 
 **Corruption Detection Integration Pattern**:
+
 ```python
 # ✅ CORRECT - Corruption-aware capture
 success, message, file_path, corruption_details = self.corruption_integration.evaluate_with_retry(
     camera_id, rtsp_url, capture_func, timelapse_id
 )
 
-# ❌ WRONG - Direct capture bypasses corruption detection  
+# ❌ WRONG - Direct capture bypasses corruption detection
 success, message, file_path = self.capture.capture_image(...)
 ```
 
@@ -144,51 +178,66 @@ success, message, file_path = self.capture.capture_image(...)
 - **Synchronous database calls in FastAPI** - Use async_db only
 - **Absolute paths in database** - Store relative paths from project root
 - **FK-based latest image tracking** - Use query-based LATERAL joins only
-- **Non-existent image endpoints** - Never reference `/api/images/{id}/thumbnail`
+- **Non-existent image endpoints** - Never reference
+  `/api/images/{id}/thumbnail`
 - **Simple browser-local time calculations** - Always use timezone-aware system
-- **Individual EventSource connections** - Creates connection spam (79+ connections), use centralized SSE system only
+- **Individual EventSource connections** - Creates connection spam (79+
+  connections), use centralized SSE system only
 - **Direct RTSP capture calls** - Always use corruption detection wrapper
 - **eventEmitter for corruption events** - Use SSE subscriptions only
 - **Manual corruption scoring** - Use CorruptionController.evaluate_frame()
 - **Hardcoded corruption thresholds** - Load from database settings
+- **Direct settings API calls in components** - Always use centralized settings
+  context
+- **Individual hooks for settings management** - Use `useCaptureSettings()` from
+  context only
+- **Duplicate settings fetching** - Settings context handles caching
+  automatically
 
 ## 🛡️ CORRUPTION DETECTION SYSTEM ARCHITECTURE
 
-**Purpose**: Automatically detect and handle corrupted images from RTSP cameras to ensure professional-quality timelapses.
+**Purpose**: Automatically detect and handle corrupted images from RTSP cameras
+to ensure professional-quality timelapses.
 
 ### **Core Components Architecture**
+
 ```
 RTSP Capture → CorruptionController → FastDetector + HeavyDetector → ScoreCalculator → ActionHandler → Database + Events
 ```
 
 **Component Breakdown**:
+
 - **CorruptionController**: Central orchestrator managing the detection pipeline
 - **FastDetector**: Lightweight heuristic checks (1-5ms) - always enabled
-- **HeavyDetector**: Computer vision analysis (20-100ms) - per-camera optional  
+- **HeavyDetector**: Computer vision analysis (20-100ms) - per-camera optional
 - **ScoreCalculator**: Weighted scoring algorithm (0-100 scale)
 - **ActionHandler**: Retry/discard logic based on corruption scores
 - **HealthMonitor**: Camera degraded mode tracking
 
 ### **Integration Architecture**
+
 ```
 Worker.capture_from_camera() → WorkerCorruptionIntegration.evaluate_with_retry() → CorruptionController.evaluate_frame() → Database.log_corruption_detection() → SSE Events
 ```
 
 **Critical Integration Points**:
-1. **Worker Integration**: `AsyncTimelapseWorker.__init__()` initializes corruption detection
+
+1. **Worker Integration**: `AsyncTimelapseWorker.__init__()` initializes
+   corruption detection
 2. **Capture Pipeline**: Every image capture goes through corruption evaluation
 3. **Database Logging**: All evaluations logged to `corruption_logs` table
 4. **Real-time Events**: Corruption events broadcast via SSE system
 5. **Per-Camera Settings**: Heavy detection enabled/disabled per camera
 
 ### **Scoring Algorithm**
+
 ```
 Starting Score: 100 (Perfect Image)
 Final Score = max(0, Starting Score - Total Penalties)
 
 Score Ranges:
 - 90-100: Excellent quality (save)
-- 70-89:  Good quality (save)  
+- 70-89:  Good quality (save)
 - 50-69:  Acceptable quality (save)
 - 30-49:  Poor quality (flag for review)
 - 0-29:   Severely corrupted (auto-discard candidate)
@@ -198,20 +247,24 @@ Final Score = (Fast_Score * 30%) + (Heavy_Score * 70%)
 ```
 
 ### **Fast Detection Checks (Always Enabled)**
+
 - **File Size Validation**: 25KB minimum, 10MB maximum
 - **Pixel Statistics**: Mean intensity, variance, uniformity analysis
 - **Basic Validity**: Image dimensions, channel count, data type verification
 - **Performance**: 1-5ms per image
 
-### **Heavy Detection Checks (Per-Camera Optional)**  
+### **Heavy Detection Checks (Per-Camera Optional)**
+
 - **Blur Detection**: Laplacian variance analysis (threshold: 100)
-- **Edge Analysis**: Canny edge detection with density measurement (1%-50% range)
+- **Edge Analysis**: Canny edge detection with density measurement (1%-50%
+  range)
 - **Noise Detection**: Median filter comparison for noise ratio (max 30%)
 - **Histogram Analysis**: Entropy calculation for color distribution (min 3.0)
 - **Pattern Detection**: 8x8 block uniformity for JPEG corruption (max 80%)
 - **Performance**: 20-100ms per image
 
 ### **Database Schema (Corruption Tables)**
+
 ```sql
 -- Corruption detection logs
 CREATE TABLE corruption_logs (
@@ -237,6 +290,7 @@ ALTER TABLE cameras ADD COLUMN lifetime_glitch_count INTEGER DEFAULT 0;
 ```
 
 ### **SSE Events for Corruption Detection**
+
 ```typescript
 // Corruption detection event
 {
@@ -252,9 +306,9 @@ ALTER TABLE cameras ADD COLUMN lifetime_glitch_count INTEGER DEFAULT 0;
   timestamp: string
 }
 
-// Camera degraded mode event  
+// Camera degraded mode event
 {
-  type: "camera_degraded_mode_triggered", 
+  type: "camera_degraded_mode_triggered",
   data: {
     camera_id: number,
     consecutive_failures: number,
@@ -275,13 +329,14 @@ ALTER TABLE cameras ADD COLUMN lifetime_glitch_count INTEGER DEFAULT 0;
 ```
 
 ### **File Structure for Corruption Detection**
+
 ```
 backend/
 ├── corruption_detection/
 │   ├── __init__.py
 │   ├── controller.py          # CorruptionController main class
 │   ├── fast_detector.py       # FastDetector implementation
-│   ├── heavy_detector.py      # HeavyDetector implementation  
+│   ├── heavy_detector.py      # HeavyDetector implementation
 │   ├── score_calculator.py    # Scoring algorithms
 │   ├── action_handler.py      # Retry/discard logic
 │   └── health_monitor.py      # Degraded mode tracking
@@ -302,9 +357,10 @@ frontend/
 ```
 
 ### **Performance Specifications**
+
 ```
 Fast Detection: < 5ms per image
-Heavy Detection: < 100ms per image  
+Heavy Detection: < 100ms per image
 Database Logging: < 10ms per result
 Total Overhead: < 110ms per capture (when heavy enabled)
 
@@ -319,6 +375,7 @@ Throughput Impact:
 ```
 
 ### **Configuration Hierarchy**
+
 ```
 Global App Settings (Base Defaults)
 ├── corruption_detection_enabled: true
@@ -326,7 +383,7 @@ Global App Settings (Base Defaults)
 ├── corruption_auto_discard_enabled: false
 └── corruption_auto_disable_degraded: false
 
-Per-Camera Settings (Overrides)  
+Per-Camera Settings (Overrides)
 └── corruption_detection_heavy: false (per camera)
 ```
 
@@ -673,6 +730,156 @@ structure
 **Problem**: Services starting without dependency validation **Solution**:
 Enhanced `start-services.sh` with health check retries and proper ordering
 
+## 🔍 BACKEND AUDIT & MAJOR REFACTOR COMPLETION SUMMARY
+
+### **Backend Refactoring Status: ✅ COMPLETED**
+
+**Date**: December 2024  
+**Scope**: Complete audit and refactoring of backend timelapse operations and
+video automation systems
+
+#### **✅ Completed Refactoring Tasks:**
+
+1. **Schema & Naming Clarification**
+
+   - ✅ Documented distinction between `video_generation_mode` (FPS calculation)
+     and `video_automation_mode` (scheduling/triggering)
+   - ✅ Added clear usage guidelines and future renaming recommendations to
+     AI-CONTEXT.md
+   - ✅ Analyzed all Alembic migrations to understand field evolution and
+     current schema state
+
+2. **Model Consistency & Type Safety**
+
+   - ✅ Fixed `Timelapse` model to use `Optional[VideoGenerationMode]` enum
+     instead of `Optional[str]`
+   - ✅ Ensured proper enum imports in both Camera and Timelapse models
+   - ✅ Validated all model fields match database schema exactly
+
+3. **Database Operations Pattern Compliance**
+
+   - ✅ Refactored `timelapse_operations.py` to use cursor-based database access
+     pattern
+   - ✅ Added proper `# type: ignore[attr-defined]` comments for mixin database
+     access
+   - ✅ Fixed all return type annotations and error handling
+
+4. **Backend Logic Validation**
+
+   - ✅ Audited `video_calculations.py` to ensure correct
+     `video_generation_mode` usage for FPS logic
+   - ✅ Audited `video_automation_service.py` and fixed all incorrect usage of
+     `video_generation_mode` for automation
+   - ✅ Replaced all automation logic to use `video_automation_mode` correctly
+   - ✅ Fixed SSE event broadcasting to use proper
+     `broadcast_event(event_type, data)` signature
+
+5. **Code Quality & Error Resolution**
+   - ✅ All backend files now pass type checking with no errors
+   - ✅ Consistent use of database patterns following documented rules
+   - ✅ Proper error handling and logging throughout automation service
+
+#### **✅ Validated Systems:**
+
+- **Video Generation Settings**: Correctly uses `video_generation_mode` for FPS
+  calculation only
+- **Video Automation Service**: Correctly uses `video_automation_mode` for
+  scheduling/triggering only
+- **Settings Inheritance**: Both fields work independently with proper
+  camera→timelapse inheritance
+- **Database Access**: All critical operations use cursor-based patterns per
+  documented rules
+- **Type Safety**: All models, operations, and calculations are properly typed
+
+#### **📋 Architecture Compliance:**
+
+The backend now fully complies with the documented rules:
+
+- ✅ Cursor-based database access pattern
+- ✅ Proper field separation and naming
+- ✅ Mixin-compatible database operations
+- ✅ SSE event broadcasting compliance
+- ✅ Video automation queue system integration
+
+**Status**: Backend audit and refactoring is complete. All timelapse-related
+operations now follow the established patterns and use the correct field
+semantics.
+
+### 🎯 **Major Architecture Refactor: Composition-Based Database Operations (December 2024)**
+
+**Status**: ✅ **SUCCESSFULLY COMPLETED** - Video Operations Migrated to Composition Pattern
+
+**Problem Solved**: Eliminated all `# type: ignore[attr-defined]` comments by replacing mixin inheritance with dependency injection.
+
+#### **What Was Refactored:**
+
+1. **✅ Database Operations Architecture**
+   - Created new `database/core.py` with composition-based AsyncDatabase/SyncDatabase classes
+   - Replaced mixin-based `VideoOperations` with dependency injection pattern
+   - Eliminated all type safety issues and `# type: ignore` comments
+
+2. **✅ Service Layer Modernization**
+   - Created `services/video_service.py` using clean composition pattern
+   - Clear dependency injection: `VideoService(db)` instead of mixin inheritance
+   - Type-safe operations with explicit database dependencies
+
+3. **✅ Router Layer Updates**
+   - Updated `routers/video_routers.py` to use new VideoService composition pattern
+   - Eliminated direct database mixin calls in favor of service-based architecture
+   - Maintained all existing API compatibility
+
+4. **✅ Backward Compatibility**
+   - Legacy mixin-based classes still available during transition period
+   - New composition-based classes available via `database.composition_async_db`
+   - Gradual migration path for remaining components
+
+#### **Before/After Comparison:**
+
+```python
+# ❌ OLD: Mixin pattern with type issues
+class VideoOperations:
+    def get_videos(self):
+        return self.execute_query(query)  # type: ignore[attr-defined]
+
+# ✅ NEW: Composition pattern, type-safe
+class VideoOperations:
+    def __init__(self, db: AsyncDatabase):
+        self.db = db
+    
+    def get_videos(self):
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                return cur.fetchall()
+```
+
+#### **Files Successfully Refactored:**
+- `/backend/app/database/core.py` - New composition-based database core
+- `/backend/app/database/video_operations.py` - Composition-based video operations
+- `/backend/app/services/video_service.py` - Modern service layer with DI
+- `/backend/app/routers/video_routers.py` - Updated router using composition
+- `/backend/app/database/__init__.py` - Dual compatibility layer
+
+#### **Migration Guide for Remaining Components:**
+
+```python
+# Step 1: Update import
+from app.database import composition_async_db
+from app.services.video_service import VideoService
+
+# Step 2: Use composition instead of direct database access
+video_service = VideoService(composition_async_db)
+videos = await video_service.get_videos()
+
+# Step 3: Replace old mixin calls
+# OLD: await async_db.get_videos()
+# NEW: await video_service.get_videos()
+```
+
+**Next Components to Migrate**: Camera operations, timelapse operations, image operations (same pattern)
+
+---
+
 ## 🚨 COMMON AI MISCONCEPTIONS TO AVOID
 
 ### 1. **"Let's optimize dashboard loading by serving images directly from database"**
@@ -752,24 +959,29 @@ Enhanced `start-services.sh` with health check retries and proper ordering
 
 ❌ **Why This Causes Connection Spam**:
 
-- Creates 79+ simultaneous SSE connections (dashboard + each camera card + modals)
+- Creates 79+ simultaneous SSE connections (dashboard + each camera card +
+  modals)
 - Rapid connection cycling every 500ms with aggressive reconnection timers
 - Massive performance impact and console spam
 - Server overload handling multiple connections from same client
 - Duplicates event handling logic across components
 - **Solution**: Centralized SSE via React Context with single shared connection
 
-**Real Example**: Camera dashboard with 10 cameras = 12+ connections (dashboard + 10 cards + modals). Fixed with SSEProvider pattern achieving 99% connection reduction.
+**Real Example**: Camera dashboard with 10 cameras = 12+ connections
+(dashboard + 10 cards + modals). Fixed with SSEProvider pattern achieving 99%
+connection reduction.
 
 ### 9. **"Corruption detection can be added as an optional post-processing step"**
 
 ❌ **Why This Defeats the Purpose**:
 
-- Corruption detection must happen **during capture pipeline** to enable retry logic
+- Corruption detection must happen **during capture pipeline** to enable retry
+  logic
 - Post-processing can't retry failed captures - the moment is gone
 - Auto-discard functionality requires real-time evaluation during capture
-- Database integrity requires corruption scoring before image record creation  
-- **Solution**: Integrate corruption detection into `WorkerCorruptionIntegration.evaluate_with_retry()`
+- Database integrity requires corruption scoring before image record creation
+- **Solution**: Integrate corruption detection into
+  `WorkerCorruptionIntegration.evaluate_with_retry()`
 
 ### 10. **"We can simplify by using the same corruption threshold for all cameras"**
 
@@ -777,30 +989,43 @@ Enhanced `start-services.sh` with health check retries and proper ordering
 
 - Different camera hardware has different noise/quality characteristics
 - Indoor vs outdoor cameras have vastly different corruption patterns
-- Heavy detection (computer vision) may be too slow for high-frequency captures on some cameras
-- Camera-specific corruption_detection_heavy settings allow fine-tuned performance
-- **Solution**: Load per-camera settings from database and respect individual camera configurations
+- Heavy detection (computer vision) may be too slow for high-frequency captures
+  on some cameras
+- Camera-specific corruption_detection_heavy settings allow fine-tuned
+  performance
+- **Solution**: Load per-camera settings from database and respect individual
+  camera configurations
 
 ### 11. **"Fast detection is enough - heavy detection is just unnecessary overhead"**
 
 ❌ **Why Both Detection Levels Are Needed**:
 
-- Fast detection catches obvious corruption (file size, basic pixel issues) but misses subtle problems
-- Heavy detection catches blur, noise, compression artifacts that fast detection can't detect  
-- Weighted scoring (30% fast + 70% heavy) provides comprehensive quality assessment
-- Per-camera enablement allows optimization - enable heavy detection only where needed
-- Professional timelapses require thorough quality control, not just basic file validation
-- **Solution**: Use both detection levels with per-camera heavy detection configuration
+- Fast detection catches obvious corruption (file size, basic pixel issues) but
+  misses subtle problems
+- Heavy detection catches blur, noise, compression artifacts that fast detection
+  can't detect
+- Weighted scoring (30% fast + 70% heavy) provides comprehensive quality
+  assessment
+- Per-camera enablement allows optimization - enable heavy detection only where
+  needed
+- Professional timelapses require thorough quality control, not just basic file
+  validation
+- **Solution**: Use both detection levels with per-camera heavy detection
+  configuration
 
 ### 12. **"Corruption events should use direct eventEmitter for better performance"**
 
 ❌ **Why This Breaks the SSE Architecture**:
 
-- Creates the same connection spam problem that was solved for regular camera events
+- Creates the same connection spam problem that was solved for regular camera
+  events
 - Bypasses the centralized SSE system that achieves 99% connection reduction
-- eventEmitter is for internal component state, not real-time data synchronization
-- Corruption events must follow the same `{ type, data: {...}, timestamp }` structure
-- **Solution**: Use `useSSESubscription` for corruption events like all other real-time updates
+- eventEmitter is for internal component state, not real-time data
+  synchronization
+- Corruption events must follow the same `{ type, data: {...}, timestamp }`
+  structure
+- **Solution**: Use `useSSESubscription` for corruption events like all other
+  real-time updates
 
 ## 🗄️ DATABASE SCHEMA
 
@@ -815,12 +1040,15 @@ images (1) ──► corruption_logs (0..1)
 
 **Key Tables**:
 
-- `cameras`: RTSP config, health status, time windows, video settings, corruption settings
+- `cameras`: RTSP config, health status, time windows, video settings,
+  corruption settings
 - `timelapses`: Recording sessions with entity-based architecture
-- `images`: Captures linked to timelapse, day_number calculation, corruption scores
+- `images`: Captures linked to timelapse, day_number calculation, corruption
+  scores
 - `videos`: Generated MP4s with overlay settings
 - `settings`: Global config including timezone and corruption detection settings
-- `corruption_logs`: Detailed corruption detection audit trail with scores and actions
+- `corruption_logs`: Detailed corruption detection audit trail with scores and
+  actions
 
 **Corruption Detection Schema**:
 
@@ -1039,17 +1267,24 @@ timelapser-v4/
 1. Worker captures RTSP frame every 5 minutes using OpenCV
 2. **Corruption Detection Pipeline**:
    - Fast Detection: File size, pixel statistics, uniformity (1-5ms)
-   - Heavy Detection: Blur, edge, noise, histogram analysis (20-100ms, if enabled)
+   - Heavy Detection: Blur, edge, noise, histogram analysis (20-100ms, if
+     enabled)
    - Score Calculation: Weighted scoring algorithm (0-100 scale)
    - Action Decision: Save, retry, or discard based on score vs threshold
-3. **Retry Logic**: If corruption score < threshold and auto-discard enabled, retry once
-4. Save to filesystem: `/data/cameras/camera-{id}/images/YYYY-MM-DD/capture_YYYYMMDD_HHMMSS.jpg`
+3. **Retry Logic**: If corruption score < threshold and auto-discard enabled,
+   retry once
+4. Save to filesystem:
+   `/data/cameras/camera-{id}/images/YYYY-MM-DD/capture_YYYYMMDD_HHMMSS.jpg`
 5. Generate thumbnails (if enabled) using Pillow with separate folders
 6. **Corruption Logging**: Record evaluation results in `corruption_logs` table
-7. Record in database: `sync_db.record_captured_image()` with corruption score and timelapse relationship
-8. Update camera health and corruption stats: `sync_db.update_camera_health()` + `sync_db.update_camera_corruption_stats()`
-9. **Degraded Mode Check**: Monitor consecutive failures and trigger degraded mode if thresholds exceeded
-10. Broadcast SSE events: `sync_db.broadcast_event()` with corruption details for real-time UI
+7. Record in database: `sync_db.record_captured_image()` with corruption score
+   and timelapse relationship
+8. Update camera health and corruption stats: `sync_db.update_camera_health()` +
+   `sync_db.update_camera_corruption_stats()`
+9. **Degraded Mode Check**: Monitor consecutive failures and trigger degraded
+   mode if thresholds exceeded
+10. Broadcast SSE events: `sync_db.broadcast_event()` with corruption details
+    for real-time UI
 
 **Day Number Calculation**:
 
@@ -1087,7 +1322,8 @@ useRealtimeCameras() → EventSource('/api/sse') → Live UI updates
 2. Dialog pre-fills with camera's settings as defaults
 3. User can customize any settings specifically for this timelapse
 4. On submit → Creates new timelapse with customized settings
-5. Settings only apply to this timelapse, camera settings remain unchanged
+5. Settings only apply to this specific timelapse, camera settings remain
+   unchanged
 
 ## 🚀 CURRENT SYSTEM STATUS (Fully Functional)
 
@@ -1097,26 +1333,36 @@ useRealtimeCameras() → EventSource('/api/sse') → Live UI updates
 - **Camera Health Monitoring** - Real-time online/offline status
 - **Image Capture Events** - Watch capture counts update live
 - **Timelapse Status Changes** - Start/stop reflects immediately
-- **Centralized SSE System** - Single connection shared across all components (99% connection reduction)
+- **Centralized SSE System** - Single connection shared across all components
+  (99% connection reduction)
 - **SSE Connection Health** - Visual indicator for live updates
 - **Error Broadcasting** - Failed captures show immediately
 - **Corruption Detection Events** - Real-time corruption score updates
 - **Degraded Mode Alerts** - Live camera quality issue notifications
-- **Quality Statistics Updates** - System-wide corruption stats refresh automatically
+- **Quality Statistics Updates** - System-wide corruption stats refresh
+  automatically
 
 ### ✅ CORE FUNCTIONALITY (Production Ready)
 
 - **RTSP Camera Management** - Add, edit, delete cameras with validation
 - **Time Window Controls** - Capture only during specified hours
-- **Automated Image Capture** - Scheduled captures every 5 minutes (configurable) with corruption detection
-- **Image Quality Control** - Automatic corruption detection with fast and heavy analysis modes
-- **Intelligent Retry Logic** - Corrupted images automatically retried when auto-discard enabled
-- **Camera Health Monitoring** - Automatic offline detection, recovery, and degraded mode tracking
-- **Per-Camera Quality Settings** - Individual heavy detection configuration for optimal performance
-- **Quality Score Database** - Complete corruption audit trail with 0-100 scoring system
-- **Degraded Mode Protection** - Automatic camera management when quality issues persist
+- **Automated Image Capture** - Scheduled captures every 5 minutes
+  (configurable) with corruption detection
+- **Image Quality Control** - Automatic corruption detection with fast and heavy
+  analysis modes
+- **Intelligent Retry Logic** - Corrupted images automatically retried when
+  auto-discard enabled
+- **Camera Health Monitoring** - Automatic offline detection, recovery, and
+  degraded mode tracking
+- **Per-Camera Quality Settings** - Individual heavy detection configuration for
+  optimal performance
+- **Quality Score Database** - Complete corruption audit trail with 0-100
+  scoring system
+- **Degraded Mode Protection** - Automatic camera management when quality issues
+  persist
 - **Video Generation** - FFmpeg integration with quality settings
-- **Database Tracking** - Complete image and video metadata with corruption scores
+- **Database Tracking** - Complete image and video metadata with corruption
+  scores
 - **Day Number Tracking** - Proper day counting for overlay generation
 
 ### 🔧 DEVELOPMENT PATTERNS
@@ -1346,10 +1592,10 @@ import { useDashboardSSE } from "@/hooks/use-camera-sse"
 const DashboardComponent = () => {
   useDashboardSSE({
     onCameraAdded: (data) => {
-      setCameras(prev => [data.camera, ...prev])
+      setCameras((prev) => [data.camera, ...prev])
     },
     onVideoGenerated: (data) => {
-      setVideos(prev => [data.video, ...prev])
+      setVideos((prev) => [data.video, ...prev])
     },
   })
 }
@@ -1821,110 +2067,469 @@ WHERE i.camera_id = {camera_id};
 - **Timezone abbreviations**: CDT, UTC, etc. using Intl API
 - **"Now" state feedback**: Pulsing cyan effects during capture
 
-## 📞 SUPPORT & MAINTENANCE
+# TIMELAPSER V4 - AI CONTEXT
 
-### Regular Maintenance Tasks
+Streamlined architectural reference for AI assistants.
 
-- Monitor disk usage in `data/` directory
-- Review logs for recurring errors (`tail -f data/worker.log`)
-- Run diagnostic script weekly: `./diagnostic-test.sh`
-- Update dependencies monthly
-- Backup database schema and critical settings
-- Test disaster recovery procedures
+**Project**: RTSP camera timelapse automation platform **Stack**: Next.js
+frontend → FastAPI backend → PostgreSQL (Neon, for now) → Python Worker
+**Goal**: Open-source self-hosted timelapse creation system **Package Manager**:
+pnpm (not npm)
 
-### Health Check Schedule
+## 🏗️ SYSTEM ARCHITECTURE
 
-```bash
-# Daily automated health check
-curl -f http://localhost:3000/api/health || echo "System unhealthy"
-
-# Weekly comprehensive diagnostic
-./diagnostic-test.sh
-
-# Monthly deep health analysis
-curl -s http://localhost:8000/api/health/stats | python3 -m json.tool
+```
+Next.js (3000) ↔ FastAPI (8000) ↔ PostgreSQL ↔ Python Worker
+       ↕                                            ↕
+SSEProvider (1 connection)                    RTSP Cameras
+       ↕
+All Components
 ```
 
-## 🔍 ARCHITECTURE VALIDATION & CODE QUALITY (June 18, 2025)
+**Why This Architecture**:
 
-### Comprehensive Codebase Review Results
+- **Centralized SSE Real-time Updates**: Single SSE connection via React
+  Context, shared across all components (prevents 79+ connection spam)
+- **SSE Proxy Pattern**: Frontend → Next.js API → FastAPI SSE avoids CORS issues
+- **Dual Database Pattern**: Async (FastAPI web requests) + Sync (Worker
+  background tasks)
+- **Production Ready**: Single domain, unified auth layer, consistent error
+  handling
 
-**Validation Scope**: All recently changed files reviewed for compliance with
-AI-CONTEXT architectural rules and patterns.
+## 🚨 CONSOLIDATED CRITICAL IMPLEMENTATION RULES (DON'T BREAK THESE)
 
-**✅ Database Pattern Compliance**:
+### Database Pattern Rules (CRITICAL - Composition-Based Architecture)
 
-- All backend Python code properly uses `psycopg3` with `dict_row` for both
-  async and sync connection pools
-- Type-safe dictionary-style database access implemented consistently
-- No raw SQL cursor usage without proper row factory configuration
+1. **ALWAYS use composition over mixins** - Database operations classes receive database instance via dependency injection
+2. **NEVER use mixin inheritance** - Eliminates all `# type: ignore[attr-defined]` comments
+3. **Standard composition pattern**:
 
-**✅ Time Calculation & Timezone Compliance**:
+   ```python
+   class VideoOperations:
+       def __init__(self, db: AsyncDatabase | SyncDatabase):
+           self.db = db
+       
+       def get_videos(self) -> List[Dict[str, Any]]:
+           with self.db.get_connection() as conn:
+               with conn.cursor() as cur:
+                   cur.execute("SELECT * FROM videos")
+                   return cur.fetchall()
+   ```
 
-- Frontend consistently uses `useCaptureSettings()` hook for timezone-aware
-  calculations
-- All countdown and time display components properly pass timezone parameters
-- No raw `new Date()` or browser timezone usage in production code
+4. **Cursor-based SQL execution** - Always use `with conn.cursor() as cur:` pattern
+5. **Clear dependency chains** - Services receive database instance, operations receive it via constructor
+6. **Type safety guaranteed** - No type ignores needed, clean TypeScript compatibility
+7. **Testable architecture** - Easy to mock database dependencies for unit testing
 
-**✅ Entity-Based Architecture Compliance**:
+**Why This Matters**: Composition eliminates the type safety issues of mixins while providing cleaner architecture. Each operations class has explicit dependencies, making the code more maintainable and testable.
 
-- All API routes follow entity-based patterns for timelapse creation and
-  management
-- Worker processes respect `active_timelapse_id` relationships for image capture
-- Entity lifecycle workflows (new/paused/stopped/completed/archived) properly
-  implemented
+**Migration Status (June 24, 2025)**:
+✅ **COMPLETED**: 
+- `video_operations.py` - Full composition pattern, zero type ignores
+- `camera_operations.py` - Full composition pattern, zero type ignores  
+- `image_operations.py` - Full composition pattern, zero type ignores
+- `timelapse_operations.py` - Full composition pattern, zero type ignores
+- `log_operations.py` - Full composition pattern, zero type ignores
+- `settings_operations.py` - Full composition pattern, zero type ignores
+- `statistics_operations.py` - Full composition pattern, zero type ignores
+- `services/video_service.py` - Modern service layer with dependency injection
+- `services/camera_service.py` - Modern service layer with dependency injection
+- `services/image_service.py` - Modern service layer with dependency injection
+- `services/timelapse_service.py` - Modern service layer with dependency injection
+- `services/log_service.py` - Modern service layer with dependency injection
+- `services/settings_service.py` - Modern service layer with dependency injection
+- `services/statistics_service.py` - Modern service layer with dependency injection
+- `routers/video_routers.py` - Uses VideoService composition pattern
+- `routers/camera_routers.py` - Uses CameraService composition pattern
+- `routers/image_routers.py` - Uses ImageService composition pattern
+- `routers/timelapse_routers.py` - Uses TimelapseService composition pattern
+- `routers/log_routers.py` - Uses LogService composition pattern
+- `routers/settings_routers.py` - Uses SettingsService composition pattern
+- `routers/dashboard_routers.py` - Uses StatisticsService composition pattern
 
-**✅ Event System Architecture**:
+🔄 **REMAINING TO MIGRATE**:
+- `corruption_operations.py` - Needs assessment
 
-- SSE event emitter refactored to shared module at `src/lib/event-emitter.ts`
-- Security measures and type validation implemented for all event types
-- Singleton pattern properly implemented with proper cleanup and error handling
+**New Architecture Pattern**:
 
-**✅ Type Safety**:
+```python
+# Service Layer
+class VideoService:
+    def __init__(self, db: AsyncDatabase):
+        self.video_ops = VideoOperations(db)
+        self.camera_ops = CameraOperations(db)
+    
+    async def generate_video(self, timelapse_id: int):
+        # Clean composition, explicit dependencies
+        pass
 
-- TypeScript models and interfaces updated to match Pydantic changes
-- All API endpoints use consistent type definitions
+# Router Layer  
+@router.post("/generate")
+async def generate_video(timelapse_id: int):
+    video_service = VideoService(async_db)
+    return await video_service.generate_video(timelapse_id)
+```
 
-**✅ Build System & Development Environment**:
+### Backend Code Organization Rules (CRITICAL - Maintainability)
 
-- `.tsbuildinfo` files properly excluded from git tracking (added to
-  `.gitignore`)
-- TypeScript configuration excludes documentation directories from compilation
-- Build cache management follows best practices
+1. **Database Operations Structure** - All database operations must follow the
+   established pattern:
 
-**✅ Code Quality Improvements**:
+   - `/backend/app/database/*_operations.py` - Contains AsyncOperations and
+     SyncOperations classes
+   - Database operations use cursor pattern:
+     `with conn.cursor() as cur: cur.execute()`
+   - Each operations file handles one domain (cameras, videos, timelapses, etc.)
 
-- Removed all production `console.log` statements for cleaner output
-- Fixed critical bugs discovered during log statement removal
-- Resolved all TypeScript and Python type errors
-- Enhanced error handling and user feedback systems
+2. **Utility Functions Placement**:
 
-### API Development & Event System Rules
+   - `/backend/app/utils/` - Pure business logic, data processing, and helper
+     functions
+   - No direct database operations in utils/ - use operations classes instead
+   - Database helpers (QueryBuilder, etc.) belong in `utils/database_helpers.py`
 
-1. **SSE Event Structure is SACRED** - All events MUST follow exact `SSEEvent`
-   interface: `{ type, data, timestamp }`
-   - **NEVER** put data directly on the event object (e.g.,
-     `{ type, camera_id, status }`)
-   - **ALWAYS** nest under data property:
-     `{ type, data: { camera_id, status }, timestamp }`
-   - Violating this breaks the entire real-time system
-2. **Event Types Must Be Pre-Approved** - Only use event types from
-   `ALLOWED_EVENT_TYPES` constant in event-emitter.ts
-   - Don't create new event types without adding them to the allowed list
-   - Use existing types like `"video_status_changed"` instead of custom ones
-     like `"video_failed"`
-3. **API Endpoint Completeness Pattern** - When adding new endpoints, BOTH
-   pieces are required:
-   - Backend FastAPI endpoint in `/backend/app/routers/`
-   - Frontend Next.js proxy route in `/src/app/api/`
-   - Missing either piece causes 404 errors that are hard to debug
-4. **Database Method Dependency** - Router endpoints that call database methods
-   require the method to exist
-   - Check `/backend/app/database.py` for required methods like
-     `get_timelapse_by_id()`
-   - Follow naming patterns: `get_*`, `create_*`, `update_*`, `complete_*`
-5. **Next.js 15 Async Params** - All dynamic route parameters are now Promises
-   - **ALWAYS** await params: `const { id } = await params`
-   - Route signature: `{ params }: { params: Promise<{ id: string }> }`
+3. **Avoid Code Duplication** - Before creating new database functions:
+
+   - Check if functionality exists in corresponding `*_operations.py` file
+   - Use existing CRUD operations rather than building custom queries
+   - Consolidate similar operations into shared methods
+
+4. **Method Placement Guidelines**:
+
+   - **Data validation** → Static methods in `*_operations.py` classes
+   - **Row processing** → Static methods in `*_operations.py` classes
+   - **Business logic** → Separate helper files in `utils/` (e.g.,
+     `video_helpers.py`)
+   - **Statistics queries** → `statistics_operations.py`
+   - **Query building** → Use existing CRUD methods, not custom builders
+
+5. **File Naming Conventions**:
+   - Database operations: `{domain}_operations.py` (e.g., `video_operations.py`)
+   - Business logic helpers: `{domain}_helpers.py` (e.g., `video_helpers.py`)
+   - Manager classes: Only when coordinating multiple domains
+
+**Why This Matters**: Prevents code duplication, ensures consistent database
+patterns, and maintains clear separation between database operations and
+business logic. The `video_record_manager.py` anti-pattern duplicated
+functionality already in `video_operations.py`.
+
+**Files Following Correct Structure**:
+
+- `/backend/app/database/video_operations.py` - Complete video CRUD operations
+- `/backend/app/database/camera_operations.py` - Complete camera CRUD operations
+- `/backend/app/utils/database_helpers.py` - Query building utilities only
+
+### Time Calculation Rules
+
+1. **Always use `useCaptureSettings()` hook** to get timezone in components
+2. **Never use raw `new Date()` or browser timezone** for display calculations
+3. **All countdown and relative time calculations must pass timezone parameter**
+4. **Time windows are calculated in database-configured timezone, not browser
+   local**
+
+### Entity-Based Architecture Rules
+
+1. **Always create new timelapse entities** when users click "Start A New
+   Timelapse"
+2. **Use active_timelapse_id** for determining where new images should be
+   associated
+3. **Preserve completed timelapses** as permanent historical records
+4. **Display both total and current statistics** on camera cards
+5. **Worker processes must respect** active timelapse relationships for image
+   capture
+
+### Dashboard Enhancement Rules
+
+1. **Auto-stop times must be validated** as future timestamps in correct
+   timezone
+2. **Progress borders only activate** during running timelapses with valid time
+   data
+3. **Capture Now requires both** online camera AND active timelapse
+4. **Bulk Resume button state** must check actual paused cameras, not all
+   cameras
+5. **New timelapse dialog validates** all fields before allowing submission
+
+### Video Generation Settings Rules
+
+1. **CRITICAL NAMING CLARIFICATION**: Database schema has confusing field names
+
+   - `video_generation_mode`: Controls **FPS calculation method** ('standard',
+     'target') - NOT when videos are generated
+   - `video_automation_mode`: Controls **when videos are generated** ('manual',
+     'per_capture', 'scheduled', 'milestone')
+   - **Future Consideration**: Rename `video_generation_mode` to
+     `fps_calculation_mode` for clarity
+
+2. **Schema Compliance**: Both cameras and timelapses tables MUST have both
+   fields
+
+   - `video_generation_mode`: ENUM ('standard', 'target'), NOT NULL on cameras,
+     NULL on timelapses (inheritance)
+   - `video_automation_mode`: ENUM ('manual', 'per_capture', 'scheduled',
+     'milestone'), NOT NULL on cameras, NULL on timelapses (inheritance)
+
+3. **Settings Inheritance Pattern**: Timelapse settings override camera defaults
+   for BOTH fields independently
+
+   - Use `get_effective_video_settings()` for FPS calculation settings
+   - Use `get_effective_automation_settings()` for automation behavior settings
+
+4. **Validate FPS bounds**: Min FPS ≤ Calculated FPS ≤ Max FPS
+5. **Respect time limits**: Standard mode adjusts FPS to stay within min/max
+   time
+6. **Preview before generation**: Show users exact results before processing
+7. **Video automation integration**: All automated videos must use
+   VideoAutomationService
+8. **Queue system compliance**: Automated videos go through VideoQueue with
+   proper priority
+9. **Trigger-specific metadata**: Include trigger_type and job_id in generated
+   videos
+10. **Throttling respect**: Per-capture mode must respect 5-minute minimum
+    intervals
+
+### Video Automation System Rules (CRITICAL - Performance Impact)
+
+1. **NEVER bypass VideoQueue system** - All automated videos must use proper job
+   queue
+2. **ALWAYS use VideoAutomationService methods** -
+   trigger_per_capture_generation(), etc.
+3. **Respect concurrency limits** - Maximum 3 concurrent video generations
+4. **Use proper job priorities** - Manual (high) > Milestone/Scheduled
+   (medium) > Per-capture (low)
+5. **Implement throttling correctly** - Per-capture mode minimum 5-minute
+   intervals
+6. **Settings inheritance required** - Camera defaults → timelapse overrides
+   pattern
+7. **Timezone-aware scheduling** - All automation uses database timezone setting
+8. **SSE event compliance** - Broadcast job status changes for real-time UI
+   updates
+9. **Database logging mandatory** - All jobs logged to video_generation_jobs
+   table
+10. **Graceful degradation** - Automation failures must not affect image capture
+
+### Thumbnail System Rules
+
+1. **Always use separate folder structure** - Never mix thumbnails with full
+   images
+2. **Respect generate_thumbnails setting** - Check database setting before
+   generation
+3. **Use Pillow for thumbnails** - OpenCV only for RTSP capture
+4. **Implement cascading fallbacks** - thumbnail → small → full → placeholder
+5. **Store relative paths in database** - Never store absolute paths
+
+### Real-time Event System Rules (CRITICAL - Performance Impact)
+
+1. **NEVER create individual EventSource connections** - Each component using
+   `new EventSource("/api/events")` creates separate connections
+2. **ALWAYS use centralized SSE system** - Single connection via `<SSEProvider>`
+   in app layout
+3. **Use specialized hooks for event subscriptions**:
+   - `useCameraSSE(cameraId, callbacks)` - Camera-specific events
+   - `useDashboardSSE(callbacks)` - Global dashboard events
+   - `useSSESubscription(filter, callback)` - Custom event filtering
+4. **No console.log spam** - SSE connections should be silent after initial
+   establishment
+5. **Connection sharing principle** - All components share one SSE connection,
+   never create multiple
+6. **Event filtering at component level** - Filter by camera_id or event type in
+   hooks, not in API
+7. **Proper cleanup** - Hooks handle subscription/unsubscription automatically
+
+**Why This Matters**: Multiple EventSource connections caused 79+ simultaneous
+connections with rapid cycling. Centralized system achieves 99% connection
+reduction while maintaining same real-time functionality.
+
+**Files in Centralized SSE System**:
+
+- `/src/contexts/sse-context.tsx` - Single connection management
+- `/src/hooks/use-camera-sse.ts` - Specialized event hooks
+- Components use hooks, never direct EventSource connections
+
+**SSE Event Structure (CRITICAL)**:
+
+- **ALWAYS use proper event structure**: `{ type, data: {...}, timestamp }`
+- ✅ Correct: `event.data.camera_id`, `event.data.image_count`,
+  `event.data.status`
+- ❌ Wrong: `event.camera_id` (data directly on event object)
+- All events MUST nest data under the `data` property for consistency
+
+### Corruption Detection System Rules (CRITICAL - Quality Control)
+
+1. **NEVER bypass corruption integration** - All image captures must go through
+   corruption detection pipeline
+2. **ALWAYS use WorkerCorruptionIntegration.evaluate_with_retry()** - Never call
+   RTSPCapture.capture_image() directly
+3. **Use per-camera heavy detection settings** - Respect
+   `corruption_detection_heavy` flag from database
+4. **NEVER skip corruption scoring** - Every captured image must receive a
+   corruption score (0-100)
+5. **Proper retry logic** - Failed corruption checks trigger automatic retry
+   when auto-discard enabled
+6. **Database logging required** - All corruption evaluations must be logged to
+   `corruption_logs` table
+7. **SSE events for corruption** - Broadcast corruption events for real-time UI
+   updates
+8. **Graceful degradation** - System continues if corruption detection fails,
+   with error logging
+
+**Corruption Detection Integration Pattern**:
+
+```python
+# ✅ CORRECT - Corruption-aware capture
+success, message, file_path, corruption_details = self.corruption_integration.evaluate_with_retry(
+    camera_id, rtsp_url, capture_func, timelapse_id
+)
+
+# ❌ WRONG - Direct capture bypasses corruption detection
+success, message, file_path = self.capture.capture_image(...)
+```
 
 ### System-Wide Constraints
+
+1. **psycopg3 connection pooling** - Both async/sync pools required
+2. **Day number calculation** - Always relative to timelapse.start_date
+3. **File path structure** - /data/cameras/camera-{id}/images/YYYY-MM-DD/
+4. **TypeScript ↔ Pydantic sync** - Interfaces must match exactly
+5. **SSE event format** - Must match existing broadcast_event() structure
+6. **RTSP URL validation** - Security validation in camera.py models
+7. **Query-based image retrieval** - Use LATERAL joins, no FK dependencies
+8. **Video automation integration** - All automated videos must use VideoQueue
+   system
+9. **Settings inheritance pattern** - Camera defaults → timelapse overrides for
+   all automation
+10. **Timezone-aware automation** - All scheduling uses database timezone
+    setting
+11. **Centralized timezone handling** - All datetime operations must use
+    timezone_utils.py module
+12. **Config-driven paths** - No hardcoded absolute paths, use
+    settings.data_directory and related config
+
+### Timezone System Rules (CRITICAL - Data Consistency)
+
+1. **ALWAYS use centralized timezone utilities** - Never use raw datetime.now()
+   or datetime.utcnow()
+2. **Use appropriate sync/async functions**:
+   - `get_timezone_aware_timestamp_sync(sync_db)` for worker processes
+   - `get_timezone_aware_timestamp_async(async_db)` for FastAPI endpoints
+   - `utc_now()` for internal calculations that need timezone-aware datetime
+     objects
+3. **Database timezone inheritance** - Settings cascade: timelapse → camera →
+   system default
+4. **Event timestamp consistency** - All SSE events use timezone-aware
+   timestamps via centralized utilities
+5. **Filename timestamp formatting** - Use
+   `get_timezone_aware_timestamp_string_sync/async()` for file naming
+6. **Date calculations** - Use `get_timezone_aware_date_sync/async()` for
+   date-based operations
+7. **Validation with central functions** - Use `validate_timezone()` before
+   storing timezone settings
+8. **No manual datetime manipulation** - Avoid strftime, isoformat, or manual
+   timezone conversions
+
+**Critical Files**:
+
+- `/backend/app/timezone_utils.py` - Single source of truth for all timezone
+  operations
+- All modules must import and use these utilities instead of datetime directly
+
+### Path Management Rules (CRITICAL - Portability)
+
+1. **NEVER use hardcoded absolute paths** - Creates deployment and portability
+   issues
+2. **NEVER use `get_project_root()` for file serving** - Use config-driven paths
+   instead
+3. **ALWAYS use config-driven directory resolution**:
+   - `settings.data_directory` for main data folder
+   - `settings.images_directory` for image storage
+   - `settings.videos_directory` for video output
+   - `settings.thumbnails_directory` for thumbnail storage
+4. **Use dynamic project root sparingly** - `get_project_root()` only when
+   absolutely necessary
+5. **Store relative paths in database** - Never store absolute paths in database
+   records
+6. **Environment variable support** - All directory settings support env var
+   overrides
+7. **Consistent path joining** - Use `pathlib.Path` for cross-platform
+   compatibility
+
+**Pattern for File Serving** (ALL endpoints updated):
+
+```python
+# ✅ CORRECT - Config-driven paths
+from app.config import settings
+from pathlib import Path
+
+data_root = Path(settings.data_directory)
+full_path = data_root / image["file_path"]
+
+# ❌ WRONG - Project root for file serving
+project_root = get_project_root()
+full_path = project_root / image["file_path"]
+```
+
+**Pattern for Services**:
+
+```python
+# ✅ CORRECT - Config-driven paths
+from app.config import settings
+output_dir = settings.videos_directory
+
+# ❌ WRONG - Hardcoded paths
+output_dir = "/Users/user/project/data/videos"
+```
+
+┌─────────────────┐ │ API Layer │ ← HTTP Requests │ (routers/) │
+└─────┬───────────┘ │ ┌─────▼───────────┐ │ Service Layer │ ← Business Logic │
+(services/) │ └─────┬───────────┘ │ ┌─────▼───────────┐ │ Data Layer │ ←
+Database Operations │ (database/) │ └─────┬───────────┘ │ ┌─────▼───────────┐ │
+PostgreSQL DB │ ← Data Storage └─────────────────┘
+
+1. Data Access Layer (app/database/) Purpose: Pure database operations and
+   connection management
+
+Characteristics:
+
+Mixin Pattern: Operations classes are mixed into AsyncDatabase and SyncDatabase
+Connection Pooling: Uses psycopg3 pools for efficient PostgreSQL connections
+Pure CRUD: No business logic, only database operations Type Safety: Uses # type:
+ignore[attr-defined] for mixin methods Example:
+
+2. Service Layer (app/services/) Purpose: Business logic orchestration and
+   domain services
+
+Characteristics:
+
+Business Logic: Orchestrates between data layer and external systems Domain
+Services: Each service handles one business domain Dependency Injection:
+Services receive database instances Reusable: Can be used by both API and worker
+processes Example:
+
+3. API Layer (app/routers/) Purpose: HTTP request/response handling and API
+   endpoints
+
+Characteristics:
+
+FastAPI Routes: RESTful endpoints with auto-documentation Async Operations: Uses
+AsyncDatabase for all operations Request Validation: Pydantic models for
+input/output Real-time Events: SSE broadcasting for live updates Example:
+
+4. Model Layer (app/models/) Purpose: Data validation and serialization
+
+Characteristics:
+
+Pydantic Models: Request/response validation Type Safety: Full TypeScript
+compatibility Data Transformation: Automatic serialization/deserialization
+Documentation: Auto-generated API docs
+
+5. Utility Layer (app/utils/) Purpose: Pure helper functions and shared
+   utilities
+
+Characteristics:
+
+Pure Functions: No side effects or external dependencies Reusable: Used across
+multiple layers Stateless: No instance variables or persistence Testable: Easy
+to unit test in isolation
+
+🚨 What Should Stay in Integration Layer Hardware interfaces that can't be
+abstracted System-level process management (signal handlers, process lifecycle)
+External system entry points (CLI scripts, daemon management)

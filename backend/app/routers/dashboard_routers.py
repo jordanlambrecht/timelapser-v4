@@ -7,94 +7,114 @@ Responsibilities: System overview metrics, health summaries, real-time status en
 Interactions: Uses StatisticsService for aggregated data, coordinates multiple services for dashboard views
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from fastapi import APIRouter, Response
 
-from fastapi import APIRouter, HTTPException, Query, status
-from loguru import logger
-
-from ..dependencies import StatisticsServiceDep
+from ..dependencies import CameraServiceDep, StatisticsServiceDep, HealthServiceDep
+from ..utils.cache_manager import (
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
+    generate_timestamp_etag
+)
 from ..models.statistics_model import (
     DashboardStatsModel,
-    CameraPerformanceModel,
-    QualityTrendDataPoint,
-    StorageStatsModel,
+    EnhancedDashboardStatsModel,
     SystemHealthScoreModel,
 )
-from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
 from ..utils.response_helpers import ResponseFormatter
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+# TODO: CACHING STRATEGY - ETAG + SHORT CACHE
+# Dashboard is perfect use case for ETag + short cache strategy:
+# - Composite data (stats/overview): ETag + 2-3 min cache - changes occasionally
+# - Health status: SSE broadcasting - critical real-time monitoring
+# Dashboard data is expensive to compute but doesn't change every second.
+router = APIRouter(tags=["dashboard"])
 
 
-@router.get("/stats", response_model=DashboardStatsModel)
+# IMPLEMENTED: ETag + 2-3 minute cache (composite dashboard data changes occasionally)
+# This is the PERFECT use case for composite endpoint caching
+# ETag based on hash of latest camera/timelapse/image/video timestamps
+@router.get("/dashboard", response_model=EnhancedDashboardStatsModel)
+@handle_exceptions("get dashboard overview")
+async def get_dashboard_overview(
+    response: Response,
+    statistics_service: StatisticsServiceDep,
+) -> EnhancedDashboardStatsModel:
+    """Get complete unified dashboard overview including system data"""
+    # All business logic handled in service layer
+    enhanced_stats = await statistics_service.get_enhanced_dashboard_stats()
+    
+    # Generate ETag based on dashboard stats content (composite data)
+    etag = generate_content_hash_etag(enhanced_stats.model_dump())
+    
+    # Add short cache for dashboard composite data
+    response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"  # 3 minutes
+    response.headers["ETag"] = etag
+    
+    return enhanced_stats
+
+
+# IMPLEMENTED: ETag + 2-3 minute cache (dashboard stats change occasionally)
+# ETag based on system activity - camera counts, image counts, latest activity
+@router.get("/dashboard/stats", response_model=DashboardStatsModel)
 @handle_exceptions("get dashboard stats")
-async def get_dashboard_stats(statistics_service: StatisticsServiceDep):
+async def get_dashboard_stats(
+    response: Response,
+    statistics_service: StatisticsServiceDep,
+) -> DashboardStatsModel:
     """Get comprehensive dashboard statistics"""
     dashboard_stats = await statistics_service.get_dashboard_stats()
+    
+    # Generate ETag based on dashboard stats content
+    etag = generate_content_hash_etag(dashboard_stats.model_dump())
+    
+    # Add short cache for dashboard statistics
+    response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"  # 3 minutes
+    response.headers["ETag"] = etag
+    
+    return dashboard_stats
+
+
+# DEPRECATED ENDPOINTS MERGED INTO MAIN /dashboard:
+# - /dashboard/system-overview merged into main /dashboard endpoint
+# - /dashboard/storage merged into main /dashboard endpoint
+# - /dashboard/quality-trends merged into main /dashboard endpoint
+# - /dashboard/camera-performance merged into main /dashboard endpoint
+# - /dashboard/health-score merged into main /dashboard endpoint
+# All system overview, storage, quality trends, camera performance, and health score data is now included in the unified dashboard response
+
+
+# TODO: Replace with SSE in services layer- health status changes frequently and is critical for monitoring
+# Use very short cache (30 seconds max) or preferably SSE events
+@router.get("/dashboard/health")
+@handle_exceptions("get dashboard health")
+async def get_dashboard_health(health_service: HealthServiceDep):
+    """Get health status for dashboard display"""
+    health_status = await health_service.get_detailed_health()
     return ResponseFormatter.success(
-        "Dashboard statistics retrieved", data=dashboard_stats.model_dump()
+        "Dashboard health status retrieved", data=health_status.model_dump()
     )
 
 
-@router.get("/health-score", response_model=SystemHealthScoreModel)
-@handle_exceptions("get system health score")
-async def get_system_health_score(statistics_service: StatisticsServiceDep):
-    """Get overall system health score"""
-    health_score = await statistics_service.get_system_health_score()
-    return ResponseFormatter.success(
-        "System health score retrieved", data=health_score.model_dump()
-    )
+# TODO: Decide if we need this
+# @router.get("/dashboard/complete")
+# @handle_exceptions("retrieve complete dashboard")
+# async def get_complete_dashboard(
+#     camera_service: CameraServiceDep,
+#     statistics_service: StatisticsServiceDep
+# ) -> Dict[str, Any]:
+#     """Single call replacing 4-6 separate dashboard API calls"""
+#     dashboard_data = await asyncio.gather(
+#         camera_service.list_cameras_with_latest_images(),
+#         statistics_service.get_system_overview(),
+#         statistics_service.get_recent_activity(limit=10),
+#         statistics_service.get_health_summary()
+#     )
 
-
-@router.get("/camera-performance", response_model=list[CameraPerformanceModel])
-@handle_exceptions("get camera performance")
-async def get_camera_performance(
-    statistics_service: StatisticsServiceDep,
-    limit: Optional[int] = Query(10, description="Number of cameras to return"),
-):
-    """Get camera performance metrics"""
-    performance_data = await statistics_service.get_camera_performance_stats()
-    return ResponseFormatter.success(
-        "Camera performance metrics retrieved",
-        data=[item.model_dump() for item in performance_data],
-    )
-
-
-@router.get("/quality-trends")
-@handle_exceptions("get quality trends")
-async def get_quality_trends(
-    statistics_service: StatisticsServiceDep,
-    days: Optional[int] = Query(7, description="Number of days to include"),
-    camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
-):
-    """Get quality trend data points"""
-    trend_data = await statistics_service.get_quality_trend_data()
-    return ResponseFormatter.success(
-        "Quality trend data points retrieved",
-        data=[item.model_dump() for item in trend_data],
-    )
-
-
-@router.get("/storage", response_model=StorageStatsModel)
-@handle_exceptions("get storage stats")
-async def get_storage_stats(statistics_service: StatisticsServiceDep):
-    """Get storage utilization statistics"""
-    storage_stats = await statistics_service.get_storage_statistics()
-    return ResponseFormatter.success(
-        "Storage utilization statistics retrieved", data=storage_stats.model_dump()
-    )
-
-
-@router.get("/system-overview")
-@handle_exceptions("get system overview")
-async def get_system_overview(statistics_service: StatisticsServiceDep):
-    """Get complete system overview for dashboard"""
-    # Get simple UTC timestamp for last_updated
-    current_timestamp = datetime.now(timezone.utc)
-
-    overview = await statistics_service.get_dashboard_stats()
-    overview_dict = overview.model_dump()
-    overview_dict["last_updated"] = current_timestamp.isoformat()
-    return ResponseFormatter.success("System overview retrieved", data=overview_dict)
+#     return ResponseFormatter.success(data={
+#         "cameras": dashboard_data[0],
+#         "system_stats": dashboard_data[1],
+#         "recent_activity": dashboard_data[2],
+#         "health": dashboard_data[3]
+#     })

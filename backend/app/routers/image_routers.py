@@ -10,28 +10,35 @@ Interactions: Uses ImageService for business logic, serves files directly from
 """
 # NOTE: THIS FILE SHOULD NOT CONTAIN ANY BUSINESS LOGIC.
 
-import io
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Query, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Query, HTTPException, status, Response
 from pydantic import BaseModel, Field
 
 from ..dependencies import ImageServiceDep
-from ..models.image_model import (
-    ImageWithDetails,
-    ThumbnailRegenerationResponse,
-    ImageStatisticsResponse,
-    BulkDownloadResponse,
-    QualityAssessmentResponse,
-)
+
+from ..models.image_model import ImageWithDetails
+from ..models.shared_models import ThumbnailRegenerationResponse
+
+from ..models.shared_models import ImageStatisticsResponse, BulkDownloadResponse
 from ..utils.router_helpers import handle_exceptions
-from ..utils.response_helpers import ResponseFormatter, SSEEventManager
+from ..utils.response_helpers import ResponseFormatter
 from ..utils.file_helpers import create_file_response
-from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
+from ..utils.cache_manager import (
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
+    generate_timestamp_etag
+)
 from ..constants import IMAGE_SIZE_VARIANTS, CACHE_CONTROL_PUBLIC
 
-router = APIRouter(prefix="/images", tags=["images"])
+# TODO: CACHING STRATEGY - LONG CACHE FOR IMMUTABLE CONTENT
+# Images are perfect example of immutable content that benefits from aggressive caching:
+# - Image files: Long cache (1 year) + ETag - never change after creation
+# - Image metadata: ETag + moderate cache (5-10 min) - rarely changes
+# - Dynamic operations (bulk downloads, deletion): No cache + SSE broadcasting
+# Individual endpoint TODOs are well-defined throughout this file.
+router = APIRouter(tags=["images"])
 
 
 # ====================================================================
@@ -55,41 +62,52 @@ class BulkDownloadRequest(BaseModel):
 # ====================================================================
 
 
-@router.get("/", response_model=List[ImageWithDetails])
-@handle_exceptions("get images")
-async def get_images(
+# Removed /images GET endpoint per decision: "DEPRECATE BACKEND - Unnecessary API surface area"
+# Use scoped endpoints like /images/camera/{id} and /timelapses/{id}/images instead
+
+
+# IMPLEMENTED: ETag + 5 minute cache (count changes when images added/removed)
+# ETag based on latest image timestamp + total count
+@router.get("/images/count")
+@handle_exceptions("get image count")
+async def get_image_count(
+    response: Response,
     image_service: ImageServiceDep,
-    camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
-    timelapse_id: Optional[int] = Query(None, description="Filter by timelapse ID"),
-    limit: int = Query(
-        100, ge=1, le=1000, description="Maximum number of images to return"
-    ),
-    offset: int = Query(0, ge=0, description="Number of images to skip"),
+    camera_id: Optional[int] = Query(None),
+    timelapse_id: Optional[int] = Query(None),
 ):
-    """
-    Get images with optional filtering by camera or timelapse.
-
-    Supports pagination and filtering. Returns detailed image information
-    including camera and timelapse context.
-    """
-    # Calculate page from offset and limit
-    page = (offset // limit) + 1
-
-    result = await image_service.get_images(
-        camera_id=camera_id,
-        timelapse_id=timelapse_id,
-        page=page,
-        page_size=limit,
-        order_by="captured_at",
-        order_dir="DESC",
+    """Get total count of images with optional filtering"""
+    # Use get_images with filters and count the results
+    images_result = await image_service.get_images(
+        camera_id=camera_id, timelapse_id=timelapse_id, page=1, page_size=1
+    )
+    total_count = (
+        images_result.get("total", 0) if isinstance(images_result, dict) else 0
+    )
+    
+    # Generate ETag based on count and filter parameters for cache validation
+    etag_data = f"count-{total_count}-{camera_id}-{timelapse_id}"
+    etag = generate_content_hash_etag(etag_data)
+    
+    # Add moderate cache for count data
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+    response.headers["ETag"] = etag
+    
+    return ResponseFormatter.success(
+        "Image count retrieved successfully",
+        data={
+            "count": total_count,
+            "camera_id": camera_id,
+            "timelapse_id": timelapse_id,
+        },
     )
 
-    return result.get("images", [])
 
-
-@router.get("/{image_id}", response_model=ImageWithDetails)
+# IMPLEMENTED: ETag + long cache (image metadata never changes after creation)
+# ETag = f'"{image.id}-{image.updated_at.timestamp()}"'
+@router.get("/images/{image_id}", response_model=ImageWithDetails)
 @handle_exceptions("get image")
-async def get_image(image_id: int, image_service: ImageServiceDep):
+async def get_image(response: Response, image_id: int, image_service: ImageServiceDep):
     """
     Get detailed image metadata by ID.
 
@@ -101,6 +119,14 @@ async def get_image(image_id: int, image_service: ImageServiceDep):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
+    
+    # Generate ETag based on image ID and captured timestamp
+    etag = generate_composite_etag(image.id, image.captured_at)
+    
+    # Add long cache for immutable image metadata
+    response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"  # 1 hour
+    response.headers["ETag"] = etag
+    
     return image
 
 
@@ -109,52 +135,16 @@ async def get_image(image_id: int, image_service: ImageServiceDep):
 # ====================================================================
 
 
-@router.get("/camera/{camera_id}/latest")
-@handle_exceptions("serve camera latest image")
-async def serve_camera_latest_image(
-    camera_id: int,
-    image_service: ImageServiceDep,
-    size: str = Query(
-        "full", description=f"Image size: {', '.join(IMAGE_SIZE_VARIANTS)}"
-    ),
-):
-    """
-    Serve the latest image for a camera.
-
-    Automatically selects the most recent image for the specified camera
-    with size variant support and cascading fallbacks.
-    """
-    latest_image = await image_service.get_latest_image_for_camera(camera_id)
-    if not latest_image:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No images found for this camera",
-        )
-
-    # Delegate to service layer for file preparation
-    serving_result = await image_service.prepare_image_for_serving(
-        latest_image.id, size
-    )
-    if not serving_result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=serving_result.get("error", "Failed to prepare image for serving"),
-        )
-
-    return create_file_response(
-        file_path=serving_result["file_path"],
-        media_type=serving_result["media_type"],
-        headers={
-            "Cache-Control": CACHE_CONTROL_PUBLIC,
-            "X-Image-ID": str(latest_image.id),
-            "X-Image-Size": size,
-        },
-    )
+# Removed /images/camera/{camera_id}/latest endpoint per decision: "DEPRECATE BACKEND - Remove legacy endpoint"
+# Use unified /cameras/{camera_id}/latest-image system instead
 
 
-@router.get("/{image_id}/serve")
+# IMPLEMENTED: long cache + ETag for immutable image files
+# Cache-Control: public, max-age=31536000, immutable + ETag based on image.id
+@router.get("/images/{image_id}/serve")
 @handle_exceptions("serve image")
 async def serve_image(
+    response: Response,
     image_id: int,
     image_service: ImageServiceDep,
     size: str = Query(
@@ -179,6 +169,13 @@ async def serve_image(
             detail=serving_result.get("error", "Failed to prepare image for serving"),
         )
 
+    # Generate ETag based on image ID and size for immutable content cache validation
+    etag = generate_content_hash_etag(f"{image_id}-{size}")
+
+    # Add aggressive cache for immutable image files
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # 1 year
+    response.headers["ETag"] = etag
+
     return create_file_response(
         file_path=serving_result["file_path"],
         media_type=serving_result["media_type"],
@@ -195,7 +192,8 @@ async def serve_image(
 # ====================================================================
 
 
-@router.delete("/{image_id}")
+# TODO:  no HTTP caching needed for DELETE operations
+@router.delete("/images/{image_id}")
 @handle_exceptions("delete image")
 async def delete_image(image_id: int, image_service: ImageServiceDep):
     """
@@ -210,16 +208,7 @@ async def delete_image(image_id: int, image_service: ImageServiceDep):
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
 
-    # Broadcast SSE event for real-time updates
-    SSEEventManager.broadcast_event(
-        {
-            "type": "image_deleted",
-            "data": {"image_id": image_id},
-            "timestamp": await get_timezone_aware_timestamp_string_async(
-                image_service.db
-            ),
-        }
-    )
+    # SSE broadcasting handled by service layer (proper architecture)
 
     return ResponseFormatter.success(
         message="Image deleted successfully",
@@ -234,54 +223,12 @@ async def delete_image(image_id: int, image_service: ImageServiceDep):
 # ====================================================================
 
 
-@router.get("/camera/{camera_id}/statistics", response_model=ImageStatisticsResponse)
-@handle_exceptions("get camera image statistics")
-async def get_camera_image_statistics(camera_id: int, image_service: ImageServiceDep):
-    """
-    Get comprehensive image statistics for a camera.
-
-    Includes total image counts, corruption statistics, file size metrics,
-    and quality assessment data.
-    """
-    stats = await image_service.calculate_image_statistics(camera_id=camera_id)
-    if not stats or "error" in stats:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Camera not found or no images available",
-        )
-
-    return ResponseFormatter.success(
-        message="Camera image statistics retrieved successfully",
-        data=stats,
-        camera_id=camera_id,
-    )
+# Moved camera statistics endpoint to cameras namespace per decision: "MOVE TO CAMERAS NAMESPACE"
+# Camera image statistics now available at /cameras/{camera_id}/statistics
 
 
-@router.get(
-    "/timelapse/{timelapse_id}/statistics", response_model=ImageStatisticsResponse
-)
-@handle_exceptions("get timelapse image statistics")
-async def get_timelapse_image_statistics(
-    timelapse_id: int, image_service: ImageServiceDep
-):
-    """
-    Get comprehensive image statistics for a timelapse.
-
-    Includes day-by-day breakdowns, capture consistency metrics,
-    and quality assessment summaries.
-    """
-    stats = await image_service.calculate_image_statistics(timelapse_id=timelapse_id)
-    if not stats or "error" in stats:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Timelapse not found or no images available",
-        )
-
-    return ResponseFormatter.success(
-        message="Timelapse image statistics retrieved successfully",
-        data=stats,
-        timelapse_id=timelapse_id,
-    )
+# Removed /images/timelapse/{timelapse_id}/statistics endpoint per decision: "DEPRECATE BACKEND - Remove duplicate functionality"
+# Timelapse statistics are available through camera statistics and main timelapse endpoints
 
 
 # ====================================================================
@@ -289,7 +236,37 @@ async def get_timelapse_image_statistics(
 # ====================================================================
 
 
-@router.post("/bulk/download", response_model=BulkDownloadResponse)
+@router.get("/images/batch")
+@handle_exceptions("batch load images")
+async def get_images_batch(
+    image_service: ImageServiceDep,
+    ids: str = Query(..., description="Comma-separated image IDs: '1,2,3,4'"),
+    size: str = Query("thumbnail", description="thumbnail|small|original"),
+):
+    """Batch load multiple images/thumbnails in single request"""
+    image_ids = [int(id.strip()) for id in ids.split(",") if id.strip()]
+    images = await image_service.get_images_batch(image_ids, size)
+
+    # Convert Pydantic models to dicts for ResponseFormatter compatibility
+    # TODO: conversion should not be needed
+    images_data = [image.model_dump() for image in images]
+
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
+        message="Images batch retrieved successfully",
+        data={
+            "images": images_data,
+            "size": size,
+            "requested_count": len(image_ids),
+            "loaded_count": len(images),
+        },
+    )
+
+
+# TODO: No caching needed - bulk downloads are dynamic operations
+# Good SSE broadcasting for operation tracking
+@router.post("/images/bulk/download", response_model=BulkDownloadResponse)
 @handle_exceptions("bulk download images")
 async def bulk_download_images(
     request: BulkDownloadRequest, image_service: ImageServiceDep
@@ -316,30 +293,14 @@ async def bulk_download_images(
             detail=bulk_result.get("error", "Bulk download preparation failed"),
         )
 
-    # Broadcast SSE event for bulk operation tracking
-    SSEEventManager.broadcast_event(
-        {
-            "type": "bulk_download_completed",
-            "data": {
-                "requested_images": bulk_result["requested_images"],
-                "included_images": bulk_result["included_images"],
-                "filename": bulk_result["filename"],
-            },
-            "timestamp": await get_timezone_aware_timestamp_string_async(
-                image_service.db
-            ),
-        }
-    )
+    # SSE broadcasting handled by service layer (proper architecture)
 
-    return StreamingResponse(
-        io.BytesIO(bulk_result["zip_data"]),
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename={bulk_result['filename']}",
-            "X-Total-Images": str(bulk_result["included_images"]),
-            "X-Requested-Images": str(bulk_result["requested_images"]),
-            "X-Total-Size": str(bulk_result.get("total_size", 0)),
-        },
+    return BulkDownloadResponse(
+        requested_images=bulk_result["requested_images"],
+        included_images=bulk_result["included_images"],
+        filename=bulk_result["filename"],
+        total_size=bulk_result.get("total_size"),
+        zip_data=bulk_result.get("zip_data"),
     )
 
 
@@ -348,81 +309,90 @@ async def bulk_download_images(
 # ====================================================================
 
 
-@router.post(
-    "/{image_id}/regenerate-thumbnails", response_model=ThumbnailRegenerationResponse
-)
-@handle_exceptions("regenerate thumbnails")
-async def regenerate_thumbnails(image_id: int, image_service: ImageServiceDep):
-    """
-    Force regeneration of thumbnails for an image.
+# Removed quality-assessment endpoint per decision: "DEPRECATE BACKEND - Include quality data in main image endpoint"
+# Quality assessment data is now included in the main /images/{image_id} GET endpoint via ImageWithDetails model
 
-    Useful for fixing corrupted thumbnails or updating thumbnail quality.
-    Uses the ImageService coordination for proper thumbnail management.
-    """
-    result = await image_service.coordinate_thumbnail_generation(
-        image_id=image_id, force_regenerate=True
-    )
 
-    if not result.success:
+# IMPLEMENTED: long cache + ETag for immutable image files
+# Cache-Control: public, max-age=31536000, immutable + ETag based on image.id
+@router.get("/images/{image_id}/small")
+@handle_exceptions("serve small image")
+async def serve_small_image(response: Response, image_id: int, image_service: ImageServiceDep):
+    """Serve small/medium-sized version of an image (800x600)"""
+    # Delegate to service layer for file preparation
+    serving_result = await image_service.prepare_image_for_serving(image_id, "small")
+    if not serving_result.get("success"):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Thumbnail regeneration failed: {result.error}",
-        )
-
-    # Create response model
-    response_data = ThumbnailRegenerationResponse(
-        image_id=image_id,
-        thumbnail_path=result.thumbnail_path,
-        small_path=result.small_path,
-        thumbnail_size=result.thumbnail_size,
-        small_size=result.small_size,
-        thumbnail_generated=bool(result.thumbnail_path),
-        small_generated=bool(result.small_path),
-    )
-
-    # Broadcast SSE event for real-time updates
-    SSEEventManager.broadcast_event(
-        {
-            "type": "thumbnails_regenerated",
-            "data": {
-                "image_id": image_id,
-                "thumbnail_generated": response_data.thumbnail_generated,
-                "small_generated": response_data.small_generated,
-            },
-            "timestamp": await get_timezone_aware_timestamp_string_async(
-                image_service.db
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if "not found" in serving_result.get("error", "").lower()
+                else status.HTTP_500_INTERNAL_SERVER_ERROR
             ),
-        }
-    )
-
-    return response_data
-
-
-@router.get("/{image_id}/quality-assessment", response_model=QualityAssessmentResponse)
-@handle_exceptions("get image quality assessment")
-async def get_image_quality_assessment(image_id: int, image_service: ImageServiceDep):
-    """
-    Get detailed quality assessment for an image.
-
-    Provides corruption scores, quality metrics, and analysis details
-    from the integrated corruption detection system.
-    """
-    quality_result = await image_service.coordinate_quality_assessment(image_id)
-
-    if not quality_result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Quality assessment failed: {quality_result.get('error', 'Unknown error')}",
+            detail=serving_result.get(
+                "error", "Failed to prepare small image for serving"
+            ),
         )
 
-    # Create response model
-    response_data = QualityAssessmentResponse(
-        image_id=image_id,
-        quality_score=quality_result.get("quality_score", 0),
-        corruption_detected=quality_result.get("corruption_detected", False),
-        analysis_details=quality_result.get("analysis_details"),
-        action_taken=quality_result.get("action_taken"),
-        processing_time_ms=quality_result.get("processing_time_ms"),
+    # Generate ETag based on image ID and size for immutable content cache validation
+    etag = generate_content_hash_etag(f"{image_id}-small")
+
+    # Add aggressive cache for immutable image files
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # 1 year
+    response.headers["ETag"] = etag
+
+    return create_file_response(
+        file_path=serving_result["file_path"],
+        media_type=serving_result["media_type"],
+        headers={
+            "Cache-Control": CACHE_CONTROL_PUBLIC,
+            "X-Image-ID": str(image_id),
+            "X-Image-Size": "small",
+        },
     )
 
-    return response_data
+
+# IMPLEMENTED: long cache + ETag for immutable thumbnail files
+# Cache-Control: public, max-age=31536000, immutable + ETag based on image.id
+@router.get("/images/{image_id}/thumbnail")
+@handle_exceptions("serve thumbnail image")
+async def serve_thumbnail_image(response: Response, image_id: int, image_service: ImageServiceDep):
+    """Serve thumbnail version of an image (200x150)"""
+    # Delegate to service layer for file preparation
+    serving_result = await image_service.prepare_image_for_serving(
+        image_id, "thumbnail"
+    )
+    if not serving_result.get("success"):
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if "not found" in serving_result.get("error", "").lower()
+                else status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=serving_result.get(
+                "error", "Failed to prepare thumbnail for serving"
+            ),
+        )
+
+    # Generate ETag based on image ID and size for immutable content cache validation
+    etag = generate_content_hash_etag(f"{image_id}-thumbnail")
+
+    # Add aggressive cache for immutable thumbnail files
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # 1 year
+    response.headers["ETag"] = etag
+
+    return create_file_response(
+        file_path=serving_result["file_path"],
+        media_type=serving_result["media_type"],
+        headers={
+            "Cache-Control": CACHE_CONTROL_PUBLIC,
+            "X-Image-ID": str(image_id),
+            "X-Image-Size": "thumbnail",
+        },
+    )
+
+
+# @router.get("/images/{path:path}")
+# @handle_exceptions("serve dynamic image path")
+# async def serve_dynamic_image_path(path: str, image_service: ImageServiceDep):
+#     """Serve images by dynamic file path (for frontend compatibility)"""
+#     return await image_service.serve_image_by_path(path)

@@ -3,8 +3,11 @@
 
 import { useState } from "react"
 import { useVideoQueue } from "@/hooks/use-video-automation"
-import { useCaptureSettings } from "@/hooks/use-camera-countdown"
-import { formatRelativeTime, formatAbsoluteTimeForCounter } from "@/lib/time-utils"
+import { useCaptureSettings } from "@/contexts/settings-context"
+import {
+  formatRelativeTime,
+  formatAbsoluteTimeForCounter,
+} from "@/lib/time-utils"
 import {
   Card,
   CardContent,
@@ -106,15 +109,17 @@ export function VideoQueueMonitor({
   }
 
   // Timezone-aware time formatting following AI-CONTEXT patterns
-  const formatJobTime = (timestamp: string): { relative: string; absolute: string } => {
+  const formatJobTime = (
+    timestamp: string
+  ): { relative: string; absolute: string } => {
     const relative = formatRelativeTime(timestamp, {
       includeAbsolute: false,
       shortFormat: true,
       timezone,
     })
-    
+
     const absolute = formatAbsoluteTimeForCounter(timestamp, timezone)
-    
+
     return { relative, absolute }
   }
 
@@ -279,8 +284,12 @@ export function VideoQueueMonitor({
             filteredJobs.map((job) => {
               // Get timezone-aware formatted times for this job
               const createdTime = formatJobTime(job.created_at)
-              const startedTime = job.started_at ? formatJobTime(job.started_at) : null
-              const completedTime = job.completed_at ? formatJobTime(job.completed_at) : null
+              const startedTime = job.started_at
+                ? formatJobTime(job.started_at)
+                : null
+              const completedTime = job.completed_at
+                ? formatJobTime(job.completed_at)
+                : null
 
               return (
                 <div
@@ -303,7 +312,9 @@ export function VideoQueueMonitor({
                         </Badge>
                         <Badge
                           variant='outline'
-                          className={`text-xs ${getPriorityColor(job.priority)}`}
+                          className={`text-xs ${getPriorityColor(
+                            job.priority
+                          )}`}
                         >
                           {job.priority}
                         </Badge>
@@ -319,7 +330,7 @@ export function VideoQueueMonitor({
                             </div>
                           )}
                         </div>
-                        
+
                         {startedTime && (
                           <div>
                             <span>Started {startedTime.relative}</span>
@@ -330,7 +341,7 @@ export function VideoQueueMonitor({
                             )}
                           </div>
                         )}
-                        
+
                         {completedTime && (
                           <div>
                             <span>Completed {completedTime.relative}</span>

@@ -1,8 +1,8 @@
 # backend/app/models/timelapse.py
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Literal
-from datetime import datetime, date
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Optional, Literal, Union
+from datetime import datetime, date, time
 
 # Import shared components to eliminate duplication
 from .shared_models import (
@@ -15,9 +15,51 @@ from .shared_models import (
 
 class TimelapseBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
-    status: Literal["running", "stopped", "paused", "completed", "archived"] = Field(
-        default="stopped", description="Timelapse status"
+    status: Literal["running", "paused", "completed", "archived"] = Field(
+        default="completed", description="Timelapse status"
     )
+
+
+class TimelapseCreateData(BaseModel):
+    """Model for creating a new timelapse without requiring camera_id (gets it from query param)"""
+
+    name: Optional[str] = Field(None, description="Custom name for the timelapse")
+    auto_stop_at: Optional[datetime] = Field(None, description="Automatic stop time")
+
+    # Time window configuration
+    time_window_type: Literal["none", "time", "sunrise_sunset"] = Field(
+        default="none", description="Type of time window control"
+    )
+    time_window_start: Optional[str] = Field(
+        None, description="Custom time window start (HH:MM)"
+    )
+    time_window_end: Optional[str] = Field(
+        None, description="Custom time window end (HH:MM)"
+    )
+    sunrise_offset_minutes: Optional[int] = Field(
+        None, description="Minutes before (-) or after (+) sunrise to start capturing"
+    )
+    sunset_offset_minutes: Optional[int] = Field(
+        None, description="Minutes before (-) or after (+) sunset to stop capturing"
+    )
+    use_custom_time_window: Optional[bool] = Field(
+        False, description="Use custom time window instead of camera default"
+    )
+
+    # Video generation settings (optional overrides)
+    video_generation_mode: Optional[VideoGenerationMode] = None
+    standard_fps: Optional[int] = Field(default=None, ge=1, le=120)
+    enable_time_limits: Optional[bool] = None
+    min_time_seconds: Optional[int] = Field(default=None, ge=1)
+    max_time_seconds: Optional[int] = Field(default=None, ge=1)
+    target_time_seconds: Optional[int] = Field(default=None, ge=1)
+    fps_bounds_min: Optional[int] = Field(default=None, ge=1, le=60)
+    fps_bounds_max: Optional[int] = Field(default=None, ge=1, le=120)
+
+    # Video automation settings (optional overrides)
+    video_automation_mode: Optional[VideoAutomationMode] = None
+    generation_schedule: Optional[GenerationSchedule] = None
+    milestone_config: Optional[MilestoneConfig] = None
 
 
 class TimelapseCreate(TimelapseBase):
@@ -46,18 +88,28 @@ class TimelapseCreate(TimelapseBase):
         False, description="Use custom time window instead of camera default"
     )
 
-    # Video generation settings (optional overrides)
-    video_generation_mode: Optional[VideoGenerationMode] = None
-    standard_fps: Optional[int] = Field(None, ge=1, le=120)
-    enable_time_limits: Optional[bool] = None
+    # Video generation settings (with defaults for database requirements)
+    video_generation_mode: VideoGenerationMode = Field(
+        default=VideoGenerationMode.STANDARD, description="Video generation mode"
+    )
+    standard_fps: int = Field(default=30, ge=1, le=120, description="Standard FPS")
+    enable_time_limits: bool = Field(
+        default=False, description="Enable time limits for video generation"
+    )
     min_time_seconds: Optional[int] = Field(None, ge=1)
     max_time_seconds: Optional[int] = Field(None, ge=1)
     target_time_seconds: Optional[int] = Field(None, ge=1)
-    fps_bounds_min: Optional[int] = Field(None, ge=1, le=60)
-    fps_bounds_max: Optional[int] = Field(None, ge=1, le=120)
+    fps_bounds_min: int = Field(
+        default=15, ge=1, le=60, description="Minimum FPS bound"
+    )
+    fps_bounds_max: int = Field(
+        default=60, ge=1, le=120, description="Maximum FPS bound"
+    )
 
-    # Video automation settings (optional overrides)
-    video_automation_mode: Optional[VideoAutomationMode] = None
+    # Video automation settings (with defaults for database requirements)
+    video_automation_mode: VideoAutomationMode = Field(
+        default=VideoAutomationMode.MANUAL, description="Video automation mode"
+    )
     generation_schedule: Optional[GenerationSchedule] = None
     milestone_config: Optional[MilestoneConfig] = None
 
@@ -65,9 +117,7 @@ class TimelapseCreate(TimelapseBase):
 class TimelapseUpdate(BaseModel):
     """Model for updating a timelapse"""
 
-    status: Optional[
-        Literal["running", "stopped", "paused", "completed", "archived"]
-    ] = None
+    status: Optional[Literal["running", "paused", "completed", "archived"]] = None
 
     # Time window configuration
     time_window_type: Optional[Literal["none", "time", "sunrise_sunset"]] = None
@@ -79,13 +129,13 @@ class TimelapseUpdate(BaseModel):
 
     # Video generation settings (optional overrides)
     video_generation_mode: Optional[VideoGenerationMode] = None
-    standard_fps: Optional[int] = Field(None, ge=1, le=120)
+    standard_fps: Optional[int] = Field(default=None, ge=1, le=120)
     enable_time_limits: Optional[bool] = None
-    min_time_seconds: Optional[int] = Field(None, ge=1)
-    max_time_seconds: Optional[int] = Field(None, ge=1)
-    target_time_seconds: Optional[int] = Field(None, ge=1)
-    fps_bounds_min: Optional[int] = Field(None, ge=1, le=60)
-    fps_bounds_max: Optional[int] = Field(None, ge=1, le=120)
+    min_time_seconds: Optional[int] = Field(default=None, ge=1)
+    max_time_seconds: Optional[int] = Field(default=None, ge=1)
+    target_time_seconds: Optional[int] = Field(default=None, ge=1)
+    fps_bounds_min: Optional[int] = Field(default=None, ge=1, le=60)
+    fps_bounds_max: Optional[int] = Field(default=None, ge=1, le=120)
 
     # Video automation settings (optional overrides)
     video_automation_mode: Optional[VideoAutomationMode] = None
@@ -108,6 +158,18 @@ class Timelapse(TimelapseBase):
     sunrise_offset_minutes: Optional[int] = None
     sunset_offset_minutes: Optional[int] = None
     use_custom_time_window: bool = False
+
+    @field_validator("time_window_start", "time_window_end", mode="before")
+    @classmethod
+    def convert_time_to_string(cls, v):
+        """Convert datetime.time objects to HH:MM string format"""
+        if v is None:
+            return v
+        if isinstance(v, time):
+            return v.strftime("%H:%M")
+        if isinstance(v, str):
+            return v
+        return str(v)
 
     image_count: int = 0
     last_capture_at: Optional[datetime] = None

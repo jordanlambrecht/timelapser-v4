@@ -1,3 +1,4 @@
+// src/app/cameras/[id]/page.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -5,9 +6,9 @@ import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   useRelativeTime,
-  useCaptureSettings,
   useCameraCountdown,
 } from "@/hooks/use-camera-countdown"
+import { useCaptureSettings } from "@/contexts/settings-context"
 import { useCameraDetails } from "@/hooks/use-camera-details"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
@@ -15,6 +16,9 @@ import { toast } from "@/lib/toast"
 import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
 import { TimelapseDetailsModal } from "@/components/timelapse-details-modal"
 import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
+import { CameraDetailsImage } from "@/components/camera-image-unified"
+import { useLatestImageDetails } from "@/hooks/use-latest-image"
+import { downloadLatestImage } from "@/lib/latest-image-api"
 import { AnimatedGradientButton } from "@/components/ui/animated-gradient-button"
 // import { AnimatedCountdownBorder } from "@/components/animated-countdown-border"
 import { Button } from "@/components/ui/button"
@@ -92,15 +96,12 @@ export default function CameraDetailsPage() {
   const isTimelapseRunning = activeTimelapse?.status === "running"
   const isTimelapsePaused = activeTimelapse?.status === "paused"
 
-  // 🎯 PRODUCTION: Console.log statements removed for clean production code
-
   // Use the new time formatting hooks
   const lastImageCapturedText = useRelativeTime(
     camera?.last_image?.captured_at,
     {
       includeAbsolute: false,
       refreshInterval: 30000,
-      timezone: timezone,
     }
   )
 
@@ -132,27 +133,61 @@ export default function CameraDetailsPage() {
   // Extract progress for the animated border
   const { captureProgress } = countdownState
 
-  // 🎯 REFACTORED: Centralized SSE event handling
+  // 🎯 REAL-TIME: SSE event handling for live updates (no React Query interference)
   useCameraSSE(cameraId, {
     onImageCaptured: () => {
-      // Force image refresh with cache-busting
+      // Force image refresh with cache-busting - SSE system handles data updates
       setImageKey(Date.now())
-      // Refetch comprehensive data to stay in sync
+      // Let useCameraDetails hook handle data refetching automatically
       refetch()
     },
     onStatusChanged: () => {
-      // For any significant state changes, refetch all data
-      refetch()
+      // Force image refresh and let SSE system handle data updates
       setImageKey(Date.now())
+      refetch()
     },
     onTimelapseStatusChanged: () => {
-      // For any significant state changes, refetch all data
-      refetch()
+      // Force image refresh and let SSE system handle data updates
       setImageKey(Date.now())
+      refetch()
+    },
+    onTimelapseStarted: (data) => {
+      console.log("🎬 Timelapse started via SSE:", data)
+      toast.timelapseStarted(camera?.name || "Camera")
+      setNewTimelapseDialogOpen(false)
+      setImageKey(Date.now())
+      refetch()
+    },
+    onTimelapsePaused: (data) => {
+      console.log("⏸️ Timelapse paused via SSE:", data)
+      toast.timelapsePaused(camera?.name || "Camera")
+      refetch()
+    },
+    onTimelapseResumed: (data) => {
+      console.log("▶️ Timelapse resumed via SSE:", data)
+      toast.timelapseResumed(camera?.name || "Camera")
+      refetch()
+    },
+    onTimelapseStopped: (data) => {
+      console.log("⏹️ Timelapse stopped via SSE:", data)
+      toast.success(`⏹️ Timelapse stopped for ${camera?.name || "Camera"}`, {
+        description: "Recording session has ended",
+      })
+      setImageKey(Date.now())
+      refetch()
+    },
+    onTimelapseCompleted: (data) => {
+      console.log("✅ Timelapse completed via SSE:", data)
+      toast.success(`✅ Timelapse completed for ${camera?.name || "Camera"}`, {
+        description: "Recording session archived",
+      })
+      setImageKey(Date.now())
+      refetch()
     },
     onCameraUpdated: () => {
-      refetch()
+      // Force image refresh and let SSE system handle data updates
       setImageKey(Date.now())
+      refetch()
     },
   })
 
@@ -167,18 +202,16 @@ export default function CameraDetailsPage() {
       setActionLoading("pause")
 
       const response = await fetch(
-        `/api/timelapses/${activeTimelapse.id}/status?camera_id=${camera.id}`,
+        `/api/cameras/${camera.id}/pause-timelapse`,
         {
-          method: "PUT",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "paused" }),
         }
       )
 
       if (response.ok) {
-        toast.timelapsePaused(camera.name)
-        // 🎯 REFACTORED: Use comprehensive hook for data refresh
-        await refetch()
+        // SSE event will handle state update automatically - no manual refetch needed
+        // toast.timelapsePaused(camera.name) // Removed - SSE handler shows toast
       } else {
         throw new Error("Failed to pause timelapse")
       }
@@ -200,18 +233,16 @@ export default function CameraDetailsPage() {
       setActionLoading("resume")
 
       const response = await fetch(
-        `/api/timelapses/${activeTimelapse.id}/status?camera_id=${camera.id}`,
+        `/api/cameras/${camera.id}/resume-timelapse`,
         {
-          method: "PUT",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "running" }),
         }
       )
 
       if (response.ok) {
-        toast.timelapseResumed(camera.name)
-        // 🎯 REFACTORED: Use comprehensive hook for data refresh
-        await refetch()
+        // SSE event will handle state update automatically - no manual refetch needed
+        // toast.timelapseResumed(camera.name) // Removed - SSE handler shows toast
       } else {
         throw new Error("Failed to resume timelapse")
       }
@@ -232,22 +263,15 @@ export default function CameraDetailsPage() {
     try {
       setActionLoading("stop")
 
-      // Complete the timelapse using entity-based endpoint
-      const response = await fetch(
-        `/api/timelapses/${activeTimelapse.id}/complete?camera_id=${camera.id}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      )
+      // Complete the timelapse using camera-centric endpoint
+      const response = await fetch(`/api/cameras/${camera.id}/stop-timelapse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
 
       if (response.ok) {
-        toast.success(`⏹️ Timelapse stopped for ${camera.name}`, {
-          description: "Recording session has ended",
-        })
-        // 🎯 REFACTORED: Use comprehensive hook for data refresh
-        await refetch()
-        setImageKey(Date.now())
+        // SSE event will handle state update automatically - no manual refetch needed
+        // Toast and image refresh handled by SSE event handler
       } else {
         throw new Error("Failed to stop timelapse")
       }
@@ -278,46 +302,54 @@ export default function CameraDetailsPage() {
         }
       }
 
-      const timelapseData = {
-        camera_id: camera.id,
-        status: "running",
+      // Send minimal data - let backend apply defaults via Pydantic model
+      const timelapseData: any = {
         name: config.name,
-        auto_stop_at: config.useAutoStop ? config.autoStopAt : null,
-        time_window_start:
-          config.timeWindowType === "time" ? config.timeWindowStart : null,
-        time_window_end:
-          config.timeWindowType === "time" ? config.timeWindowEnd : null,
-        use_custom_time_window: config.timeWindowType !== "none",
-        // ARCHITECTURAL LAW: Video settings inheritance pattern
-        ...(config.videoSettings && config.videoSettings),
+      }
+
+      // Only include optional fields if they differ from defaults
+      if (config.useAutoStop && config.autoStopAt) {
+        timelapseData.auto_stop_at = config.autoStopAt
+      }
+
+      if (config.timeWindowType === "time") {
+        timelapseData.time_window_type = "time"
+        timelapseData.time_window_start = config.timeWindowStart
+        timelapseData.time_window_end = config.timeWindowEnd
+        timelapseData.use_custom_time_window = true
+      } else if (config.timeWindowType === "sunrise_sunset") {
+        timelapseData.time_window_type = "sunrise_sunset"
+        timelapseData.use_custom_time_window = true
+      }
+
+      // Include video settings if provided
+      if (config.videoSettings) {
+        Object.assign(timelapseData, config.videoSettings)
       }
 
       // No optimistic updates needed - comprehensive hook will handle data updates
 
-      // Use the entity-based endpoint
-      const response = await fetch("/api/timelapses/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(timelapseData),
-      })
+      // Use the camera-centric start timelapse endpoint
+      const response = await fetch(
+        `/api/cameras/${camera.id}/start-timelapse`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(timelapseData),
+        }
+      )
 
       const result = await response.json()
 
       if (response.ok) {
         toast.timelapseStarted(camera.name)
         setNewTimelapseDialogOpen(false)
-        await refetch()
-
+        // SSE event will handle all state updates automatically
         // Force image refresh with cache-busting
         setImageKey(Date.now())
-
-        // Additional refresh to ensure backend state is synchronized
-        setTimeout(async () => {
-          await refetch()
-        }, 1000)
       } else {
-        // Reset with fresh data on failure
-        await refetch()
+        // On failure, refetch to get fresh state
+        refetch()
         throw new Error(result.detail || "Failed to start timelapse")
       }
     } catch (error) {
@@ -635,101 +667,16 @@ export default function CameraDetailsPage() {
                     // Latest Image View
                     camera.last_image ? (
                       <>
-                        <Image
-                          src={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
-                          alt={`Latest capture from ${camera.name}`}
-                          width={800}
-                          height={450}
+                        <CameraDetailsImage
+                          cameraId={camera.id}
+                          cameraName={camera.name}
                           className='object-cover w-full h-full hover:scale-105 transition-transform duration-300'
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none"
-                            const parent = e.currentTarget.parentElement
-                            if (
-                              parent &&
-                              !parent.querySelector(".image-error-placeholder")
-                            ) {
-                              const placeholder = document.createElement("div")
-                              placeholder.className =
-                                "flex items-center justify-center w-full h-full text-gray-500 image-error-placeholder"
-                              placeholder.innerHTML = `
-                                <div class="text-center">
-                                  <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                                  </svg>
-                                  <p class="mt-2">Image not available</p>
-                                </div>
-                              `
-                              parent.appendChild(placeholder)
-                            }
-                          }}
                         />
                         {/* Download Button for Image */}
                         <Button
                           onClick={async () => {
                             try {
-                              // Try the dedicated download endpoint first
-                              let response = await fetch(
-                                `/api/cameras/${camera.id}/latest-capture/download`
-                              )
-                              let isUsingFallback = false
-
-                              // If that fails, fall back to the regular endpoint
-                              if (!response.ok) {
-                                response = await fetch(
-                                  `/api/cameras/${camera.id}/latest-capture?t=${imageKey}`
-                                )
-                                isUsingFallback = true
-                              }
-
-                              if (!response.ok) {
-                                throw new Error("Failed to download image")
-                              }
-
-                              const blob = await response.blob()
-                              const url = window.URL.createObjectURL(blob)
-                              const a = document.createElement("a")
-                              a.href = url
-
-                              // Generate filename with timestamp
-                              let filename = `${camera.name}_latest_capture.jpg`
-
-                              if (isUsingFallback) {
-                                // For fallback, generate timestamp ourselves
-                                const now = new Date()
-                                const timestamp = now
-                                  .toISOString()
-                                  .slice(0, 19)
-                                  .replace(/[:-]/g, "")
-                                  .replace("T", "_")
-                                const safeCameraName = camera.name
-                                  .replace(/[^a-zA-Z0-9\s\-_]/g, "")
-                                  .replace(/\s+/g, "_")
-                                filename = `${safeCameraName}_${timestamp}.jpg`
-                              } else {
-                                // Try to get filename from response headers
-                                const contentDisposition = response.headers.get(
-                                  "content-disposition"
-                                )
-                                if (contentDisposition) {
-                                  const filenameMatch =
-                                    contentDisposition.match(
-                                      /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/
-                                    )
-                                  if (filenameMatch) {
-                                    filename = filenameMatch[1].replace(
-                                      /['"]/g,
-                                      ""
-                                    )
-                                  }
-                                }
-                              }
-
-                              a.download = filename
-                              document.body.appendChild(a)
-                              a.click()
-                              document.body.removeChild(a)
-                              window.URL.revokeObjectURL(url)
+                              await downloadLatestImage(camera.id)
                               toast.success("Image downloaded successfully!")
                             } catch (error) {
                               console.error("Error downloading image:", error)
@@ -772,7 +719,7 @@ export default function CameraDetailsPage() {
                       <video
                         controls
                         className='w-full h-full object-contain'
-                        poster={`/api/cameras/${camera.id}/latest-capture?t=${imageKey}`}
+                        poster={`/api/cameras/${camera.id}/latest-image/small`}
                       >
                         <source
                           src={`/api/videos/${completedVideos[0].id}/stream`}
@@ -1567,8 +1514,8 @@ export default function CameraDetailsPage() {
                     throw new Error("Failed to update video settings")
                   }
 
-                  // 🎯 REFACTORED: Use comprehensive hook for data refresh
-                  await refetch()
+                  // Invalidate cache for settings updates
+                  queryClient.invalidateQueries({ queryKey: ['camera', cameraId] })
 
                   toast.success("Video generation settings updated", {
                     description: "Settings will apply to new timelapses",
@@ -1631,7 +1578,7 @@ export default function CameraDetailsPage() {
           timelapseId={selectedTimelapse.id}
           cameraName={camera.name}
           onDataUpdate={() => {
-            // 🎯 REFACTORED: Use comprehensive hook for data refresh
+            // Refetch data for updates
             refetch()
           }}
         />
@@ -1644,7 +1591,7 @@ export default function CameraDetailsPage() {
         cameraId={cameraId}
         cameraName={camera.name}
         onSettingsUpdate={() => {
-          // 🎯 REFACTORED: Use comprehensive hook for data refresh
+          // Refetch data for settings updates
           refetch()
         }}
       />

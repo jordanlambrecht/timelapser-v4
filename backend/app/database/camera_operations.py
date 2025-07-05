@@ -14,11 +14,18 @@ All operations return proper Pydantic models directly, eliminating Dict[str, Any
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from zoneinfo import ZoneInfo
-from ..utils.timezone_utils import get_timezone_from_db_async
+
 from loguru import logger
 from pydantic import ValidationError
 
 from .core import AsyncDatabase, SyncDatabase
+from ..constants import (
+    HEALTH_STATUSES,
+    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    CAMERA_NOT_FOUND,
+    CAMERA_CAPTURE_SUCCESS,
+    CORRUPTION_SCORE_FAILED,
+)
 from ..models.camera_model import (
     Camera,
     CameraWithLastImage,
@@ -28,9 +35,63 @@ from ..models.camera_model import (
 )
 from ..models.corruption_model import CorruptionSettingsModel
 from ..models.shared_models import CameraHealthStatus, CameraStatistics
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_async,
+    get_timezone_aware_timestamp_sync,
+    get_timezone_from_cache_async,
+    get_timezone_from_cache_sync,
+)
+
+
+def _prepare_camera_data_shared(
+    camera_data: Dict[str, Any], tz: ZoneInfo
+) -> Dict[str, Any]:
+    """
+    Shared helper function for preparing camera data from database rows.
+
+    This eliminates duplicate logic between async and sync _prepare_camera_data methods.
+    Handles time object conversion and timezone localization.
+
+    Args:
+        camera_data: Camera data dictionary from database row
+        tz: ZoneInfo timezone object for localization
+
+    Returns:
+        Processed camera data dictionary
+    """
+    # Convert time objects to strings for API serialization
+    if camera_data.get("time_window_start") and hasattr(
+        camera_data["time_window_start"], "strftime"
+    ):
+        camera_data["time_window_start"] = camera_data["time_window_start"].strftime(
+            "%H:%M:%S"
+        )
+    if camera_data.get("time_window_end") and hasattr(
+        camera_data["time_window_end"], "strftime"
+    ):
+        camera_data["time_window_end"] = camera_data["time_window_end"].strftime(
+            "%H:%M:%S"
+        )
+
+    # Localize datetime fields using provided timezone
+    for dt_field in [
+        "created_at",
+        "updated_at",
+        "next_capture_at",
+        "last_degraded_at",
+    ]:
+        if camera_data.get(dt_field) and isinstance(camera_data[dt_field], datetime):
+            if camera_data[dt_field].tzinfo is None:
+                camera_data[dt_field] = camera_data[dt_field].replace(tzinfo=tz)
+
+    return camera_data
 
 
 class AsyncCameraOperations:
+    def __init__(self, db: AsyncDatabase, settings_service) -> None:
+        self.db = db
+        self.settings_service = settings_service
+
     async def get_active_cameras(self) -> List[Camera]:
         """
         Retrieve all enabled cameras for worker processing (async).
@@ -64,46 +125,21 @@ class AsyncCameraOperations:
 
     """Async camera database operations for FastAPI endpoints."""
 
-    def __init__(self, db: AsyncDatabase) -> None:
-        self.db = db
-
     async def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Prepare database row data for Pydantic model validation.
-        This method is now async to support database-driven timezone localization (AI-CONTEXT compliance).
-        Time fields are converted to strings for serialization, and datetime fields are localized using the timezone from the database.
+        Prepare database row data for Pydantic model validation (async version).
+
+        Uses shared helper function to eliminate code duplication.
+        Gets timezone from database cache and delegates processing to shared helper.
         """
         camera_data = dict(row)
 
-        # Convert time objects to strings for API serialization
-        if camera_data.get("time_window_start") and hasattr(
-            camera_data["time_window_start"], "strftime"
-        ):
-            camera_data["time_window_start"] = camera_data[
-                "time_window_start"
-            ].strftime("%H:%M:%S")
-        if camera_data.get("time_window_end") and hasattr(
-            camera_data["time_window_end"], "strftime"
-        ):
-            camera_data["time_window_end"] = camera_data["time_window_end"].strftime(
-                "%H:%M:%S"
-            )
-
-        # Localize datetime fields using database-driven timezone
-        tz_str = await get_timezone_from_db_async(self.db)
+        # Get timezone from database cache (async)
+        tz_str = await get_timezone_from_cache_async(self.db)
         tz = ZoneInfo(tz_str)
-        for dt_field in [
-            "created_at",
-            "updated_at",
-            "next_capture_at",
-            "last_degraded_at",
-        ]:
-            if camera_data.get(dt_field) and isinstance(
-                camera_data[dt_field], datetime
-            ):
-                if camera_data[dt_field].tzinfo is None:
-                    camera_data[dt_field] = camera_data[dt_field].replace(tzinfo=tz)
-        return camera_data
+
+        # Use shared helper for common processing logic
+        return _prepare_camera_data_shared(camera_data, tz)
 
     async def _create_camera_with_stats(self, row: Dict[str, Any]) -> CameraWithStats:
         """Create CameraWithStats model from database row."""
@@ -122,15 +158,31 @@ class AsyncCameraOperations:
             }
         )
 
-        # Create CameraWithStats using model_validate for type safety
+        # Create stats from database row data
+        stats_data = {
+            "total_images": row.get("total_images", 0),
+            "total_videos": 0,  # Will be populated by service layer if needed
+            "current_timelapse_images": (
+                row.get("total_images", 0)
+                if row.get("timelapse_status") in ["running", "paused"]
+                else 0
+            ),
+            "current_timelapse_name": row.get("timelapse_name"),
+            "timelapse_count": 1 if row.get("timelapse_id") else 0,
+            "last_capture_at": row.get("last_capture_at"),
+            "first_capture_at": None,  # Would need separate query for this
+            "avg_capture_interval_minutes": None,  # Would need calculation
+            "days_since_first_capture": None,  # Would need calculation
+        }
+
         try:
+            stats = CameraStats.model_validate(stats_data)
+            camera_fields["stats"] = stats
             camera_with_stats = CameraWithStats.model_validate(camera_fields)
+            return camera_with_stats
         except ValidationError as e:
             logger.error(f"Error creating CameraWithStats model: {e}")
             raise
-
-        # Business logic (stats assignment) must be handled in the service layer.
-        return camera_with_stats
 
     async def _create_camera_with_image(
         self, row: Dict[str, Any]
@@ -195,7 +247,7 @@ class AsyncCameraOperations:
         query = """
         SELECT 
             c.*,
-            COALESCE(t.status, 'stopped') as timelapse_status,
+            t.status as timelapse_status,
             t.id as timelapse_id,
             t.name as timelapse_name,
             COUNT(i.id) as total_images,
@@ -240,7 +292,7 @@ class AsyncCameraOperations:
         query = """
         SELECT 
             c.*,
-            COALESCE(t.status, 'stopped') as timelapse_status,
+            t.status as timelapse_status,
             t.id as timelapse_id,
             t.name as timelapse_name,
             COUNT(i.id) as total_images,
@@ -376,7 +428,7 @@ class AsyncCameraOperations:
         """
         # Build dynamic update query based on provided fields
         update_fields = []
-        params = {"camera_id": camera_id}
+        params: Dict[str, Any] = {"camera_id": camera_id}
 
         # Dynamically determine updateable fields from Camera model, excluding immutable fields
         updateable_fields = [
@@ -404,7 +456,10 @@ class AsyncCameraOperations:
                 }
             )
 
-        update_fields.append("updated_at = NOW()")
+        # Add timezone-aware timestamp for updated_at
+        now = await get_timezone_aware_timestamp_async(self.db)
+        update_fields.append("updated_at = %(updated_at)s")
+        params["updated_at"] = now
 
         query = f"""
         UPDATE cameras 
@@ -468,6 +523,12 @@ class AsyncCameraOperations:
         Usage:
             health = await db.get_camera_health_status(1)
         """
+        # Calculate 24 hours ago using timezone-aware timestamp
+        from datetime import timedelta
+
+        now = await get_timezone_aware_timestamp_async(self.db)
+        twenty_four_hours_ago = now - timedelta(hours=24)
+
         query = """
         SELECT 
             c.lifetime_glitch_count,
@@ -479,14 +540,14 @@ class AsyncCameraOperations:
             AVG(cl.corruption_score) as avg_corruption_score
         FROM cameras c
         LEFT JOIN corruption_logs cl ON c.id = cl.camera_id 
-            AND cl.created_at > NOW() - INTERVAL '24 hours'
+            AND cl.created_at > %s
         WHERE c.id = %s
         GROUP BY c.id
         """
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (camera_id,))
+                await cur.execute(query, (twenty_four_hours_ago, camera_id))
                 results = await cur.fetchall()
                 if results:
                     try:
@@ -552,7 +613,8 @@ class AsyncCameraOperations:
             True if update was successful
 
         Usage:
-            success = await db.update_camera_next_capture_time(1, datetime.now())
+            from ..utils.timezone_utils import utc_now
+            success = await db.update_camera_next_capture_time(1, utc_now())
         """
         query = "UPDATE cameras SET next_capture_at = %s WHERE id = %s"
 
@@ -581,7 +643,7 @@ class AsyncCameraOperations:
             })
         """
         update_fields = []
-        params = {"camera_id": camera_id}
+        params: Dict[str, Any] = {"camera_id": camera_id}
 
         corruption_fields = ["corruption_detection_heavy"]
 
@@ -593,9 +655,13 @@ class AsyncCameraOperations:
         if not update_fields:
             return True  # Nothing to update
 
+        # Add timezone-aware timestamp for updated_at
+        now = await get_timezone_aware_timestamp_async(self.db)
+        params["updated_at"] = now
+
         query = f"""
         UPDATE cameras 
-        SET {', '.join(update_fields)}, updated_at = NOW()
+        SET {', '.join(update_fields)}, updated_at = %(updated_at)s
         WHERE id = %(camera_id)s
         """
 
@@ -624,7 +690,7 @@ class AsyncCameraOperations:
             })
         """
         update_fields = []
-        params = {"camera_id": camera_id}
+        params: Dict[str, Any] = {"camera_id": camera_id}
 
         health_fields = [
             "consecutive_corruption_failures",
@@ -641,7 +707,10 @@ class AsyncCameraOperations:
         if not update_fields:
             return True  # Nothing to update
 
-        update_fields.append("updated_at = NOW()")
+        # Add timezone-aware timestamp for updated_at
+        now = await get_timezone_aware_timestamp_async(self.db)
+        update_fields.append("updated_at = %(updated_at)s")
+        params["updated_at"] = now
 
         query = f"""
         UPDATE cameras 
@@ -672,22 +741,121 @@ class AsyncCameraOperations:
         Usage:
             success = await db.update_camera_status(1, 'active')
         """
+        # Get timezone-aware timestamp
+        now = await get_timezone_aware_timestamp_async(self.db)
+
         query = """
         UPDATE cameras 
         SET status = %s, 
             last_error = %s,
-            updated_at = NOW()
+            updated_at = %s
         WHERE id = %s
         """
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (status, error_message, camera_id))
+                await cur.execute(query, (status, error_message, now, camera_id))
                 affected = cur.rowcount
 
                 if affected and affected > 0:
                     return True
                 return False
+
+    async def update_camera_capture_stats(
+        self, camera_id: int, success: bool, error_message: Optional[str] = None
+    ) -> bool:
+        """
+        Update camera capture statistics after a capture attempt.
+
+        Args:
+            camera_id: ID of the camera
+            success: Whether the capture was successful
+            error_message: Optional error message if capture failed
+
+        Returns:
+            True if stats were updated successfully
+        """
+        # Get timezone-aware timestamp
+        now = await get_timezone_aware_timestamp_async(self.db)
+
+        if success:
+            # Reset consecutive failures and update last success time
+            query = """
+            UPDATE cameras
+            SET last_capture_at = %s,
+                last_capture_success = true,
+                consecutive_failures = 0,
+                health_status = 'online',
+                updated_at = %s
+            WHERE id = %s
+            """
+            params = (now, now, camera_id)
+        else:
+            # Increment consecutive failures and record error
+            query = """
+            UPDATE cameras
+            SET last_capture_success = false,
+                consecutive_failures = consecutive_failures + 1,
+                health_status = CASE 
+                    WHEN consecutive_failures + 1 >= 5 THEN 'offline'
+                    ELSE 'degraded'
+                END,
+                updated_at = %s
+            WHERE id = %s
+            """
+            params = (now, camera_id)
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                affected = cur.rowcount
+                return bool(affected and affected) > 0
+
+    async def get_cameras_ready_for_capture(self) -> List[Camera]:
+        """
+        Get all cameras that are ready for image capture.
+
+        Returns cameras that are:
+        - Active status
+        - Have running timelapses
+        - Are due for capture (next_capture_at <= now)
+        - Not in degraded mode or have corruption detection enabled
+
+        Returns:
+            List of Camera model instances ready for capture
+        """
+        # Get current timezone-aware timestamp for comparison
+        now = await get_timezone_aware_timestamp_async(self.db)
+
+        query = """
+        SELECT 
+            c.*,
+            t.id as active_timelapse_id,
+            t.status as timelapse_status
+        FROM cameras c
+        INNER JOIN timelapses t ON c.active_timelapse_id = t.id 
+        WHERE c.status = 'active'
+          AND t.status = 'running'
+          AND (c.next_capture_at IS NULL OR c.next_capture_at <= %s)
+          AND (c.degraded_mode_active = false OR c.corruption_detection_heavy = true)
+        ORDER BY c.next_capture_at ASC NULLS FIRST
+        """
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (now,))
+                results = await cur.fetchall()
+
+                cameras = []
+                for row in results:
+                    try:
+                        camera_data = await self._prepare_camera_data(row)
+                        cameras.append(Camera.model_validate(camera_data))
+                    except ValidationError as e:
+                        logger.error(f"Error creating Camera model for row {row}: {e}")
+                        continue
+
+                return cameras
 
 
 class SyncCameraOperations:
@@ -697,24 +865,20 @@ class SyncCameraOperations:
         self.db = db
 
     def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare database row data for Pydantic model validation."""
+        """
+        Prepare database row data for Pydantic model validation (sync version).
+
+        Uses shared helper function to eliminate code duplication.
+        Gets timezone from database cache and delegates processing to shared helper.
+        """
         camera_data = dict(row)
 
-        # Convert time objects to strings for API serialization
-        if camera_data.get("time_window_start") and hasattr(
-            camera_data["time_window_start"], "strftime"
-        ):
-            camera_data["time_window_start"] = camera_data[
-                "time_window_start"
-            ].strftime("%H:%M:%S")
-        if camera_data.get("time_window_end") and hasattr(
-            camera_data["time_window_end"], "strftime"
-        ):
-            camera_data["time_window_end"] = camera_data["time_window_end"].strftime(
-                "%H:%M:%S"
-            )
+        # Get timezone from database cache (sync)
+        tz_str = get_timezone_from_cache_sync(self.db)
+        tz = ZoneInfo(tz_str)
 
-        return camera_data
+        # Use shared helper for common processing logic
+        return _prepare_camera_data_shared(camera_data, tz)
 
     def get_active_cameras(self) -> List[Camera]:
         """
@@ -808,17 +972,20 @@ class SyncCameraOperations:
         Usage:
             success = db.update_camera_connectivity(1, False, "Connection timeout")
         """
+        # Get timezone-aware timestamp for sync operation
+        now = get_timezone_aware_timestamp_sync(self.db)
+
         query = """
         UPDATE cameras 
         SET is_connected = %s, 
             last_error = %s,
-            updated_at = NOW()
+            updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (is_connected, error_message, camera_id))
+                cur.execute(query, (is_connected, error_message, now, camera_id))
                 affected = cur.rowcount
                 return bool(affected and affected) > 0
 
@@ -836,7 +1003,8 @@ class SyncCameraOperations:
             True if update was successful
 
         Usage:
-            success = db.update_next_capture_time(1, datetime.now())
+            from ..utils.timezone_utils import utc_now
+            success = db.update_next_capture_time(1, utc_now())
         """
         query = "UPDATE cameras SET next_capture_at = %s WHERE id = %s"
 
@@ -899,25 +1067,30 @@ class SyncCameraOperations:
         Usage:
             success = db.update_camera_corruption_failure_count(1, True)
         """
+        # Get timezone-aware timestamp for sync operation
+        now = get_timezone_aware_timestamp_sync(self.db)
+
         if increment:
             query = """
             UPDATE cameras
             SET consecutive_corruption_failures = consecutive_corruption_failures + 1,
                 lifetime_glitch_count = lifetime_glitch_count + 1,
-                updated_at = NOW()
+                updated_at = %s
             WHERE id = %s
             """
+            params = (now, camera_id)
         else:
             query = """
             UPDATE cameras
             SET consecutive_corruption_failures = 0,
-                updated_at = NOW()
+                updated_at = %s
             WHERE id = %s
             """
+            params = (now, camera_id)
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (camera_id,))
+                cur.execute(query, params)
                 affected = cur.rowcount
                 return bool(affected and affected) > 0
 
@@ -935,17 +1108,20 @@ class SyncCameraOperations:
         Usage:
             success = db.set_camera_degraded_mode(1, True)
         """
+        # Get timezone-aware timestamp for sync operation
+        now = get_timezone_aware_timestamp_sync(self.db)
+
         query = """
         UPDATE cameras
         SET degraded_mode_active = %s,
-            last_degraded_at = CASE WHEN %s THEN NOW() ELSE last_degraded_at END,
-            updated_at = NOW()
+            last_degraded_at = CASE WHEN %s THEN %s ELSE last_degraded_at END,
+            updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (is_degraded, is_degraded, camera_id))
+                cur.execute(query, (is_degraded, is_degraded, now, now, camera_id))
                 affected = cur.rowcount
                 return bool(affected and affected) > 0
 
@@ -962,16 +1138,122 @@ class SyncCameraOperations:
         Usage:
             success = db.reset_camera_corruption_failures(1)
         """
+        # Get timezone-aware timestamp for sync operation
+        now = get_timezone_aware_timestamp_sync(self.db)
+
         query = """
         UPDATE cameras
         SET consecutive_corruption_failures = 0,
             degraded_mode_active = false,
-            updated_at = NOW()
+            updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (camera_id,))
+                cur.execute(query, (now, camera_id))
                 affected = cur.rowcount
                 return bool(affected and affected) > 0
+
+    def update_camera_capture_stats(
+        self, camera_id: int, success: bool, error_message: Optional[str] = None
+    ) -> bool:
+        """
+        Update camera capture statistics after a capture attempt.
+
+        Args:
+            camera_id: ID of the camera
+            success: Whether the capture was successful
+            error_message: Optional error message if capture failed
+
+        Returns:
+            True if stats were updated successfully
+
+        Usage:
+            success = db.update_camera_capture_stats(1, True)
+            success = db.update_camera_capture_stats(1, False, "Connection timeout")
+        """
+        # Get timezone-aware timestamp for sync operation
+        now = get_timezone_aware_timestamp_sync(self.db)
+
+        if success:
+            # Reset consecutive failures and update last success time
+            query = """
+            UPDATE cameras
+            SET last_capture_at = %s,
+                last_capture_success = true,
+                consecutive_failures = 0,
+                health_status = 'online',
+                updated_at = %s
+            WHERE id = %s
+            """
+            params = (now, now, camera_id)
+        else:
+            # Increment consecutive failures and record error
+            query = """
+            UPDATE cameras
+            SET last_capture_success = false,
+                consecutive_failures = consecutive_failures + 1,
+                health_status = CASE 
+                    WHEN consecutive_failures + 1 >= 5 THEN 'offline'
+                    ELSE 'degraded'
+                END,
+                updated_at = %s
+            WHERE id = %s
+            """
+            params = (now, camera_id)
+
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                affected = cur.rowcount
+                return bool(affected and affected) > 0
+
+    def get_cameras_ready_for_capture(self) -> List[Camera]:
+        """
+        Get all cameras that are ready for image capture.
+
+        Returns cameras that are:
+        - Active status
+        - Have running timelapses
+        - Are due for capture (next_capture_at <= now)
+        - Not in degraded mode or have corruption detection enabled
+
+        Returns:
+            List of Camera model instances ready for capture
+
+        Usage:
+            ready_cameras = db.get_cameras_ready_for_capture()
+        """
+        # Get current timezone-aware timestamp for comparison (sync)
+        now = get_timezone_aware_timestamp_sync(self.db)
+
+        query = """
+        SELECT 
+            c.*,
+            t.id as active_timelapse_id,
+            t.status as timelapse_status
+        FROM cameras c
+        INNER JOIN timelapses t ON c.active_timelapse_id = t.id 
+        WHERE c.status = 'active'
+          AND t.status = 'running'
+          AND (c.next_capture_at IS NULL OR c.next_capture_at <= %s)
+          AND (c.degraded_mode_active = false OR c.corruption_detection_heavy = true)
+        ORDER BY c.next_capture_at ASC NULLS FIRST
+        """
+
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (now,))
+                results = cur.fetchall()
+
+                cameras = []
+                for row in results:
+                    try:
+                        camera_data = self._prepare_camera_data(row)
+                        cameras.append(Camera.model_validate(camera_data))
+                    except ValidationError as e:
+                        logger.error(f"Error creating Camera model for row {row}: {e}")
+                        continue
+
+                return cameras

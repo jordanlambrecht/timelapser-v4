@@ -15,13 +15,54 @@ from ..models.corruption_model import CorruptionLogsPage
 from loguru import logger
 
 from .core import AsyncDatabase, SyncDatabase
+from ..constants import (
+    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
+    DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
+    DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
+    MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE,
+)
 from ..models.corruption_model import (
     CorruptionLogEntry,
     CorruptionStats,
-    CorruptionSettings,  # Why is this not used?
     CameraWithCorruption,
     CorruptionAnalysisStats,
 )
+
+
+def _process_corruption_settings_rows(
+    settings_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Shared helper to process settings rows from database into a settings dictionary.
+
+    Eliminates duplicate logic between async and sync get_corruption_settings methods.
+    Handles type conversion for boolean and numeric strings.
+
+    Args:
+        settings_rows: List of database rows with 'key' and 'value' columns
+
+    Returns:
+        Dictionary with processed settings
+    """
+    settings = {}
+
+    for row in settings_rows:
+        key = row["key"]
+        value = row["value"]
+
+        # Convert boolean strings to actual booleans
+        if value.lower() in ("true", "false"):
+            value = value.lower() == "true"
+        # Convert numeric strings to numbers
+        elif value.isdigit():
+            value = int(value)
+
+        settings[key] = value
+
+    return settings
 
 
 class CorruptionOperations:
@@ -62,7 +103,7 @@ class CorruptionOperations:
         camera_id: Optional[int] = None,
         timelapse_id: Optional[int] = None,
         page: int = 1,
-        page_size: int = 50,
+        page_size: int = DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
         min_score: Optional[int] = None,
         max_score: Optional[int] = None,
     ) -> CorruptionLogsPage:
@@ -174,8 +215,9 @@ class CorruptionOperations:
             MIN(cl.corruption_score) as min_corruption_score,
             MAX(cl.corruption_score) as max_corruption_score,
             AVG(cl.processing_time_ms) as avg_processing_time_ms,
-            COUNT(CASE WHEN cl.corruption_score < 70 THEN 1 END) as low_quality_count,
-            COUNT(CASE WHEN cl.created_at > NOW() - INTERVAL '24 hours' THEN 1 END) as detections_last_24h
+            COUNT(CASE WHEN cl.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as low_quality_count,
+            COUNT(CASE WHEN cl.created_at > NOW() - INTERVAL '24 hours' THEN 1 END) as detections_last_24h,
+            MAX(cl.created_at) as most_recent_detection
         FROM corruption_logs cl
         {where_clause}
         """
@@ -188,21 +230,33 @@ class CorruptionOperations:
                 if results:
                     row = results[0]
                     return CorruptionAnalysisStats(
-                        total_detections=row.get("total_detections", 0),
-                        images_saved=row.get("images_saved", 0),
-                        images_discarded=row.get("images_discarded", 0),
-                        images_retried=row.get("images_retried", 0),
+                        total_detections=row["total_detections"],
+                        images_saved=row["images_saved"],
+                        images_discarded=row["images_discarded"],
+                        images_retried=row["images_retried"],
                         avg_corruption_score=float(
-                            row.get("avg_corruption_score", 100.0)
+                            row["avg_corruption_score"] or 100.0
                         ),
-                        min_corruption_score=int(row.get("min_corruption_score", 100)),
-                        max_corruption_score=int(row.get("max_corruption_score", 100)),
+                        min_corruption_score=int(row["min_corruption_score"] or 100),
+                        max_corruption_score=int(row["max_corruption_score"] or 100),
                         avg_processing_time_ms=float(
-                            row.get("avg_processing_time_ms", 0.0)
+                            row["avg_processing_time_ms"] or 0.0
                         ),
+                        most_recent_detection=row["most_recent_detection"],
                     )
                 else:
-                    return CorruptionAnalysisStats()
+                    return CorruptionAnalysisStats(
+                        total_detections=0,
+                        images_saved=0,
+                        images_discarded=0,
+                        images_retried=0,
+                        avg_corruption_score=100.0,
+                        min_corruption_score=100,
+                        max_corruption_score=100,
+                        avg_processing_time_ms=0.0,
+                        unique_cameras=0,
+                        most_recent_detection=None,
+                    )
 
     async def get_camera_corruption_history(
         self, camera_id: int, hours: int = 24
@@ -282,11 +336,229 @@ class CorruptionOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    await self.db.broadcast_event(
-                        "camera_degraded_mode_reset", {"camera_id": camera_id}
-                    )
                     return True
                 return False
+
+    async def get_corruption_settings(self) -> Dict[str, Any]:
+        """Get global corruption detection settings from settings table (async version)."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT key, value 
+                    FROM settings 
+                    WHERE key LIKE 'corruption_%'
+                    """
+                )
+                settings_rows = await cur.fetchall()
+
+                # Use shared helper for processing
+                return _process_corruption_settings_rows(settings_rows)
+
+    async def update_corruption_settings(self, settings: Dict[str, Any]) -> None:
+        """Update global corruption detection settings (async version)."""
+        if not settings:
+            return
+            
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                for key, value in settings.items():
+                    # Convert setting name to database key format
+                    db_key = f"corruption_{key}"
+                    await cur.execute(
+                        """
+                        INSERT INTO settings (key, value)
+                        VALUES (%s, %s)
+                        ON CONFLICT (key)
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                        """,
+                        (db_key, str(value))
+                    )
+
+    async def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
+        """Get camera-specific corruption settings."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT corruption_detection_heavy 
+                    FROM cameras 
+                    WHERE id = %s
+                    """,
+                    (camera_id,),
+                )
+                camera_data = await cur.fetchone()
+                if not camera_data:
+                    raise ValueError(f"Camera {camera_id} not found")
+
+                return {
+                    "corruption_detection_heavy": camera_data[
+                        "corruption_detection_heavy"
+                    ]
+                    or False
+                }
+
+    async def get_total_cameras_count(self) -> int:
+        """Get total number of cameras."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT COUNT(*) as count FROM cameras")
+                result = await cur.fetchone()
+                return result["count"] if result else 0
+
+    async def get_recent_detections_count(self) -> Dict[str, int]:
+        """Get recent corruption detections count."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 
+                        COUNT(CASE WHEN created_at > NOW() - INTERVAL '1 day' THEN 1 END) as today,
+                        COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as week
+                    FROM corruption_logs
+                    WHERE action_taken = 'discarded'
+                    """
+                )
+                result = await cur.fetchone()
+                return {
+                    "today": result["today"] or 0,
+                    "week": result["week"] or 0,
+                }
+
+    async def log_discard_decision(
+        self,
+        camera_id: int,
+        corruption_score: float,
+        should_discard: bool,
+        reason: Optional[str],
+    ) -> None:
+        """Log auto-discard decision for audit trail."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO corruption_logs (
+                        camera_id, image_id, corruption_score, fast_score, heavy_score,
+                        detection_details, action_taken, processing_time_ms
+                    ) VALUES (
+                        %s, NULL, %s, NULL, NULL, %s, %s, 0
+                    )
+                    """,
+                    (
+                        camera_id,
+                        corruption_score,
+                        {"discard_decision": should_discard, "reason": reason},
+                        "auto_discard_decision",
+                    ),
+                )
+
+    async def get_timelapse_quality_statistics(
+        self, timelapse_id: int
+    ) -> Dict[str, Any]:
+        """Get quality statistics for a specific timelapse."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 
+                        COUNT(i.id) as total_images,
+                        AVG(i.corruption_score) as avg_score,
+                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(CASE WHEN i.is_flagged = true THEN 1 END) as manual_flags
+                    FROM images i
+                    WHERE i.timelapse_id = %s
+                    """,
+                    (timelapse_id,),
+                )
+                result = await cur.fetchone()
+                return dict(result) if result else {}
+
+    async def get_camera_quality_statistics(self, camera_id: int) -> Dict[str, Any]:
+        """Get quality statistics for a specific camera."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 
+                        COUNT(i.id) as total_images,
+                        AVG(i.corruption_score) as avg_score,
+                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(cl.id) as corruption_detections
+                    FROM images i
+                    LEFT JOIN corruption_logs cl ON i.id = cl.image_id
+                    WHERE i.camera_id = %s
+                    """,
+                    (camera_id,),
+                )
+                result = await cur.fetchone()
+                return dict(result) if result else {}
+
+    async def get_overall_quality_statistics(self) -> Dict[str, Any]:
+        """Get overall system quality statistics."""
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 
+                        COUNT(i.id) as total_images,
+                        AVG(i.corruption_score) as avg_score,
+                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(cl.id) as corruption_detections,
+                        COUNT(DISTINCT i.camera_id) as cameras_with_images
+                    FROM images i
+                    LEFT JOIN corruption_logs cl ON i.id = cl.image_id
+                    """
+                )
+                result = await cur.fetchone()
+                return dict(result) if result else {}
+
+    async def get_camera_id_for_image(self, image_id: int) -> Optional[int]:
+        """Get camera ID for a given image.
+
+        Args:
+            image_id: ID of the image
+
+        Returns:
+            Camera ID or None if image not found
+        """
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT camera_id FROM images WHERE id = %s", (image_id,)
+                )
+                result = await cur.fetchone()
+                return result["camera_id"] if result else None
+
+    async def get_camera_corruption_metadata(self, camera_id: int) -> Dict[str, Any]:
+        """Get camera corruption metadata including counters and degraded status.
+
+        Args:
+            camera_id: ID of the camera
+
+        Returns:
+            Dictionary containing camera corruption metadata
+
+        Raises:
+            ValueError: If camera not found
+        """
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 
+                        consecutive_corruption_failures,
+                        lifetime_glitch_count,
+                        degraded_mode_active,
+                        last_degraded_at
+                    FROM cameras 
+                    WHERE id = %s
+                    """,
+                    (camera_id,),
+                )
+                result = await cur.fetchone()
+                if not result:
+                    raise ValueError(f"Camera {camera_id} not found")
+                return dict(result)
 
 
 class SyncCorruptionOperations:
@@ -361,17 +633,6 @@ class SyncCorruptionOperations:
                     log_entry_row = results[0]
                     log_entry = self._row_to_corruption_log(log_entry_row)
 
-                    # Broadcast event for real-time monitoring
-                    self.db.broadcast_event(
-                        "corruption_detected",
-                        {
-                            "camera_id": camera_id,
-                            "corruption_score": corruption_score,
-                            "action_taken": action_taken,
-                            "log_entry": log_entry_row,  # Keep as dict for SSE
-                        },
-                    )
-
                     return log_entry
 
                 raise Exception("Failed to log corruption detection")
@@ -431,16 +692,21 @@ class SyncCorruptionOperations:
 
         # Check consecutive failures threshold
         consecutive_threshold = settings.get(
-            "corruption_degraded_consecutive_threshold", 10
+            "corruption_degraded_consecutive_threshold",
+            DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
         )
         if stats["consecutive_corruption_failures"] >= consecutive_threshold:
             return True
 
         # Check failure percentage in time window
         time_window_minutes = settings.get(
-            "corruption_degraded_time_window_minutes", 30
+            "corruption_degraded_time_window_minutes",
+            DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
         )
-        failure_percentage = settings.get("corruption_degraded_failure_percentage", 50)
+        failure_percentage = settings.get(
+            "corruption_degraded_failure_percentage",
+            DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
+        )
 
         # Get total captures and failures in time window
         query = """
@@ -472,7 +738,9 @@ class SyncCorruptionOperations:
                     total_captures = data["total_captures"] or 0
                     total_failures = data["total_failures"] or 0
 
-                    if total_captures >= 20:  # Minimum sample size
+                    if (
+                        total_captures >= MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE
+                    ):  # Minimum sample size
                         current_failure_percentage = (
                             total_failures / total_captures
                         ) * 100
@@ -506,10 +774,6 @@ class SyncCorruptionOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    self.db.broadcast_event(
-                        "camera_degraded_mode_changed",
-                        {"camera_id": camera_id, "degraded_mode_active": is_degraded},
-                    )
                     return True
                 return False
 
@@ -537,18 +801,17 @@ class SyncCorruptionOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    self.db.broadcast_event(
-                        "camera_corruption_failures_reset", {"camera_id": camera_id}
-                    )
                     return True
                 return False
 
-    def cleanup_old_corruption_logs(self, days_to_keep: int = 90) -> int:
+    def cleanup_old_corruption_logs(
+        self, days_to_keep: int = DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS
+    ) -> int:
         """
         Clean up old corruption detection logs.
 
         Args:
-            days_to_keep: Number of days to keep logs (default: 90)
+            days_to_keep: Number of days to keep logs (default: from constants)
 
         Returns:
             Number of logs deleted
@@ -567,3 +830,111 @@ class SyncCorruptionOperations:
                     logger.info(f"Cleaned up {affected} old corruption logs")
 
                 return affected or 0
+
+    def get_corruption_settings(self) -> Dict[str, Any]:
+        """Get global corruption detection settings from settings table (sync version)."""
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT key, value 
+                    FROM settings 
+                    WHERE key LIKE 'corruption_%'
+                    """
+                )
+                settings_rows = cur.fetchall()
+
+                # Use shared helper for processing
+                return _process_corruption_settings_rows(settings_rows)
+
+    def update_corruption_settings(self, settings: Dict[str, Any]) -> None:
+        """Update global corruption detection settings (sync version)."""
+        if not settings:
+            return
+            
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                for key, value in settings.items():
+                    # Convert setting name to database key format
+                    db_key = f"corruption_{key}"
+                    cur.execute(
+                        """
+                        INSERT INTO settings (key, value)
+                        VALUES (%s, %s)
+                        ON CONFLICT (key)
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                        """,
+                        (db_key, str(value))
+                    )
+
+    def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
+        """Get camera-specific corruption settings."""
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT corruption_detection_heavy 
+                    FROM cameras 
+                    WHERE id = %s
+                    """,
+                    (camera_id,),
+                )
+                camera_data = cur.fetchone()
+                if not camera_data:
+                    return {"corruption_detection_heavy": False}
+
+                return {
+                    "corruption_detection_heavy": camera_data[
+                        "corruption_detection_heavy"
+                    ]
+                    or False
+                }
+
+    def update_camera_corruption_stats(
+        self, camera_id: int, corruption_score: int, is_valid: bool
+    ) -> bool:
+        """
+        Update camera corruption statistics after evaluation.
+        
+        Args:
+            camera_id: ID of the camera
+            corruption_score: Corruption score from evaluation
+            is_valid: Whether the image was considered valid
+            
+        Returns:
+            True if update was successful
+        """
+        try:
+            if not is_valid:
+                # Increment failure counters for invalid images
+                query = """
+                UPDATE cameras
+                SET consecutive_corruption_failures = consecutive_corruption_failures + 1,
+                    lifetime_glitch_count = lifetime_glitch_count + 1,
+                    updated_at = NOW()
+                WHERE id = %s
+                """
+                
+                with self.db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(query, (camera_id,))
+                        affected = cur.rowcount
+                        return affected and affected > 0
+            else:
+                # Reset consecutive failures for valid images
+                query = """
+                UPDATE cameras
+                SET consecutive_corruption_failures = 0,
+                    updated_at = NOW()
+                WHERE id = %s
+                """
+                
+                with self.db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(query, (camera_id,))
+                        affected = cur.rowcount
+                        return affected and affected > 0
+                        
+        except Exception as e:
+            logger.error(f"Failed to update camera corruption stats for camera {camera_id}: {e}")
+            return False

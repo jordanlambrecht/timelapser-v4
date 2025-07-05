@@ -4,7 +4,7 @@ import { proxyToFastAPI } from "@/lib/fastapi-proxy"
 
 export async function GET() {
   try {
-    // Proxy to FastAPI backend
+    // Updated to match backend path format (both use regenerate-all)
     return proxyToFastAPI("/api/thumbnails/regenerate-all/status")
   } catch (error) {
     console.error("Thumbnail regeneration status error:", error)

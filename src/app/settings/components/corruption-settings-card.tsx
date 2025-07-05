@@ -14,45 +14,27 @@ import { Input } from "@/components/ui/input"
 import { Shield, Zap, AlertTriangle, Settings2 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
+import { useSettings } from "@/contexts/settings-context"
 
-interface CorruptionSettingsCardProps {
-  // Global settings
-  corruptionDetectionEnabled: boolean
-  setCorruptionDetectionEnabled: (value: boolean) => void
-  corruptionScoreThreshold: number
-  setCorruptionScoreThreshold: (value: number) => void
-  corruptionAutoDiscardEnabled: boolean
-  setCorruptionAutoDiscardEnabled: (value: boolean) => void
-  corruptionAutoDisableDegraded: boolean
-  setCorruptionAutoDisableDegraded: (value: boolean) => void
-  corruptionDegradedConsecutiveThreshold: number
-  setCorruptionDegradedConsecutiveThreshold: (value: number) => void
-  corruptionDegradedTimeWindowMinutes: number
-  setCorruptionDegradedTimeWindowMinutes: (value: number) => void
-  corruptionDegradedFailurePercentage: number
-  setCorruptionDegradedFailurePercentage: (value: number) => void
-  corruptionHeavyDetectionEnabled: boolean
-  setCorruptionHeavyDetectionEnabled: (value: boolean) => void
-}
-
-export function CorruptionSettingsCard({
-  corruptionDetectionEnabled,
-  setCorruptionDetectionEnabled,
-  corruptionScoreThreshold,
-  setCorruptionScoreThreshold,
-  corruptionAutoDiscardEnabled,
-  setCorruptionAutoDiscardEnabled,
-  corruptionAutoDisableDegraded,
-  setCorruptionAutoDisableDegraded,
-  corruptionDegradedConsecutiveThreshold,
-  setCorruptionDegradedConsecutiveThreshold,
-  corruptionDegradedTimeWindowMinutes,
-  setCorruptionDegradedTimeWindowMinutes,
-  corruptionDegradedFailurePercentage,
-  setCorruptionDegradedFailurePercentage,
-  corruptionHeavyDetectionEnabled,
-  setCorruptionHeavyDetectionEnabled,
-}: CorruptionSettingsCardProps) {
+export function CorruptionSettingsCard() {
+  const {
+    corruptionDetectionEnabled,
+    setCorruptionDetectionEnabled,
+    corruptionScoreThreshold,
+    setCorruptionScoreThreshold,
+    corruptionAutoDiscardEnabled,
+    setCorruptionAutoDiscardEnabled,
+    corruptionAutoDisableDegraded,
+    setCorruptionAutoDisableDegraded,
+    corruptionDegradedConsecutiveThreshold,
+    setCorruptionDegradedConsecutiveThreshold,
+    corruptionDegradedTimeWindowMinutes,
+    setCorruptionDegradedTimeWindowMinutes,
+    corruptionDegradedFailurePercentage,
+    setCorruptionDegradedFailurePercentage,
+    corruptionHeavyDetectionEnabled,
+    setCorruptionHeavyDetectionEnabled,
+  } = useSettings()
   return (
     <Card>
       <CardHeader>

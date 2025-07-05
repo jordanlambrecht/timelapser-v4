@@ -14,6 +14,11 @@ export interface CameraSSECallbacks {
   onImageCaptured?: (data: CameraSSEData) => void
   onStatusChanged?: (data: CameraSSEData) => void
   onTimelapseStatusChanged?: (data: CameraSSEData) => void
+  onTimelapseStarted?: (data: CameraSSEData) => void
+  onTimelapsePaused?: (data: CameraSSEData) => void
+  onTimelapseResumed?: (data: CameraSSEData) => void
+  onTimelapseStopped?: (data: CameraSSEData) => void
+  onTimelapseCompleted?: (data: CameraSSEData) => void
   onCameraUpdated?: (data: CameraSSEData) => void
   onCorruptionDetected?: (data: CameraSSEData) => void
   onDegradedModeTriggered?: (data: CameraSSEData) => void
@@ -29,6 +34,11 @@ export function useCameraSSE(cameraId: number, callbacks: CameraSSECallbacks) {
     onImageCaptured,
     onStatusChanged,
     onTimelapseStatusChanged,
+    onTimelapseStarted,
+    onTimelapsePaused,
+    onTimelapseResumed,
+    onTimelapseStopped,
+    onTimelapseCompleted,
     onCameraUpdated,
     onCorruptionDetected,
     onDegradedModeTriggered,
@@ -59,6 +69,51 @@ export function useCameraSSE(cameraId: number, callbacks: CameraSSECallbacks) {
     useCallback((event) => {
       onTimelapseStatusChanged?.(event.data)
     }, [onTimelapseStatusChanged]),
+    [cameraId]
+  )
+
+  // Subscribe to timelapse started events
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_started" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onTimelapseStarted?.(event.data)
+    }, [onTimelapseStarted]),
+    [cameraId]
+  )
+
+  // Subscribe to timelapse paused events  
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_paused" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onTimelapsePaused?.(event.data)
+    }, [onTimelapsePaused]),
+    [cameraId]
+  )
+
+  // Subscribe to timelapse resumed events
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_resumed" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onTimelapseResumed?.(event.data)
+    }, [onTimelapseResumed]),
+    [cameraId]
+  )
+
+  // Subscribe to timelapse stopped events
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_stopped" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onTimelapseStopped?.(event.data)
+    }, [onTimelapseStopped]),
+    [cameraId]
+  )
+
+  // Subscribe to timelapse completed events
+  useSSESubscription<CameraSSEData>(
+    (event) => event.type === "timelapse_completed" && event.data?.camera_id === cameraId,
+    useCallback((event) => {
+      onTimelapseCompleted?.(event.data)
+    }, [onTimelapseCompleted]),
     [cameraId]
   )
 

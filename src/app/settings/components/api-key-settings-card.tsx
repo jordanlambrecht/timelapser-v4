@@ -13,22 +13,16 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { PasswordInput } from "@/components/ui/password-input"
 import { Cloud } from "lucide-react"
+import { useSettings } from "@/contexts/settings-context"
 
-interface ApiKeySettingsCardProps {
-  openWeatherApiKey: string
-  setOpenWeatherApiKey: (value: string) => void
-  apiKeyModified: boolean
-  setApiKeyModified: (value: boolean) => void
-  originalApiKeyHash: string
-}
-
-export function ApiKeySettingsCard({
-  openWeatherApiKey,
-  setOpenWeatherApiKey,
-  apiKeyModified,
-  setApiKeyModified,
-  originalApiKeyHash,
-}: ApiKeySettingsCardProps) {
+export function ApiKeySettingsCard() {
+  const {
+    openWeatherApiKey,
+    setOpenWeatherApiKey,
+    apiKeyModified,
+    setApiKeyModified,
+    originalApiKeyHash,
+  } = useSettings()
   // Handler for API key input changes
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
   try {
-    // Proxy to FastAPI backend for secure dashboard data
+    // Proxy to FastAPI backend for unified dashboard data including health score
     const fastApiUrl =
       process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
     const response = await fetch(`${fastApiUrl}/api/dashboard`, {

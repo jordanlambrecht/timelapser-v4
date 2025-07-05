@@ -718,14 +718,27 @@ async def get_timezone_async(settings_service) -> str:
     Get timezone using SettingsService and unified cache infrastructure.
 
     Args:
-        settings_service: SettingsService instance for data access
+        settings_service: SettingsService instance for data access (async or sync)
 
     Returns:
         Timezone string (defaults to 'UTC' if not configured)
     """
     try:
-        timezone = await settings_service.get_setting("timezone")
-        return timezone or "UTC"
+        # Handle both async and sync settings services
+        if hasattr(settings_service, "get_setting"):
+            get_setting_method = getattr(settings_service, "get_setting")
+            if asyncio.iscoroutinefunction(get_setting_method):
+                # Async service
+                timezone = await settings_service.get_setting("timezone")
+            else:
+                # Sync service
+                timezone = settings_service.get_setting("timezone")
+            return timezone or "UTC"
+        else:
+            logger.warning(
+                f"Settings service {type(settings_service)} does not have get_setting method"
+            )
+            return "UTC"
     except Exception as e:
         logger.warning(f"Failed to get timezone from settings service: {e}")
         return "UTC"
@@ -747,9 +760,21 @@ async def get_setting_cached(
         Setting value or default
     """
     try:
-        # Load from service layer (caching handled by decorator)
-        value = await settings_service.get_setting(key)
-        return value if value is not None else default
+        # Handle both async and sync settings services
+        if hasattr(settings_service, "get_setting"):
+            get_setting_method = getattr(settings_service, "get_setting")
+            if asyncio.iscoroutinefunction(get_setting_method):
+                # Async service
+                value = await settings_service.get_setting(key)
+            else:
+                # Sync service
+                value = settings_service.get_setting(key)
+            return value if value is not None else default
+        else:
+            logger.warning(
+                f"Settings service {type(settings_service)} does not have get_setting method"
+            )
+            return default
 
     except Exception as e:
         logger.error(f"❌ Settings error for key '{key}': {e}")

@@ -7,6 +7,7 @@ handling business logic and coordinating between database operations
 and external systems.
 """
 
+import zoneinfo
 from typing import List, Dict, Optional, Any
 from loguru import logger
 
@@ -14,6 +15,19 @@ from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
 from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
+from ..database.sse_events_operations import SSEEventsOperations
+from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
+from ..constants import (
+    EVENT_SETTING_UPDATED,
+    EVENT_SETTING_DELETED,
+    DEFAULT_CAPTURE_INTERVAL_SECONDS,
+    MIN_CAPTURE_INTERVAL_SECONDS,
+    MAX_CAPTURE_INTERVAL_SECONDS,
+    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    VIDEO_GENERATION_MODES,
+    VIDEO_AUTOMATION_MODES,
+    DEFAULT_TIMEZONE,
+)
 
 
 class SettingsService:
@@ -37,6 +51,7 @@ class SettingsService:
         """Initialize service with async database instance."""
         self.db = db
         self.settings_ops = SettingsOperations(db)
+        self.sse_ops = SSEEventsOperations(db)
 
     async def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""
@@ -57,7 +72,22 @@ class SettingsService:
     async def set_setting(self, key: str, value: str) -> bool:
         """Set a setting value."""
         try:
-            return await self.settings_ops.set_setting(key, value)
+            result = await self.settings_ops.set_setting(key, value)
+            
+            if result:
+                # Create SSE event for setting changes
+                await self.sse_ops.create_event(
+                    event_type=EVENT_SETTING_UPDATED,
+                    event_data={
+                        "key": key,
+                        "value": value,
+                        "operation": "update",
+                    },
+                    priority="normal",
+                    source="api"
+                )
+                
+            return result
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
@@ -65,7 +95,22 @@ class SettingsService:
     async def set_multiple_settings(self, settings_dict: Dict[str, str]) -> bool:
         """Set multiple settings in a single transaction."""
         try:
-            return await self.settings_ops.set_multiple_settings(settings_dict)
+            result = await self.settings_ops.set_multiple_settings(settings_dict)
+            
+            if result:
+                # Create SSE event for bulk setting changes
+                await self.sse_ops.create_event(
+                    event_type=EVENT_SETTING_UPDATED,
+                    event_data={
+                        "operation": "bulk_update",
+                        "updated_keys": list(settings_dict.keys()),
+                        "count": len(settings_dict),
+                    },
+                    priority="normal",
+                    source="api"
+                )
+                
+            return result
         except Exception as e:
             logger.error(f"Failed to set multiple settings: {e}")
             raise
@@ -73,7 +118,22 @@ class SettingsService:
     async def delete_setting(self, key: str) -> bool:
         """Delete a setting by key."""
         try:
-            return await self.settings_ops.delete_setting(key)
+            result = await self.settings_ops.delete_setting(key)
+            
+            if result:
+                # Create SSE event for setting deletion
+                await self.sse_ops.create_event(
+                    event_type=EVENT_SETTING_DELETED,
+                    event_data={
+                        "key": key,
+                        "value": None,
+                        "operation": "delete",
+                    },
+                    priority="normal",
+                    source="api"
+                )
+                
+            return result
         except Exception as e:
             logger.error(f"Failed to delete setting {key}: {e}")
             raise
@@ -183,16 +243,7 @@ class SettingsService:
                 key, formatted_value
             )
 
-            # Broadcast change event
-            await self.db.broadcast_event(
-                "setting_changed",
-                {
-                    "key": key,
-                    "value": formatted_value,
-                    "validation_result": validation_result,
-                    "propagation_result": propagation_result,
-                },
-            )
+            # SSE broadcasting removed - now handled in router layer
 
             logger.info(
                 f"Setting '{key}' updated successfully with validation and propagation"
@@ -413,7 +464,11 @@ class SettingsService:
     def _validate_timezone(self, value: str) -> Dict[str, Any]:
         """Validate timezone setting."""
         try:
-            import zoneinfo
+            # Check timezone aliases first
+            from ..constants import TIMEZONE_ALIASES
+
+            if value in TIMEZONE_ALIASES:
+                value = TIMEZONE_ALIASES[value]
 
             zoneinfo.ZoneInfo(value)
             return {"valid": True, "formatted_value": value}
@@ -421,31 +476,31 @@ class SettingsService:
             return {
                 "valid": False,
                 "error": f"Invalid timezone: {value}",
-                "suggested_value": "UTC",
+                "suggested_value": DEFAULT_TIMEZONE,
             }
 
     def _validate_capture_interval(self, value: str) -> Dict[str, Any]:
         """Validate capture interval setting."""
         try:
             interval = int(value)
-            if interval < 60:  # Minimum 1 minute
+            if interval < MIN_CAPTURE_INTERVAL_SECONDS:
                 return {
                     "valid": False,
-                    "error": "Capture interval must be at least 60 seconds",
-                    "suggested_value": "300",
+                    "error": f"Capture interval must be at least {MIN_CAPTURE_INTERVAL_SECONDS} seconds",
+                    "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
                 }
-            if interval > 86400:  # Maximum 24 hours
+            if interval > MAX_CAPTURE_INTERVAL_SECONDS:
                 return {
                     "valid": False,
-                    "error": "Capture interval cannot exceed 24 hours",
-                    "suggested_value": "3600",
+                    "error": f"Capture interval cannot exceed {MAX_CAPTURE_INTERVAL_SECONDS} seconds",
+                    "suggested_value": str(MAX_CAPTURE_INTERVAL_SECONDS),
                 }
             return {"valid": True, "formatted_value": str(interval)}
         except ValueError:
             return {
                 "valid": False,
                 "error": "Capture interval must be a valid integer",
-                "suggested_value": "300",
+                "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
             }
 
     def _validate_corruption_threshold(self, value: str) -> Dict[str, Any]:
@@ -456,14 +511,14 @@ class SettingsService:
                 return {
                     "valid": False,
                     "error": "Corruption threshold must be between 0 and 100",
-                    "suggested_value": "70",
+                    "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
                 }
             return {"valid": True, "formatted_value": str(threshold)}
         except ValueError:
             return {
                 "valid": False,
                 "error": "Corruption threshold must be a valid integer",
-                "suggested_value": "70",
+                "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
             }
 
     def _validate_data_directory(self, value: str) -> Dict[str, Any]:
@@ -483,7 +538,10 @@ class SettingsService:
 
     def _validate_video_generation_mode(self, value: str) -> Dict[str, Any]:
         """Validate video generation mode setting."""
-        valid_modes = ["standard", "target"]
+        valid_modes = [
+            "standard",
+            "target",
+        ]  # From video-generation-settings-implementation.md
         if value not in valid_modes:
             return {
                 "valid": False,
@@ -494,11 +552,10 @@ class SettingsService:
 
     def _validate_video_automation_mode(self, value: str) -> Dict[str, Any]:
         """Validate video automation mode setting."""
-        valid_modes = ["manual", "per_capture", "scheduled", "milestone"]
-        if value not in valid_modes:
+        if value not in VIDEO_AUTOMATION_MODES:
             return {
                 "valid": False,
-                "error": f"Video automation mode must be one of: {valid_modes}",
+                "error": f"Video automation mode must be one of: {VIDEO_AUTOMATION_MODES}",
                 "suggested_value": "manual",
             }
         return {"valid": True, "formatted_value": value}

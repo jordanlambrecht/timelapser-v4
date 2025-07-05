@@ -7,7 +7,7 @@ This service handles video-related business logic using dependency injection
 for database operations, providing type-safe Pydantic model interfaces.
 
 Responsibilities (per Target Architecture):
-- Video record management  
+- Video record management
 - FFmpeg coordination via utils
 - Generation job queue management
 - File lifecycle management
@@ -43,8 +43,16 @@ from ..utils.file_helpers import (
 from ..utils.timezone_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
+    get_timezone_aware_timestamp_string_async,
 )
+from ..database.sse_events_operations import SSEEventsOperations
 from ..config import settings
+from ..constants import (
+    VIDEO_QUALITIES,
+    DEFAULT_VIDEO_CLEANUP_DAYS,
+    DEFAULT_VIDEO_ARCHIVE_DIRECTORY,
+    DEFAULT_VIDEO_GENERATION_PRIORITY,
+)
 
 
 class VideoService:
@@ -73,6 +81,7 @@ class VideoService:
         """
         self.db = db
         self.video_ops = VideoOperations(db)
+        self.sse_ops = SSEEventsOperations(db)
         self.video_automation_service = video_automation_service
 
     async def get_videos(
@@ -114,8 +123,23 @@ class VideoService:
         # Ensure timezone-aware creation timestamp
         if "created_at" not in video_data:
             video_data["created_at"] = await get_timezone_aware_timestamp_async(self.db)
+
+        video = await self.video_ops.create_video_record(video_data)
         
-        return await self.video_ops.create_video_record(video_data)
+        # Create SSE event for real-time updates
+        await self.sse_ops.create_event(
+            event_type="video_created",
+            event_data={
+                "video_id": video.id,
+                "camera_id": video_data.get("camera_id"),
+                "video_name": video_data.get("name"),
+                "status": video_data.get("status"),
+            },
+            priority="normal",
+            source="api"
+        )
+        
+        return video
 
     async def update_video(self, video_id: int, video_data: Dict[str, Any]) -> Video:
         """
@@ -130,12 +154,12 @@ class VideoService:
         """
         # Ensure timezone-aware update timestamp
         video_data["updated_at"] = await get_timezone_aware_timestamp_async(self.db)
-        
+
         return await self.video_ops.update_video(video_id, video_data)
 
     async def delete_video(self, video_id: int) -> bool:
         """
-        Delete a video record.
+        Delete a video record and associated files.
 
         Args:
             video_id: ID of the video to delete
@@ -143,7 +167,43 @@ class VideoService:
         Returns:
             True if video was deleted successfully
         """
-        return await self.video_ops.delete_video(video_id)
+        # Get video info before deletion for file cleanup and SSE event
+        video = await self.get_video_by_id(video_id)
+        
+        # Extract file path before database deletion
+        file_path_to_cleanup = video.file_path if video else None
+        
+        # Delete from database first
+        success = await self.video_ops.delete_video(video_id)
+        
+        # Clean up file directly using file_helpers (no database lookup needed)
+        if success and file_path_to_cleanup:
+            try:
+                validated_path = validate_file_path(
+                    file_path_to_cleanup, 
+                    base_directory=settings.data_directory, 
+                    must_exist=False
+                )
+                if validated_path.exists():
+                    validated_path.unlink()
+                    logger.info(f"Deleted video file: {validated_path}")
+            except Exception as e:
+                logger.warning(f"Database deletion succeeded but file cleanup failed for video {video_id}: {e}")
+        
+        # Create SSE event for real-time updates
+        if success and video:
+            await self.sse_ops.create_event(
+                event_type="video_deleted",
+                event_data={
+                    "video_id": video_id,
+                    "video_name": video.name,
+                    "camera_id": video.camera_id,
+                },
+                priority="normal",
+                source="api"
+            )
+        
+        return success
 
     async def get_video_generation_jobs(
         self, status: Optional[str] = None
@@ -174,8 +234,9 @@ class VideoService:
         # Ensure timezone-aware creation timestamp
         if "created_at" not in job_data:
             job_data["created_at"] = await get_timezone_aware_timestamp_async(self.db)
-        
-        return await self.video_ops.create_video_generation_job(job_data)
+
+        job = await self.video_ops.create_video_generation_job(job_data)
+        return job
 
     async def update_video_generation_job_status(
         self,
@@ -196,9 +257,10 @@ class VideoService:
         Returns:
             Updated VideoGenerationJob model instance
         """
-        return await self.video_ops.update_video_generation_job_status(
+        job = await self.video_ops.update_video_generation_job_status(
             job_id, status, error_message, video_path
         )
+        return job
 
     async def get_video_statistics(
         self, timelapse_id: Optional[int] = None
@@ -238,9 +300,9 @@ class VideoService:
 
             # Use file_helpers for secure path operations
             file_path = validate_file_path(
-                video.file_path, 
+                video.file_path,
                 base_directory=settings.data_directory,
-                must_exist=(action != "cleanup")
+                must_exist=(action != "cleanup"),
             )
 
             if action == "cleanup":
@@ -248,10 +310,13 @@ class VideoService:
                 if file_path.exists():
                     file_path.unlink()
                     await self.update_video(
-                        video_id, {
-                            "file_path": None, 
-                            "deleted_at": await get_timezone_aware_timestamp_async(self.db)
-                        }
+                        video_id,
+                        {
+                            "file_path": None,
+                            "deleted_at": await get_timezone_aware_timestamp_async(
+                                self.db
+                            ),
+                        },
                     )
                     return {
                         "success": True,
@@ -286,21 +351,22 @@ class VideoService:
             elif action == "archive":
                 # Move to archive directory using file_helpers
                 archive_dir = ensure_directory_exists(
-                    str(Path(settings.data_directory) / "archive" / "videos")
+                    str(Path(settings.data_directory) / DEFAULT_VIDEO_ARCHIVE_DIRECTORY)
                 )
                 archive_path = archive_dir / file_path.name
 
                 if file_path.exists():
                     file_path.rename(archive_path)
                     relative_archive_path = get_relative_path(
-                        archive_path, 
-                        settings.data_directory
+                        archive_path, settings.data_directory
                     )
                     await self.update_video(
                         video_id,
                         {
                             "file_path": relative_archive_path,
-                            "archived_at": await get_timezone_aware_timestamp_async(self.db),
+                            "archived_at": await get_timezone_aware_timestamp_async(
+                                self.db
+                            ),
                         },
                     )
                     return {
@@ -344,7 +410,7 @@ class VideoService:
                     await self.video_automation_service.queue_video_generation(
                         timelapse_id=timelapse_id,
                         trigger_type=trigger_type,
-                        priority="medium",
+                        priority=DEFAULT_VIDEO_GENERATION_PRIORITY,
                     )
                 )
 
@@ -389,9 +455,11 @@ class VideoService:
             # Note: This method would need to be implemented when actual video generation
             # functionality is added. For now, it serves as a placeholder for the
             # complete workflow that would coordinate FFmpeg rendering.
-            
-            logger.info(f"Video generation workflow requested for timelapse {timelapse_id}")
-            
+
+            logger.info(
+                f"Video generation workflow requested for timelapse {timelapse_id}"
+            )
+
             # Placeholder for future implementation
             return {
                 "workflow": "pending_implementation",
@@ -405,6 +473,56 @@ class VideoService:
                 f"Video generation workflow failed for timelapse {timelapse_id}: {e}"
             )
             return {"workflow": "failed", "error": str(e)}
+
+    async def get_service_health(self) -> Dict[str, Any]:
+        """
+        Get video service health status for monitoring.
+
+        Returns:
+            Dictionary with service health metrics
+        """
+        try:
+            # Get basic statistics for health assessment
+            stats = await self.get_video_statistics()
+            
+            # Get recent job status for health check
+            recent_jobs = await self.get_video_generation_jobs()
+            
+            # Calculate health metrics
+            total_jobs = len(recent_jobs)
+            failed_jobs = len([job for job in recent_jobs if job.status == "failed"])
+            processing_jobs = len([job for job in recent_jobs if job.status == "processing"])
+            
+            # Determine health status
+            if total_jobs == 0:
+                health_status = "unknown"
+            elif failed_jobs > total_jobs * 0.5:  # More than 50% failed
+                health_status = "unhealthy"
+            elif failed_jobs > total_jobs * 0.2:  # More than 20% failed
+                health_status = "degraded"
+            else:
+                health_status = "healthy"
+            
+            health_data = {
+                "status": health_status,
+                "total_videos": stats.total_videos,
+                "total_jobs": total_jobs,
+                "failed_jobs": failed_jobs,
+                "processing_jobs": processing_jobs,
+                "service": "video_service",
+                "timestamp": await get_timezone_aware_timestamp_async(self.db),
+            }
+            
+            return health_data
+            
+        except Exception as e:
+            logger.error(f"Video service health check failed: {e}")
+            return {
+                "status": "unknown",
+                "error": str(e),
+                "service": "video_service",
+                "timestamp": await get_timezone_aware_timestamp_async(self.db),
+            }
 
 
 class SyncVideoService:
@@ -485,7 +603,7 @@ class SyncVideoService:
         # Ensure timezone-aware creation timestamp
         if "created_at" not in video_data:
             video_data["created_at"] = get_timezone_aware_timestamp_sync(self.db)
-        
+
         return self.video_ops.create_video_record(video_data)
 
     def generate_video_for_timelapse(
@@ -496,7 +614,7 @@ class SyncVideoService:
 
         This method orchestrates the complete video generation process:
         1. Get timelapse and image data from database using operations
-        2. Configure video generation settings  
+        2. Configure video generation settings
         3. Call FFmpeg utilities to generate video
         4. Create video record in database
         5. Update job status
@@ -535,13 +653,15 @@ class SyncVideoService:
             images_dir = validate_file_path(
                 f"cameras/camera-{timelapse.camera_id}/images",
                 base_directory=settings.data_directory,
-                must_exist=True
+                must_exist=True,
             )
 
             # Generate output filename with timezone-aware timestamp
-            timestamp_str = get_timezone_aware_timestamp_sync(self.db).strftime("%Y%m%d_%H%M%S")
+            timestamp_str = get_timezone_aware_timestamp_sync(self.db).strftime(
+                "%Y%m%d_%H%M%S"
+            )
             output_filename = f"timelapse_{timelapse_id}_{timestamp_str}.mp4"
-            
+
             # Use file_helpers to ensure output directory exists
             videos_dir = ensure_directory_exists(settings.videos_directory)
             output_path = videos_dir / output_filename
@@ -553,6 +673,11 @@ class SyncVideoService:
             overlay_settings = video_settings.get(
                 "overlay_settings", ffmpeg_utils.DEFAULT_OVERLAY_SETTINGS
             )
+            
+            # Get quality from constants if not specified
+            quality = video_settings.get("quality")
+            if quality not in VIDEO_QUALITIES:
+                quality = "medium"  # Default fallback
 
             logger.info(f"Starting video generation for timelapse {timelapse_id}")
 
@@ -561,7 +686,7 @@ class SyncVideoService:
                 images_directory=images_dir,
                 output_path=str(output_path),
                 framerate=float(video_settings.get("fps", 24.0)),
-                quality=video_settings.get("quality", "medium"),
+                quality=quality,
                 overlay_settings=overlay_settings,
                 day_numbers=day_numbers,
             )
@@ -572,7 +697,9 @@ class SyncVideoService:
                     "camera_id": timelapse.camera_id,
                     "timelapse_id": timelapse_id,
                     "name": f"Timelapse {timelapse.name}",
-                    "file_path": get_relative_path(output_path, settings.data_directory),
+                    "file_path": get_relative_path(
+                        output_path, settings.data_directory
+                    ),
                     "status": "completed",
                     "settings": video_settings,
                     "image_count": metadata.get("image_count", len(images)),
@@ -582,7 +709,8 @@ class SyncVideoService:
                         "framerate", video_settings.get("fps", 24.0)
                     ),
                     "images_start_date": timelapse.start_date,
-                    "images_end_date": timelapse.last_capture_at or timelapse.start_date,
+                    "images_end_date": timelapse.last_capture_at
+                    or timelapse.start_date,
                     "trigger_type": video_settings.get("trigger_type", "manual"),
                     "job_id": job_id,
                     "created_at": get_timezone_aware_timestamp_sync(self.db),
@@ -619,7 +747,7 @@ class SyncVideoService:
                 logger.error(f"Failed to update job status: {completion_error}")
             return False, error_msg, None
 
-    def cleanup_old_video_jobs(self, days_to_keep: int = 30) -> int:
+    def cleanup_old_video_jobs(self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS) -> int:
         """
         Clean up old completed video generation jobs.
 

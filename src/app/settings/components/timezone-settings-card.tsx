@@ -13,17 +13,9 @@ import { TimezoneSelector } from "@/components/timezone-selector-combobox"
 import { useSettings } from "@/contexts/settings-context"
 import { Globe } from "lucide-react"
 
-interface TimezoneSettingsCardProps {
-  timezone: string
-  saving: boolean
-  onTimezoneChange: (timezone: string) => void
-}
-
-export function TimezoneSettingsCard({
-  timezone,
-  saving,
-  onTimezoneChange,
-}: TimezoneSettingsCardProps) {
+export function TimezoneSettingsCard() {
+  const { timezone, saving, updateSetting } = useSettings()
+  
   // Debug timezone changes
   const handleTimezoneChange = (newTimezone: string) => {
     console.log(
@@ -32,7 +24,7 @@ export function TimezoneSettingsCard({
       "to",
       newTimezone
     )
-    onTimezoneChange(newTimezone)
+    updateSetting('timezone', newTimezone)
   }
 
   return (

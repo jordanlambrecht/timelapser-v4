@@ -13,19 +13,85 @@ from fastapi import APIRouter, Query, HTTPException
 
 from ..dependencies import LogServiceDep
 from ..models.log_model import Log
-from ..models.log_summary_model import LogSourceModel, LogLevelModel, LogSummaryModel
+from ..models.log_summary_model import LogSourceModel, LogSummaryModel
 from ..utils.router_helpers import (
     handle_exceptions,
-    create_success_response,
     paginate_query_params,
 )
-from ..utils.time_utils import parse_iso_timestamp_safe
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.timezone_utils import (
+    get_timezone_aware_timestamp_async,
+    parse_iso_timestamp_safe,
+)
 from ..constants import LOG_LEVELS
 
-router = APIRouter(prefix="/logs", tags=["logs"])
+# TODO: CACHING STRATEGY - MIXED APPROACH
+# Log endpoints use mixed caching strategy:
+# - Log statistics/summary: ETag + short cache (2-5 min) - aggregated data changes slowly
+# - Log sources: ETag + longer cache (15-30 min) - mostly static configuration data
+# - Log search/filtering: Minimal cache (30 seconds max) - dynamic queries with parameters
+# - Historical logs: Short cache + ETag - immutable once written but accessed frequently
+router = APIRouter(tags=["logs"])
 
 
-@router.get("/")
+def create_pagination_metadata(
+    page: int, limit: int, total_pages: int, total_count: int
+) -> dict:
+    """Create standardized pagination metadata to reduce code duplication"""
+    return {
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "total_items": total_count,
+        "has_next": page < total_pages,
+        "has_previous": page > 1,
+    }
+
+
+@router.get("/logs/stats")
+@handle_exceptions("get log stats")
+async def get_log_stats(
+    log_service: LogServiceDep,
+    hours: int = Query(
+        24,
+        ge=1,
+        le=168,
+        description="Number of hours to include in comprehensive log statistics",
+    ),
+) -> dict:
+    """Get comprehensive log statistics and summary for the specified time period (default: 24h)"""
+
+    summary: LogSummaryModel = await log_service.get_log_summary(hours=hours)
+
+    return ResponseFormatter.success(
+        "Log statistics fetched successfully",
+        data={
+            "summary": summary.model_dump(),
+            "period_hours": hours,
+            "metadata": {
+                "generated_at": (
+                    await get_timezone_aware_timestamp_async(log_service.db)
+                ).isoformat(),
+                "data_range": {
+                    "first_log": (
+                        summary.first_log_at.isoformat()
+                        if summary.first_log_at
+                        else None
+                    ),
+                    "last_log": (
+                        summary.last_log_at.isoformat() if summary.last_log_at else None
+                    ),
+                },
+                "coverage": {
+                    "unique_sources": summary.unique_sources,
+                    "unique_cameras": summary.unique_cameras,
+                },
+            },
+        },
+    )
+
+
+@router.get("/logs")
 @handle_exceptions("get logs")
 async def get_logs(
     log_service: LogServiceDep,
@@ -42,6 +108,7 @@ async def get_logs(
     end_date: Optional[str] = Query(None, description="End date filter (ISO format)"),
 ):
     """Get logs with optional filtering and pagination"""
+
     # Validate pagination parameters
     limit, offset = paginate_query_params(page, limit, max_per_page=100)
 
@@ -82,79 +149,47 @@ async def get_logs(
         page_size=limit,
     )
 
-    # Calculate pagination metadata
-    total_pages = result["total_pages"]
-    has_next = page < total_pages
-    has_previous = page > 1
-
-    return {
-        "logs": result["logs"],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total_pages": total_pages,
-            "total_items": result["total_count"],
-            "has_next": has_next,
-            "has_previous": has_previous,
+    return ResponseFormatter.success(
+        "Logs fetched successfully",
+        data={
+            "logs": result["logs"],
+            "pagination": create_pagination_metadata(
+                page=page,
+                limit=limit,
+                total_pages=result["total_pages"],
+                total_count=result["total_count"],
+            ),
+            "filters_applied": {
+                "level": level,
+                "camera_id": camera_id,
+                "search": search,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
         },
-        "filters_applied": {
-            "level": level,
-            "camera_id": camera_id,
-            "search": search,
-            "start_date": start_date,
-            "end_date": end_date,
-        },
-    }
+    )
 
 
-@router.get("/levels")
-@handle_exceptions("get log levels")
-async def get_log_levels(log_service: LogServiceDep) -> dict:
-    """Get available log levels and their counts"""
-    levels: List[LogLevelModel] = await log_service.get_log_levels()
-    return {
-        "levels": [level.model_dump() for level in levels],
-        "total_logs": sum(level.log_count for level in levels),
-    }
+# DEPRECATED: /logs/levels endpoint removed - use static LOG_LEVELS constant from frontend
+# Log levels are hardcoded constants and don't require database queries
 
 
-@router.get("/sources")
+@router.get("/logs/sources")
 @handle_exceptions("get log sources")
 async def get_log_sources(log_service: LogServiceDep) -> dict:
     """Get available log sources and their statistics"""
+
     sources: List[LogSourceModel] = await log_service.get_log_sources()
-    return {
-        "sources": [source.model_dump() for source in sources],
-        "total_sources": len(sources),
-    }
-
-
-@router.get("/recent")
-@handle_exceptions("get recent logs")
-async def get_recent_logs(
-    log_service: LogServiceDep,
-    count: int = Query(50, ge=1, le=200, description="Number of recent logs to return"),
-    level: Optional[str] = Query(
-        None, description=f"Filter by log level ({', '.join(LOG_LEVELS)})"
-    ),
-):
-    """Get the most recent logs"""
-    # Validate log level if provided
-    if level and level.upper() not in LOG_LEVELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid log level. Must be one of: {', '.join(LOG_LEVELS)}",
-        )
-
-    # Use get_logs with pagination to get recent logs
-    result = await log_service.get_logs(
-        level=level.upper() if level else None, page=1, page_size=count
+    return ResponseFormatter.success(
+        "Log sources fetched successfully",
+        data={
+            "sources": [source.model_dump() for source in sources],
+            "total_sources": len(sources),
+        },
     )
 
-    return {"logs": result["logs"], "count": len(result["logs"]), "level_filter": level}
 
-
-@router.get("/search")
+@router.get("/logs/search")
 @handle_exceptions("search logs")
 async def search_logs(
     log_service: LogServiceDep,
@@ -165,6 +200,7 @@ async def search_logs(
     level: Optional[str] = Query(None, description="Filter by log level"),
 ):
     """Search logs by message content"""
+
     # Validate pagination parameters
     limit, offset = paginate_query_params(page, limit, max_per_page=100)
 
@@ -184,61 +220,26 @@ async def search_logs(
         page_size=limit,
     )
 
-    # Calculate pagination metadata
-    total_pages = result["total_pages"]
-    has_next = page < total_pages
-    has_previous = page > 1
-
-    return {
-        "logs": result["logs"],
-        "search_query": query,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total_pages": total_pages,
-            "total_items": result["total_count"],
-            "has_next": has_next,
-            "has_previous": has_previous,
+    return ResponseFormatter.success(
+        "Log search completed successfully",
+        data={
+            "logs": result["logs"],
+            "search_query": query,
+            "pagination": create_pagination_metadata(
+                page=page,
+                limit=limit,
+                total_pages=result["total_pages"],
+                total_count=result["total_count"],
+            ),
+            "filters_applied": {
+                "camera_id": camera_id,
+                "level": level,
+            },
         },
-        "filters_applied": {
-            "camera_id": camera_id,
-            "level": level,
-        },
-    }
+    )
 
 
-@router.get("/summary")
-@handle_exceptions("get log summary")
-async def get_log_summary(
-    log_service: LogServiceDep,
-    hours: int = Query(
-        24, ge=1, le=168, description="Number of hours to include in summary"
-    ),
-) -> dict:
-    """Get log summary statistics for the specified time period"""
-    summary: LogSummaryModel = await log_service.get_log_summary(hours=hours)
-    return {"summary": summary.model_dump(), "period_hours": hours}
-
-
-@router.get("/errors")
-@handle_exceptions("get recent errors")
-async def get_recent_errors(
-    log_service: LogServiceDep,
-    hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
-    limit: int = Query(
-        50, ge=1, le=200, description="Maximum number of errors to return"
-    ),
-) -> dict:
-    """Get recent error and critical logs"""
-    errors: List[Log] = await log_service.get_recent_errors(hours=hours, limit=limit)
-    return {
-        "errors": [error.model_dump() for error in errors],
-        "count": len(errors),
-        "hours_analyzed": hours,
-    }
-
-
-@router.delete("/cleanup")
+@router.delete("/logs/cleanup")
 @handle_exceptions("cleanup old logs")
 async def cleanup_old_logs(
     log_service: LogServiceDep,
@@ -247,16 +248,22 @@ async def cleanup_old_logs(
     ),
 ):
     """Clean up logs older than the specified number of days"""
+
     # Perform cleanup using the existing service method
     deleted_count = await log_service.delete_old_logs(days_to_keep)
-    return create_success_response(
+
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
         f"Cleaned up {deleted_count} old log entries",
-        deleted_count=deleted_count,
-        days_kept=days_to_keep,
+        data={
+            "deleted_count": deleted_count,
+            "days_kept": days_to_keep,
+        },
     )
 
 
-@router.get("/cameras/{camera_id}")
+@router.get("/logs/cameras/{camera_id}")
 @handle_exceptions("get camera logs")
 async def get_camera_logs(
     camera_id: int,
@@ -264,12 +271,16 @@ async def get_camera_logs(
     limit: int = Query(50, ge=1, le=200, description="Number of recent logs to return"),
 ) -> dict:
     """Get recent logs for a specific camera"""
+
     logs: List[Log] = await log_service.get_logs_for_camera(camera_id, limit=limit)
-    return {
-        "logs": [log.model_dump() for log in logs],
-        "camera_id": camera_id,
-        "count": len(logs),
-    }
+    return ResponseFormatter.success(
+        "Camera logs fetched successfully",
+        data={
+            "logs": [log.model_dump() for log in logs],
+            "camera_id": camera_id,
+            "count": len(logs),
+        },
+    )
 
 
 # Note: Export, individual log retrieval, and individual log deletion endpoints

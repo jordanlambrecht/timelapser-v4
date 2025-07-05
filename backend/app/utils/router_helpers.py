@@ -6,10 +6,12 @@ Common functions and decorators for FastAPI routers to reduce code duplication.
 Provides standardized error handling, entity validation, and response patterns.
 """
 
+
 from functools import wraps
-from typing import Optional, Dict, Any, Callable, TypeVar
+from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable
 from fastapi import HTTPException
 from loguru import logger
+from app.utils.response_helpers import ResponseFormatter
 
 T = TypeVar("T")
 
@@ -50,27 +52,29 @@ def handle_exceptions(operation_name: str):
 
 
 async def validate_entity_exists(
-    db_method: Callable, entity_id: int, entity_name: str = "entity"
-) -> Dict[str, Any]:
+    db_method: Callable[..., Awaitable[Optional[T]]], 
+    entity_id: int, 
+    entity_name: str = "entity"
+) -> T:
     """
-    Validate that an entity exists in the database.
+    Validate that an entity exists in the database with proper typing.
 
     Args:
-        db_method: Database method to call (e.g., async_db.get_camera_by_id)
+        db_method: Database method to call (e.g., video_service.get_video_by_id)
         entity_id: ID of the entity to validate
         entity_name: Human-readable name for error messages
 
     Returns:
-        Dict containing the entity data
+        The entity (properly typed as returned by db_method)
 
     Raises:
         HTTPException: 404 if entity not found
 
     Usage:
-        camera = await validate_entity_exists(
-            async_db.get_camera_by_id,
-            camera_id,
-            "camera"
+        video = await validate_entity_exists(
+            video_service.get_video_by_id,
+            video_id,
+            "video"
         )
     """
     entity = await db_method(entity_id)
@@ -191,23 +195,23 @@ def create_error_response(
     return response
 
 
-async def get_active_timelapse_for_camera(db, camera_id: int) -> Dict[str, Any]:
+async def get_active_timelapse_for_camera(timelapse_service, camera_id: int):
     """
     Get the active timelapse for a camera, validating it exists and is running.
 
     Args:
-        db: Database instance (async or sync)
+        timelapse_service: TimelapseService instance
         camera_id: Camera ID
 
     Returns:
-        Active timelapse dictionary
+        Active timelapse Pydantic model
 
     Raises:
         HTTPException: 400 if no active timelapse found
     """
-    timelapses = await db.get_timelapses(camera_id=camera_id)
+    timelapses = await timelapse_service.get_timelapses(camera_id=camera_id)
     active_timelapse = next(
-        (t for t in timelapses if t.get("status") == "running"), None
+        (t for t in timelapses if t.status == "running"), None
     )
 
     if not active_timelapse:
@@ -370,3 +374,32 @@ class DatabaseOperationMixin:
         where_clause = " AND ".join(where_clauses)
 
         return where_clause, filtered_conditions
+
+
+async def run_sync_service_method(func, *args, **kwargs):
+    """
+    Helper to run sync service methods in async context with proper error handling.
+    
+    This utility bridges the gap between async router endpoints and sync service methods,
+    executing sync functions in a thread pool to avoid blocking the event loop.
+
+    Args:
+        func: Sync function to call
+        *args: Positional arguments for the function
+        **kwargs: Keyword arguments for the function
+
+    Returns:
+        Result of the function call
+        
+    Raises:
+        Exception: Re-raises any exceptions from the wrapped function
+    """
+    import asyncio
+    
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, func, *args, **kwargs)
+    except Exception as e:
+        # Let the @handle_exceptions decorator handle logging
+        # Router layer should not do direct logging
+        raise

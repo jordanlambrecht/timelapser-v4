@@ -4,11 +4,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
+from datetime import datetime
 from loguru import logger
 
 from .config import settings
 from .database import async_db, sync_db
+
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
+
+# from app.middleware.trailing_slash import TrailingSlashRedirectMiddleware
 from app.routers import (
     camera_routers as cameras,
     timelapse_routers as timelapses,
@@ -21,6 +25,8 @@ from app.routers import (
     thumbnail_routers as thumbnails,
     corruption_routers as corruption,
     video_automation_routers as video_automation,
+    monitoring_routers as monitoring,
+    sse_routers as sse,
 )
 
 
@@ -33,6 +39,15 @@ async def lifespan(_app: FastAPI):
     sync_db.initialize()
     logger.info("Database connections initialized")
 
+    # Setup database logging for FastAPI
+    try:
+        from app.logging.database_handler import setup_database_logging
+
+        setup_database_logging(sync_db)
+        logger.info("Database logging enabled for FastAPI")
+    except Exception as e:
+        logger.error(f"Failed to enable database logging: {e}")
+
     yield
 
     # Shutdown
@@ -44,6 +59,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Timelapser API",
+    redirect_slashes=True,
     description="API for managing RTSP camera timelapses",
     version="1.0.0",
     docs_url="/docs",
@@ -51,6 +67,9 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Add middleware to normalize trailing slashes for /api/* GET requests
+# app.add_middleware(TrailingSlashRedirectMiddleware)
 
 # Add middleware stack (order matters: last added = first executed)
 # 1. Error handling (outermost - catches all errors)
@@ -72,19 +91,28 @@ app.add_middleware(
 
 
 # Include routers
-app.include_router(cameras.router, prefix="/api/cameras", tags=["cameras"])
-app.include_router(timelapses.router, prefix="/api/timelapses", tags=["timelapses"])
-app.include_router(videos.router, prefix="/api/videos", tags=["videos"])
-app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
-app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
-app.include_router(images.router, prefix="/api/images", tags=["images"])
-app.include_router(health.router, prefix="/api/health", tags=["health"])
-app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
-app.include_router(thumbnails.router, prefix="/api/thumbnails", tags=["thumbnails"])
-app.include_router(corruption.router, prefix="/api/corruption", tags=["corruption"])
-app.include_router(
-    video_automation.router, prefix="/api/video-automation", tags=["video-automation"]
-)
+app.include_router(cameras.router, prefix="/api", tags=["cameras"])
+app.include_router(timelapses.router, prefix="/api", tags=["timelapses"])
+app.include_router(videos.router, prefix="/api", tags=["videos"])
+app.include_router(settings_router.router, prefix="/api", tags=["settings"])
+app.include_router(logs.router, prefix="/api", tags=["logs"])
+app.include_router(images.router, prefix="/api", tags=["images"])
+app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
+app.include_router(thumbnails.router, prefix="/api", tags=["thumbnails"])
+app.include_router(corruption.router, prefix="/api", tags=["corruption"])
+app.include_router(video_automation.router, prefix="/api", tags=["video-automation"])
+app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
+app.include_router(sse.router, prefix="/api", tags=["sse"])
+
+# Development and testing routers
+from app.routers import cache_test_routers
+
+app.include_router(cache_test_routers.router, prefix="/api", tags=["cache-testing"])
+
+
+# NOTE: Legacy SSE endpoint removed - now handled by sse_routers.py
+# The new database-driven SSE implementation is at /api/events via sse_routers
 
 
 # Health check endpoint

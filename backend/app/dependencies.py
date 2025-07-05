@@ -20,6 +20,7 @@ from .services.corruption_service import CorruptionService
 from .services.settings_service import SettingsService
 from .services.statistics_service import StatisticsService
 from .services.log_service import LogService
+from .services.health_service import HealthService
 
 
 # Database Dependencies
@@ -36,7 +37,9 @@ def get_sync_database() -> SyncDatabase:
 # Async Service Dependencies
 async def get_camera_service() -> CameraService:
     """Get CameraService with async database dependency injection"""
-    return CameraService(async_db)
+    # Create settings service instance for camera service dependency
+    settings_service = SettingsService(async_db)
+    return CameraService(async_db, settings_service)
 
 
 async def get_video_service() -> VideoService:
@@ -46,12 +49,16 @@ async def get_video_service() -> VideoService:
 
 async def get_timelapse_service() -> TimelapseService:
     """Get TimelapseService with async database dependency injection"""
-    return TimelapseService(async_db)
+    # Create image service dependency
+    settings_service = SettingsService(async_db)
+    image_service = ImageService(async_db, settings_service)
+    return TimelapseService(async_db, image_service=image_service)
 
 
 async def get_image_service() -> ImageService:
     """Get ImageService with async database dependency injection"""
-    return ImageService(async_db)
+    settings_service = SettingsService(async_db)
+    return ImageService(async_db, settings_service)
 
 
 async def get_corruption_service() -> CorruptionService:
@@ -72,6 +79,11 @@ async def get_statistics_service() -> StatisticsService:
 async def get_log_service() -> LogService:
     """Get LogService with async database dependency injection"""
     return LogService(async_db)
+
+
+async def get_health_service() -> HealthService:
+    """Get HealthService with async database dependency injection"""
+    return HealthService(async_db)
 
 
 # Sync Service Dependencies (for background tasks and worker processes)
@@ -98,6 +110,7 @@ CorruptionServiceDep = Annotated[CorruptionService, Depends(get_corruption_servi
 SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 StatisticsServiceDep = Annotated[StatisticsService, Depends(get_statistics_service)]
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
+HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 
 # Sync service dependencies
 SyncVideoServiceDep = Annotated[SyncVideoService, Depends(get_sync_video_service)]

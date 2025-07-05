@@ -9,68 +9,109 @@ Interactions: Uses SettingsService for business logic, handles settings validati
 
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, HTTPException
-from loguru import logger
+from fastapi import APIRouter, HTTPException, Response
 
 from ..dependencies import SettingsServiceDep
-from ..models import Setting, SettingCreate, SettingUpdate
-from ..models.shared_models import CorruptionSettings
-from ..utils.router_helpers import handle_exceptions, create_success_response
-from ..utils.timezone_utils import (
-    get_timezone_aware_timestamp_async,
-    validate_timezone,
-    get_supported_timezones,
-    get_timezone_from_settings,
+from ..models import (
+    Setting,
+    SettingCreate,
+    SettingUpdate,
+    BulkSettingsUpdate,
+    WeatherSettingUpdate,
 )
+from ..utils.router_helpers import handle_exceptions
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.cache_manager import (
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
+)
+from ..constants import EVENT_SETTING_UPDATED, EVENT_SETTING_DELETED, WEATHER_SETTINGS_KEYS
 
-router = APIRouter(prefix="/settings", tags=["settings"])
-
-# Settings that should be masked when returned
-MASKABLE_SETTINGS = {"openweather_api_key"}
-
-
-def mask_api_key(api_key: str) -> str:
-    """Mask API key for display purposes."""
-    if not api_key or len(api_key) < 8:
-        return "*" * 8
-    return f"{api_key[:4]}{'*' * (len(api_key) - 8)}{api_key[-4:]}"
+# TODO: CACHING STRATEGY - ETAG + CACHE (PERFECT USE CASE)
+# Settings are the perfect example for ETag + Cache-Control strategy:
+# - GET operations: ETag + 10-15 min cache - settings change occasionally, fresh when changed
+# - Write operations: SSE broadcasting - immediate real-time updates across system
+# - Different cache durations based on setting type (weather, system, user preferences)
+# Individual endpoint TODOs are well-defined throughout this file.
+router = APIRouter(tags=["settings"])
 
 
-@router.get("/")
+# Accept both /settings/ and /settings (no trailing slash)
+# IMPLEMENTED: ETag + 10 minute cache (settings change occasionally)
+# ETag based on hash of all settings updated_at timestamps
+@router.get("/settings")
+@router.get("")  # Add this line to handle /api/settings without trailing slash
 @handle_exceptions("get settings")
-async def get_settings(settings_service: SettingsServiceDep):
+async def get_settings(response: Response, settings_service: SettingsServiceDep):
     """Get all settings as a dictionary"""
+    # Get all settings from service
     settings_dict = await settings_service.get_all_settings()
 
-    # Mask sensitive settings for display
-    for key, value in settings_dict.items():
-        if key in MASKABLE_SETTINGS and value:
-            settings_dict[key] = mask_api_key(value)
+    # Generate ETag based on the content of all settings
+    etag = generate_content_hash_etag(settings_dict)
 
-    return settings_dict
+    # Add caching for settings
+    response.headers["Cache-Control"] = (
+        "public, max-age=600, s-maxage=600"  # 10 minutes
+    )
+    response.headers["ETag"] = etag
+
+    return ResponseFormatter.success(
+        "Settings retrieved successfully", data=settings_dict
+    )
 
 
-@router.get("/list", response_model=List[Setting])
+# IMPLEMENTED: ETag + 10 minute cache (settings list changes occasionally)
+# ETag based on hash of all settings updated_at timestamps
+@router.get("/settings/list", response_model=List[Setting])
 @handle_exceptions("get settings list")
-async def get_settings_list(settings_service: SettingsServiceDep):
+async def get_settings_list(response: Response, settings_service: SettingsServiceDep):
     """Get all settings as a list"""
     settings = await settings_service.get_settings()
+
+    # Generate ETag based on all settings' updated_at timestamps
+    if settings:
+        etag = generate_collection_etag([s.updated_at for s in settings])
+    else:
+        etag = generate_content_hash_etag("empty")
+
+    # Add caching for settings list
+    response.headers["Cache-Control"] = (
+        "public, max-age=600, s-maxage=600"  # 10 minutes
+    )
+    response.headers["ETag"] = etag
+
     return settings
 
 
-@router.get("/{key}")
+# IMPLEMENTED: ETag + 15 minute cache (individual settings change rarely)
+# ETag = f'"{key}-{setting.updated_at.timestamp()}"'
+@router.get("/settings/{key}")
 @handle_exceptions("get setting")
-async def get_setting_by_key(key: str, settings_service: SettingsServiceDep):
+async def get_setting_by_key(
+    response: Response, key: str, settings_service: SettingsServiceDep
+):
     """Get a specific setting by key"""
     value = await settings_service.get_setting(key)
     if value is None:
         raise HTTPException(status_code=404, detail="Setting not found")
 
-    # Return simple key-value response since we don't track individual setting timestamps
-    return {"key": key, "value": value}
+    # Generate ETag based on key and value content for individual setting cache validation
+    etag = generate_content_hash_etag(f"{key}-{value}")
+
+    # Add longer cache for individual settings
+    response.headers["Cache-Control"] = (
+        "public, max-age=900, s-maxage=900"  # 15 minutes
+    )
+    response.headers["ETag"] = etag
+
+    return ResponseFormatter.success(
+        "Setting retrieved successfully", data={"key": key, "value": value}
+    )
 
 
-@router.post("/")
+@router.post("/settings")
 @handle_exceptions("create setting")
 async def create_setting(
     setting_data: SettingCreate, settings_service: SettingsServiceDep
@@ -80,16 +121,15 @@ async def create_setting(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to create setting")
 
-    logger.info(f"Created/updated setting: {setting_data.key}")
-    return {
-        "key": setting_data.key,
-        "value": setting_data.value,
-        "success": True,
-        "message": "Setting created successfully",
-    }
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
+        "Setting created successfully",
+        data={"key": setting_data.key, "value": setting_data.value},
+    )
 
 
-@router.put("/")
+@router.put("/settings")
 @handle_exceptions("update setting from body")
 async def update_setting_body(
     setting_data: Dict[str, Any], settings_service: SettingsServiceDep
@@ -108,16 +148,14 @@ async def update_setting_body(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update setting")
 
-    logger.info(f"Updated setting: {key} = {value}")
-    return {
-        "key": key,
-        "value": str(value),
-        "success": True,
-        "message": "Setting updated successfully",
-    }
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
+        "Setting updated successfully", data={"key": key, "value": str(value)}
+    )
 
 
-@router.put("/{key}")
+@router.put("/settings/{key}")
 @handle_exceptions("update setting")
 async def update_setting(
     key: str, setting_data: SettingUpdate, settings_service: SettingsServiceDep
@@ -127,16 +165,14 @@ async def update_setting(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update setting")
 
-    logger.info(f"Updated setting: {key} = {setting_data.value}")
-    return {
-        "key": key,
-        "value": setting_data.value,
-        "success": True,
-        "message": "Setting updated successfully",
-    }
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
+        "Setting updated successfully", data={"key": key, "value": setting_data.value}
+    )
 
 
-@router.delete("/{key}")
+@router.delete("/settings/{key}")
 @handle_exceptions("delete setting")
 async def delete_setting(key: str, settings_service: SettingsServiceDep):
     """Delete a setting"""
@@ -144,101 +180,73 @@ async def delete_setting(key: str, settings_service: SettingsServiceDep):
     if not success:
         raise HTTPException(status_code=404, detail="Setting not found")
 
-    logger.info(f"Deleted setting: {key}")
-    return create_success_response("Setting deleted successfully")
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success("Setting deleted successfully")
 
 
-@router.post("/bulk")
+@router.post("/settings/bulk")
 @handle_exceptions("update multiple settings")
 async def update_multiple_settings(
-    settings_data: Dict[str, str], settings_service: SettingsServiceDep
+    bulk_data: BulkSettingsUpdate, settings_service: SettingsServiceDep
 ):
     """Update multiple settings in a single transaction"""
-    success = await settings_service.set_multiple_settings(settings_data)
+    success = await settings_service.set_multiple_settings(bulk_data.settings)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update settings")
 
-    logger.info(f"Updated {len(settings_data)} settings in bulk")
-    return create_success_response(
-        f"Successfully updated {len(settings_data)} settings",
-        updated_keys=list(settings_data.keys()),
+    # SSE broadcasting handled by service layer (proper architecture)
+
+    return ResponseFormatter.success(
+        f"Successfully updated {len(bulk_data.settings)} settings",
+        data={"updated_keys": list(bulk_data.settings.keys())},
     )
 
 
-@router.get("/timezone/supported")
-@handle_exceptions("get supported timezones")
-async def get_supported_timezones_endpoint():
-    """Get list of supported timezone identifiers"""
-    timezones = get_supported_timezones()
-    return {"timezones": timezones, "count": len(timezones), "default": "UTC"}
-
-
-@router.post("/timezone/validate")
-@handle_exceptions("validate timezone")
-async def validate_timezone_endpoint(timezone_data: Dict[str, str]):
-    """Validate a timezone string"""
-    timezone_str = timezone_data.get("timezone")
-    if not timezone_str:
-        raise HTTPException(status_code=400, detail="Timezone is required")
-
-    is_valid = validate_timezone(timezone_str)
-    return {
-        "timezone": timezone_str,
-        "valid": is_valid,
-        "message": f"Timezone '{timezone_str}' is {'valid' if is_valid else 'invalid'}",
-    }
-
-
-@router.get("/timezone/current")
-@handle_exceptions("get current timezone")
-async def get_current_timezone(settings_service: SettingsServiceDep):
-    """Get current timezone setting and timestamp"""
-    all_settings = await settings_service.get_all_settings()
-    current_timezone = get_timezone_from_settings(all_settings)
-    current_timestamp = await get_timezone_aware_timestamp_async(settings_service.db)
-
-    return {
-        "timezone": current_timezone,
-        "current_time": current_timestamp.isoformat(),
-        "is_utc": current_timezone == "UTC",
-        "valid": validate_timezone(current_timezone),
-    }
-
-
-@router.put("/timezone")
-@handle_exceptions("update timezone")
-async def update_timezone(
-    timezone_data: Dict[str, str], settings_service: SettingsServiceDep
+# IMPLEMENTED: ETag + 15 minute cache (weather settings change rarely)
+# ETag based on weather settings updated_at timestamps
+@router.get("/settings/weather")
+@handle_exceptions("get weather settings")
+async def get_weather_settings(
+    response: Response, settings_service: SettingsServiceDep
 ):
-    """Update system timezone with validation"""
-    new_timezone = timezone_data.get("timezone")
-    if not new_timezone:
-        raise HTTPException(status_code=400, detail="Timezone is required")
+    """Get weather-related settings"""
+    weather_settings = {}
 
-    # Validate timezone
-    if not validate_timezone(new_timezone):
-        raise HTTPException(status_code=400, detail=f"Invalid timezone: {new_timezone}")
+    for key in WEATHER_SETTINGS_KEYS:
+        value = await settings_service.get_setting(key)
+        if value is not None:
+            weather_settings[key] = value
 
-    # Update setting
-    success = await settings_service.set_setting("timezone", new_timezone)
+    # Generate ETag based on content of weather settings
+    etag = generate_content_hash_etag(weather_settings)
+
+    # Add longer cache for weather settings (they change rarely)
+    response.headers["Cache-Control"] = (
+        "public, max-age=900, s-maxage=900"  # 15 minutes
+    )
+    response.headers["ETag"] = etag
+
+    return ResponseFormatter.success(
+        "Weather settings retrieved successfully", data=weather_settings
+    )
+
+
+@router.put("/settings/weather")
+@handle_exceptions("update weather setting")
+async def update_weather_setting(
+    setting_data: WeatherSettingUpdate, settings_service: SettingsServiceDep
+):
+    """Update a weather-related setting with validation"""
+    key = setting_data.key
+    value = setting_data.value
+
+    success = await settings_service.set_setting(key, str(value))
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to update timezone")
+        raise HTTPException(status_code=500, detail="Failed to update weather setting")
 
-    # Get new timestamp with updated timezone
-    new_timestamp = await get_timezone_aware_timestamp_async(settings_service.db)
+    # SSE broadcasting handled by service layer (proper architecture)
 
-    logger.info(f"System timezone updated to: {new_timezone}")
-    return {
-        "success": True,
-        "timezone": new_timezone,
-        "updated_at": new_timestamp.isoformat(),
-        "message": f"System timezone updated to {new_timezone}",
-    }
-
-
-@router.get("/corruption/settings", response_model=CorruptionSettings)
-@handle_exceptions("get corruption settings")
-async def get_corruption_settings(settings_service: SettingsServiceDep):
-    """Get corruption detection related settings"""
-    corruption_settings = await settings_service.get_corruption_settings()
-    return corruption_settings
+    return ResponseFormatter.success(
+        "Weather setting updated successfully", data={"key": key, "value": str(value)}
+    )
