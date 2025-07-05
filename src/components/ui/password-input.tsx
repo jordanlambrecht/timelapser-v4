@@ -7,9 +7,19 @@ import { Button } from "@/components/ui/button"
 import { Input, type InputProps } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
-const PasswordInput = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, ...props }, ref) => {
-    const [showPassword, setShowPassword] = useState(false)
+export interface PasswordInputProps extends InputProps {
+  showPassword?: boolean
+  onTogglePassword?: () => void
+}
+
+const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
+  ({ className, showPassword: externalShowPassword, onTogglePassword, ...props }, ref) => {
+    const [internalShowPassword, setInternalShowPassword] = useState(false)
+    
+    // Use external control if provided, otherwise use internal state
+    const showPassword = externalShowPassword !== undefined ? externalShowPassword : internalShowPassword
+    const togglePassword = onTogglePassword || (() => setInternalShowPassword((prev) => !prev))
+    
     // Only disable the toggle button if the component itself is disabled, not if empty
     const disabled = props.disabled
 
@@ -26,7 +36,7 @@ const PasswordInput = forwardRef<HTMLInputElement, InputProps>(
           variant='ghost'
           size='sm'
           className='absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent z-10'
-          onClick={() => setShowPassword((prev) => !prev)}
+          onClick={togglePassword}
           disabled={disabled}
           aria-label={showPassword ? "Hide password" : "Show password"}
         >
