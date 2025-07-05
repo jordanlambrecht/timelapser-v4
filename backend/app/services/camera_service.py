@@ -1241,6 +1241,15 @@ class SyncCameraService:
             List of enabled Camera model instances
         """
         return self.camera_ops.get_active_cameras()
+    
+    def get_cameras_with_running_timelapses(self) -> List[Camera]:
+        """
+        Retrieve cameras that have active running timelapses.
+        
+        Returns:
+            List of Camera model instances with running timelapses
+        """
+        return self.camera_ops.get_cameras_with_running_timelapses()
 
     def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
         """
