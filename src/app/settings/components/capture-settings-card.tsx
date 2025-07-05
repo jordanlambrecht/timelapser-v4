@@ -1,7 +1,7 @@
 // src/app/settings/components/capture-settings-card.tsx
 "use client"
 
-import { useState } from "react"
+import React, { useState } from "react"
 import {
   Card,
   CardContent,
@@ -12,22 +12,21 @@ import {
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { NumberInput } from "@/components/ui/number-input"
-import { ImageTypeSlider } from "@/components/ui/image-type-slider"
+import { ToggleGroup } from "@/components/ui/toggle-group"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { ThumbnailRegenerationModal } from "@/components/thumbnail-regeneration-modal"
-import SwitchLabeled from "@/components/ui/switch-labeled"
-import { Clock, Image as ImageIcon } from "lucide-react"
+import { SuperSwitch } from "@/components/ui/switch"
+import { Image as ImageIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useSettings } from "@/contexts/settings-context"
 
 export function CaptureSettingsCard() {
   const {
-    captureInterval,
     generateThumbnails,
     imageCaptureType,
     saving,
-    updateSetting
+    setGenerateThumbnails,
+    setImageCaptureType,
   } = useSettings()
   // Local state for thumbnail modal and confirmation
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false)
@@ -39,30 +38,45 @@ export function CaptureSettingsCard() {
   const [imageFormatChangeDialogOpen, setImageFormatChangeDialogOpen] =
     useState(false)
   const [pendingImageFormat, setPendingImageFormat] = useState<"PNG" | "JPG">(
-    "JPG"
+    imageCaptureType
   )
+  const [userIsChangingFormat, setUserIsChangingFormat] = useState(false)
 
-  const formatInterval = (seconds: number) => {
-    const sec = seconds
-    if (sec < 60) return `${sec} seconds`
-    if (sec < 3600) return `${Math.floor(sec / 60)} minutes`
-    return `${Math.floor(sec / 3600)} hours`
-  }
+  // Only sync pendingImageFormat when user is not actively changing it
+  React.useEffect(() => {
+    if (!userIsChangingFormat) {
+      console.log(
+        "🔄 Syncing pendingImageFormat to context value:",
+        imageCaptureType
+      )
+      setPendingImageFormat(imageCaptureType)
+    }
+  }, [imageCaptureType, userIsChangingFormat])
 
   const handleImageCaptureTypeChange = (newType: "PNG" | "JPG") => {
+    console.log("🎯 Image type toggle clicked:", imageCaptureType, "→", newType)
+    setUserIsChangingFormat(true)
     setPendingImageFormat(newType)
     setImageFormatChangeDialogOpen(true)
   }
 
   const handleImageFormatConfirm = () => {
+    console.log("🔄 Image format confirmed:", pendingImageFormat)
     setImageFormatChangeDialogOpen(false)
-    updateSetting('image_capture_type', pendingImageFormat)
+    setImageCaptureType(pendingImageFormat)
     setImageConversionDialogOpen(true)
+    // Keep the flag true until the conversion dialog is also closed
   }
 
   const handleImageFormatCancel = () => {
+    console.log(
+      "✅ Image format changed for future captures only:",
+      pendingImageFormat
+    )
     setImageFormatChangeDialogOpen(false)
-    updateSetting('image_capture_type', pendingImageFormat) // Still change the format, just don't convert existing
+    setUserIsChangingFormat(false)
+    // Apply the change but don't show conversion dialog (user chose "Only Future Captures")
+    setImageCaptureType(pendingImageFormat)
   }
 
   return (
@@ -70,76 +84,15 @@ export function CaptureSettingsCard() {
       <Card className='transition-all duration-300 glass hover:glow'>
         <CardHeader>
           <CardTitle className='flex items-center space-x-2'>
-            <Clock className='w-5 h-5 text-primary' />
-            <span>Capture Settings</span>
+            <ImageIcon className='w-5 h-5 text-primary' />
+            <span>Image Settings</span>
           </CardTitle>
           <CardDescription>
-            Configure image capture intervals and thumbnail generation
+            Configure thumbnail generation and image capture type
           </CardDescription>
         </CardHeader>
         <CardContent className='space-y-6'>
           <div className='space-y-4'>
-            <div className='space-y-3 grid grid-cols-1 md:grid-cols-2 gap-x-8'>
-              <div>
-                <NumberInput
-                  id='interval'
-                  label='Interval (seconds)'
-                  value={captureInterval}
-                  onChange={(value) => updateSetting('capture_interval', value)}
-                  min={1}
-                  max={86400}
-                  step={1}
-                  className='bg-background/50 border-borderColor/50 focus:border-primary/50'
-                />
-                <div className='flex flex-col space-x-4'>
-                  <Badge
-                    variant='outline'
-                    className='px-2 py-2 whitespace-nowrap'
-                  >
-                    ({formatInterval(captureInterval)})
-                  </Badge>
-                </div>
-                <p className='text-xs text-muted-foreground'>
-                  Range: 1 second to 24 hours (86,400 seconds)
-                </p>
-              </div>
-
-              {/* Quick Presets */}
-              <div className='space-y-4'>
-                <Label className='text-xs text-muted-foreground'>
-                  Quick Presets:
-                </Label>
-                <div className='grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 gap-2'>
-                  {[
-                    { label: "30s", value: 30, desc: "High detail" },
-                    { label: "1m", value: 60, desc: "Detailed" },
-                    { label: "5m", value: 300, desc: "Standard" },
-                    { label: "15m", value: 900, desc: "Moderate" },
-                    { label: "1h", value: 3600, desc: "Long-term" },
-                    { label: "2h", value: 7200, desc: "Longer-term" },
-                  ].map((preset) => (
-                    <Button
-                      key={preset.value}
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      onClick={() => updateSetting('capture_interval', preset.value)}
-                      className={cn(
-                        "text-xs h-8 px-2 border-borderColor/50 hover:border-primary/50 transition-all duration-300 ease-in-out",
-                        captureInterval === preset.value
-                          ? "bg-primary border-primary/50 text-blue"
-                          : "bg-background/30 text-muted-foreground hover:text-foreground"
-                      )}
-                      disabled={saving}
-                      title={preset.desc}
-                    >
-                      {preset.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             {/* Thumbnail Generation Toggle */}
             <div className='space-y-3 my-8'>
               <div className='flex items-center justify-between'>
@@ -155,12 +108,15 @@ export function CaptureSettingsCard() {
                     Create small preview images for faster dashboard loading
                   </p>
                 </div>
-                <SwitchLabeled
+                <SuperSwitch
+                  variant='labeled'
                   id='thumbnails'
                   falseLabel='disabled'
                   trueLabel='enabled'
                   checked={generateThumbnails}
-                  onCheckedChange={(value) => updateSetting('generate_thumbnails', value)}
+                  onCheckedChange={(value: boolean) =>
+                    setGenerateThumbnails(value)
+                  }
                 />
               </div>
               <div className='p-3 rounded-lg bg-background/30 border border-borderColor/30'>
@@ -207,24 +163,37 @@ export function CaptureSettingsCard() {
             {/* Image Capture Type Selection */}
             <div className='space-y-3 my-8'>
               <div className='space-y-1'>
-                <Label className='text-sm font-medium flex items-center space-x-2'>
+                <div className='flex items-center space-x-2'>
                   <ImageIcon className='w-4 h-4 text-blue-400' />
-                  <span>Image Capture Type</span>
+                  <span className='text-sm font-medium'>
+                    Image Capture Type
+                  </span>
                   <Badge
                     variant='secondary'
                     className='ml-2 text-xs bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
                   >
                     Not Implemented
                   </Badge>
-                </Label>
+                </div>
                 <p className='text-xs text-muted-foreground'>
                   Choose the format for captured images (settings are saved but
                   feature is not active yet)
                 </p>
               </div>
-              <ImageTypeSlider
-                value={imageCaptureType}
-                onValueChange={handleImageCaptureTypeChange}
+              <ToggleGroup
+                options={[
+                  { label: "PNG", value: "PNG" },
+                  { label: "JPG", value: "JPG" },
+                ]}
+                value={pendingImageFormat}
+                onValueChange={(value) =>
+                  handleImageCaptureTypeChange(value as "PNG" | "JPG")
+                }
+                label='Image Format'
+                colorTheme='cyan'
+                borderFaded={true}
+                borderNone={true}
+                size='lg'
               />
             </div>
           </div>
@@ -269,7 +238,10 @@ export function CaptureSettingsCard() {
       {/* Image Conversion Progress Modal */}
       <ThumbnailRegenerationModal
         isOpen={imageConversionDialogOpen}
-        onClose={() => setImageConversionDialogOpen(false)}
+        onClose={() => {
+          setImageConversionDialogOpen(false)
+          setUserIsChangingFormat(false)
+        }}
       />
     </>
   )
