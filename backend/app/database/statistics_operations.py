@@ -430,9 +430,12 @@ class SyncStatisticsOperations:
         """Initialize with sync database instance."""
         self.db = db
 
-    def get_system_performance_metrics(self) -> Dict[str, Any]:
+    def get_system_performance_metrics(self, timestamp: Optional[str] = None) -> Dict[str, Any]:
         """
         Get system performance metrics for monitoring.
+
+        Args:
+            timestamp: ISO formatted timestamp for inclusion in metrics (provided by service layer)
 
         Returns:
             Dictionary containing performance metrics
@@ -467,11 +470,16 @@ class SyncStatisticsOperations:
                 )
                 recent_metrics = cur.fetchone()
 
-                return {
+                result = {
                     **active_metrics,
                     **recent_metrics,
-                    "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
                 }
+                
+                # Add timestamp if provided by service layer
+                if timestamp:
+                    result["timestamp"] = timestamp
+                    
+                return result
 
     def update_camera_statistics(self, camera_id: int) -> bool:
         """

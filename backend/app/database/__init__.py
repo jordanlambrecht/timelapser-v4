@@ -7,9 +7,11 @@ architecture and type safety.
 Usage:
     from app.database import async_db, sync_db
     from app.services.camera_service import CameraService
+    from app.services.settings_service import SettingsService
 
-    # Initialize services
-    camera_service = CameraService(async_db)
+    # Initialize services with proper dependency injection
+    settings_service = SettingsService(async_db)
+    camera_service = CameraService(async_db, settings_service)
 """
 
 # Composition-based database classes

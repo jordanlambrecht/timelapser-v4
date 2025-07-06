@@ -90,7 +90,7 @@ app.add_middleware(
 # Note: Removed old exception handlers - now handled by ErrorHandlerMiddleware
 
 
-# Include routers
+# Include routers - Updated 2025-07-06 to force reload v2
 app.include_router(cameras.router, prefix="/api", tags=["cameras"])
 app.include_router(timelapses.router, prefix="/api", tags=["timelapses"])
 app.include_router(videos.router, prefix="/api", tags=["videos"])

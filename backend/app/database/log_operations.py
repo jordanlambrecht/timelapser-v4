@@ -241,18 +241,29 @@ class LogOperations:
 
         Args:
             days_to_keep: Number of days to keep logs (default: from constants)
+                         If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted
         """
-        query = """
-        DELETE FROM logs 
-        WHERE timestamp < NOW() - INTERVAL '%s days'
-        """
+        if days_to_keep == 0:
+            # Delete ALL logs
+            query = "DELETE FROM logs"
+            params = []
+        else:
+            # Delete logs older than specified days
+            query = """
+            DELETE FROM logs 
+            WHERE timestamp < NOW() - INTERVAL '%s days'
+            """
+            params = [days_to_keep]
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (days_to_keep,))
+                if params:
+                    await cur.execute(query, params)
+                else:
+                    await cur.execute(query)
                 affected = cur.rowcount
 
                 return affected or 0
@@ -412,22 +423,36 @@ class SyncLogOperations:
 
         Args:
             days_to_keep: Number of days to keep logs (default: from constants)
+                         If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted
         """
-        query = """
-        DELETE FROM logs
-        WHERE timestamp < NOW() - INTERVAL '%s days'
-        """
+        if days_to_keep == 0:
+            # Delete ALL logs
+            query = "DELETE FROM logs"
+            params = []
+        else:
+            # Delete logs older than specified days
+            query = """
+            DELETE FROM logs
+            WHERE timestamp < NOW() - INTERVAL '%s days'
+            """
+            params = [days_to_keep]
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (days_to_keep,))
+                if params:
+                    cur.execute(query, params)
+                else:
+                    cur.execute(query)
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    logger.info(f"Cleaned up {affected} old log entries")
+                    if days_to_keep == 0:
+                        logger.info(f"Cleaned up ALL {affected} log entries")
+                    else:
+                        logger.info(f"Cleaned up {affected} old log entries")
 
                 return affected or 0
 

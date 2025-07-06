@@ -292,6 +292,9 @@ DEFAULT_VIDEO_CLEANUP_DAYS = 30
 DEFAULT_VIDEO_ARCHIVE_DIRECTORY = "archive/videos"
 DEFAULT_VIDEO_GENERATION_PRIORITY = "medium"
 
+# Image retention constants
+DEFAULT_IMAGE_RETENTION_DAYS = 30
+
 # ====================================================================
 # DASHBOARD CONSTANTS
 # ====================================================================
@@ -436,7 +439,9 @@ OVERLAY_FORMAT_WEATHER_DETAILED = "{temperature}°C • {weather} • {humidity}
 # ====================================================================
 
 # Scheduler job configuration
-SCHEDULER_MAX_INSTANCES = 1
+# Increased from 1 to 3 to prevent "maximum number of running instances reached"
+# errors when jobs take longer than their interval to complete
+SCHEDULER_MAX_INSTANCES = 3
 HEALTH_CHECK_INTERVAL_SECONDS = 60
 WEATHER_REFRESH_MINUTE = 0
 VIDEO_AUTOMATION_INTERVAL_SECONDS = 120
@@ -453,10 +458,16 @@ DUMMY_API_KEY = "dummy"
 
 # Setting keys and defaults
 SETTING_KEY_WEATHER_ENABLED = "weather_enabled"
+SETTING_KEY_TEMPERATURE_UNIT = "temperature_unit"
 SETTING_KEY_GENERATE_THUMBNAILS = "generate_thumbnails"
 DEFAULT_WEATHER_ENABLED = "false"
+DEFAULT_TEMPERATURE_UNIT = "celsius"
 DEFAULT_GENERATE_THUMBNAILS = "true"
 BOOLEAN_TRUE_STRING = "true"
+
+# Temperature unit constants
+TEMPERATURE_UNIT_CELSIUS = "celsius"
+TEMPERATURE_UNIT_FAHRENHEIT = "fahrenheit"
 
 # SSE event configuration
 SSE_PRIORITY_NORMAL = "normal"
@@ -505,7 +516,7 @@ MAX_SETTING_KEY_LENGTH = 255
 MAX_SETTING_VALUE_LENGTH = 10000
 
 # Weather settings keys
-WEATHER_SETTINGS_KEYS = ["weather_enabled", "weather_api_key", "weather_location", "weather_units"]
+WEATHER_SETTINGS_KEYS = ["weather_enabled", "temperature_unit", "latitude", "longitude", "openweather_api_key", "sunrise_sunset_enabled"]
 
 # Time window constants
 DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS = 5

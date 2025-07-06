@@ -146,7 +146,7 @@ class RTSPCaptureService:
                 response_time_ms=response_time_ms,
                 connection_status="online" if success else "offline",
                 error=None if success else message,
-                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
             )
 
         except Exception as e:
@@ -158,7 +158,7 @@ class RTSPCaptureService:
                 response_time_ms=None,
                 connection_status="error",
                 error=str(e),
-                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
             )
 
     def capture_image_entity_based(
@@ -193,7 +193,7 @@ class RTSPCaptureService:
                 )
 
             # Calculate day number using timezone utilities
-            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.settings_ops)
             current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
             start_date = (
                 timelapse.get("start_date")
@@ -311,7 +311,7 @@ class RTSPCaptureService:
                 )
             timelapse_id = getattr(camera, "active_timelapse_id", None)
             # Calculate day number
-            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.settings_ops)
             current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
             start_date = getattr(camera, "timelapse_start_date", None)
             if not start_date:
@@ -323,7 +323,7 @@ class RTSPCaptureService:
                 day_number = (current_date - start_date).days + 1
 
             # Generate date-based file paths using file helpers
-            date_str = timezone_utils.get_timezone_aware_date_sync(self.db)
+            date_str = timezone_utils.get_timezone_aware_date_sync(self.settings_ops)
             directories = file_helpers.ensure_camera_directories(
                 camera_id=camera_id, date_str=date_str
             )

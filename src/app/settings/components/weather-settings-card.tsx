@@ -14,12 +14,14 @@ import { Input } from "@/components/ui/input"
 import { NumberInput } from "@/components/ui/number-input"
 import { Badge } from "@/components/ui/badge"
 import { Switch, SuperSwitch } from "@/components/ui/switch"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   PasswordInput,
   type PasswordInputProps,
 } from "@/components/ui/password-input"
 import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Cloud,
   MapPin,
@@ -28,6 +30,7 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react"
 import { useSettings } from "@/contexts/settings-context"
 import {
@@ -47,6 +50,8 @@ export function WeatherSettingsCard() {
     setWeatherRecordData,
     sunriseSunsetEnabled,
     setSunriseSunsetEnabled,
+    temperatureUnit,
+    setTemperatureUnit,
     latitude,
     setLatitude,
     longitude,
@@ -63,6 +68,7 @@ export function WeatherSettingsCard() {
     currentWeatherDescription,
     sunriseTimestamp,
     sunsetTimestamp,
+    refetch: refetchSettings,
   } = useSettings()
 
   // Local state for validation errors
@@ -85,6 +91,10 @@ export function WeatherSettingsCard() {
   const [showApiKey, setShowApiKey] = useState(false)
   const apiKeyInputRef = useRef<HTMLInputElement>(null)
   const hasValidatedOnLoadRef = useRef(false)
+  
+  // Weather refresh state
+  const [isRefreshingWeather, setIsRefreshingWeather] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
 
   // API key handlers (moved from ApiKeySettingsCard)
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -230,6 +240,57 @@ export function WeatherSettingsCard() {
 
   // Update validation status when location becomes available/unavailable
   const canValidateApiKey = hasApiKey && locationComplete
+  
+  // Manual weather refresh function
+  const handleRefreshWeather = async () => {
+    setIsRefreshingWeather(true)
+    setRefreshError(null)
+    
+    try {
+      const response = await fetch('/api/settings/weather/refresh', {
+        method: 'POST',
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to refresh weather')
+      }
+      
+      const result = await response.json()
+      
+      // Show success feedback
+      if (result.data) {
+        setShowWeatherConfirmation(true)
+        setApiKeyValidationResult({
+          isValid: true,
+          message: 'Weather data refreshed',
+          weatherData: {
+            temperature: result.data.temperature,
+            description: result.data.description,
+            icon: result.data.icon,
+            cityName: result.data.city || '',
+            countryCode: '',
+          }
+        })
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+          setShowWeatherConfirmation(false)
+        }, 5000)
+      }
+      
+      // Refetch settings to update the UI with new weather data
+      if (refetchSettings) {
+        await refetchSettings()
+      }
+      
+    } catch (error: any) {
+      console.error('Weather refresh error:', error)
+      setRefreshError(error.message || 'Failed to refresh weather data')
+    } finally {
+      setIsRefreshingWeather(false)
+    }
+  }
 
   return (
     <Card className='transition-all duration-300 glass hover:glow'>
@@ -339,7 +400,8 @@ export function WeatherSettingsCard() {
                       <AlertDescription className='text-sm text-green-300'>
                         Currently{" "}
                         {formatTemperature(
-                          apiKeyValidationResult.weatherData.temperature
+                          apiKeyValidationResult.weatherData.temperature,
+                          temperatureUnit
                         )}{" "}
                         and{" "}
                         {capitalizeWords(
@@ -470,11 +532,34 @@ export function WeatherSettingsCard() {
                     weather conditions with each captured image.
                   </p>
                 </div>
-                <Switch
-                  checked={weatherRecordData}
-                  onCheckedChange={setWeatherRecordData}
-                  disabled={!hasApiKey || !locationComplete}
-                />
+                <div className='flex items-center space-x-2'>
+                  <Switch
+                    checked={weatherRecordData}
+                    onCheckedChange={setWeatherRecordData}
+                    disabled={!hasApiKey || !locationComplete}
+                  />
+                  {weatherRecordData && hasApiKey && locationComplete && (
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      onClick={handleRefreshWeather}
+                      disabled={isRefreshingWeather}
+                      className='ml-2'
+                    >
+                      {isRefreshingWeather ? (
+                        <>
+                          <Loader2 className='w-4 h-4 mr-2 animate-spin' />
+                          Refreshing...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className='w-4 h-4 mr-2' />
+                          Set Now
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {weatherRecordData && (!hasApiKey || !locationComplete) && (
@@ -482,6 +567,15 @@ export function WeatherSettingsCard() {
                   <AlertDescription className='text-xs'>
                     Weather data recording requires a valid API key and location
                     coordinates.
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {refreshError && (
+                <Alert className='border-red-500/30 bg-red-500/10'>
+                  <AlertCircle className='w-4 h-4 text-red-500' />
+                  <AlertDescription className='text-xs text-red-400'>
+                    {refreshError}
                   </AlertDescription>
                 </Alert>
               )}
@@ -499,7 +593,7 @@ export function WeatherSettingsCard() {
                   </div>
                   {currentTemp !== null && currentWeatherDescription && (
                     <div className='text-sm'>
-                      <span className='font-medium'>{formatTemperature(currentTemp)}</span>
+                      <span className='font-medium'>{formatTemperature(currentTemp, temperatureUnit)}</span>
                       <span className='text-muted-foreground ml-2'>
                         {capitalizeWords(currentWeatherDescription)}
                       </span>
@@ -507,6 +601,36 @@ export function WeatherSettingsCard() {
                   )}
                 </div>
               )}
+            </div>
+
+            <Separator />
+
+            {/* Temperature Unit */}
+            <div className='space-y-4'>
+              <div className='space-y-3'>
+                <Label className='text-sm font-medium'>Temperature Unit</Label>
+                <p className='text-xs text-muted-foreground'>
+                  Choose how temperatures are displayed throughout the application
+                </p>
+                <RadioGroup
+                  value={temperatureUnit}
+                  onValueChange={(value) => setTemperatureUnit(value as "celsius" | "fahrenheit")}
+                  className='flex space-x-6'
+                >
+                  <div className='flex items-center space-x-2'>
+                    <RadioGroupItem value='celsius' id='celsius' />
+                    <Label htmlFor='celsius' className='text-sm cursor-pointer'>
+                      Celsius (°C)
+                    </Label>
+                  </div>
+                  <div className='flex items-center space-x-2'>
+                    <RadioGroupItem value='fahrenheit' id='fahrenheit' />
+                    <Label htmlFor='fahrenheit' className='text-sm cursor-pointer'>
+                      Fahrenheit (°F)
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
             </div>
 
             <Separator />

@@ -23,6 +23,7 @@ from app.database import SyncDatabase
 from .video_service import SyncVideoService
 from ..database.video_operations import SyncVideoOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
+from ..database.settings_operations import SyncSettingsOperations
 from ..models.shared_models import (
     VideoGenerationJob,
     VideoGenerationJobWithDetails,
@@ -54,6 +55,7 @@ class VideoQueue:
     def __init__(self, db: SyncDatabase):
         self.db = db
         self.video_ops = SyncVideoOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
 
     def add_job(
         self,
@@ -83,7 +85,9 @@ class VideoQueue:
                 "settings": json.dumps(settings or {}),
             }
             
-            job_id = self.video_ops.create_video_generation_job(job_data)
+            # Calculate timestamp for database operation
+            event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            job_id = self.video_ops.create_video_generation_job(job_data, event_timestamp)
             
             if job_id:
                 logger.info(
@@ -129,7 +133,9 @@ class VideoQueue:
         """Mark a job as started"""
         try:
             # Use operations layer for database operations
-            return self.video_ops.start_video_generation_job(job_id)
+            # Calculate timestamp for database operation
+            event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            return self.video_ops.start_video_generation_job(job_id, event_timestamp)
 
         except Exception as e:
             logger.error(f"Failed to start job {job_id}: {e}")
@@ -146,11 +152,14 @@ class VideoQueue:
         """Mark a job as completed or failed"""
         try:
             # Use operations layer for database operations
+            # Calculate timestamp for database operation
+            event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
             return self.video_ops.complete_video_generation_job(
                 job_id=job_id,
                 success=success,
                 error_message=error_message,
-                video_path=video_path
+                video_path=video_path,
+                event_timestamp=event_timestamp
             )
 
         except Exception as e:
@@ -216,6 +225,7 @@ class VideoAutomationService:
         # Operations layer composition
         self.video_ops = SyncVideoOperations(db)
         self.sse_ops = SyncSSEEventsOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
 
         # Throttling settings
         self.per_capture_throttle_minutes = DEFAULT_PER_CAPTURE_THROTTLE_MINUTES
@@ -635,11 +645,9 @@ class VideoAutomationService:
 
             # Get timezone-aware timestamp for file naming
             try:
-
-                timestamp = get_timezone_aware_timestamp_string_sync(self.db)
+                timestamp = get_timezone_aware_timestamp_string_sync(self.settings_ops)
             except Exception as e:
                 logger.warning(f"Failed to get timezone for filename: {e}")
-
                 timestamp = format_filename_timestamp()
 
             if trigger_type == "milestone":

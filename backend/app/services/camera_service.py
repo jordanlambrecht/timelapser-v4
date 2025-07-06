@@ -1300,7 +1300,7 @@ class SyncCameraService:
             if not camera:
                 raise ValueError(CAMERA_NOT_FOUND)
 
-            test_timestamp = get_timezone_aware_timestamp_sync(self.db)
+            test_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
 
             # Use ImageCaptureService for actual RTSP testing if available
             if self.image_capture_service:
@@ -1331,7 +1331,7 @@ class SyncCameraService:
                 response_time_ms=None,
                 connection_status="failed",
                 error=str(e),
-                test_timestamp=get_timezone_aware_timestamp_sync(self.db),
+                test_timestamp=get_timezone_aware_timestamp_sync(self.settings_ops),
             )
 
     def update_next_capture_time(self, camera_id: int) -> bool:
@@ -1350,7 +1350,7 @@ class SyncCameraService:
         """
         try:
             # Get current timezone-aware timestamp
-            current_time = get_timezone_aware_timestamp_sync(self.db)
+            current_time = get_timezone_aware_timestamp_sync(self.settings_ops)
 
             # Get capture interval from global settings
             capture_interval_str = self.settings_ops.get_setting(

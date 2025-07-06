@@ -8,6 +8,8 @@ for database operations, providing type-safe Pydantic model interfaces.
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from loguru import logger
+import asyncio
+from pathlib import Path
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.image_operations import ImageOperations, SyncImageOperations
@@ -19,10 +21,7 @@ from ..models.image_model import (
 from ..models.shared_models import (
     ImageStatisticsResponse,
     BulkDownloadResponse,
-)
-from ..models.shared_models import (
     ThumbnailGenerationResult,
-    ThumbnailRegenerationResponse,
 )
 from ..utils.cache_manager import cached_response
 from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
@@ -51,6 +50,7 @@ class ImageService:
     - Calls thumbnail_utils for processing
     - Coordinates with CorruptionService for quality data
     """
+
 
     def __init__(self, db: AsyncDatabase, settings_service, corruption_service=None):
         """
@@ -359,7 +359,7 @@ class ImageService:
                 return ThumbnailGenerationResult(
                     success=False,
                     image_id=image_id,
-                    error=f"Image {image_id} not found",
+                    error=f"Image {image_id} not found in database",
                 )
 
             # Import thumbnail utils for processing
@@ -368,6 +368,16 @@ class ImageService:
 
             # Get data directory from database settings and construct secure paths
             data_directory = await self.settings_service.get_setting("data_directory")
+            
+            # Check if the image file exists before attempting validation
+            import os
+            potential_image_path = os.path.join(data_directory, f"cameras/camera-{image.camera_id}/images/{image.file_path}")
+            if not os.path.exists(potential_image_path):
+                return ThumbnailGenerationResult(
+                    success=False,
+                    image_id=image_id,
+                    error=f"Image file not found: {image.file_path}",
+                )
             
             # Validate the image file path
             secure_image_path = validate_file_path(
@@ -944,3 +954,4 @@ class SyncImageService:
             Image model instance, or None if not found
         """
         return self.image_ops.get_image_by_id(image_id)
+

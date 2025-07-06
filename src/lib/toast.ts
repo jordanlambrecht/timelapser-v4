@@ -322,6 +322,21 @@ export const toast = {
       ...options,
     })
   },
+
+  /**
+   * Toast for weather data updates
+   */
+  weatherUpdated: (temperature: number, description: string, temperatureUnit: "celsius" | "fahrenheit" = "celsius", options: ToastOptions = {}) => {
+    const formattedTemp = temperatureUnit === "fahrenheit" 
+      ? `${Math.round((temperature * 9/5) + 32)}°F`
+      : `${temperature}°C`
+      
+    return toast.info(`🌡️ Weather updated: ${formattedTemp}`, {
+      description: description || "Weather data refreshed",
+      duration: 4000,
+      ...options,
+    })
+  },
 }
 
 export default toast

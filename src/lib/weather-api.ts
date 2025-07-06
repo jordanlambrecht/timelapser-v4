@@ -163,7 +163,11 @@ export function getWeatherIcon(iconCode: string): string {
 /**
  * Format temperature with appropriate unit
  */
-export function formatTemperature(temp: number): string {
+export function formatTemperature(temp: number, unit: "celsius" | "fahrenheit" = "celsius"): string {
+  if (unit === "fahrenheit") {
+    const fahrenheit = Math.round((temp * 9/5) + 32)
+    return `${fahrenheit}°F`
+  }
   return `${temp}°C`
 }
 

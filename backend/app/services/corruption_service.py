@@ -24,6 +24,7 @@ from ..database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+from ..database.settings_operations import SettingsOperations
 from ..models.corruption_model import (
     CorruptionTestResponse,
     CameraHealthAssessment,
@@ -91,6 +92,7 @@ class CorruptionService:
         """
         self.db = db
         self.operations = CorruptionOperations(db)
+        self.settings_ops = SettingsOperations(db)
         self.camera_service = camera_service
 
     async def get_system_corruption_stats(self) -> Dict[str, Any]:
@@ -355,7 +357,7 @@ class CorruptionService:
             )
 
             # Calculate processing time
-            end_time = await timezone_utils.get_timezone_aware_timestamp_async(self.db)
+            end_time = await timezone_utils.get_timezone_aware_timestamp_async(self.settings_ops)
             processing_time = (end_time - start_time).total_seconds() * 1000
 
             # Determine if image is valid (not corrupted)
@@ -530,7 +532,7 @@ class CorruptionService:
 
             # Use timezone-aware timestamp
             assessment_timestamp = (
-                await timezone_utils.get_timezone_aware_timestamp_async(self.db)
+                await timezone_utils.get_timezone_aware_timestamp_async(self.settings_ops)
             )
 
             # Coordinate with camera service for health updates
@@ -968,7 +970,7 @@ class SyncCorruptionService:
             Quality analysis results
         """
         try:
-            start_time = timezone_utils.get_timezone_aware_timestamp_sync(self.db)
+            start_time = timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops)
 
             # Get corruption settings for configuration
             settings = self.operations.get_corruption_settings()
@@ -1000,7 +1002,7 @@ class SyncCorruptionService:
             is_valid = not calculator.is_corrupted(final_score)
 
             # Calculate processing time
-            end_time = timezone_utils.get_timezone_aware_timestamp_sync(self.db)
+            end_time = timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops)
             processing_time = (end_time - start_time).total_seconds() * 1000
 
             return {

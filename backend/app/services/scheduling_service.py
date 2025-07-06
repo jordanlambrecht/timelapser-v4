@@ -582,7 +582,7 @@ class SyncSchedulingService:
             True if capture is due
         """
         if current_time is None:
-            current_time = get_timezone_aware_timestamp_sync(self.db)
+            current_time = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         settings = self._get_scheduling_settings()
         grace_period_seconds = settings["grace_period_seconds"]

@@ -358,6 +358,7 @@ async def delete_timelapse(
 @handle_exceptions("start timelapse")
 async def start_timelapse(
     timelapse_service: TimelapseServiceDep,
+    settings_service: SettingsServiceDep,
     timelapse_id: int = Depends(valid_timelapse_id),
 ):
     """
@@ -369,7 +370,7 @@ async def start_timelapse(
     according to the configured schedule and time windows.
     """
     # Get timezone for proper timestamp handling
-    timezone_str = await get_timezone_from_cache_async(timelapse_service.db)
+    timezone_str = await get_timezone_from_cache_async(settings_service)
 
     try:
         updated_timelapse = await timelapse_service.start_timelapse(timelapse_id)
@@ -403,6 +404,7 @@ async def start_timelapse(
 @handle_exceptions("pause timelapse")
 async def pause_timelapse(
     timelapse_service: TimelapseServiceDep,
+    settings_service: SettingsServiceDep,
     timelapse_id: int = Depends(valid_timelapse_id),
 ):
     """
@@ -414,7 +416,7 @@ async def pause_timelapse(
     The timelapse can be restarted later from where it left off.
     """
     # Get timezone for proper timestamp handling
-    timezone_str = await get_timezone_from_cache_async(timelapse_service.db)
+    timezone_str = await get_timezone_from_cache_async(settings_service)
 
     try:
         updated_timelapse = await timelapse_service.pause_timelapse(timelapse_id)
@@ -448,6 +450,7 @@ async def pause_timelapse(
 @handle_exceptions("stop timelapse")
 async def stop_timelapse(
     timelapse_service: TimelapseServiceDep,
+    settings_service: SettingsServiceDep,
     timelapse_id: int = Depends(valid_timelapse_id),
 ):
     """
@@ -459,7 +462,7 @@ async def stop_timelapse(
     The timelapse can be resumed or completed from this state.
     """
     # Get timezone for proper timestamp handling
-    timezone_str = await get_timezone_from_cache_async(timelapse_service.db)
+    timezone_str = await get_timezone_from_cache_async(settings_service)
 
     try:
         updated_timelapse = await timelapse_service.stop_timelapse(timelapse_id)
@@ -493,6 +496,7 @@ async def stop_timelapse(
 @handle_exceptions("complete timelapse")
 async def complete_timelapse(
     timelapse_service: TimelapseServiceDep,
+    settings_service: SettingsServiceDep,
     timelapse_id: int = Depends(valid_timelapse_id),
 ):
     """
@@ -504,7 +508,7 @@ async def complete_timelapse(
     Completed timelapses cannot be resumed but can be used for video generation.
     """
     # Get timezone for proper timestamp handling
-    timezone_str = await get_timezone_from_cache_async(timelapse_service.db)
+    timezone_str = await get_timezone_from_cache_async(settings_service)
 
     try:
         completed_timelapse = await timelapse_service.complete_timelapse(timelapse_id)

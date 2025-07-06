@@ -121,7 +121,7 @@ The system uses PostgreSQL's native LISTEN/NOTIFY for truly event-driven real-ti
 ### Critical Files
 
 - `backend/app/routers/sse_routers.py` - LISTEN/NOTIFY SSE endpoint
-- `backend/alembic/versions/019_add_sse_notify_trigger.py` - Database trigger
+- `backend/alembic/versions/019_create_weather_table.py` - Weather data table
 - `backend/app/database/sse_events_operations.py` - Event database operations
 - `src/contexts/sse-context.tsx` - Frontend centralized connection
 - `src/app/api/events/route.ts` - Next.js SSE proxy

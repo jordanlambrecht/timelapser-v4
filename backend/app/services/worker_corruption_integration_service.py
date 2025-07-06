@@ -21,6 +21,7 @@ from loguru import logger
 
 from ..database.core import SyncDatabase
 from ..database.corruption_operations import SyncCorruptionOperations
+from ..database.settings_operations import SyncSettingsOperations
 from ..models.corruption_model import (
     CorruptionEvaluationResult,
     CorruptionRetryResult,
@@ -57,6 +58,7 @@ class WorkerCorruptionIntegration:
         """
         self.db = db
         self.corruption_ops = SyncCorruptionOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
         self.settings = self._load_settings()
 
     def _load_settings(self) -> Dict[str, Any]:
@@ -349,7 +351,7 @@ class WorkerCorruptionIntegration:
                 "service": "worker_corruption_integration",
                 "status": "healthy",
                 "settings_loaded": bool(self.settings),
-                "timestamp": get_timezone_aware_timestamp_sync(self.db),
+                "timestamp": get_timezone_aware_timestamp_sync(self.settings_ops),
             }
             
             # Add settings count for health assessment
@@ -370,7 +372,7 @@ class WorkerCorruptionIntegration:
                 "service": "worker_corruption_integration",
                 "status": "unhealthy",
                 "error": str(e),
-                "timestamp": get_timezone_aware_timestamp_sync(self.db),
+                "timestamp": get_timezone_aware_timestamp_sync(self.settings_ops),
             }
 
 

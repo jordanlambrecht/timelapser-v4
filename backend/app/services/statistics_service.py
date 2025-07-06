@@ -18,6 +18,7 @@ from ..database.statistics_operations import (
     StatisticsOperations,
     SyncStatisticsOperations,
 )
+from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
 from ..models.statistics_model import (
     DashboardStatsModel,
     CameraPerformanceModel,
@@ -65,6 +66,7 @@ class StatisticsService:
         """
         self.db = db
         self.stats_ops = StatisticsOperations(db)
+        self.settings_ops = SettingsOperations(db)
 
     async def get_dashboard_stats(self) -> DashboardStatsModel:
         """Get comprehensive dashboard statistics from operations layer."""
@@ -302,11 +304,14 @@ class SyncStatisticsService:
         """Initialize service with sync database instance."""
         self.db = db
         self.stats_ops = SyncStatisticsOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
 
     def get_system_performance_metrics(self) -> Dict[str, Any]:
         """Get system performance metrics for monitoring."""
         try:
-            return self.stats_ops.get_system_performance_metrics()
+            # Calculate timestamp for database operation
+            timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            return self.stats_ops.get_system_performance_metrics(timestamp)
         except Exception as e:
             logger.error(f"Failed to get system performance metrics: {e}")
             raise
@@ -342,7 +347,7 @@ class SyncStatisticsService:
     def get_system_overview_sync(self) -> Dict[str, Any]:
         """Get system overview for worker processes."""
         try:
-            timestamp = get_timezone_aware_timestamp_sync(self.db)
+            timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
 
             # Get basic metrics from operations layer
             performance_metrics = self.get_system_performance_metrics()

@@ -492,6 +492,55 @@ class ImageOperations:
                 results = await cur.fetchall()
                 return [self._row_to_image_with_details(row) for row in results]
 
+    async def get_all_images_for_regeneration(self, limit: int = MAX_BULK_OPERATION_ITEMS, check_file_existence: bool = False) -> List[Dict[str, Any]]:
+        """
+        Get all images for bulk thumbnail regeneration.
+        
+        Args:
+            limit: Maximum number of images to return
+            check_file_existence: If True, verify files exist on disk before including them
+            
+        Returns:
+            List of dictionaries with id, file_path, camera_id for regeneration
+        """
+        query = """
+        SELECT 
+            i.id,
+            i.file_path,
+            i.camera_id
+        FROM images i
+        ORDER BY i.captured_at DESC
+        LIMIT %s
+        """
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (limit,))
+                results = await cur.fetchall()
+                image_list = [dict(row) for row in results]
+                
+                # If file existence check is requested, filter out missing files
+                if check_file_existence:
+                    from ..services.settings_service import SettingsService
+                    import os
+                    
+                    # Get data directory for file existence check
+                    settings_service = SettingsService(self.db)
+                    data_directory = await settings_service.get_setting("data_directory")
+                    
+                    existing_images = []
+                    for image_data in image_list:
+                        file_path = os.path.join(
+                            data_directory, 
+                            f"cameras/camera-{image_data['camera_id']}/images/{image_data['file_path']}"
+                        )
+                        if os.path.exists(file_path):
+                            existing_images.append(image_data)
+                    
+                    logger.info(f"File existence check: {len(existing_images)}/{len(image_list)} images have files on disk")
+                    return existing_images
+                
+                return image_list
+
     async def update_image_thumbnails(
         self, image_id: int, thumbnail_data: Dict[str, Any]
     ) -> bool:
@@ -541,6 +590,28 @@ class ImageOperations:
                 success = cur.rowcount > 0
 
                 return success
+
+    async def clear_all_thumbnail_paths(self) -> int:
+        """
+        Clear all thumbnail paths from all image records.
+        
+        Returns:
+            Number of image records updated
+        """
+        query = """
+        UPDATE images SET
+            thumbnail_path = NULL,
+            thumbnail_size = NULL,
+            small_path = NULL,
+            small_size = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE thumbnail_path IS NOT NULL OR small_path IS NOT NULL
+        """
+        
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query)
+                return cur.rowcount
 
     async def get_thumbnail_statistics(self) -> Dict[str, Any]:
         """

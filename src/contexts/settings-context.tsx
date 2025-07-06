@@ -25,9 +25,10 @@ interface SettingsContextType {
   weatherIntegrationEnabled: boolean
   weatherRecordData: boolean
   sunriseSunsetEnabled: boolean
+  temperatureUnit: "celsius" | "fahrenheit"
   latitude: number | null
   longitude: number | null
-  
+
   // Weather data (cached from hourly updates)
   weatherDateFetched: string | null
   currentTemp: number | null
@@ -36,11 +37,14 @@ interface SettingsContextType {
   sunriseTimestamp: string | null
   sunsetTimestamp: string | null
 
-  // Logging settings
-  logRetentionDays: number
+  // Database logging settings (for application events in PostgreSQL)
+  dbLogRetentionDays: number
+  dbLogLevel: string
+
+  // File logging settings (for system debugging with loguru)
+  fileLogRetentionDays: number
   maxLogFileSize: number
-  enableDebugLogging: boolean
-  logLevel: string
+  fileLogLevel: string
   enableLogRotation: boolean
   enableLogCompression: boolean
   maxLogFiles: number
@@ -67,7 +71,7 @@ interface SettingsContextType {
   deleteSetting: (key: string) => Promise<boolean>
   saveAllSettings: () => Promise<boolean>
   refetch: () => Promise<void>
-  
+
   // Setters for controlled components
   setTimezone: (value: string) => void
   setGenerateThumbnails: (value: boolean) => void
@@ -77,12 +81,14 @@ interface SettingsContextType {
   setWeatherIntegrationEnabled: (value: boolean) => void
   setWeatherRecordData: (value: boolean) => void
   setSunriseSunsetEnabled: (value: boolean) => void
+  setTemperatureUnit: (value: "celsius" | "fahrenheit") => void
   setLatitude: (value: number | null) => void
   setLongitude: (value: number | null) => void
-  setLogRetentionDays: (value: number) => void
+  setDbLogRetentionDays: (value: number) => void
+  setDbLogLevel: (value: string) => void
+  setFileLogRetentionDays: (value: number) => void
   setMaxLogFileSize: (value: number) => void
-  setEnableDebugLogging: (value: boolean) => void
-  setLogLevel: (value: string) => void
+  setFileLogLevel: (value: string) => void
   setEnableLogRotation: (value: boolean) => void
   setEnableLogCompression: (value: boolean) => void
   setMaxLogFiles: (value: number) => void
@@ -110,19 +116,20 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     timezone: "America/Chicago",
     generateThumbnails: true,
     imageCaptureType: "JPG" as const,
-    
+
     // API settings
     openWeatherApiKey: "",
     apiKeyModified: false,
     originalApiKeyHash: "",
-    
+
     // Weather settings
     weatherIntegrationEnabled: false,
     weatherRecordData: false,
     sunriseSunsetEnabled: false,
+    temperatureUnit: "celsius" as const,
     latitude: null as number | null,
     longitude: null as number | null,
-    
+
     // Weather data (cached from hourly updates)
     weatherDateFetched: null as string | null,
     currentTemp: null as number | null,
@@ -130,16 +137,19 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     currentWeatherDescription: null as string | null,
     sunriseTimestamp: null as string | null,
     sunsetTimestamp: null as string | null,
-    
-    // Logging settings
-    logRetentionDays: 30,
+
+    // Database logging settings (for application events in PostgreSQL)
+    dbLogRetentionDays: 30,
+    dbLogLevel: "info",
+
+    // File logging settings (for system debugging with loguru)
+    fileLogRetentionDays: 7,
     maxLogFileSize: 100,
-    enableDebugLogging: false,
-    logLevel: "info",
+    fileLogLevel: "info",
     enableLogRotation: true,
     enableLogCompression: false,
     maxLogFiles: 10,
-    
+
     // Corruption detection settings
     corruptionDetectionEnabled: true,
     corruptionScoreThreshold: 70,
@@ -155,7 +165,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastFetch, setLastFetch] = useState(0)
-  const [originalSettings, setOriginalSettings] = useState<typeof settings | null>(null)
+  const [originalSettings, setOriginalSettings] = useState<
+    typeof settings | null
+  >(null)
 
   const fetchSettings = useCallback(
     async (force = false) => {
@@ -165,15 +177,15 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
       try {
         setError(null)
-        
+
         // Fetch core settings with no-cache headers
         const response = await fetch("/api/settings", {
-          cache: 'no-store',
+          cache: "no-store",
           headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+          },
         })
         if (!response.ok) {
           throw new Error(`Settings fetch failed: ${response.status}`)
@@ -182,19 +194,19 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         console.log("🔍 Settings fetched from backend:", {
           image_capture_type: data.data.image_capture_type,
           capture_interval: data.data.capture_interval,
-          timezone: data.data.timezone
+          timezone: data.data.timezone,
         })
 
         // Fetch corruption settings
         let corruptionData = {}
         try {
           const corruptionResponse = await fetch("/api/settings/corruption", {
-            cache: 'no-store',
+            cache: "no-store",
             headers: {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0'
-            }
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
+            },
           })
           if (corruptionResponse.ok) {
             const corruptionResult = await corruptionResponse.json()
@@ -209,47 +221,72 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           timezone: data.data.timezone || "America/Chicago",
           generateThumbnails: data.data.generate_thumbnails === "true",
           imageCaptureType: data.data.image_capture_type || "JPG",
-          
+
           // API settings - the backend now returns the actual key for display
           openWeatherApiKey: data.data.openweather_api_key || "", // Store actual key for display
           apiKeyModified: false, // Reset on fetch
-          originalApiKeyHash: data.data.openweather_api_key_hash || (data.data.openweather_api_key ? "stored" : ""),
-          
+          originalApiKeyHash:
+            data.data.openweather_api_key_hash ||
+            (data.data.openweather_api_key ? "stored" : ""),
+
           // Weather settings (with fallbacks for backend compatibility)
-          weatherIntegrationEnabled: data.data.weather_integration_enabled === "true" || data.data.weather_enabled === "true",
+          weatherIntegrationEnabled:
+            data.data.weather_integration_enabled === "true" ||
+            data.data.weather_enabled === "true",
           weatherRecordData: data.data.weather_enabled === "true",
           sunriseSunsetEnabled: data.data.sunrise_sunset_enabled === "true",
+          temperatureUnit: (data.data.temperature_unit === "fahrenheit"
+            ? "fahrenheit"
+            : "celsius") as "celsius" | "fahrenheit",
           latitude: data.data.latitude ? parseFloat(data.data.latitude) : null,
-          longitude: data.data.longitude ? parseFloat(data.data.longitude) : null,
-          
+          longitude: data.data.longitude
+            ? parseFloat(data.data.longitude)
+            : null,
+
           // Weather data (cached from hourly updates)
           weatherDateFetched: data.data.weather_date_fetched || null,
-          currentTemp: data.data.current_temp ? parseFloat(data.data.current_temp) : null,
+          currentTemp: data.data.current_temp
+            ? parseFloat(data.data.current_temp)
+            : null,
           currentWeatherIcon: data.data.current_weather_icon || null,
-          currentWeatherDescription: data.data.current_weather_description || null,
+          currentWeatherDescription:
+            data.data.current_weather_description || null,
           sunriseTimestamp: data.data.sunrise_timestamp || null,
           sunsetTimestamp: data.data.sunset_timestamp || null,
-          
+
           // Logging settings
           logRetentionDays: parseInt(data.data.log_retention_days || "30"),
           maxLogFileSize: parseInt(data.data.max_log_file_size || "100"),
-          enableDebugLogging: data.data.enable_debug_logging === "true",
           logLevel: data.data.log_level || "info",
           enableLogRotation: data.data.enable_log_rotation !== "false",
           enableLogCompression: data.data.enable_log_compression === "true",
           maxLogFiles: parseInt(data.data.max_log_files || "10"),
-          
+
           // Corruption detection settings
-          corruptionDetectionEnabled: (corruptionData as any).corruption_detection_enabled !== false,
-          corruptionScoreThreshold: parseInt((corruptionData as any).corruption_score_threshold || "70"),
-          corruptionAutoDiscardEnabled: (corruptionData as any).corruption_auto_discard_enabled === true,
-          corruptionAutoDisableDegraded: (corruptionData as any).corruption_auto_disable_degraded === true,
-          corruptionDegradedConsecutiveThreshold: parseInt((corruptionData as any).corruption_degraded_consecutive_threshold || "10"),
-          corruptionDegradedTimeWindowMinutes: parseInt((corruptionData as any).corruption_degraded_time_window_minutes || "30"),
-          corruptionDegradedFailurePercentage: parseInt((corruptionData as any).corruption_degraded_failure_percentage || "50"),
+          corruptionDetectionEnabled:
+            (corruptionData as any).corruption_detection_enabled !== false,
+          corruptionScoreThreshold: parseInt(
+            (corruptionData as any).corruption_score_threshold || "70"
+          ),
+          corruptionAutoDiscardEnabled:
+            (corruptionData as any).corruption_auto_discard_enabled === true,
+          corruptionAutoDisableDegraded:
+            (corruptionData as any).corruption_auto_disable_degraded === true,
+          corruptionDegradedConsecutiveThreshold: parseInt(
+            (corruptionData as any).corruption_degraded_consecutive_threshold ||
+              "10"
+          ),
+          corruptionDegradedTimeWindowMinutes: parseInt(
+            (corruptionData as any).corruption_degraded_time_window_minutes ||
+              "30"
+          ),
+          corruptionDegradedFailurePercentage: parseInt(
+            (corruptionData as any).corruption_degraded_failure_percentage ||
+              "50"
+          ),
           corruptionHeavyDetectionEnabled: false, // Will be set based on camera settings
         }
-        
+
         setSettings(newSettings)
         setOriginalSettings(newSettings) // Store original for change detection
 
@@ -267,11 +304,14 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const updateSetting = useCallback(
     async (key: string, value: any): Promise<boolean> => {
       try {
-        const response = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: String(value) }),
-        })
+        const response = await fetch(
+          `/api/settings/${encodeURIComponent(key)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: String(value) }),
+          }
+        )
 
         if (!response.ok) {
           throw new Error(`Settings update failed: ${response.status}`)
@@ -343,135 +383,154 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     []
   )
 
-  const deleteSetting = useCallback(
-    async (key: string): Promise<boolean> => {
-      try {
-        const response = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
-          method: "DELETE",
-        })
+  const deleteSetting = useCallback(async (key: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      })
 
-        if (!response.ok) {
-          throw new Error(`Failed to delete setting: ${response.status}`)
-        }
-
-        // Remove from local state if it exists
-        setSettings((prev) => {
-          const updated = { ...prev }
-          if (key in updated) {
-            delete updated[key as keyof typeof prev]
-          }
-          return updated
-        })
-
-        return true
-      } catch (err) {
-        console.error("Failed to delete setting:", err)
-        setError(err instanceof Error ? err.message : "Delete setting failed")
-        return false
+      if (!response.ok) {
+        throw new Error(`Failed to delete setting: ${response.status}`)
       }
+
+      // Remove from local state if it exists
+      setSettings((prev) => {
+        const updated = { ...prev }
+        if (key in updated) {
+          delete updated[key as keyof typeof prev]
+        }
+        return updated
+      })
+
+      return true
+    } catch (err) {
+      console.error("Failed to delete setting:", err)
+      setError(err instanceof Error ? err.message : "Delete setting failed")
+      return false
+    }
+  }, [])
+
+  // Setter functions for controlled components
+  const setTimezone = useCallback((value: string) => {
+    setSettings((prev) => ({ ...prev, timezone: value }))
+  }, [])
+
+  const setGenerateThumbnails = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, generateThumbnails: value }))
+  }, [])
+
+  const setImageCaptureType = useCallback((value: "PNG" | "JPG") => {
+    setSettings((prev) => ({ ...prev, imageCaptureType: value }))
+  }, [])
+
+  const setOpenWeatherApiKey = useCallback((value: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      openWeatherApiKey: value,
+      apiKeyModified: true,
+    }))
+  }, [])
+
+  const setApiKeyModified = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, apiKeyModified: value }))
+  }, [])
+
+  const setWeatherIntegrationEnabled = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, weatherIntegrationEnabled: value }))
+  }, [])
+
+  const setWeatherRecordData = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, weatherRecordData: value }))
+  }, [])
+
+  const setSunriseSunsetEnabled = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, sunriseSunsetEnabled: value }))
+  }, [])
+
+  const setTemperatureUnit = useCallback((value: "celsius" | "fahrenheit") => {
+    setSettings((prev) => ({ ...prev, temperatureUnit: value }))
+  }, [])
+
+  const setLatitude = useCallback((value: number | null) => {
+    setSettings((prev) => ({ ...prev, latitude: value }))
+  }, [])
+
+  const setLongitude = useCallback((value: number | null) => {
+    setSettings((prev) => ({ ...prev, longitude: value }))
+  }, [])
+
+  const setLogRetentionDays = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, logRetentionDays: value }))
+  }, [])
+
+  const setMaxLogFileSize = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, maxLogFileSize: value }))
+  }, [])
+
+  const setLogLevel = useCallback((value: string) => {
+    setSettings((prev) => ({ ...prev, logLevel: value }))
+  }, [])
+
+  const setEnableLogRotation = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, enableLogRotation: value }))
+  }, [])
+
+  const setEnableLogCompression = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, enableLogCompression: value }))
+  }, [])
+
+  const setMaxLogFiles = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, maxLogFiles: value }))
+  }, [])
+
+  const setCorruptionDetectionEnabled = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, corruptionDetectionEnabled: value }))
+  }, [])
+
+  const setCorruptionScoreThreshold = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, corruptionScoreThreshold: value }))
+  }, [])
+
+  const setCorruptionAutoDiscardEnabled = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, corruptionAutoDiscardEnabled: value }))
+  }, [])
+
+  const setCorruptionAutoDisableDegraded = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, corruptionAutoDisableDegraded: value }))
+  }, [])
+
+  const setCorruptionDegradedConsecutiveThreshold = useCallback(
+    (value: number) => {
+      setSettings((prev) => ({
+        ...prev,
+        corruptionDegradedConsecutiveThreshold: value,
+      }))
     },
     []
   )
 
-  // Setter functions for controlled components
-  const setTimezone = useCallback((value: string) => {
-    setSettings(prev => ({ ...prev, timezone: value }))
-  }, [])
+  const setCorruptionDegradedTimeWindowMinutes = useCallback(
+    (value: number) => {
+      setSettings((prev) => ({
+        ...prev,
+        corruptionDegradedTimeWindowMinutes: value,
+      }))
+    },
+    []
+  )
 
-  const setGenerateThumbnails = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, generateThumbnails: value }))
-  }, [])
-
-  const setImageCaptureType = useCallback((value: "PNG" | "JPG") => {
-    setSettings(prev => ({ ...prev, imageCaptureType: value }))
-  }, [])
-
-  const setOpenWeatherApiKey = useCallback((value: string) => {
-    setSettings(prev => ({ ...prev, openWeatherApiKey: value, apiKeyModified: true }))
-  }, [])
-
-  const setApiKeyModified = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, apiKeyModified: value }))
-  }, [])
-
-  const setWeatherIntegrationEnabled = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, weatherIntegrationEnabled: value }))
-  }, [])
-
-  const setWeatherRecordData = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, weatherRecordData: value }))
-  }, [])
-
-  const setSunriseSunsetEnabled = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, sunriseSunsetEnabled: value }))
-  }, [])
-
-  const setLatitude = useCallback((value: number | null) => {
-    setSettings(prev => ({ ...prev, latitude: value }))
-  }, [])
-
-  const setLongitude = useCallback((value: number | null) => {
-    setSettings(prev => ({ ...prev, longitude: value }))
-  }, [])
-
-  const setLogRetentionDays = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, logRetentionDays: value }))
-  }, [])
-
-  const setMaxLogFileSize = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, maxLogFileSize: value }))
-  }, [])
-
-  const setEnableDebugLogging = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, enableDebugLogging: value }))
-  }, [])
-
-  const setLogLevel = useCallback((value: string) => {
-    setSettings(prev => ({ ...prev, logLevel: value }))
-  }, [])
-
-  const setEnableLogRotation = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, enableLogRotation: value }))
-  }, [])
-
-  const setEnableLogCompression = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, enableLogCompression: value }))
-  }, [])
-
-  const setMaxLogFiles = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, maxLogFiles: value }))
-  }, [])
-
-  const setCorruptionDetectionEnabled = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, corruptionDetectionEnabled: value }))
-  }, [])
-
-  const setCorruptionScoreThreshold = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, corruptionScoreThreshold: value }))
-  }, [])
-
-  const setCorruptionAutoDiscardEnabled = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, corruptionAutoDiscardEnabled: value }))
-  }, [])
-
-  const setCorruptionAutoDisableDegraded = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, corruptionAutoDisableDegraded: value }))
-  }, [])
-
-  const setCorruptionDegradedConsecutiveThreshold = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, corruptionDegradedConsecutiveThreshold: value }))
-  }, [])
-
-  const setCorruptionDegradedTimeWindowMinutes = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, corruptionDegradedTimeWindowMinutes: value }))
-  }, [])
-
-  const setCorruptionDegradedFailurePercentage = useCallback((value: number) => {
-    setSettings(prev => ({ ...prev, corruptionDegradedFailurePercentage: value }))
-  }, [])
+  const setCorruptionDegradedFailurePercentage = useCallback(
+    (value: number) => {
+      setSettings((prev) => ({
+        ...prev,
+        corruptionDegradedFailurePercentage: value,
+      }))
+    },
+    []
+  )
 
   const setCorruptionHeavyDetectionEnabled = useCallback((value: boolean) => {
-    setSettings(prev => ({ ...prev, corruptionHeavyDetectionEnabled: value }))
+    setSettings((prev) => ({ ...prev, corruptionHeavyDetectionEnabled: value }))
   }, [])
 
   // Save all settings function (equivalent to the page-specific hook's saveSettings)
@@ -481,34 +540,67 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       // Helper function to detect changed settings
       const detectChangedSettings = () => {
         if (!originalSettings) return []
-        
+
         const changes: string[] = []
-        
+
         // Core settings
         if (settings.timezone !== originalSettings.timezone) {
           changes.push(`Timezone (${settings.timezone})`)
         }
-        if (settings.generateThumbnails !== originalSettings.generateThumbnails) {
-          changes.push(`Thumbnails (${settings.generateThumbnails ? 'enabled' : 'disabled'})`)
+        if (
+          settings.generateThumbnails !== originalSettings.generateThumbnails
+        ) {
+          changes.push(
+            `Thumbnails (${
+              settings.generateThumbnails ? "enabled" : "disabled"
+            })`
+          )
         }
         if (settings.imageCaptureType !== originalSettings.imageCaptureType) {
           changes.push(`Image Type (${settings.imageCaptureType})`)
         }
-        
+
         // API Key
         if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
-          changes.push('OpenWeather API Key')
+          changes.push("OpenWeather API Key")
         }
-        
+
         // Weather settings
-        if (settings.weatherIntegrationEnabled !== originalSettings.weatherIntegrationEnabled) {
-          changes.push(`Weather Integration (${settings.weatherIntegrationEnabled ? 'enabled' : 'disabled'})`)
+        if (
+          settings.weatherIntegrationEnabled !==
+          originalSettings.weatherIntegrationEnabled
+        ) {
+          changes.push(
+            `Weather Integration (${
+              settings.weatherIntegrationEnabled ? "enabled" : "disabled"
+            })`
+          )
         }
         if (settings.weatherRecordData !== originalSettings.weatherRecordData) {
-          changes.push(`Weather Data Collection (${settings.weatherRecordData ? 'enabled' : 'disabled'})`)
+          changes.push(
+            `Weather Data Collection (${
+              settings.weatherRecordData ? "enabled" : "disabled"
+            })`
+          )
         }
-        if (settings.sunriseSunsetEnabled !== originalSettings.sunriseSunsetEnabled) {
-          changes.push(`Sunrise/Sunset (${settings.sunriseSunsetEnabled ? 'enabled' : 'disabled'})`)
+        if (
+          settings.sunriseSunsetEnabled !==
+          originalSettings.sunriseSunsetEnabled
+        ) {
+          changes.push(
+            `Sunrise/Sunset (${
+              settings.sunriseSunsetEnabled ? "enabled" : "disabled"
+            })`
+          )
+        }
+        if (settings.temperatureUnit !== originalSettings.temperatureUnit) {
+          changes.push(
+            `Temperature Unit (${
+              settings.temperatureUnit === "fahrenheit"
+                ? "Fahrenheit"
+                : "Celsius"
+            })`
+          )
         }
         if (settings.latitude !== originalSettings.latitude) {
           changes.push(`Latitude (${settings.latitude})`)
@@ -516,7 +608,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         if (settings.longitude !== originalSettings.longitude) {
           changes.push(`Longitude (${settings.longitude})`)
         }
-        
+
         // Logging settings
         if (settings.logRetentionDays !== originalSettings.logRetentionDays) {
           changes.push(`Log Retention (${settings.logRetentionDays} days)`)
@@ -524,39 +616,84 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
           changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
         }
-        if (settings.enableDebugLogging !== originalSettings.enableDebugLogging) {
-          changes.push(`Debug Logging (${settings.enableDebugLogging ? 'enabled' : 'disabled'})`)
-        }
         if (settings.logLevel !== originalSettings.logLevel) {
           changes.push(`Log Level (${settings.logLevel})`)
         }
-        
+
         // Corruption settings
-        if (settings.corruptionDetectionEnabled !== originalSettings.corruptionDetectionEnabled) {
-          changes.push(`Corruption Detection (${settings.corruptionDetectionEnabled ? 'enabled' : 'disabled'})`)
+        if (
+          settings.corruptionDetectionEnabled !==
+          originalSettings.corruptionDetectionEnabled
+        ) {
+          changes.push(
+            `Corruption Detection (${
+              settings.corruptionDetectionEnabled ? "enabled" : "disabled"
+            })`
+          )
         }
-        if (settings.corruptionScoreThreshold !== originalSettings.corruptionScoreThreshold) {
-          changes.push(`Corruption Threshold (${settings.corruptionScoreThreshold})`)
+        if (
+          settings.corruptionScoreThreshold !==
+          originalSettings.corruptionScoreThreshold
+        ) {
+          changes.push(
+            `Corruption Threshold (${settings.corruptionScoreThreshold})`
+          )
         }
-        if (settings.corruptionAutoDiscardEnabled !== originalSettings.corruptionAutoDiscardEnabled) {
-          changes.push(`Auto Discard (${settings.corruptionAutoDiscardEnabled ? 'enabled' : 'disabled'})`)
+        if (
+          settings.corruptionAutoDiscardEnabled !==
+          originalSettings.corruptionAutoDiscardEnabled
+        ) {
+          changes.push(
+            `Auto Discard (${
+              settings.corruptionAutoDiscardEnabled ? "enabled" : "disabled"
+            })`
+          )
         }
-        if (settings.corruptionAutoDisableDegraded !== originalSettings.corruptionAutoDisableDegraded) {
-          changes.push(`Auto Disable Degraded (${settings.corruptionAutoDisableDegraded ? 'enabled' : 'disabled'})`)
+        if (
+          settings.corruptionAutoDisableDegraded !==
+          originalSettings.corruptionAutoDisableDegraded
+        ) {
+          changes.push(
+            `Auto Disable Degraded (${
+              settings.corruptionAutoDisableDegraded ? "enabled" : "disabled"
+            })`
+          )
         }
-        if (settings.corruptionDegradedConsecutiveThreshold !== originalSettings.corruptionDegradedConsecutiveThreshold) {
-          changes.push(`Consecutive Threshold (${settings.corruptionDegradedConsecutiveThreshold})`)
+        if (
+          settings.corruptionDegradedConsecutiveThreshold !==
+          originalSettings.corruptionDegradedConsecutiveThreshold
+        ) {
+          changes.push(
+            `Consecutive Threshold (${settings.corruptionDegradedConsecutiveThreshold})`
+          )
         }
-        if (settings.corruptionDegradedTimeWindowMinutes !== originalSettings.corruptionDegradedTimeWindowMinutes) {
-          changes.push(`Time Window (${settings.corruptionDegradedTimeWindowMinutes} min)`)
+        if (
+          settings.corruptionDegradedTimeWindowMinutes !==
+          originalSettings.corruptionDegradedTimeWindowMinutes
+        ) {
+          changes.push(
+            `Time Window (${settings.corruptionDegradedTimeWindowMinutes} min)`
+          )
         }
-        if (settings.corruptionDegradedFailurePercentage !== originalSettings.corruptionDegradedFailurePercentage) {
-          changes.push(`Failure Percentage (${settings.corruptionDegradedFailurePercentage}%)`)
+        if (
+          settings.corruptionDegradedFailurePercentage !==
+          originalSettings.corruptionDegradedFailurePercentage
+        ) {
+          changes.push(
+            `Failure Percentage (${settings.corruptionDegradedFailurePercentage}%)`
+          )
         }
-        if (settings.corruptionHeavyDetectionEnabled !== originalSettings.corruptionHeavyDetectionEnabled) {
-          changes.push(`Heavy Detection (${settings.corruptionHeavyDetectionEnabled ? 'enabled' : 'disabled'})`)
+        if (
+          settings.corruptionHeavyDetectionEnabled !==
+          originalSettings.corruptionHeavyDetectionEnabled
+        ) {
+          changes.push(
+            `Heavy Detection (${
+              settings.corruptionHeavyDetectionEnabled ? "enabled" : "disabled"
+            })`
+          )
         }
-        
+
         return changes
       }
 
@@ -573,58 +710,71 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       const changedSettings: string[] = []
 
       // Prepare core settings for bulk update (including corruption settings)
-      console.log("📤 Saving settings with imageCaptureType:", settings.imageCaptureType)
+      console.log(
+        "📤 Saving settings with imageCaptureType:",
+        settings.imageCaptureType
+      )
       const coreSettings = {
         timezone: settings.timezone,
         generate_thumbnails: settings.generateThumbnails.toString(),
         image_capture_type: settings.imageCaptureType,
         log_retention_days: settings.logRetentionDays.toString(),
         max_log_file_size: settings.maxLogFileSize.toString(),
-        enable_debug_logging: settings.enableDebugLogging.toString(),
         log_level: settings.logLevel,
         enable_log_rotation: settings.enableLogRotation.toString(),
         enable_log_compression: settings.enableLogCompression.toString(),
         max_log_files: settings.maxLogFiles.toString(),
-        
+
         // Corruption settings (flattened)
-        corruption_detection_enabled: settings.corruptionDetectionEnabled.toString(),
-        corruption_score_threshold: settings.corruptionScoreThreshold.toString(),
-        corruption_auto_discard_enabled: settings.corruptionAutoDiscardEnabled.toString(),
-        corruption_auto_disable_degraded: settings.corruptionAutoDisableDegraded.toString(),
-        corruption_degraded_consecutive_threshold: settings.corruptionDegradedConsecutiveThreshold.toString(),
-        corruption_degraded_time_window_minutes: settings.corruptionDegradedTimeWindowMinutes.toString(),
-        corruption_degraded_failure_percentage: settings.corruptionDegradedFailurePercentage.toString(),
-        corruption_heavy_detection_enabled: settings.corruptionHeavyDetectionEnabled.toString(),
+        corruption_detection_enabled:
+          settings.corruptionDetectionEnabled.toString(),
+        corruption_score_threshold:
+          settings.corruptionScoreThreshold.toString(),
+        corruption_auto_discard_enabled:
+          settings.corruptionAutoDiscardEnabled.toString(),
+        corruption_auto_disable_degraded:
+          settings.corruptionAutoDisableDegraded.toString(),
+        corruption_degraded_consecutive_threshold:
+          settings.corruptionDegradedConsecutiveThreshold.toString(),
+        corruption_degraded_time_window_minutes:
+          settings.corruptionDegradedTimeWindowMinutes.toString(),
+        corruption_degraded_failure_percentage:
+          settings.corruptionDegradedFailurePercentage.toString(),
+        corruption_heavy_detection_enabled:
+          settings.corruptionHeavyDetectionEnabled.toString(),
       }
-      
 
       // Add API key if modified
       if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
-        coreSettings['openweather_api_key'] = settings.openWeatherApiKey
+        coreSettings["openweather_api_key"] = settings.openWeatherApiKey
       }
 
       // Save core settings in bulk (now includes corruption settings)
       const coreSuccess = await updateMultipleSettings(coreSettings)
       if (coreSuccess) {
-        changedSettings.push('core_settings')
+        changedSettings.push("core_settings")
       }
 
-      // Save weather settings  
+      // Save weather settings
       const weatherSettings: Record<string, string> = {
         weather_enabled: settings.weatherRecordData.toString(),
         sunrise_sunset_enabled: settings.sunriseSunsetEnabled.toString(),
-        latitude: settings.latitude !== null ? settings.latitude.toString() : "",
-        longitude: settings.longitude !== null ? settings.longitude.toString() : "",
+        temperature_unit: settings.temperatureUnit,
+        latitude:
+          settings.latitude !== null ? settings.latitude.toString() : "",
+        longitude:
+          settings.longitude !== null ? settings.longitude.toString() : "",
       }
-      
+
       // Add weather_integration_enabled if we have the new field structure
       if (settings.weatherIntegrationEnabled !== settings.weatherRecordData) {
-        weatherSettings.weather_integration_enabled = settings.weatherIntegrationEnabled.toString()
+        weatherSettings.weather_integration_enabled =
+          settings.weatherIntegrationEnabled.toString()
       }
 
       const weatherSuccess = await updateMultipleSettings(weatherSettings)
       if (weatherSuccess) {
-        changedSettings.push('weather_settings')
+        changedSettings.push("weather_settings")
       }
 
       // Reset API key modification flag if it was saved
@@ -636,12 +786,13 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       // Show success notification with actual changed fields
       if (changedSettings.length > 0) {
         toast.success("✅ Settings saved successfully!", {
-          description: changedFields.length > 3 
-            ? `Updated ${changedFields.length} settings` 
-            : `Updated: ${changedFields.join(', ')}`,
+          description:
+            changedFields.length > 3
+              ? `Updated ${changedFields.length} settings`
+              : `Updated: ${changedFields.join(", ")}`,
           duration: 4000,
         })
-        
+
         // Update original settings to current for next change detection
         // Need to create a new object with the current values
         const updatedSettings = {
@@ -650,15 +801,16 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           imageCaptureType: settings.imageCaptureType,
           openWeatherApiKey: settings.openWeatherApiKey,
           apiKeyModified: false, // Reset after save
-          originalApiKeyHash: settings.openWeatherApiKey || settings.originalApiKeyHash,
+          originalApiKeyHash:
+            settings.openWeatherApiKey || settings.originalApiKeyHash,
           weatherIntegrationEnabled: settings.weatherIntegrationEnabled,
           weatherRecordData: settings.weatherRecordData,
           sunriseSunsetEnabled: settings.sunriseSunsetEnabled,
+          temperatureUnit: settings.temperatureUnit,
           latitude: settings.latitude,
           longitude: settings.longitude,
           logRetentionDays: settings.logRetentionDays,
           maxLogFileSize: settings.maxLogFileSize,
-          enableDebugLogging: settings.enableDebugLogging,
           logLevel: settings.logLevel,
           enableLogRotation: settings.enableLogRotation,
           enableLogCompression: settings.enableLogCompression,
@@ -667,13 +819,17 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           corruptionScoreThreshold: settings.corruptionScoreThreshold,
           corruptionAutoDiscardEnabled: settings.corruptionAutoDiscardEnabled,
           corruptionAutoDisableDegraded: settings.corruptionAutoDisableDegraded,
-          corruptionDegradedConsecutiveThreshold: settings.corruptionDegradedConsecutiveThreshold,
-          corruptionDegradedTimeWindowMinutes: settings.corruptionDegradedTimeWindowMinutes,
-          corruptionDegradedFailurePercentage: settings.corruptionDegradedFailurePercentage,
-          corruptionHeavyDetectionEnabled: settings.corruptionHeavyDetectionEnabled,
+          corruptionDegradedConsecutiveThreshold:
+            settings.corruptionDegradedConsecutiveThreshold,
+          corruptionDegradedTimeWindowMinutes:
+            settings.corruptionDegradedTimeWindowMinutes,
+          corruptionDegradedFailurePercentage:
+            settings.corruptionDegradedFailurePercentage,
+          corruptionHeavyDetectionEnabled:
+            settings.corruptionHeavyDetectionEnabled,
         }
         setOriginalSettings(updatedSettings)
-        
+
         // REMOVED: Force fetch that was causing UI reversion
         // setTimeout(() => {
         //   fetchSettings(true)
@@ -684,18 +840,25 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     } catch (error) {
       console.error("Failed to save settings:", error)
       setError(error instanceof Error ? error.message : "Save failed")
-      
+
       // Show error notification
       toast.error("❌ Failed to save settings", {
-        description: error instanceof Error ? error.message : "Please try again",
+        description:
+          error instanceof Error ? error.message : "Please try again",
         duration: 5000,
       })
-      
+
       return false
     } finally {
       setSaving(false)
     }
-  }, [settings, originalSettings, updateMultipleSettings, setApiKeyModified, setOpenWeatherApiKey])
+  }, [
+    settings,
+    originalSettings,
+    updateMultipleSettings,
+    setApiKeyModified,
+    setOpenWeatherApiKey,
+  ])
 
   useEffect(() => {
     // Always fetch fresh settings on mount
@@ -713,7 +876,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     deleteSetting,
     saveAllSettings,
     refetch: () => fetchSettings(true),
-    
+
     // Setters
     setTimezone,
     setGenerateThumbnails,
@@ -723,11 +886,11 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setWeatherIntegrationEnabled,
     setWeatherRecordData,
     setSunriseSunsetEnabled,
+    setTemperatureUnit,
     setLatitude,
     setLongitude,
     setLogRetentionDays,
     setMaxLogFileSize,
-    setEnableDebugLogging,
     setLogLevel,
     setEnableLogRotation,
     setEnableLogCompression,
@@ -765,22 +928,22 @@ export function useTimezoneSettings() {
 
 // Hook for components that need extended settings functionality
 export function useSettingsActions() {
-  const { 
-    saveAllSettings, 
-    updateSetting, 
-    updateMultipleSettings, 
-    saving, 
+  const {
+    saveAllSettings,
+    updateSetting,
+    updateMultipleSettings,
+    saving,
     error,
-    refetch 
+    refetch,
   } = useSettings()
-  
-  return { 
-    saveAllSettings, 
-    updateSetting, 
-    updateMultipleSettings, 
-    saving, 
+
+  return {
+    saveAllSettings,
+    updateSetting,
+    updateMultipleSettings,
+    saving,
     error,
-    refetch 
+    refetch,
   }
 }
 
@@ -790,6 +953,7 @@ export function useWeatherSettings() {
     weatherIntegrationEnabled,
     weatherRecordData,
     sunriseSunsetEnabled,
+    temperatureUnit,
     latitude,
     longitude,
     openWeatherApiKey,
@@ -798,16 +962,18 @@ export function useWeatherSettings() {
     setWeatherIntegrationEnabled,
     setWeatherRecordData,
     setSunriseSunsetEnabled,
+    setTemperatureUnit,
     setLatitude,
     setLongitude,
     setOpenWeatherApiKey,
     setApiKeyModified,
   } = useSettings()
-  
+
   return {
     weatherIntegrationEnabled,
     weatherRecordData,
     sunriseSunsetEnabled,
+    temperatureUnit,
     latitude,
     longitude,
     openWeatherApiKey,
@@ -816,6 +982,7 @@ export function useWeatherSettings() {
     setWeatherIntegrationEnabled,
     setWeatherRecordData,
     setSunriseSunsetEnabled,
+    setTemperatureUnit,
     setLatitude,
     setLongitude,
     setOpenWeatherApiKey,

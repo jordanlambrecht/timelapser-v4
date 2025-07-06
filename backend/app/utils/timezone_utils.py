@@ -31,7 +31,9 @@ from pathlib import Path
 from loguru import logger
 import re
 
-# Import the cache manager for settings
+# Import the cache manager for settings (async version only)
+# Note: get_timezone_async is only used by async functions.
+# Sync functions use direct settings service access to avoid event loop conflicts.
 from app.utils.cache_manager import get_timezone_async
 
 
@@ -43,30 +45,24 @@ from app.utils.cache_manager import get_timezone_async
 
 # Sync timezone cache access (for non-async contexts)
 def get_timezone_from_cache_sync(settings_service) -> str:
-    """Get timezone from in-memory cache (sync, using cache_manager)."""
+    """
+    Get timezone using SettingsService (sync version, bypasses async cache).
+    
+    This function directly accesses settings without using the async cache infrastructure
+    to avoid event loop conflicts in worker processes.
+    """
     try:
-        import asyncio
-
-        # For sync contexts, we need to run the async function
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is already running, we can't use asyncio.run()
-                # This is a limitation - sync code in async contexts should use async version
-                logger.warning(
-                    "⚠️ Cannot run sync cache access in async context. Use async version."
-                )
-                return "UTC"
-            else:
-                return loop.run_until_complete(get_timezone_async(settings_service))
-        except RuntimeError:
-            # No event loop, safe to use asyncio.run()
-            async def _get_timezone():
-                return await get_timezone_async(settings_service)
-
-            return asyncio.run(_get_timezone())
+        # Direct sync access without async cache to avoid event loop conflicts
+        if hasattr(settings_service, "get_setting"):
+            timezone = settings_service.get_setting("timezone")
+            return timezone or "UTC"
+        else:
+            logger.warning(
+                f"Settings service {type(settings_service)} does not have get_setting method"
+            )
+            return "UTC"
     except Exception as e:
-        logger.error(f"❌ Failed to get timezone from cache: {e}")
+        logger.error(f"❌ Failed to get timezone from settings service: {e}")
         return "UTC"
 
 

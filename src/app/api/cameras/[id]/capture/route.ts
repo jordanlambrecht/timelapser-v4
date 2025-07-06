@@ -11,7 +11,7 @@ export async function POST(
     const { id } = await params
     
     // Proxy to FastAPI backend manual capture endpoint
-    const response = await proxyToFastAPI(`/api/cameras/${id}/capture`, {
+    const response = await proxyToFastAPI(`/api/cameras/${id}/capture-now`, {
       method: "POST",
     })
 

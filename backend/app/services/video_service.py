@@ -27,6 +27,7 @@ from ..database.video_operations import VideoOperations, SyncVideoOperations
 from ..database.timelapse_operations import SyncTimelapseOperations
 from ..database.camera_operations import SyncCameraOperations
 from ..database.image_operations import SyncImageOperations
+from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
 from ..models.video_model import Video, VideoWithDetails
 from ..models.shared_models import (
     VideoGenerationJob,
@@ -81,6 +82,7 @@ class VideoService:
         """
         self.db = db
         self.video_ops = VideoOperations(db)
+        self.settings_ops = SettingsOperations(db)
         self.sse_ops = SSEEventsOperations(db)
         self.video_automation_service = video_automation_service
 
@@ -233,9 +235,11 @@ class VideoService:
         """
         # Ensure timezone-aware creation timestamp
         if "created_at" not in job_data:
-            job_data["created_at"] = await get_timezone_aware_timestamp_async(self.db)
+            job_data["created_at"] = await get_timezone_aware_timestamp_async(self.settings_ops)
 
-        job = await self.video_ops.create_video_generation_job(job_data)
+        # Calculate event timestamp for database operation
+        event_timestamp = await get_timezone_aware_timestamp_async(self.settings_ops)
+        job = await self.video_ops.create_video_generation_job(job_data, event_timestamp)
         return job
 
     async def update_video_generation_job_status(
@@ -510,7 +514,7 @@ class VideoService:
                 "failed_jobs": failed_jobs,
                 "processing_jobs": processing_jobs,
                 "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(self.db),
+                "timestamp": await get_timezone_aware_timestamp_async(self.settings_ops),
             }
             
             return health_data
@@ -521,7 +525,7 @@ class VideoService:
                 "status": "unknown",
                 "error": str(e),
                 "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(self.db),
+                "timestamp": await get_timezone_aware_timestamp_async(self.settings_ops),
             }
 
 
@@ -545,6 +549,7 @@ class SyncVideoService:
         self.timelapse_ops = SyncTimelapseOperations(db)
         self.camera_ops = SyncCameraOperations(db)
         self.image_ops = SyncImageOperations(db)
+        self.settings_ops = SyncSettingsOperations(db)
 
     def get_pending_video_generation_jobs(self) -> List[VideoGenerationJobWithDetails]:
         """
@@ -586,8 +591,10 @@ class SyncVideoService:
         Returns:
             True if job was successfully completed
         """
+        # Calculate timestamp for database operation
+        event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
         return self.video_ops.complete_video_generation_job(
-            job_id, video_path, success, error_message
+            job_id, success, error_message, video_path, event_timestamp
         )
 
     def create_video_record(self, video_data: Dict[str, Any]) -> Video:
@@ -602,7 +609,7 @@ class SyncVideoService:
         """
         # Ensure timezone-aware creation timestamp
         if "created_at" not in video_data:
-            video_data["created_at"] = get_timezone_aware_timestamp_sync(self.db)
+            video_data["created_at"] = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         return self.video_ops.create_video_record(video_data)
 
@@ -657,7 +664,7 @@ class SyncVideoService:
             )
 
             # Generate output filename with timezone-aware timestamp
-            timestamp_str = get_timezone_aware_timestamp_sync(self.db).strftime(
+            timestamp_str = get_timezone_aware_timestamp_sync(self.settings_ops).strftime(
                 "%Y%m%d_%H%M%S"
             )
             output_filename = f"timelapse_{timelapse_id}_{timestamp_str}.mp4"
@@ -713,7 +720,7 @@ class SyncVideoService:
                     or timelapse.start_date,
                     "trigger_type": video_settings.get("trigger_type", "manual"),
                     "job_id": job_id,
-                    "created_at": get_timezone_aware_timestamp_sync(self.db),
+                    "created_at": get_timezone_aware_timestamp_sync(self.settings_ops),
                 }
 
                 video_record = self.create_video_record(video_data)

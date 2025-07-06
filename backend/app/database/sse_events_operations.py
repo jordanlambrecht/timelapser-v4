@@ -2,7 +2,7 @@
 """
 SSE Events Operations - Composition-based architecture.
 
-This module handles database operations for Server-Sent Events (SSE) using 
+This module handles database operations for Server-Sent Events (SSE) using
 dependency injection for database operations, providing type-safe interfaces.
 """
 
@@ -17,8 +17,8 @@ from .core import AsyncDatabase, SyncDatabase
 class SSEEventsOperations:
     """
     Async SSE events database operations using composition pattern.
-    
-    This class handles creating, retrieving, and managing SSE events 
+
+    This class handles creating, retrieving, and managing SSE events
     stored in the database for reliable real-time event streaming.
     """
 
@@ -68,7 +68,9 @@ class SSEEventsOperations:
                     )
                     result = await cur.fetchone()
                     if result:
-                        event_id = result["id"] if isinstance(result, dict) else result[0]
+                        event_id = (
+                            result["id"] if isinstance(result, dict) else result[0]
+                        )
                         logger.debug(
                             f"Created SSE event: {event_type} with ID {event_id}"
                         )
@@ -81,9 +83,7 @@ class SSEEventsOperations:
             raise
 
     async def get_pending_events(
-        self, 
-        limit: int = 100,
-        max_age_minutes: int = 60
+        self, limit: int = 100, max_age_minutes: int = 60
     ) -> List[Dict[str, Any]]:
         """
         Get pending (unprocessed) SSE events for streaming.
@@ -121,7 +121,11 @@ class SSEEventsOperations:
                             "id": row["id"],
                             "type": row["event_type"],
                             "data": row["event_data"] if row["event_data"] else {},
-                            "timestamp": row["created_at"].isoformat() if row["created_at"] else None,
+                            "timestamp": (
+                                row["created_at"].isoformat()
+                                if row["created_at"]
+                                else None
+                            ),
                             "priority": row["priority"],
                             "source": row["source"],
                         }
@@ -162,9 +166,7 @@ class SSEEventsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(query, (event_ids,))
                     updated_count = cur.rowcount
-                    logger.debug(
-                        f"Marked {updated_count} SSE events as processed"
-                    )
+                    logger.debug(f"Marked {updated_count} SSE events as processed")
                     return updated_count
 
         except Exception as e:
@@ -256,7 +258,7 @@ class SSEEventsOperations:
 class SyncSSEEventsOperations:
     """
     Sync SSE events database operations for worker processes.
-    
+
     This class provides synchronous database operations for SSE events,
     used by worker processes that need to create events.
     """
@@ -294,8 +296,8 @@ class SyncSSEEventsOperations:
         """
         try:
             query = """
-                INSERT INTO sse_events (event_type, event_data, priority, source)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO sse_events (event_type, event_data, priority, source, retry_count)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
             """
 
@@ -303,11 +305,11 @@ class SyncSSEEventsOperations:
                 with conn.cursor() as cur:
                     cur.execute(
                         query,
-                        (event_type, json.dumps(event_data), priority, source),
+                        (event_type, json.dumps(event_data), priority, source, 0),
                     )
                     result = cur.fetchone()
                     if result:
-                        event_id = result[0]
+                        event_id = result["id"]
                         logger.debug(
                             f"Created SSE event: {event_type} with ID {event_id}"
                         )
@@ -344,12 +346,12 @@ class SyncSSEEventsOperations:
             "image_count": image_count,
             "day_number": day_number,
         }
-        
+
         return self.create_event(
             event_type="image_captured",
             event_data=event_data,
             priority="normal",
-            source="worker"
+            source="worker",
         )
 
     def create_camera_status_event(
@@ -373,15 +375,15 @@ class SyncSSEEventsOperations:
             "camera_id": camera_id,
             "status": status,
         }
-        
+
         if health_status:
             event_data["health_status"] = health_status
-        
+
         return self.create_event(
             event_type="camera_status_changed",
             event_data=event_data,
             priority="high",
-            source="worker"
+            source="worker",
         )
 
     def create_timelapse_status_event(
@@ -406,10 +408,43 @@ class SyncSSEEventsOperations:
             "timelapse_id": timelapse_id,
             "status": status,
         }
-        
+
         return self.create_event(
             event_type="timelapse_status_changed",
             event_data=event_data,
             priority="high",
-            source="worker"
+            source="worker",
         )
+
+    def cleanup_old_events(self, max_age_hours: int = 24) -> int:
+        """
+        Clean up old SSE events (sync version).
+
+        Args:
+            max_age_hours: Maximum age of events to keep in hours
+
+        Returns:
+            Number of events deleted
+
+        Raises:
+            Exception: If cleanup fails
+        """
+        try:
+            query = """
+                DELETE FROM sse_events
+                WHERE created_at < NOW() - INTERVAL '%s hours'
+            """
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (max_age_hours,))
+                    affected = cur.rowcount
+
+                    if affected and affected > 0:
+                        logger.info(f"Cleaned up {affected} old SSE events")
+
+                    return affected or 0
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup old SSE events: {e}")
+            return 0

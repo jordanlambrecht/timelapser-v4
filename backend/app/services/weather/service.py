@@ -33,7 +33,6 @@ from app.utils.timezone_utils import (
     create_timezone_aware_datetime,
     utc_now,
     get_timezone_from_settings,
-    get_timezone_async,
 )
 
 # Import new weather models
@@ -59,6 +58,9 @@ from ...constants import (
     WEATHER_CONNECTION_ERROR,
     WEATHER_REFRESH_SKIPPED_LOCATION
 )
+
+# Import conversion utilities
+from ...utils.conversion_utils import safe_int
 
 
 class OpenWeatherService:
@@ -315,25 +317,6 @@ class WeatherManager:
         self.weather_ops = weather_operations
         self.settings_service = settings_service
 
-    @staticmethod
-    def _safe_int(value: any, default: Optional[int] = None) -> Optional[int]:
-        """
-        Safely convert a value to int, returning default if conversion fails.
-        
-        Args:
-            value: Value to convert to int
-            default: Default value to return if conversion fails
-            
-        Returns:
-            int or None: Converted integer or default value
-        """
-        if value is None or value == "":
-            return default
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            return default
-
     async def get_weather_settings(self) -> Dict[str, Any]:
         """Get weather-related settings from database"""
         try:
@@ -397,13 +380,13 @@ class WeatherManager:
                     if settings_dict.get("longitude")
                     else None
                 ),
-                "sunrise_offset_minutes": self._safe_int(
+                "sunrise_offset_minutes": safe_int(
                     settings_dict.get("sunrise_offset_minutes", "0"), 0
                 ),
-                "sunset_offset_minutes": self._safe_int(
+                "sunset_offset_minutes": safe_int(
                     settings_dict.get("sunset_offset_minutes", "0"), 0
                 ),
-                "current_temp": self._safe_int(
+                "current_temp": safe_int(
                     settings_dict.get("current_temp", ""), None
                 ),
                 "current_weather_icon": settings_dict.get("current_weather_icon", ""),
@@ -411,10 +394,10 @@ class WeatherManager:
                     "current_weather_description", ""
                 ),
                 "weather_date_fetched": settings_dict.get("weather_date_fetched", ""),
-                "sunrise_timestamp": self._safe_int(
+                "sunrise_timestamp": safe_int(
                     settings_dict.get("sunrise_timestamp", ""), None
                 ),
-                "sunset_timestamp": self._safe_int(
+                "sunset_timestamp": safe_int(
                     settings_dict.get("sunset_timestamp", ""), None
                 ),
             }
@@ -425,8 +408,26 @@ class WeatherManager:
     async def update_weather_cache(self, weather_data: OpenWeatherApiData) -> bool:
         """Update cached weather data in weather table"""
         try:
+            # Get timezone setting for proper timestamp
+            if self.settings_service:
+                try:
+                    get_all_method = getattr(self.settings_service, "get_all_settings")
+                    if inspect.iscoroutinefunction(get_all_method):
+                        settings_dict = await self.settings_service.get_all_settings()
+                    else:
+                        settings_dict = self.settings_service.get_all_settings()
+                except Exception as e:
+                    logger.warning(f"Failed to get timezone from settings service: {e}")
+                    settings_dict = await self._get_settings_from_db()
+            else:
+                settings_dict = await self._get_settings_from_db()
+
+            # Get timezone and create timezone-aware timestamp
+            timezone_str = get_timezone_from_settings(settings_dict)
+            
             # Convert weather data for weather table storage
-            weather_date_fetched = datetime.combine(weather_data.date_fetched, datetime.min.time())
+            # Use current timestamp in configured timezone to show when data was actually fetched
+            weather_date_fetched = create_timezone_aware_datetime(timezone_str)
             sunrise_timestamp = datetime.fromtimestamp(weather_data.sunrise_timestamp) if weather_data.sunrise_timestamp else None
             sunset_timestamp = datetime.fromtimestamp(weather_data.sunset_timestamp) if weather_data.sunset_timestamp else None
 
@@ -458,6 +459,10 @@ class WeatherManager:
                     )
             else:
                 raise AttributeError("Weather operations instance missing insert_weather_data method")
+
+            # Check if weather data was successfully inserted
+            if not weather_id:
+                raise Exception("Failed to insert weather data - no ID returned from database operation")
 
             logger.info(
                 f"Updated weather cache in weather table (ID: {weather_id}): {weather_data.temperature}°C, {weather_data.description}"
@@ -496,12 +501,13 @@ class WeatherManager:
             return False
 
 
-    async def refresh_weather_if_needed(self, api_key: str) -> Optional[OpenWeatherApiData]:
+    async def refresh_weather_if_needed(self, api_key: str, force: bool = False) -> Optional[OpenWeatherApiData]:
         """
-        Refresh weather data if it's stale (not from today).
+        Refresh weather data if it's stale (not from today) or force refresh.
 
         Args:
             api_key: Decrypted OpenWeather API key
+            force: Force refresh even if data is current
 
         Returns:
             Optional[OpenWeatherApiData]: Current weather data or None if failed
@@ -558,8 +564,8 @@ class WeatherManager:
                 else:
                     weather_date_str = str(weather_date)
                 
-                if weather_date_str == today:
-                    # Data is current, return cached data
+                if weather_date_str == today and not force:
+                    # Data is current and not forcing refresh, return cached data
                     if all(
                         latest_weather.get(key)
                         for key in [
@@ -664,21 +670,16 @@ class WeatherManager:
     async def _get_settings_from_db(self) -> Dict[str, Any]:
         """Fallback method to get settings directly from database"""
         try:
-            # The database instance we receive is the raw database core, not settings operations
-            # We need to create settings operations to access settings properly
-            from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
-            from ..database.weather_operations import WeatherOperations, SyncWeatherOperations
-            import inspect
-            
-            # Determine if we have async or sync database and create appropriate operations
-            if hasattr(self.db, 'get_connection') and inspect.iscoroutinefunction(self.db.get_connection):
-                # Async database
-                settings_ops = SettingsOperations(self.db)
-                return await settings_ops.get_all_settings()
+            # If we have a settings service, use it as fallback
+            if self.settings_service:
+                get_all_method = getattr(self.settings_service, "get_all_settings")
+                if inspect.iscoroutinefunction(get_all_method):
+                    return await self.settings_service.get_all_settings()
+                else:
+                    return self.settings_service.get_all_settings()
             else:
-                # Sync database
-                settings_ops = SyncSettingsOperations(self.db)
-                return settings_ops.get_all_settings()
+                logger.error("No settings service available for fallback settings access")
+                return {}
                 
         except Exception as e:
             logger.error(f"Failed to get settings from database: {e}")

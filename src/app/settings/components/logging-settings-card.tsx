@@ -32,8 +32,6 @@ export function LoggingSettingsCard() {
     setLogRetentionDays,
     maxLogFileSize,
     setMaxLogFileSize,
-    enableDebugLogging,
-    setEnableDebugLogging,
     logLevel,
     setLogLevel,
     enableLogRotation,
@@ -48,11 +46,40 @@ export function LoggingSettingsCard() {
 
   const handleCleanLogsNow = async () => {
     setCleanLogsConfirmOpen(false)
-    toast.info("Cleaning logs...", {
-      description: "System logs are being cleaned up",
-      duration: 3000,
-    })
-    // TODO: Implement actual log cleanup functionality
+
+    try {
+      toast.info("Cleaning all logs...", {
+        description: "Removing ALL log entries from the database",
+        duration: 3000,
+      })
+
+      const response = await fetch(`/api/logs/cleanup?days_to_keep=0`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success) {
+        const deletedCount = result.data?.deleted_count || 0
+        toast.success("All logs cleaned successfully! 🧹", {
+          description: `Removed ${deletedCount} log entries`,
+          duration: 5000,
+        })
+      } else {
+        throw new Error(result.message || "Failed to clean logs")
+      }
+    } catch (error) {
+      console.error("Failed to clean logs:", error)
+      toast.error("Failed to clean logs", {
+        description:
+          error instanceof Error ? error.message : "Unknown error occurred",
+        duration: 5000,
+      })
+    }
   }
 
   return (
@@ -62,12 +89,6 @@ export function LoggingSettingsCard() {
           <CardTitle className='flex items-center space-x-2'>
             <FileText className='w-5 h-5 text-green-400' />
             <span>System Maintenance</span>
-            <Badge
-              variant='secondary'
-              className='ml-2 text-xs bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
-            >
-              Not Implemented
-            </Badge>
           </CardTitle>
           <CardDescription>
             Manage system logs and maintenance tasks
@@ -79,7 +100,7 @@ export function LoggingSettingsCard() {
               <div className='space-y-1'>
                 <Label className='text-sm font-medium'>System Logs</Label>
                 <p className='text-xs text-muted-foreground'>
-                  Remove old log files to free up disk space
+                  Remove ALL log entries from the database
                 </p>
               </div>
               <Button
@@ -164,27 +185,6 @@ export function LoggingSettingsCard() {
             <div className='space-y-3'>
               <div className='flex items-center justify-between'>
                 <div className='space-y-1'>
-                  <Label
-                    htmlFor='debug-logging'
-                    className='text-sm font-medium'
-                  >
-                    Debug Logging
-                  </Label>
-                  <p className='text-xs text-muted-foreground'>
-                    Enable detailed debug information in logs (overrides log
-                    level)
-                  </p>
-                </div>
-                <SuperSwitch
-                  variant="labeled"
-                  id='debug-logging'
-                  checked={enableDebugLogging}
-                  onCheckedChange={setEnableDebugLogging}
-                />
-              </div>
-
-              <div className='flex items-center justify-between'>
-                <div className='space-y-1'>
                   <Label htmlFor='log-rotation' className='text-sm font-medium'>
                     Log Rotation
                   </Label>
@@ -193,7 +193,7 @@ export function LoggingSettingsCard() {
                   </p>
                 </div>
                 <SuperSwitch
-                  variant="labeled"
+                  variant='labeled'
                   id='log-rotation'
                   checked={enableLogRotation}
                   onCheckedChange={setEnableLogRotation}
@@ -213,7 +213,7 @@ export function LoggingSettingsCard() {
                   </p>
                 </div>
                 <SuperSwitch
-                  variant="labeled"
+                  variant='labeled'
                   id='log-compression'
                   checked={enableLogCompression}
                   onCheckedChange={setEnableLogCompression}
@@ -230,7 +230,7 @@ export function LoggingSettingsCard() {
         onClose={() => setCleanLogsConfirmOpen(false)}
         onConfirm={handleCleanLogsNow}
         title='Clean System Logs'
-        description='Are you sure you want to delete all system log files? This action cannot be undone.'
+        description='Are you sure you want to clean up ALL system logs? This will remove ALL log entries from the database and cannot be undone.'
         confirmLabel='Yes, Clean Logs'
         cancelLabel='Cancel'
         variant='warning'

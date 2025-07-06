@@ -135,7 +135,7 @@ class AsyncCameraOperations:
         camera_data = dict(row)
 
         # Get timezone from database cache (async)
-        tz_str = await get_timezone_from_cache_async(self.db)
+        tz_str = await get_timezone_from_cache_async(self.settings_service)
         tz = ZoneInfo(tz_str)
 
         # Use shared helper for common processing logic
@@ -862,7 +862,9 @@ class SyncCameraOperations:
     """Sync camera database operations for worker processes."""
 
     def __init__(self, db: SyncDatabase) -> None:
+        from .settings_operations import SyncSettingsOperations
         self.db = db
+        self.settings_ops = SyncSettingsOperations(db)
 
     def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -874,7 +876,7 @@ class SyncCameraOperations:
         camera_data = dict(row)
 
         # Get timezone from database cache (sync)
-        tz_str = get_timezone_from_cache_sync(self.db)
+        tz_str = get_timezone_from_cache_sync(self.settings_ops)
         tz = ZoneInfo(tz_str)
 
         # Use shared helper for common processing logic
@@ -1010,7 +1012,7 @@ class SyncCameraOperations:
             success = db.update_camera_connectivity(1, False, "Connection timeout")
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         query = """
         UPDATE cameras 
@@ -1105,7 +1107,7 @@ class SyncCameraOperations:
             success = db.update_camera_corruption_failure_count(1, True)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         if increment:
             query = """
@@ -1146,7 +1148,7 @@ class SyncCameraOperations:
             success = db.set_camera_degraded_mode(1, True)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         query = """
         UPDATE cameras
@@ -1176,7 +1178,7 @@ class SyncCameraOperations:
             success = db.reset_camera_corruption_failures(1)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         query = """
         UPDATE cameras
@@ -1211,7 +1213,7 @@ class SyncCameraOperations:
             success = db.update_camera_capture_stats(1, False, "Connection timeout")
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         if success:
             # Reset consecutive failures and update last success time
@@ -1263,7 +1265,7 @@ class SyncCameraOperations:
             ready_cameras = db.get_cameras_ready_for_capture()
         """
         # Get current timezone-aware timestamp for comparison (sync)
-        now = get_timezone_aware_timestamp_sync(self.db)
+        now = get_timezone_aware_timestamp_sync(self.settings_ops)
 
         query = """
         SELECT 

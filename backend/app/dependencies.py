@@ -16,6 +16,7 @@ from .services.video_service import VideoService, SyncVideoService
 from .services.video_automation_service import VideoAutomationService
 from .services.timelapse_service import TimelapseService
 from .services.image_service import ImageService
+from .services.thumbnail_service import ThumbnailService
 from .services.corruption_service import CorruptionService
 from .services.settings_service import SettingsService
 from .services.statistics_service import StatisticsService
@@ -59,6 +60,13 @@ async def get_image_service() -> ImageService:
     """Get ImageService with async database dependency injection"""
     settings_service = SettingsService(async_db)
     return ImageService(async_db, settings_service)
+
+
+async def get_thumbnail_service() -> ThumbnailService:
+    """Get ThumbnailService with async database dependency injection"""
+    settings_service = SettingsService(async_db)
+    image_service = ImageService(async_db, settings_service)
+    return ThumbnailService(async_db, settings_service, image_service)
 
 
 async def get_corruption_service() -> CorruptionService:
@@ -106,6 +114,7 @@ CameraServiceDep = Annotated[CameraService, Depends(get_camera_service)]
 VideoServiceDep = Annotated[VideoService, Depends(get_video_service)]
 TimelapseServiceDep = Annotated[TimelapseService, Depends(get_timelapse_service)]
 ImageServiceDep = Annotated[ImageService, Depends(get_image_service)]
+ThumbnailServiceDep = Annotated[ThumbnailService, Depends(get_thumbnail_service)]
 CorruptionServiceDep = Annotated[CorruptionService, Depends(get_corruption_service)]
 SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 StatisticsServiceDep = Annotated[StatisticsService, Depends(get_statistics_service)]

@@ -27,6 +27,7 @@ import {
 import { toast } from "@/lib/toast"
 import { useDashboardSSE } from "@/hooks/use-camera-sse"
 import { useSSE, useSSESubscription } from "@/contexts/sse-context"
+import { useSettings } from "@/contexts/settings-context"
 import {
   CorruptionHealthSummary,
   CorruptionAlert,
@@ -47,6 +48,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [sseConnected, setSseConnected] = useState(false)
   const [lastEventTime, setLastEventTime] = useState<number>(Date.now())
+
+  // Get temperature unit from settings
+  const { temperatureUnit } = useSettings()
 
   // Confirmation dialog state
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
@@ -137,6 +141,7 @@ export default function Dashboard() {
         "camera_degraded_mode_triggered",
         "camera_corruption_reset",
         "corruption_stats_updated",
+        "weather_updated",
       ].includes(event.type),
     (event) => {
       setLastEventTime(Date.now())
@@ -269,6 +274,15 @@ export default function Dashboard() {
         case "corruption_stats_updated":
           // Refresh corruption stats when updated
           // The useCorruptionStats hook will handle the refetch automatically
+          break
+
+        case "weather_updated":
+          // Show toast notification for weather updates
+          toast.weatherUpdated(
+            event.data.temperature,
+            event.data.description,
+            temperatureUnit
+          )
           break
       }
     }

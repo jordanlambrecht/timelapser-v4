@@ -84,11 +84,41 @@ export function DangerZoneCard() {
 
   const handleDeleteAllThumbnails = async () => {
     setDeleteAllThumbnailsConfirmOpen(false)
+    
     toast.info("Deleting thumbnails...", {
       description: "All thumbnail images are being removed",
       duration: 3000,
     })
-    // TODO: Implement actual thumbnail deletion functionality
+
+    try {
+      const response = await fetch("/api/thumbnails/delete-all", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete thumbnails: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success) {
+        toast.success("Thumbnails deleted successfully!", {
+          description: `Deleted ${result.data.deleted_files} files (${result.data.deleted_size_mb}MB) from ${result.data.cameras_processed} cameras`,
+          duration: 5000,
+        })
+      } else {
+        throw new Error(result.message || "Failed to delete thumbnails")
+      }
+    } catch (error) {
+      console.error("Error deleting thumbnails:", error)
+      toast.error("Failed to delete thumbnails", {
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+        duration: 5000,
+      })
+    }
   }
 
   return (

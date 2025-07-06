@@ -109,7 +109,7 @@ class ImageCaptureService:
                 connection_status="not_found",
                 error=CAMERA_NOT_FOUND,
                 test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                    self.db
+                    self.settings_ops
                 ),
             )
 
@@ -122,7 +122,7 @@ class ImageCaptureService:
                 connection_status="no_rtsp_url",
                 error=CAMERA_CONNECTION_FAILED,
                 test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                    self.db
+                    self.settings_ops
                 ),
             )
 
@@ -156,7 +156,7 @@ class ImageCaptureService:
                     success=False,
                     camera_id=camera_id,
                     monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.db
+                        self.settings_ops
                     ),
                     error=CAMERA_NOT_FOUND,
                 ),
@@ -187,7 +187,7 @@ class ImageCaptureService:
                     success=False,
                     camera_id=camera_id,
                     monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.db
+                        self.settings_ops
                     ),
                     error=CAMERA_CONNECTION_FAILED,
                 ),
@@ -212,7 +212,7 @@ class ImageCaptureService:
                     success=False,
                     camera_id=camera_id,
                     monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.db
+                        self.settings_ops
                     ),
                     error=CAMERA_CAPTURE_FAILED,
                 ),
@@ -254,13 +254,13 @@ class ImageCaptureService:
                 success=True,
                 camera_id=camera_id,
                 monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                    self.db
+                    self.settings_ops
                 ),
             ),
             capture_scheduling=CameraCaptureScheduleResult(
                 success=True,
                 camera_id=camera_id,
-                scheduled_at=timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+                scheduled_at=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
                 message="Image captured and processed successfully",
             ),
             overall_success=True,
@@ -285,7 +285,7 @@ class ImageCaptureService:
                 connection_status="error",
                 error=str(e),
                 test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                    self.db
+                    self.settings_ops
                 ),
             )
 
@@ -392,14 +392,14 @@ class ImageCaptureService:
                     connection_status="retry_failed",
                     error=f"Failed after {max_retries} attempts",
                     test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.db
+                        self.settings_ops
                     ),
                 ),
                 health_monitoring=CameraHealthMonitoringResult(
                     success=False,
                     camera_id=camera_id,
                     monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.db
+                        self.settings_ops
                     ),
                     error=f"Failed after {max_retries} attempts",
                 ),
@@ -455,7 +455,7 @@ class ImageCaptureService:
                     file_path=filepath,
                     day_number=self._calculate_day_number(
                         camera_id,
-                        timezone_utils.get_timezone_aware_timestamp_sync(self.db),
+                        timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
                     ),
                     file_size=None,  # File size will be calculated by database
                     corruption_score=100,  # Default perfect score
@@ -719,7 +719,7 @@ class ImageCaptureService:
     ) -> Image:
         """Save captured image to filesystem and database using timezone-aware timestamps."""
         # Get timezone-aware timestamp using database settings (cache-backed)
-        timezone_str = timezone_utils.get_timezone_from_cache_sync(self.db)
+        timezone_str = timezone_utils.get_timezone_from_cache_sync(self.settings_ops)
         timestamp = timezone_utils.create_timezone_aware_datetime(timezone_str)
 
         # Generate file paths using file_helpers
@@ -860,14 +860,14 @@ class AsyncImageCaptureService:
                     connection_status="async_error",
                     error=str(e),
                     test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.sync_capture_service.db
+                        self.sync_capture_service.settings_ops
                     ),
                 ),
                 health_monitoring=CameraHealthMonitoringResult(
                     success=False,
                     camera_id=camera_id,
                     monitoring_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                        self.sync_capture_service.db
+                        self.sync_capture_service.settings_ops
                     ),
                     error=str(e),
                 ),
@@ -900,6 +900,6 @@ class AsyncImageCaptureService:
                 connection_status="async_error",
                 error=str(e),
                 test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
-                    self.sync_capture_service.db
+                    self.sync_capture_service.settings_ops
                 ),
             )

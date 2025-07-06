@@ -18,6 +18,7 @@ from ..models.shared_models import CorruptionSettings
 from ..database.sse_events_operations import SSEEventsOperations
 from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
 from ..utils.hashing import hash_api_key, mask_api_key
+from ..utils.conversion_utils import safe_int
 from .api_key_service import APIKeyService, SyncAPIKeyService
 from ..constants import (
     EVENT_SETTING_UPDATED,
@@ -527,45 +528,45 @@ class SettingsService:
 
     def _validate_capture_interval(self, value: str) -> Dict[str, Any]:
         """Validate capture interval setting."""
-        try:
-            interval = int(value)
-            if interval < MIN_CAPTURE_INTERVAL_SECONDS:
-                return {
-                    "valid": False,
-                    "error": f"Capture interval must be at least {MIN_CAPTURE_INTERVAL_SECONDS} seconds",
-                    "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
-                }
-            if interval > MAX_CAPTURE_INTERVAL_SECONDS:
-                return {
-                    "valid": False,
-                    "error": f"Capture interval cannot exceed {MAX_CAPTURE_INTERVAL_SECONDS} seconds",
-                    "suggested_value": str(MAX_CAPTURE_INTERVAL_SECONDS),
-                }
-            return {"valid": True, "formatted_value": str(interval)}
-        except ValueError:
+        interval = safe_int(value)
+        if interval is None:
             return {
                 "valid": False,
                 "error": "Capture interval must be a valid integer",
                 "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
             }
+        
+        if interval < MIN_CAPTURE_INTERVAL_SECONDS:
+            return {
+                "valid": False,
+                "error": f"Capture interval must be at least {MIN_CAPTURE_INTERVAL_SECONDS} seconds",
+                "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
+            }
+        if interval > MAX_CAPTURE_INTERVAL_SECONDS:
+            return {
+                "valid": False,
+                "error": f"Capture interval cannot exceed {MAX_CAPTURE_INTERVAL_SECONDS} seconds",
+                "suggested_value": str(MAX_CAPTURE_INTERVAL_SECONDS),
+            }
+        return {"valid": True, "formatted_value": str(interval)}
 
     def _validate_corruption_threshold(self, value: str) -> Dict[str, Any]:
         """Validate corruption threshold setting."""
-        try:
-            threshold = int(value)
-            if threshold < 0 or threshold > 100:
-                return {
-                    "valid": False,
-                    "error": "Corruption threshold must be between 0 and 100",
-                    "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
-                }
-            return {"valid": True, "formatted_value": str(threshold)}
-        except ValueError:
+        threshold = safe_int(value)
+        if threshold is None:
             return {
                 "valid": False,
                 "error": "Corruption threshold must be a valid integer",
                 "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
             }
+        
+        if threshold < 0 or threshold > 100:
+            return {
+                "valid": False,
+                "error": "Corruption threshold must be between 0 and 100",
+                "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
+            }
+        return {"valid": True, "formatted_value": str(threshold)}
 
     def _validate_data_directory(self, value: str) -> Dict[str, Any]:
         """Validate data directory setting."""

@@ -3,4 +3,5 @@
   fenced-code-language: false,
   line-length: false,
   no-duplicate-heading: false,
+  no-emphasis-as-heading: false,
 }

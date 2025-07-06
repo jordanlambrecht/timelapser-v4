@@ -685,12 +685,13 @@ class SyncVideoOperations:
 
                 return affected or 0
 
-    def create_video_generation_job(self, job_data: Dict[str, Any]) -> Optional[int]:
+    def create_video_generation_job(self, job_data: Dict[str, Any], event_timestamp: Optional[str] = None) -> Optional[int]:
         """
         Create a new video generation job (sync version).
         
         Args:
             job_data: Dictionary containing job configuration
+            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
             
         Returns:
             Job ID if successful, None if failed
@@ -721,22 +722,22 @@ class SyncVideoOperations:
                         conn.commit()
                         
                         # Broadcast SSE event
-                        try:
-                            from ..utils.timezone_utils import get_timezone_aware_timestamp_sync
-                            from ..constants import EVENT_VIDEO_JOB_QUEUED
-                            
-                            self.db.broadcast_event(
-                                EVENT_VIDEO_JOB_QUEUED,
-                                {
-                                    "job_id": job_id,
-                                    "timelapse_id": job_data.get("timelapse_id"),
-                                    "trigger_type": job_data.get("trigger_type"),
-                                    "priority": job_data.get("priority", "medium"),
-                                    "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
-                                },
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to broadcast job queued event: {e}")
+                        if event_timestamp:
+                            try:
+                                from ..constants import EVENT_VIDEO_JOB_QUEUED
+                                
+                                self.db.broadcast_event(
+                                    EVENT_VIDEO_JOB_QUEUED,
+                                    {
+                                        "job_id": job_id,
+                                        "timelapse_id": job_data.get("timelapse_id"),
+                                        "trigger_type": job_data.get("trigger_type"),
+                                        "priority": job_data.get("priority", "medium"),
+                                        "timestamp": event_timestamp,
+                                    },
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to broadcast job queued event: {e}")
                         
                         return job_id
                     return None
@@ -744,12 +745,13 @@ class SyncVideoOperations:
             logger.error(f"Failed to create video generation job: {e}")
             return None
 
-    def start_video_generation_job(self, job_id: int) -> bool:
+    def start_video_generation_job(self, job_id: int, event_timestamp: Optional[str] = None) -> bool:
         """
         Mark a video generation job as started.
         
         Args:
             job_id: ID of the job to start
+            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
             
         Returns:
             True if successful, False otherwise
@@ -772,26 +774,26 @@ class SyncVideoOperations:
                         conn.commit()
                         
                         # Broadcast SSE event
-                        try:
-                            from ..utils.timezone_utils import get_timezone_aware_timestamp_sync
-                            from ..constants import EVENT_VIDEO_JOB_STARTED
-                            
-                            self.db.broadcast_event(
-                                EVENT_VIDEO_JOB_STARTED,
-                                {
-                                    "job_id": job_id,
-                                    "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
-                                },
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to broadcast job started event: {e}")
+                        if event_timestamp:
+                            try:
+                                from ..constants import EVENT_VIDEO_JOB_STARTED
+                                
+                                self.db.broadcast_event(
+                                    EVENT_VIDEO_JOB_STARTED,
+                                    {
+                                        "job_id": job_id,
+                                        "timestamp": event_timestamp,
+                                    },
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to broadcast job started event: {e}")
                     
                     return success
         except Exception as e:
             logger.error(f"Failed to start video generation job {job_id}: {e}")
             return False
 
-    def complete_video_generation_job(self, job_id: int, success: bool, error_message: Optional[str] = None, video_path: Optional[str] = None) -> bool:
+    def complete_video_generation_job(self, job_id: int, success: bool, error_message: Optional[str] = None, video_path: Optional[str] = None, event_timestamp: Optional[str] = None) -> bool:
         """
         Mark a video generation job as completed.
         
@@ -800,6 +802,7 @@ class SyncVideoOperations:
             success: Whether the job completed successfully
             error_message: Error message if job failed
             video_path: Path to generated video if successful
+            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
             
         Returns:
             True if update successful, False otherwise
@@ -823,21 +826,21 @@ class SyncVideoOperations:
                         conn.commit()
                         
                         # Broadcast SSE event
-                        try:
-                            from ..utils.timezone_utils import get_timezone_aware_timestamp_sync
-                            from ..constants import EVENT_VIDEO_JOB_COMPLETED
-                            
-                            self.db.broadcast_event(
-                                EVENT_VIDEO_JOB_COMPLETED,
-                                {
-                                    "job_id": job_id,
-                                    "success": success,
-                                    "video_path": video_path,
-                                    "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
-                                },
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to broadcast job completed event: {e}")
+                        if event_timestamp:
+                            try:
+                                from ..constants import EVENT_VIDEO_JOB_COMPLETED
+                                
+                                self.db.broadcast_event(
+                                    EVENT_VIDEO_JOB_COMPLETED,
+                                    {
+                                        "job_id": job_id,
+                                        "success": success,
+                                        "video_path": video_path,
+                                        "timestamp": event_timestamp,
+                                    },
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to broadcast job completed event: {e}")
                     
                     return update_success
         except Exception as e:

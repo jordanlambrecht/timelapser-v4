@@ -2,15 +2,18 @@
 """
 Thumbnail management HTTP endpoints.
 
-Role: Thumbnail management HTTP endpoints
+Role: Thumbnail management HTTP endpoints  
 Responsibilities: Thumbnail generation, regeneration, and serving operations
 Interactions: Uses ImageService for business logic, delegates to services following the layered architecture pattern
+
+Updated: 2025-07-06 - Debugging thumbnail regeneration endpoints
 """
 
 
 from fastapi import APIRouter, BackgroundTasks, Query
+from loguru import logger
 
-from ..dependencies import ImageServiceDep, SettingsServiceDep
+from ..dependencies import ThumbnailServiceDep, SettingsServiceDep
 from ..models.shared_models import (
     ThumbnailGenerationResult,
     ThumbnailRegenerationStatus,
@@ -42,7 +45,7 @@ router = APIRouter(tags=["thumbnails"])
 @handle_exceptions("generate thumbnail for image")
 async def generate_thumbnail_for_image(
     image_id: int,
-    image_service: ImageServiceDep,
+    thumbnail_service: ThumbnailServiceDep,
     settings_service: SettingsServiceDep,
     force_regenerate: bool = Query(
         False, description="Force regeneration even if thumbnails exist"
@@ -58,12 +61,9 @@ async def generate_thumbnail_for_image(
     Returns:
         ThumbnailGenerationResult with generation details
     """
-    # Validate image exists (using router helper)
-    await validate_entity_exists(image_service.get_image_by_id, image_id, "image")
-
     # Use database-aware timezone for timing (cache-backed)
     start_time = await get_timezone_aware_timestamp_async(settings_service)
-    result = await image_service.coordinate_thumbnail_generation(
+    result = await thumbnail_service.generate_thumbnail_for_image(
         image_id, force_regenerate
     )
     end_time = await get_timezone_aware_timestamp_async(settings_service)
@@ -80,7 +80,7 @@ async def generate_thumbnail_for_image(
 @router.get("/thumbnails/stats", response_model=ThumbnailStatistics)
 @handle_exceptions("get thumbnail statistics")
 async def get_thumbnail_stats(
-    image_service: ImageServiceDep, settings_service: SettingsServiceDep
+    thumbnail_service: ThumbnailServiceDep, settings_service: SettingsServiceDep
 ):
     """
     Get comprehensive thumbnail statistics.
@@ -88,108 +88,63 @@ async def get_thumbnail_stats(
     Returns:
         ThumbnailStatistics with coverage and storage information
     """
-    # TODO: Implement get_thumbnail_statistics in ImageService
-    # For now, return placeholder statistics
-    stats_data = {
-        "total_images": 0,
-        "images_with_thumbnails": 0,
-        "images_with_small": 0,
-        "images_without_thumbnails": 0,
-        "thumbnail_coverage_percentage": 0.0,
-        "total_thumbnail_storage_mb": 0.0,
-        "total_small_storage_mb": 0.0,
-        "avg_thumbnail_size_kb": 0.0,
-        "avg_small_size_kb": 0.0,
-    }
+    return await thumbnail_service.get_thumbnail_statistics()
 
-    # Use database-aware timezone for last_updated timestamp
-    current_time = await get_timezone_aware_timestamp_async(settings_service)
 
-    return ThumbnailStatistics(**stats_data, last_updated=current_time)
 
 
 @router.post("/thumbnails/regenerate-all", response_model=ThumbnailOperationResponse)
-@router.post(
-    "/thumbnails/regenerate", response_model=ThumbnailOperationResponse, deprecated=True
-)
+@router.post("/thumbnails/regenerate", deprecated=True)
 @handle_exceptions("start thumbnail regeneration")
 async def start_thumbnail_regeneration(
-    image_service: ImageServiceDep,
+    thumbnail_service: ThumbnailServiceDep,
     settings_service: SettingsServiceDep,
-    limit: int = Query(
-        100, ge=1, le=1000, description="Maximum number of images to process"
-    ),
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of images to process"),
 ):
     """
-    Start thumbnail regeneration for images missing thumbnails.
+    Start thumbnail regeneration for all images.
 
     Args:
-        limit: Maximum number of images to process in this batch
+        limit: Maximum number of images to regenerate (1-10000)
 
     Returns:
         ThumbnailOperationResponse with operation status
     """
-    # TODO: Implement get_images_without_thumbnails in ImageService
-    # For now, return empty list to prevent errors
-    images_without_thumbnails = []
-
-    # Use database-aware timezone for timestamps
     current_time = await get_timezone_aware_timestamp_async(settings_service)
-
-    if not images_without_thumbnails:
-        return ThumbnailOperationResponse(
-            success=True,
-            message="No images need thumbnail regeneration",
-            operation="regenerate",
-            data={"images_processed": 0},
-            timestamp=current_time,
-        )
-
-    # TODO: Implement start_thumbnail_regeneration in ImageService
-    # For now, this endpoint returns success but doesn't process anything
-
-    # SSE broadcasting handled by service layer (proper architecture)
-
+    
+    # Start regeneration via ThumbnailService
+    result = await thumbnail_service.start_thumbnail_regeneration(limit)
+    
     return ThumbnailOperationResponse(
-        success=True,
-        message=f"Thumbnail regeneration started for {len(images_without_thumbnails)} images",
+        success=result["success"],
+        message=result["message"],
         operation="regenerate",
-        data={
-            "images_to_process": len(images_without_thumbnails),
-            "started_at": current_time.isoformat(),
-        },
+        data={"limit": limit},
         timestamp=current_time,
     )
 
 
-@router.get(
-    "/thumbnails/regenerate-all/status", response_model=ThumbnailRegenerationStatus
-)
-@handle_exceptions("get regeneration status")
-async def get_regeneration_status():
+@router.get("/thumbnails/regenerate-all/status", response_model=ThumbnailRegenerationStatus)
+@handle_exceptions("get thumbnail regeneration status")
+async def get_regeneration_status(
+    thumbnail_service: ThumbnailServiceDep,
+):
     """
     Get current thumbnail regeneration status.
 
     Returns:
         ThumbnailRegenerationStatus with current progress
     """
-    # TODO: Implement proper state management in ImageService
-    # For now, return idle status to maintain functionality
-    return ThumbnailRegenerationStatus(
-        active=False,
-        progress=0,
-        status_message="idle",
-        total_images=0,
-        completed_images=0,
-        failed_images=0,
-    )
+    return await thumbnail_service.get_thumbnail_regeneration_status()
 
 
 @router.post(
     "/thumbnails/regenerate-all/cancel", response_model=ThumbnailOperationResponse
 )
 @handle_exceptions("cancel thumbnail regeneration")
-async def cancel_thumbnail_regeneration(settings_service: SettingsServiceDep):
+async def cancel_thumbnail_regeneration(
+    thumbnail_service: ThumbnailServiceDep, settings_service: SettingsServiceDep
+):
     """
     Cancel currently running thumbnail regeneration process.
 
@@ -198,13 +153,46 @@ async def cancel_thumbnail_regeneration(settings_service: SettingsServiceDep):
     """
     current_time = await get_timezone_aware_timestamp_async(settings_service)
 
-    # TODO: Implement proper cancellation in ImageService
-    # For now, return "no active operation" to maintain functionality
+    # Cancel via ThumbnailService
+    result = await thumbnail_service.cancel_thumbnail_regeneration()
+
     return ThumbnailOperationResponse(
-        success=False,
-        message="No active thumbnail regeneration to cancel",
+        success=result["success"],
+        message=result["message"],
         operation="cancel",
-        data={"active": False},
+        data={"cancelled_at": current_time.isoformat()},
+        timestamp=current_time,
+    )
+
+
+@router.delete("/thumbnails/delete-all", response_model=ThumbnailOperationResponse)
+@handle_exceptions("delete all thumbnails")
+async def delete_all_thumbnails(
+    thumbnail_service: ThumbnailServiceDep,
+    settings_service: SettingsServiceDep,
+):
+    """
+    Delete all thumbnail files and clear database references.
+
+    Returns:
+        ThumbnailOperationResponse with deletion results
+    """
+    current_time = await get_timezone_aware_timestamp_async(settings_service)
+    
+    # Start deletion via ThumbnailService
+    result = await thumbnail_service.delete_all_thumbnails()
+    
+    return ThumbnailOperationResponse(
+        success=result["success"],
+        message=result["message"],
+        operation="delete_all",
+        data={
+            "deleted_files": result.get("deleted_files", 0),
+            "deleted_size_mb": result.get("deleted_size_mb", 0.0),
+            "cameras_processed": result.get("cameras_processed", 0),
+            "cleared_database_records": result.get("cleared_database_records", 0),
+            "errors": len(result.get("errors", []))
+        },
         timestamp=current_time,
     )
 
@@ -212,7 +200,7 @@ async def cancel_thumbnail_regeneration(settings_service: SettingsServiceDep):
 @router.delete("/thumbnails/cleanup", response_model=ThumbnailOperationResponse)
 @handle_exceptions("cleanup orphaned thumbnails")
 async def cleanup_orphaned_thumbnails(
-    image_service: ImageServiceDep,
+    thumbnail_service: ThumbnailServiceDep,
     settings_service: SettingsServiceDep,
     dry_run: bool = Query(
         False, description="Preview cleanup without actually deleting files"

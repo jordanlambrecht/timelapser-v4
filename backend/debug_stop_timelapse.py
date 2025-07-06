@@ -23,8 +23,12 @@ async def debug_stop_timelapse():
     db = AsyncDatabase()
     await db.initialize()
     
-    # Create camera operations
-    camera_ops = AsyncCameraOperations(db, None)  # No settings service for this test
+    # Initialize settings service (required for timezone operations)
+    from app.services.settings_service import SettingsService
+    settings_service = SettingsService(db)
+    
+    # Create camera operations with proper settings service
+    camera_ops = AsyncCameraOperations(db, settings_service)
     
     try:
         # Test the update_camera call that's failing

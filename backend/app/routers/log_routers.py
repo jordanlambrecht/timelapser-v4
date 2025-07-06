@@ -244,10 +244,10 @@ async def search_logs(
 async def cleanup_old_logs(
     log_service: LogServiceDep,
     days_to_keep: int = Query(
-        30, ge=1, le=365, description="Number of days of logs to keep"
+        30, ge=0, le=365, description="Number of days of logs to keep (0 = delete all logs)"
     ),
 ):
-    """Clean up logs older than the specified number of days"""
+    """Clean up logs older than the specified number of days (0 = delete all logs)"""
 
     # Perform cleanup using the existing service method
     deleted_count = await log_service.delete_old_logs(days_to_keep)

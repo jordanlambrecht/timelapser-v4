@@ -17,7 +17,16 @@ class DatabaseLogHandler:
         self._last_settings_check = 0
 
     def _get_user_log_level(self) -> str:
-        """Get user-configured log level from database settings."""
+        """
+        Get user-configured log level from database settings.
+
+        The enable_debug_logging setting overrides the log_level setting when enabled.
+        This allows users to temporarily enable debug logging without changing their
+        normal log level configuration.
+
+        Returns:
+            str: The effective log level ("DEBUG" if debug logging enabled, otherwise the configured log_level)
+        """
         import time
 
         # Cache settings check for 30 seconds to avoid excessive DB queries
@@ -28,6 +37,17 @@ class DatabaseLogHandler:
         try:
             with self.sync_db.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # Check if debug logging is enabled (overrides log_level)
+                    cur.execute(
+                        "SELECT value FROM settings WHERE key = 'enable_debug_logging'"
+                    )
+                    debug_result = cur.fetchone()
+                    if debug_result and debug_result[0].lower() == "true":
+                        self._cached_log_level = "DEBUG"
+                        self._last_settings_check = current_time
+                        return self._cached_log_level
+
+                    # Otherwise use the configured log_level
                     cur.execute("SELECT value FROM settings WHERE key = 'log_level'")
                     result = cur.fetchone()
                     if result:

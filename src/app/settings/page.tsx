@@ -7,7 +7,7 @@ import { useSettings, useSettingsActions } from "@/contexts/settings-context"
 import { DangerZoneCard } from "./components/danger-zone-card"
 import { TimezoneSettingsCard } from "./components/timezone-settings-card"
 import { LoggingSettingsCard } from "./components/logging-settings-card"
-import { ApiKeySettingsCard } from "./components/api-key-settings-card"
+import { SeparatedLoggingSettingsCard } from "./components/separated-logging-settings-card"
 import { CaptureSettingsCard } from "./components/capture-settings-card"
 import { CorruptionSettingsCard } from "./components/corruption-settings-card"
 import { WeatherSettingsCard } from "./components/weather-settings-card"
@@ -51,14 +51,8 @@ export default function Settings() {
         {/* Weather Settings - Full Width */}
         <WeatherSettingsCard />
 
-        {/* Additional Settings Grid */}
-        <div className='grid gap-6 lg:grid-cols-2'>
-          {/* External Services */}
-          <ApiKeySettingsCard />
-
-          {/* System Maintenance */}
-          <LoggingSettingsCard />
-        </div>
+        {/* System Maintenance */}
+        <SeparatedLoggingSettingsCard />
 
         {/* Corruption Detection Settings - Full Width */}
         <CorruptionSettingsCard />
@@ -95,7 +89,7 @@ export default function Settings() {
           openWeatherApiKey: settings.openWeatherApiKey,
           generateThumbnails: settings.generateThumbnails,
           imageCaptureType: settings.imageCaptureType,
-          logLevel: settings.logLevel,
+          logLevel: settings.dbLogLevel,
         }}
       />
 

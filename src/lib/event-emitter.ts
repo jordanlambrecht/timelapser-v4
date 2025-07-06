@@ -33,6 +33,7 @@ const ALLOWED_EVENT_TYPES = [
   "timelapse_updated",
   "timelapse_deleted",
   "timelapse_started",
+  "logs_cleanup_completed",
   "timelapse_paused",
   "timelapse_stopped",
   "timelapse_completed",
@@ -44,6 +45,8 @@ const ALLOWED_EVENT_TYPES = [
   "camera_corruption_reset",
   "corruption_stats_updated",
   "corruption_settings_updated",
+  // Weather events
+  "weather_updated",
 ] as const
 
 type AllowedEventType = (typeof ALLOWED_EVENT_TYPES)[number]

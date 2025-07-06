@@ -68,33 +68,39 @@ class LogService:
     def _sanitize_string_input(self, input_value: str, max_length: int = 1000) -> str:
         """
         Sanitize string input to prevent injection attacks and limit length.
-        
+
         Args:
             input_value: String to sanitize
             max_length: Maximum allowed length
-            
+
         Returns:
             Sanitized string
         """
         if not isinstance(input_value, str):
             return ""
-        
+
         # Remove potentially dangerous characters
-        sanitized = input_value.replace('<', '').replace('>', '').replace('&', '').replace('"', '').replace("'", '')
-        
+        sanitized = (
+            input_value.replace("<", "")
+            .replace(">", "")
+            .replace("&", "")
+            .replace('"', "")
+            .replace("'", "")
+        )
+
         # Limit length
         if len(sanitized) > max_length:
             sanitized = sanitized[:max_length]
-            
+
         return sanitized.strip()
 
     def _validate_log_level(self, level: str) -> Optional[str]:
         """
         Validate and sanitize log level input.
-        
+
         Args:
             level: Log level to validate
-            
+
         Returns:
             Valid log level or None if invalid
         """
@@ -132,8 +138,10 @@ class LogService:
         # Sanitize string inputs
         sanitized_level = self._validate_log_level(level) if level else None
         sanitized_source = self._sanitize_string_input(source, 50) if source else None
-        sanitized_search_query = self._sanitize_string_input(search_query, 200) if search_query else None
-        
+        sanitized_search_query = (
+            self._sanitize_string_input(search_query, 200) if search_query else None
+        )
+
         return await self.log_ops.get_logs(
             camera_id,
             sanitized_level,
@@ -195,20 +203,21 @@ class LogService:
 
         Args:
             days_to_keep: Number of days to keep logs (default from constants)
+                         If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted
         """
-        # Validate retention period
+        # Validate retention period (allow 0 for delete all)
         if days_to_keep > MAX_LOG_RETENTION_DAYS:
             days_to_keep = MAX_LOG_RETENTION_DAYS
-        elif days_to_keep < 1:
+        elif days_to_keep < 0:
             days_to_keep = DEFAULT_LOG_RETENTION_DAYS
 
         deleted_count = await self.log_ops.delete_old_logs(days_to_keep)
-        
+
         # SSE broadcasting handled by higher-level service layer
-        
+
         return deleted_count
 
     async def aggregate_logs_from_services(
@@ -228,8 +237,12 @@ class LogService:
             timestamp = await get_timezone_aware_timestamp_async(self.db)
 
             # Sanitize service names to prevent injection
-            sanitized_services = [self._sanitize_string_input(service, 50) for service in services if service]
-            
+            sanitized_services = [
+                self._sanitize_string_input(service, 50)
+                for service in services
+                if service
+            ]
+
             # Limit number of services to prevent resource exhaustion
             if len(sanitized_services) > 10:
                 sanitized_services = sanitized_services[:10]
@@ -249,7 +262,9 @@ class LogService:
 
             # Aggregate logs from each service
             for service in sanitized_services:
-                service_logs = await self.get_logs(source=service, page_size=MAX_LOG_PAGE_SIZE)
+                service_logs = await self.get_logs(
+                    source=service, page_size=MAX_LOG_PAGE_SIZE
+                )
                 service_summary = await self.get_log_summary_for_service(service, hours)
 
                 aggregated_data["service_logs"][service] = {
@@ -384,12 +399,14 @@ class LogService:
         """
         try:
             timestamp = await get_timezone_aware_timestamp_async(self.db)
-            
+
             # Sanitize inputs for security
             sanitized_action = self._sanitize_string_input(action, 50)
             sanitized_entity_type = self._sanitize_string_input(entity_type, 50)
-            sanitized_user_id = self._sanitize_string_input(user_id, 100) if user_id else None
-            
+            sanitized_user_id = (
+                self._sanitize_string_input(user_id, 100) if user_id else None
+            )
+
             # Sanitize changes dictionary values
             sanitized_changes = {}
             if isinstance(changes, dict):
@@ -398,9 +415,11 @@ class LogService:
                     if isinstance(value, str):
                         safe_value = self._sanitize_string_input(value, 500)
                     else:
-                        safe_value = str(value)[:500]  # Convert to string and limit length
+                        safe_value = str(value)[
+                            :500
+                        ]  # Convert to string and limit length
                     sanitized_changes[safe_key] = safe_value
-            
+
             audit_entry = {
                 "timestamp": timestamp.isoformat(),
                 "action": sanitized_action,
@@ -841,14 +860,15 @@ class SyncLogService:
 
         Args:
             days_to_keep: Number of days to keep logs (default from constants)
+                         If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted
         """
-        # Validate retention period
+        # Validate retention period (allow 0 for delete all)
         if days_to_keep > MAX_LOG_RETENTION_DAYS:
             days_to_keep = MAX_LOG_RETENTION_DAYS
-        elif days_to_keep < 1:
+        elif days_to_keep < 0:
             days_to_keep = DEFAULT_LOG_RETENTION_DAYS
 
         return self.log_ops.cleanup_old_logs(days_to_keep)
