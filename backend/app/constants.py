@@ -530,3 +530,60 @@ HEALTH_DEGRADED_PENALTY = 50
 HEALTH_FLAGGED_PENALTY = 30
 HEALTH_ACTIVITY_PERFECT_SCORE = 10
 DEFAULT_STATISTICS_RETENTION_DAYS = 365
+
+# ====================================================================
+# THUMBNAIL JOB CONSTANTS
+# ====================================================================
+
+# Thumbnail job statuses
+THUMBNAIL_JOB_STATUS_PENDING = "pending"
+THUMBNAIL_JOB_STATUS_PROCESSING = "processing"
+THUMBNAIL_JOB_STATUS_COMPLETED = "completed"
+THUMBNAIL_JOB_STATUS_FAILED = "failed"
+THUMBNAIL_JOB_STATUS_CANCELLED = "cancelled"
+
+# Thumbnail job priorities
+THUMBNAIL_JOB_PRIORITY_HIGH = "high"      # Manual operations from settings UI
+THUMBNAIL_JOB_PRIORITY_MEDIUM = "medium"  # New image captures
+THUMBNAIL_JOB_PRIORITY_LOW = "low"        # Bulk background operations
+
+# Thumbnail job types
+THUMBNAIL_JOB_TYPE_SINGLE = "single"      # Single image processing
+THUMBNAIL_JOB_TYPE_BULK = "bulk"          # Bulk operation processing
+
+# Job queue configuration defaults - OPTIMIZED FOR PERFORMANCE
+DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 10      # Increased from 5 for better throughput
+DEFAULT_THUMBNAIL_WORKER_INTERVAL = 3     # Reduced from 10s for faster response 
+DEFAULT_THUMBNAIL_MAX_RETRIES = 3
+DEFAULT_THUMBNAIL_CLEANUP_HOURS = 24
+
+# High-load configuration (for busy systems)
+HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 20   # For systems with many cameras
+HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 1  # Near real-time processing
+
+# Memory optimization settings
+THUMBNAIL_MEMORY_LIMIT_MB = 512           # Memory limit per worker
+THUMBNAIL_CONCURRENT_JOBS = 3             # Concurrent processing limit
+
+# Retry backoff timing (minutes) - OPTIMIZED
+THUMBNAIL_JOB_RETRY_DELAYS = [2, 10, 30]  # 2min, 10min, 30min - less aggressive
+
+# Thumbnail job settings keys
+SETTING_KEY_THUMBNAIL_JOB_BATCH_SIZE = "thumbnail_job_batch_size"
+SETTING_KEY_THUMBNAIL_WORKER_INTERVAL = "thumbnail_worker_interval"
+SETTING_KEY_THUMBNAIL_MAX_RETRIES = "thumbnail_max_retries"
+SETTING_KEY_THUMBNAIL_CLEANUP_HOURS = "thumbnail_cleanup_hours"
+SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
+SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
+SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = "thumbnail_purge_smalls_on_completion"
+
+# Performance optimization settings
+SETTING_KEY_THUMBNAIL_HIGH_LOAD_MODE = "thumbnail_high_load_mode"
+SETTING_KEY_THUMBNAIL_MEMORY_LIMIT = "thumbnail_memory_limit_mb"
+SETTING_KEY_THUMBNAIL_CONCURRENT_JOBS = "thumbnail_concurrent_jobs"
+
+# Performance thresholds for adaptive scaling
+THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50    # Switch to high-load mode
+THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10     # Switch back to normal mode
+THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000 # Log slow processing warning
+THUMBNAIL_MEMORY_WARNING_THRESHOLD = 0.8    # Memory usage warning (80%)
