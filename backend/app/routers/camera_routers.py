@@ -12,7 +12,7 @@ Architecture: API Layer - delegates all business logic to services
 
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, status, Path as FastAPIPath, Response
+from fastapi import APIRouter, HTTPException, status, Path as FastAPIPath, Response, Request
 from fastapi.responses import FileResponse
 from loguru import logger
 
@@ -62,6 +62,7 @@ from ..utils.cache_manager import (
     generate_composite_etag,
     generate_collection_etag,
     generate_content_hash_etag,
+    validate_etag_match,
 )
 
 # TODO: CACHING STRATEGY - MIXED APPROACH
@@ -670,6 +671,7 @@ async def get_camera_latest_image_unified(
 @router.get("/cameras/{camera_id}/latest-image/thumbnail")
 @handle_exceptions("serve camera latest image thumbnail")
 async def serve_camera_latest_image_thumbnail(
+    request: Request,
     response: Response,
     image_service: ImageServiceDep,
     camera_service: CameraServiceDep,
@@ -688,6 +690,14 @@ async def serve_camera_latest_image_thumbnail(
 
     # Generate ETag based on image ID and captured timestamp for cache validation
     etag = generate_composite_etag(latest_image.id, latest_image.captured_at)
+    
+    # Check If-None-Match header for 304 Not Modified
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and validate_etag_match(if_none_match, etag):
+        response.status_code = status.HTTP_304_NOT_MODIFIED
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
     # Add aggressive caching for thumbnails with proper ETag
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
@@ -703,6 +713,7 @@ async def serve_camera_latest_image_thumbnail(
 @router.get("/cameras/{camera_id}/latest-image/small")
 @handle_exceptions("serve camera latest image small")
 async def serve_camera_latest_image_small(
+    request: Request,
     response: Response,
     image_service: ImageServiceDep,
     camera_service: CameraServiceDep,
@@ -721,6 +732,14 @@ async def serve_camera_latest_image_small(
 
     # Generate ETag based on image ID and captured timestamp for better cache validation
     etag = generate_composite_etag(latest_image.id, latest_image.captured_at)
+    
+    # Check If-None-Match header for 304 Not Modified
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and validate_etag_match(if_none_match, etag):
+        response.status_code = status.HTTP_304_NOT_MODIFIED
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
     # Add caching for small images with improved ETag
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes

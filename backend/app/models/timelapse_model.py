@@ -172,6 +172,8 @@ class Timelapse(TimelapseBase):
         return str(v)
 
     image_count: int = 0
+    thumbnail_count: int = 0
+    small_count: int = 0
     last_capture_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime

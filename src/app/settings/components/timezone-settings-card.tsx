@@ -15,7 +15,7 @@ import { Globe } from "lucide-react"
 
 export function TimezoneSettingsCard() {
   const { timezone, saving, setTimezone } = useSettings()
-  
+
   // Debug timezone changes
   const handleTimezoneChange = (newTimezone: string) => {
     console.log(

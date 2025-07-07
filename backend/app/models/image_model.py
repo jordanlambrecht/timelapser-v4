@@ -6,7 +6,9 @@ from datetime import datetime
 
 class ImageBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
-    timelapse_id: int = Field(..., description="ID of the associated timelapse")
+    timelapse_id: Optional[int] = Field(
+        None, description="ID of the associated timelapse (None for legacy images)"
+    )
     file_path: str = Field(..., description="Path to the image file")
     day_number: int = Field(
         ..., ge=1, description="Day number in the timelapse sequence"

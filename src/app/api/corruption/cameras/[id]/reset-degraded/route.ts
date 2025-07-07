@@ -37,7 +37,7 @@ export async function POST(
 
     // Broadcast SSE event for real-time updates
     eventEmitter.emit({
-      type: "camera_degraded_mode_reset",
+      type: "camera_corruption_reset",
       data: {
         camera_id: cameraId,
         degraded_mode_active: false,

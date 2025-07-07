@@ -216,19 +216,8 @@ class CleanupWorker(BaseWorker):
                 f"rate_limiter: {cleanup_results.get('rate_limiter', 0)})"
             )
 
-            # Broadcast cleanup event for frontend
-            if hasattr(self.sync_db, "broadcast_event"):
-                self.sync_db.broadcast_event(
-                    {
-                        "type": "system_cleanup_completed",
-                        "data": {
-                            "timestamp": start_time.isoformat(),
-                            "duration_seconds": duration,
-                            "total_cleaned": total_cleaned,
-                            "results": cleanup_results,
-                        },
-                    }
-                )
+            # Note: SyncDatabase doesn't support broadcast_event (async only feature)
+            # Frontend will need to poll for cleanup status or use async endpoints
 
         except Exception as e:
             logger.error(f"🧹 Error during cleanup cycle: {e}")
@@ -238,24 +227,37 @@ class CleanupWorker(BaseWorker):
         """Get retention settings from user configuration."""
         try:
             # Get settings with fallback to defaults
+            def get_int_setting(key: str, default: int) -> int:
+                """Helper to get integer setting with proper type conversion."""
+                value = self.settings_service.get_setting(key, str(default))
+                if value is None:
+                    return default
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Invalid {key} setting '{value}', using default: {default}"
+                    )
+                    return default
+
             return {
-                "log_retention_days": self.settings_service.get_setting(
+                "log_retention_days": get_int_setting(
                     "log_retention_days", DEFAULT_LOG_RETENTION_DAYS
                 ),
-                "image_retention_days": self.settings_service.get_setting(
+                "image_retention_days": get_int_setting(
                     "image_retention_days", DEFAULT_IMAGE_RETENTION_DAYS
                 ),
-                "video_cleanup_days": self.settings_service.get_setting(
+                "video_cleanup_days": get_int_setting(
                     "video_cleanup_days", DEFAULT_VIDEO_CLEANUP_DAYS
                 ),
-                "timelapse_retention_days": self.settings_service.get_setting(
+                "timelapse_retention_days": get_int_setting(
                     "timelapse_retention_days", 90
                 ),
-                "corruption_logs_retention_days": self.settings_service.get_setting(
+                "corruption_logs_retention_days": get_int_setting(
                     "corruption_logs_retention_days",
                     DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
                 ),
-                "statistics_retention_days": self.settings_service.get_setting(
+                "statistics_retention_days": get_int_setting(
                     "statistics_retention_days", DEFAULT_STATISTICS_RETENTION_DAYS
                 ),
             }
@@ -274,7 +276,8 @@ class CleanupWorker(BaseWorker):
         """Clean up old log entries."""
         try:
             if self.log_service:
-                return self.log_service.delete_old_logs(days_to_keep)
+                # Use cleanup_old_logs method which exists on SyncLogService
+                return self.log_service.cleanup_old_logs(days_to_keep)
             return 0
         except Exception as e:
             logger.error(f"Failed to cleanup logs: {e}")

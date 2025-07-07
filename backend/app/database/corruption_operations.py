@@ -359,7 +359,7 @@ class CorruptionOperations:
         """Update global corruption detection settings (async version)."""
         if not settings:
             return
-            
+
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
                 for key, value in settings.items():
@@ -372,7 +372,7 @@ class CorruptionOperations:
                         ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                         """,
-                        (db_key, str(value))
+                        (db_key, str(value)),
                     )
 
     async def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
@@ -851,7 +851,7 @@ class SyncCorruptionOperations:
         """Update global corruption detection settings (sync version)."""
         if not settings:
             return
-            
+
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
                 for key, value in settings.items():
@@ -864,7 +864,7 @@ class SyncCorruptionOperations:
                         ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                         """,
-                        (db_key, str(value))
+                        (db_key, str(value)),
                     )
 
     def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
@@ -895,12 +895,12 @@ class SyncCorruptionOperations:
     ) -> bool:
         """
         Update camera corruption statistics after evaluation.
-        
+
         Args:
             camera_id: ID of the camera
             corruption_score: Corruption score from evaluation
             is_valid: Whether the image was considered valid
-            
+
         Returns:
             True if update was successful
         """
@@ -914,7 +914,7 @@ class SyncCorruptionOperations:
                     updated_at = NOW()
                 WHERE id = %s
                 """
-                
+
                 with self.db.get_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(query, (camera_id,))
@@ -928,13 +928,15 @@ class SyncCorruptionOperations:
                     updated_at = NOW()
                 WHERE id = %s
                 """
-                
+
                 with self.db.get_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(query, (camera_id,))
                         affected = cur.rowcount
                         return affected and affected > 0
-                        
+
         except Exception as e:
-            logger.error(f"Failed to update camera corruption stats for camera {camera_id}: {e}")
+            logger.error(
+                f"Failed to update camera corruption stats for camera {camera_id}: {e}"
+            )
             return False
