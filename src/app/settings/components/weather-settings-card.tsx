@@ -10,15 +10,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
 import { NumberInput } from "@/components/ui/number-input"
 import { Badge } from "@/components/ui/badge"
 import { Switch, SuperSwitch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import {
-  PasswordInput,
-  type PasswordInputProps,
-} from "@/components/ui/password-input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -38,7 +34,6 @@ import {
   getWeatherIcon,
   formatTemperature,
   capitalizeWords,
-  type WeatherData,
   type ApiKeyValidationResult,
 } from "@/lib/weather-api"
 
@@ -91,7 +86,7 @@ export function WeatherSettingsCard() {
   const [showApiKey, setShowApiKey] = useState(false)
   const apiKeyInputRef = useRef<HTMLInputElement>(null)
   const hasValidatedOnLoadRef = useRef(false)
-  
+
   // Weather refresh state
   const [isRefreshingWeather, setIsRefreshingWeather] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -183,13 +178,13 @@ export function WeatherSettingsCard() {
           const result = await validateApiKeyAndFetchWeather(
             apiKey,
             40.7128, // Default to NYC for validation
-            -74.0060
+            -74.006
           )
-          
+
           if (result.isValid) {
             setApiKeyValidationResult({
               isValid: true,
-              message: "OpenWeather API key working"
+              message: "OpenWeather API key working",
             })
           } else {
             setApiKeyValidationResult(result)
@@ -240,53 +235,53 @@ export function WeatherSettingsCard() {
 
   // Update validation status when location becomes available/unavailable
   const canValidateApiKey = hasApiKey && locationComplete
-  
+
   // Manual weather refresh function
   const handleRefreshWeather = async () => {
     setIsRefreshingWeather(true)
     setRefreshError(null)
-    
+
     try {
-      const response = await fetch('/api/settings/weather/refresh', {
-        method: 'POST',
+      const response = await fetch("/api/settings/weather/refresh", {
+        method: "POST",
       })
-      
+
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || 'Failed to refresh weather')
+        throw new Error(error.error || "Failed to refresh weather")
       }
-      
+
       const result = await response.json()
-      
+
       // Show success feedback
       if (result.data) {
         setShowWeatherConfirmation(true)
         setApiKeyValidationResult({
           isValid: true,
-          message: 'Weather data refreshed',
+          message: "Weather data refreshed",
           weatherData: {
             temperature: result.data.temperature,
+            condition: result.data.description || "Unknown",
             description: result.data.description,
             icon: result.data.icon,
-            cityName: result.data.city || '',
-            countryCode: '',
-          }
+            cityName: result.data.city || "",
+            countryCode: "",
+          },
         })
-        
+
         // Auto-hide after 5 seconds
         setTimeout(() => {
           setShowWeatherConfirmation(false)
         }, 5000)
       }
-      
+
       // Refetch settings to update the UI with new weather data
       if (refetchSettings) {
         await refetchSettings()
       }
-      
     } catch (error: any) {
-      console.error('Weather refresh error:', error)
-      setRefreshError(error.message || 'Failed to refresh weather data')
+      console.error("Weather refresh error:", error)
+      setRefreshError(error.message || "Failed to refresh weather data")
     } finally {
       setIsRefreshingWeather(false)
     }
@@ -317,15 +312,16 @@ export function WeatherSettingsCard() {
         {/* Main Weather Integration Toggle */}
         <div className='space-y-3'>
           {loading ? (
-            <div className="h-6 bg-gray-200 rounded animate-pulse"></div>
-          ) : (          <SuperSwitch
-            variant="labeled"
-            id='weather-integration'
-            falseLabel='disabled'
-            trueLabel='enabled'
-            checked={weatherIntegrationEnabled}
-            onCheckedChange={setWeatherIntegrationEnabled}
-          />
+            <div className='h-6 bg-gray-200 rounded animate-pulse'></div>
+          ) : (
+            <SuperSwitch
+              variant='labeled'
+              id='weather-integration'
+              falseLabel='disabled'
+              trueLabel='enabled'
+              checked={weatherIntegrationEnabled}
+              onCheckedChange={setWeatherIntegrationEnabled}
+            />
           )}
           <div className='space-y-1'>
             <Label className='text-sm font-medium'>Weather Integration</Label>
@@ -365,26 +361,29 @@ export function WeatherSettingsCard() {
                   {isValidatingApiKey ? (
                     <>
                       <Loader2 className='w-4 h-4 animate-spin text-muted-foreground' />
-                      <span className='text-muted-foreground'>Validating API key...</span>
+                      <span className='text-muted-foreground'>
+                        Validating API key...
+                      </span>
                     </>
                   ) : apiKeyValidationResult?.isValid ? (
                     <>
                       <CheckCircle2 className='w-4 h-4 text-green-500' />
                       <span className='text-green-400'>
-                        {apiKeyValidationResult.message || 'API key validated successfully'}
+                        {apiKeyValidationResult.message ||
+                          "API key validated successfully"}
                       </span>
                     </>
                   ) : (
                     <>
                       <AlertCircle className='w-4 h-4 text-red-500' />
                       <span className='text-red-400'>
-                        {apiKeyValidationResult?.error || 'API key validation failed'}
+                        {apiKeyValidationResult?.error ||
+                          "API key validation failed"}
                       </span>
                     </>
                   )}
                 </div>
               )}
-
 
               {/* Weather Confirmation */}
               {showWeatherConfirmation &&
@@ -527,9 +526,9 @@ export function WeatherSettingsCard() {
                     Weather Data Recording
                   </Label>
                   <p className='text-xs text-muted-foreground'>
-                    Fetch weather data hourly and cache it in the database. 
-                    When enabled, timelapses will include the current hour's 
-                    weather conditions with each captured image.
+                    Fetch weather data hourly and cache it in the database. When
+                    enabled, timelapses will include the current hour's weather
+                    conditions with each captured image.
                   </p>
                 </div>
                 <div className='flex items-center space-x-2'>
@@ -570,7 +569,7 @@ export function WeatherSettingsCard() {
                   </AlertDescription>
                 </Alert>
               )}
-              
+
               {refreshError && (
                 <Alert className='border-red-500/30 bg-red-500/10'>
                   <AlertCircle className='w-4 h-4 text-red-500' />
@@ -579,21 +578,26 @@ export function WeatherSettingsCard() {
                   </AlertDescription>
                 </Alert>
               )}
-              
+
               {/* Cached Weather Data Display */}
               {weatherDateFetched && (
                 <div className='mt-3 p-3 rounded-md bg-muted/30 border border-muted/50'>
                   <div className='flex items-center justify-between mb-2'>
                     <span className='text-xs text-muted-foreground'>
-                      Last Updated: {new Date(weatherDateFetched).toLocaleString()}
+                      Last Updated:{" "}
+                      {new Date(weatherDateFetched).toLocaleString()}
                     </span>
                     {currentWeatherIcon && (
-                      <span className='text-lg'>{getWeatherIcon(currentWeatherIcon)}</span>
+                      <span className='text-lg'>
+                        {getWeatherIcon(currentWeatherIcon)}
+                      </span>
                     )}
                   </div>
                   {currentTemp !== null && currentWeatherDescription && (
                     <div className='text-sm'>
-                      <span className='font-medium'>{formatTemperature(currentTemp, temperatureUnit)}</span>
+                      <span className='font-medium'>
+                        {formatTemperature(currentTemp, temperatureUnit)}
+                      </span>
                       <span className='text-muted-foreground ml-2'>
                         {capitalizeWords(currentWeatherDescription)}
                       </span>
@@ -610,11 +614,14 @@ export function WeatherSettingsCard() {
               <div className='space-y-3'>
                 <Label className='text-sm font-medium'>Temperature Unit</Label>
                 <p className='text-xs text-muted-foreground'>
-                  Choose how temperatures are displayed throughout the application
+                  Choose how temperatures are displayed throughout the
+                  application
                 </p>
                 <RadioGroup
                   value={temperatureUnit}
-                  onValueChange={(value) => setTemperatureUnit(value as "celsius" | "fahrenheit")}
+                  onValueChange={(value) =>
+                    setTemperatureUnit(value as "celsius" | "fahrenheit")
+                  }
                   className='flex space-x-6'
                 >
                   <div className='flex items-center space-x-2'>
@@ -625,7 +632,10 @@ export function WeatherSettingsCard() {
                   </div>
                   <div className='flex items-center space-x-2'>
                     <RadioGroupItem value='fahrenheit' id='fahrenheit' />
-                    <Label htmlFor='fahrenheit' className='text-sm cursor-pointer'>
+                    <Label
+                      htmlFor='fahrenheit'
+                      className='text-sm cursor-pointer'
+                    >
                       Fahrenheit (°F)
                     </Label>
                   </div>
@@ -644,7 +654,7 @@ export function WeatherSettingsCard() {
                   </Label>
                   <p className='text-xs text-muted-foreground'>
                     Fetch sunrise and sunset times hourly for use in timelapse
-                    time windows. Times are calculated based on your location 
+                    time windows. Times are calculated based on your location
                     and updated daily.
                   </p>
                 </div>
@@ -663,40 +673,41 @@ export function WeatherSettingsCard() {
                   </AlertDescription>
                 </Alert>
               )}
-              
+
               {/* Cached Sunrise/Sunset Times Display */}
-              {sunriseSunsetEnabled && (sunriseTimestamp || sunsetTimestamp) && (
-                <div className='mt-3 p-3 rounded-md bg-muted/30 border border-muted/50'>
-                  <div className='grid grid-cols-2 gap-4 text-sm'>
-                    {sunriseTimestamp && (
-                      <div>
-                        <span className='text-xs text-muted-foreground block mb-1'>
-                          Sunrise
-                        </span>
-                        <span className='font-medium'>
-                          {new Date(sunriseTimestamp).toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })}
-                        </span>
-                      </div>
-                    )}
-                    {sunsetTimestamp && (
-                      <div>
-                        <span className='text-xs text-muted-foreground block mb-1'>
-                          Sunset
-                        </span>
-                        <span className='font-medium'>
-                          {new Date(sunsetTimestamp).toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })}
-                        </span>
-                      </div>
-                    )}
+              {sunriseSunsetEnabled &&
+                (sunriseTimestamp || sunsetTimestamp) && (
+                  <div className='mt-3 p-3 rounded-md bg-muted/30 border border-muted/50'>
+                    <div className='grid grid-cols-2 gap-4 text-sm'>
+                      {sunriseTimestamp && (
+                        <div>
+                          <span className='text-xs text-muted-foreground block mb-1'>
+                            Sunrise
+                          </span>
+                          <span className='font-medium'>
+                            {new Date(sunriseTimestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                      )}
+                      {sunsetTimestamp && (
+                        <div>
+                          <span className='text-xs text-muted-foreground block mb-1'>
+                            Sunset
+                          </span>
+                          <span className='font-medium'>
+                            {new Date(sunsetTimestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
           </>
         )}

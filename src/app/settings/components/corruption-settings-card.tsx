@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { SuperSwitch } from "@/components/ui/switch"
-import { Input } from "@/components/ui/input"
 import { NumberInput } from "@/components/ui/number-input"
 import { Shield, Zap, AlertTriangle, Settings2 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
