@@ -127,7 +127,7 @@ class VideoService:
             video_data["created_at"] = await get_timezone_aware_timestamp_async(self.db)
 
         video = await self.video_ops.create_video_record(video_data)
-        
+
         # Create SSE event for real-time updates
         await self.sse_ops.create_event(
             event_type="video_created",
@@ -138,9 +138,9 @@ class VideoService:
                 "status": video_data.get("status"),
             },
             priority="normal",
-            source="api"
+            source="api",
         )
-        
+
         return video
 
     async def update_video(self, video_id: int, video_data: Dict[str, Any]) -> Video:
@@ -171,27 +171,29 @@ class VideoService:
         """
         # Get video info before deletion for file cleanup and SSE event
         video = await self.get_video_by_id(video_id)
-        
+
         # Extract file path before database deletion
         file_path_to_cleanup = video.file_path if video else None
-        
+
         # Delete from database first
         success = await self.video_ops.delete_video(video_id)
-        
+
         # Clean up file directly using file_helpers (no database lookup needed)
         if success and file_path_to_cleanup:
             try:
                 validated_path = validate_file_path(
-                    file_path_to_cleanup, 
-                    base_directory=settings.data_directory, 
-                    must_exist=False
+                    file_path_to_cleanup,
+                    base_directory=settings.data_directory,
+                    must_exist=False,
                 )
                 if validated_path.exists():
                     validated_path.unlink()
                     logger.info(f"Deleted video file: {validated_path}")
             except Exception as e:
-                logger.warning(f"Database deletion succeeded but file cleanup failed for video {video_id}: {e}")
-        
+                logger.warning(
+                    f"Database deletion succeeded but file cleanup failed for video {video_id}: {e}"
+                )
+
         # Create SSE event for real-time updates
         if success and video:
             await self.sse_ops.create_event(
@@ -202,9 +204,9 @@ class VideoService:
                     "camera_id": video.camera_id,
                 },
                 priority="normal",
-                source="api"
+                source="api",
             )
-        
+
         return success
 
     async def get_video_generation_jobs(
@@ -235,11 +237,13 @@ class VideoService:
         """
         # Ensure timezone-aware creation timestamp
         if "created_at" not in job_data:
-            job_data["created_at"] = await get_timezone_aware_timestamp_async(self.settings_ops)
+            job_data["created_at"] = await get_timezone_aware_timestamp_async(
+                self.settings_ops
+            )
 
         # Calculate event timestamp for database operation
         event_timestamp = await get_timezone_aware_timestamp_async(self.settings_ops)
-        job = await self.video_ops.create_video_generation_job(job_data, event_timestamp)
+        job = await self.video_ops.create_video_generation_job(job_data)
         return job
 
     async def update_video_generation_job_status(
@@ -488,15 +492,17 @@ class VideoService:
         try:
             # Get basic statistics for health assessment
             stats = await self.get_video_statistics()
-            
+
             # Get recent job status for health check
             recent_jobs = await self.get_video_generation_jobs()
-            
+
             # Calculate health metrics
             total_jobs = len(recent_jobs)
             failed_jobs = len([job for job in recent_jobs if job.status == "failed"])
-            processing_jobs = len([job for job in recent_jobs if job.status == "processing"])
-            
+            processing_jobs = len(
+                [job for job in recent_jobs if job.status == "processing"]
+            )
+
             # Determine health status
             if total_jobs == 0:
                 health_status = "unknown"
@@ -506,7 +512,7 @@ class VideoService:
                 health_status = "degraded"
             else:
                 health_status = "healthy"
-            
+
             health_data = {
                 "status": health_status,
                 "total_videos": stats.total_videos,
@@ -514,18 +520,22 @@ class VideoService:
                 "failed_jobs": failed_jobs,
                 "processing_jobs": processing_jobs,
                 "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(self.settings_ops),
+                "timestamp": await get_timezone_aware_timestamp_async(
+                    self.settings_ops
+                ),
             }
-            
+
             return health_data
-            
+
         except Exception as e:
             logger.error(f"Video service health check failed: {e}")
             return {
                 "status": "unknown",
                 "error": str(e),
                 "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(self.settings_ops),
+                "timestamp": await get_timezone_aware_timestamp_async(
+                    self.settings_ops
+                ),
             }
 
 
@@ -592,7 +602,8 @@ class SyncVideoService:
             True if job was successfully completed
         """
         # Calculate timestamp for database operation
-        event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+        event_timestamp_dt = get_timezone_aware_timestamp_sync(self.settings_ops)
+        event_timestamp = event_timestamp_dt.isoformat() if event_timestamp_dt else None
         return self.video_ops.complete_video_generation_job(
             job_id, success, error_message, video_path, event_timestamp
         )
@@ -609,7 +620,9 @@ class SyncVideoService:
         """
         # Ensure timezone-aware creation timestamp
         if "created_at" not in video_data:
-            video_data["created_at"] = get_timezone_aware_timestamp_sync(self.settings_ops)
+            video_data["created_at"] = get_timezone_aware_timestamp_sync(
+                self.settings_ops
+            )
 
         return self.video_ops.create_video_record(video_data)
 
@@ -664,9 +677,9 @@ class SyncVideoService:
             )
 
             # Generate output filename with timezone-aware timestamp
-            timestamp_str = get_timezone_aware_timestamp_sync(self.settings_ops).strftime(
-                "%Y%m%d_%H%M%S"
-            )
+            timestamp_str = get_timezone_aware_timestamp_sync(
+                self.settings_ops
+            ).strftime("%Y%m%d_%H%M%S")
             output_filename = f"timelapse_{timelapse_id}_{timestamp_str}.mp4"
 
             # Use file_helpers to ensure output directory exists
@@ -680,7 +693,7 @@ class SyncVideoService:
             overlay_settings = video_settings.get(
                 "overlay_settings", ffmpeg_utils.DEFAULT_OVERLAY_SETTINGS
             )
-            
+
             # Get quality from constants if not specified
             quality = video_settings.get("quality")
             if quality not in VIDEO_QUALITIES:
@@ -754,7 +767,9 @@ class SyncVideoService:
                 logger.error(f"Failed to update job status: {completion_error}")
             return False, error_msg, None
 
-    def cleanup_old_video_jobs(self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS) -> int:
+    def cleanup_old_video_jobs(
+        self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS
+    ) -> int:
         """
         Clean up old completed video generation jobs.
 

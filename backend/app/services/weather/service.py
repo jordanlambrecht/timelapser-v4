@@ -43,7 +43,7 @@ from ...models.weather_model import (
     WeatherConfiguration,
     WeatherApiValidationResponse,
     WeatherRefreshResult,
-    WeatherApiStatus
+    WeatherApiStatus,
 )
 
 # Import weather constants
@@ -56,7 +56,7 @@ from ...constants import (
     WEATHER_API_KEY_INVALID,
     WEATHER_LOCATION_INVALID,
     WEATHER_CONNECTION_ERROR,
-    WEATHER_REFRESH_SKIPPED_LOCATION
+    WEATHER_REFRESH_SKIPPED_LOCATION,
 )
 
 # Import conversion utilities
@@ -101,31 +101,33 @@ class OpenWeatherService:
                 "units": OPENWEATHER_API_UNITS,
             }
 
-            response = requests.get(self.BASE_URL, params=params, timeout=OPENWEATHER_API_TIMEOUT)
+            response = requests.get(
+                self.BASE_URL, params=params, timeout=OPENWEATHER_API_TIMEOUT
+            )
 
             if response.status_code == 200:
                 return WeatherApiValidationResponse(
                     valid=True,
                     message=WEATHER_API_KEY_VALID,
-                    status=WeatherApiStatus.VALID
+                    status=WeatherApiStatus.VALID,
                 )
             elif response.status_code == 401:
                 return WeatherApiValidationResponse(
                     valid=False,
                     message=WEATHER_API_KEY_INVALID,
-                    status=WeatherApiStatus.INVALID
+                    status=WeatherApiStatus.INVALID,
                 )
             elif response.status_code == 404:
                 return WeatherApiValidationResponse(
                     valid=False,
                     message=WEATHER_LOCATION_INVALID,
-                    status=WeatherApiStatus.INVALID
+                    status=WeatherApiStatus.INVALID,
                 )
             else:
                 return WeatherApiValidationResponse(
                     valid=False,
                     message=f"API error: {response.status_code}",
-                    status=WeatherApiStatus.FAILING
+                    status=WeatherApiStatus.FAILING,
                 )
 
         except requests.exceptions.RequestException as e:
@@ -133,7 +135,7 @@ class OpenWeatherService:
             return WeatherApiValidationResponse(
                 valid=False,
                 message=f"{WEATHER_CONNECTION_ERROR}: {str(e)}",
-                status=WeatherApiStatus.FAILING
+                status=WeatherApiStatus.FAILING,
             )
 
     def fetch_current_weather(self) -> Optional[OpenWeatherApiData]:
@@ -151,7 +153,9 @@ class OpenWeatherService:
                 "units": OPENWEATHER_API_UNITS,
             }
 
-            response = requests.get(self.BASE_URL, params=params, timeout=OPENWEATHER_API_TIMEOUT)
+            response = requests.get(
+                self.BASE_URL, params=params, timeout=OPENWEATHER_API_TIMEOUT
+            )
             response.raise_for_status()
 
             data = response.json()
@@ -323,17 +327,17 @@ class WeatherManager:
             # If we have a settings service, use it for proper settings access
             if self.settings_service:
                 try:
-                    
+
                     # Check if settings service has async or sync get_all_settings
                     get_all_method = getattr(self.settings_service, "get_all_settings")
-                    
+
                     if inspect.iscoroutinefunction(get_all_method):
                         # Async settings service
                         settings_dict = await self.settings_service.get_all_settings()
                     else:
                         # Sync settings service
                         settings_dict = self.settings_service.get_all_settings()
-                        
+
                 except Exception as e:
                     logger.warning(f"Failed to get settings from settings service: {e}")
                     # Fallback to direct database access
@@ -351,9 +355,22 @@ class WeatherManager:
 
             # Get API key securely through settings service if available
             api_key = ""
-            if self.settings_service and hasattr(self.settings_service, 'get_openweather_api_key'):
+            if self.settings_service and hasattr(
+                self.settings_service, "get_openweather_api_key"
+            ):
                 try:
-                    api_key = self.settings_service.get_openweather_api_key() or ""
+                    # Check if the API key method is async or sync
+                    api_key_method = getattr(
+                        self.settings_service, "get_openweather_api_key"
+                    )
+                    if inspect.iscoroutinefunction(api_key_method):
+                        # Async method
+                        api_key = (
+                            await self.settings_service.get_openweather_api_key() or ""
+                        )
+                    else:
+                        # Sync method
+                        api_key = self.settings_service.get_openweather_api_key() or ""
                 except Exception as e:
                     logger.warning(f"Failed to get API key from settings service: {e}")
                     # Fallback to direct settings access
@@ -386,9 +403,7 @@ class WeatherManager:
                 "sunset_offset_minutes": safe_int(
                     settings_dict.get("sunset_offset_minutes", "0"), 0
                 ),
-                "current_temp": safe_int(
-                    settings_dict.get("current_temp", ""), None
-                ),
+                "current_temp": safe_int(settings_dict.get("current_temp", ""), None),
                 "current_weather_icon": settings_dict.get("current_weather_icon", ""),
                 "current_weather_description": settings_dict.get(
                     "current_weather_description", ""
@@ -424,15 +439,23 @@ class WeatherManager:
 
             # Get timezone and create timezone-aware timestamp
             timezone_str = get_timezone_from_settings(settings_dict)
-            
+
             # Convert weather data for weather table storage
             # Use current timestamp in configured timezone to show when data was actually fetched
             weather_date_fetched = create_timezone_aware_datetime(timezone_str)
-            sunrise_timestamp = datetime.fromtimestamp(weather_data.sunrise_timestamp) if weather_data.sunrise_timestamp else None
-            sunset_timestamp = datetime.fromtimestamp(weather_data.sunset_timestamp) if weather_data.sunset_timestamp else None
+            sunrise_timestamp = (
+                datetime.fromtimestamp(weather_data.sunrise_timestamp)
+                if weather_data.sunrise_timestamp
+                else None
+            )
+            sunset_timestamp = (
+                datetime.fromtimestamp(weather_data.sunset_timestamp)
+                if weather_data.sunset_timestamp
+                else None
+            )
 
             # Use injected weather operations
-            if hasattr(self.weather_ops, 'insert_weather_data'):
+            if hasattr(self.weather_ops, "insert_weather_data"):
                 # Check if it's async method
                 if inspect.iscoroutinefunction(self.weather_ops.insert_weather_data):
                     weather_id = await self.weather_ops.insert_weather_data(
@@ -443,7 +466,7 @@ class WeatherManager:
                         sunrise_timestamp=sunrise_timestamp,
                         sunset_timestamp=sunset_timestamp,
                         api_key_valid=True,
-                        api_failing=False
+                        api_failing=False,
                     )
                 else:
                     # Sync method
@@ -455,14 +478,18 @@ class WeatherManager:
                         sunrise_timestamp=sunrise_timestamp,
                         sunset_timestamp=sunset_timestamp,
                         api_key_valid=True,
-                        api_failing=False
+                        api_failing=False,
                     )
             else:
-                raise AttributeError("Weather operations instance missing insert_weather_data method")
+                raise AttributeError(
+                    "Weather operations instance missing insert_weather_data method"
+                )
 
             # Check if weather data was successfully inserted
             if not weather_id:
-                raise Exception("Failed to insert weather data - no ID returned from database operation")
+                raise Exception(
+                    "Failed to insert weather data - no ID returned from database operation"
+                )
 
             logger.info(
                 f"Updated weather cache in weather table (ID: {weather_id}): {weather_data.temperature}°C, {weather_data.description}"
@@ -473,35 +500,40 @@ class WeatherManager:
             logger.error(f"Failed to update weather cache: {e}")
             return False
 
-    async def record_weather_failure(self, error_code: Optional[int] = None, error_message: Optional[str] = None) -> bool:
+    async def record_weather_failure(
+        self, error_code: Optional[int] = None, error_message: Optional[str] = None
+    ) -> bool:
         """Record weather API failure in weather table"""
         try:
             # Use injected weather operations
-            if hasattr(self.weather_ops, 'update_weather_failure'):
+            if hasattr(self.weather_ops, "update_weather_failure"):
                 # Check if it's async method
                 if inspect.iscoroutinefunction(self.weather_ops.update_weather_failure):
                     await self.weather_ops.update_weather_failure(
-                        error_response_code=error_code,
-                        last_error_message=error_message
+                        error_response_code=error_code, last_error_message=error_message
                     )
                 else:
                     # Sync method
                     self.weather_ops.update_weather_failure(
-                        error_response_code=error_code,
-                        last_error_message=error_message
+                        error_response_code=error_code, last_error_message=error_message
                     )
             else:
-                raise AttributeError("Weather operations instance missing update_weather_failure method")
+                raise AttributeError(
+                    "Weather operations instance missing update_weather_failure method"
+                )
 
-            logger.warning(f"Recorded weather API failure: {error_code} - {error_message}")
+            logger.warning(
+                f"Recorded weather API failure: {error_code} - {error_message}"
+            )
             return True
 
         except Exception as e:
             logger.error(f"Failed to record weather failure: {e}")
             return False
 
-
-    async def refresh_weather_if_needed(self, api_key: str, force: bool = False) -> Optional[OpenWeatherApiData]:
+    async def refresh_weather_if_needed(
+        self, api_key: str, force: bool = False
+    ) -> Optional[OpenWeatherApiData]:
         """
         Refresh weather data if it's stale (not from today) or force refresh.
 
@@ -522,7 +554,7 @@ class WeatherManager:
 
             # Check if weather data is from today by checking weather_data table
             # Use injected weather operations
-            if hasattr(self.weather_ops, 'get_latest_weather'):
+            if hasattr(self.weather_ops, "get_latest_weather"):
                 # Check if it's async method
                 if inspect.iscoroutinefunction(self.weather_ops.get_latest_weather):
                     latest_weather = await self.weather_ops.get_latest_weather()
@@ -530,7 +562,9 @@ class WeatherManager:
                     # Sync method
                     latest_weather = self.weather_ops.get_latest_weather()
             else:
-                raise AttributeError("Weather operations instance missing get_latest_weather method")
+                raise AttributeError(
+                    "Weather operations instance missing get_latest_weather method"
+                )
 
             # Get today's date in timezone
             if self.settings_service:
@@ -550,6 +584,7 @@ class WeatherManager:
             timezone_str = get_timezone_from_settings(settings_dict)
             try:
                 from zoneinfo import ZoneInfo
+
                 tz = ZoneInfo(timezone_str)
                 today = datetime.now(tz).date().isoformat()
             except Exception as e:
@@ -563,7 +598,7 @@ class WeatherManager:
                     weather_date_str = weather_date.date().isoformat()
                 else:
                     weather_date_str = str(weather_date)
-                
+
                 if weather_date_str == today and not force:
                     # Data is current and not forcing refresh, return cached data
                     if all(
@@ -577,15 +612,24 @@ class WeatherManager:
                     ):
                         sunrise_ts = latest_weather["sunrise_timestamp"]
                         sunset_ts = latest_weather["sunset_timestamp"]
-                        
+
                         # Convert datetime objects to timestamps if needed
-                        sunrise_timestamp = int(sunrise_ts.timestamp()) if isinstance(sunrise_ts, datetime) else int(sunrise_ts)
-                        sunset_timestamp = int(sunset_ts.timestamp()) if isinstance(sunset_ts, datetime) else int(sunset_ts)
-                        
+                        sunrise_timestamp = (
+                            int(sunrise_ts.timestamp())
+                            if isinstance(sunrise_ts, datetime)
+                            else int(sunrise_ts)
+                        )
+                        sunset_timestamp = (
+                            int(sunset_ts.timestamp())
+                            if isinstance(sunset_ts, datetime)
+                            else int(sunset_ts)
+                        )
+
                         return OpenWeatherApiData(
                             temperature=int(latest_weather["current_temp"]),
                             icon=latest_weather["current_weather_icon"],
-                            description=latest_weather["current_weather_description"] or "",
+                            description=latest_weather["current_weather_description"]
+                            or "",
                             sunrise_timestamp=sunrise_timestamp,
                             sunset_timestamp=sunset_timestamp,
                             date_fetched=date.today(),
@@ -604,7 +648,9 @@ class WeatherManager:
                 return weather_data
             else:
                 logger.error("Failed to fetch weather data from OpenWeather API")
-                await self.record_weather_failure(error_message="Failed to fetch weather data from OpenWeather API")
+                await self.record_weather_failure(
+                    error_message="Failed to fetch weather data from OpenWeather API"
+                )
                 return None
 
         except Exception as e:
@@ -678,9 +724,11 @@ class WeatherManager:
                 else:
                     return self.settings_service.get_all_settings()
             else:
-                logger.error("No settings service available for fallback settings access")
+                logger.error(
+                    "No settings service available for fallback settings access"
+                )
                 return {}
-                
+
         except Exception as e:
             logger.error(f"Failed to get settings from database: {e}")
             return {}

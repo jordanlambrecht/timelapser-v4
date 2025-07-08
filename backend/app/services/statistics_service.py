@@ -144,9 +144,9 @@ class StatisticsService:
                 camera_performance=camera_performance,
                 health_score=health_score,
             )
-            
+
             # SSE broadcasting handled by higher-level service layer
-            
+
             return enhanced_stats
 
         except Exception as e:
@@ -215,9 +215,9 @@ class StatisticsService:
                 "health_overview": health_score.model_dump() if health_score else {},
                 "system_status": "operational",  # Could be enhanced based on health score
             }
-            
+
             # SSE broadcasting handled by higher-level service layer
-            
+
             return overview_data
 
         except Exception as e:
@@ -262,9 +262,9 @@ class StatisticsService:
                 "metrics": metrics,
                 "aggregation_source": "statistics_operations",
             }
-            
+
             # SSE broadcasting handled by higher-level service layer
-            
+
             return aggregated_data
         except Exception as e:
             logger.error(f"Aggregated metrics generation failed: {e}")
@@ -311,7 +311,7 @@ class SyncStatisticsService:
         try:
             # Calculate timestamp for database operation
             timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
-            return self.stats_ops.get_system_performance_metrics(timestamp)
+            return self.stats_ops.get_system_performance_metrics(timestamp.isoformat())
         except Exception as e:
             logger.error(f"Failed to get system performance metrics: {e}")
             raise

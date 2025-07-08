@@ -44,7 +44,7 @@ from ..constants import (
 class WorkerCorruptionIntegration:
     """
     Corruption detection integration for worker processes using composition pattern.
-    
+
     This service coordinates corruption detection evaluation using dependency injection
     instead of direct database calls or global singleton patterns.
     """
@@ -52,7 +52,7 @@ class WorkerCorruptionIntegration:
     def __init__(self, db: SyncDatabase):
         """
         Initialize with sync database instance and operations composition.
-        
+
         Args:
             db: SyncDatabase instance for worker processes
         """
@@ -96,8 +96,12 @@ class WorkerCorruptionIntegration:
                 )
 
             # Get per-camera corruption settings using operations layer
-            camera_settings = self.corruption_ops.get_camera_corruption_settings(camera_id)
-            heavy_detection_enabled = camera_settings.get("corruption_detection_heavy", False)
+            camera_settings = self.corruption_ops.get_camera_corruption_settings(
+                camera_id
+            )
+            heavy_detection_enabled = camera_settings.get(
+                "corruption_detection_heavy", False
+            )
 
             # Run fast detection (always enabled)
             fast_result = detect_fast_corruption(file_path, config=self.settings)
@@ -106,10 +110,14 @@ class WorkerCorruptionIntegration:
             # Run heavy detection if enabled for this camera
             heavy_score = None
             heavy_result = None
-            
+
             if heavy_detection_enabled:
                 heavy_result = detect_heavy_corruption(file_path, config=self.settings)
-                heavy_score = heavy_result.corruption_score
+                heavy_score = (
+                    int(heavy_result.corruption_score)
+                    if heavy_result and heavy_result.corruption_score is not None
+                    else None
+                )
 
             # Calculate final corruption score
             final_score = calculate_corruption_score(
@@ -133,10 +141,10 @@ class WorkerCorruptionIntegration:
             # Create structured result using Pydantic model
             result = CorruptionEvaluationResult(
                 is_valid=is_valid,
-                corruption_score=final_score,
+                corruption_score=int(final_score),
                 action_taken="accepted" if is_valid else "flagged",
-                fast_score=fast_score,
-                heavy_score=heavy_score,
+                fast_score=int(fast_score) if fast_score is not None else None,
+                heavy_score=int(heavy_score) if heavy_score is not None else None,
                 failed_checks=failed_checks,
                 processing_time_ms=total_processing_time,
             )
@@ -150,7 +158,9 @@ class WorkerCorruptionIntegration:
                 heavy_score=result.heavy_score,
                 detection_details={
                     "fast_failed_checks": fast_result.failed_checks,
-                    "heavy_failed_checks": heavy_result.failed_checks if heavy_result else [],
+                    "heavy_failed_checks": (
+                        heavy_result.failed_checks if heavy_result else []
+                    ),
                     "total_processing_time_ms": result.processing_time_ms,
                 },
                 action_taken=result.action_taken,
@@ -164,7 +174,9 @@ class WorkerCorruptionIntegration:
                 is_valid=result.is_valid,
             )
             if not stats_updated:
-                logger.warning(f"Failed to update corruption stats for camera {camera_id}")
+                logger.warning(
+                    f"Failed to update corruption stats for camera {camera_id}"
+                )
 
             # Check for degraded mode trigger using operations layer
             if not result.is_valid:
@@ -235,7 +247,9 @@ class WorkerCorruptionIntegration:
                 )
 
             # Image is corrupted - check if retry is enabled
-            auto_discard_enabled = self.settings.get("corruption_auto_discard_enabled", False)
+            auto_discard_enabled = self.settings.get(
+                "corruption_auto_discard_enabled", False
+            )
             if not auto_discard_enabled:
                 # Auto-discard is disabled, keep the image but flag it
                 logger.warning(
@@ -327,7 +341,7 @@ class WorkerCorruptionIntegration:
     def refresh_settings(self) -> bool:
         """
         Refresh corruption detection settings from database using operations layer.
-        
+
         Returns:
             True if settings were refreshed successfully
         """
@@ -342,7 +356,7 @@ class WorkerCorruptionIntegration:
     def get_service_health(self) -> Dict[str, Any]:
         """
         Get service health status for monitoring.
-        
+
         Returns:
             Dictionary with service health metrics
         """
@@ -353,7 +367,7 @@ class WorkerCorruptionIntegration:
                 "settings_loaded": bool(self.settings),
                 "timestamp": get_timezone_aware_timestamp_sync(self.settings_ops),
             }
-            
+
             # Add settings count for health assessment
             if self.settings:
                 health_data["settings_count"] = len(self.settings)
@@ -363,9 +377,9 @@ class WorkerCorruptionIntegration:
             else:
                 health_data["status"] = "degraded"
                 health_data["error"] = "Settings not loaded"
-            
+
             return health_data
-            
+
         except Exception as e:
             logger.error(f"Worker corruption integration health check failed: {e}")
             return {
@@ -377,13 +391,15 @@ class WorkerCorruptionIntegration:
 
 
 # Dependency injection pattern - no global singleton
-def create_worker_corruption_integration(sync_db: SyncDatabase) -> WorkerCorruptionIntegration:
+def create_worker_corruption_integration(
+    sync_db: SyncDatabase,
+) -> WorkerCorruptionIntegration:
     """
     Create WorkerCorruptionIntegration instance using dependency injection.
-    
+
     Args:
         sync_db: SyncDatabase instance
-        
+
     Returns:
         WorkerCorruptionIntegration instance
     """

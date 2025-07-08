@@ -6,6 +6,7 @@ This service provides a clean interface for settings operations,
 handling business logic and coordinating between database operations
 and external systems.
 """
+from pathlib import Path
 
 import zoneinfo
 from typing import List, Dict, Optional, Any
@@ -29,6 +30,7 @@ from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
     VIDEO_GENERATION_MODES,
     VIDEO_AUTOMATION_MODES,
+    TIMEZONE_ALIASES,
     DEFAULT_TIMEZONE,
 )
 
@@ -87,7 +89,7 @@ class SettingsService:
             # Special handling for OpenWeather API key
             if key == "openweather_api_key":
                 result = await self.api_key_service.store_api_key(value)
-                
+
                 if result:
                     # Create SSE event (use masked value for security)
                     await self.sse_ops.create_event(
@@ -98,14 +100,14 @@ class SettingsService:
                             "operation": "update",
                         },
                         priority="normal",
-                        source="api"
+                        source="api",
                     )
-                    
+
                 return result
             else:
                 # Normal setting handling
                 result = await self.settings_ops.set_setting(key, value)
-                
+
                 if result:
                     # Create SSE event for setting changes
                     await self.sse_ops.create_event(
@@ -116,9 +118,9 @@ class SettingsService:
                             "operation": "update",
                         },
                         priority="normal",
-                        source="api"
+                        source="api",
                     )
-                    
+
                 return result
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
@@ -130,7 +132,7 @@ class SettingsService:
             # Process settings to handle API key hashing
             processed_settings = {}
             processed_keys = []
-            
+
             for key, value in settings_dict.items():
                 if key == "openweather_api_key":
                     # Handle API key through dedicated service
@@ -141,9 +143,9 @@ class SettingsService:
                     # Normal setting
                     processed_settings[key] = value
                     processed_keys.append(key)
-            
+
             result = await self.settings_ops.set_multiple_settings(processed_settings)
-            
+
             if result:
                 # Create SSE event for bulk setting changes
                 await self.sse_ops.create_event(
@@ -154,9 +156,9 @@ class SettingsService:
                         "count": len(processed_settings),
                     },
                     priority="normal",
-                    source="api"
+                    source="api",
                 )
-                
+
             return result
         except Exception as e:
             logger.error(f"Failed to set multiple settings: {e}")
@@ -166,7 +168,7 @@ class SettingsService:
         """Delete a setting by key."""
         try:
             result = await self.settings_ops.delete_setting(key)
-            
+
             if result:
                 # Create SSE event for setting deletion
                 await self.sse_ops.create_event(
@@ -177,9 +179,9 @@ class SettingsService:
                         "operation": "delete",
                     },
                     priority="normal",
-                    source="api"
+                    source="api",
                 )
-                
+
             return result
         except Exception as e:
             logger.error(f"Failed to delete setting {key}: {e}")
@@ -512,7 +514,6 @@ class SettingsService:
         """Validate timezone setting."""
         try:
             # Check timezone aliases first
-            from ..constants import TIMEZONE_ALIASES
 
             if value in TIMEZONE_ALIASES:
                 value = TIMEZONE_ALIASES[value]
@@ -535,7 +536,7 @@ class SettingsService:
                 "error": "Capture interval must be a valid integer",
                 "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
             }
-        
+
         if interval < MIN_CAPTURE_INTERVAL_SECONDS:
             return {
                 "valid": False,
@@ -559,7 +560,7 @@ class SettingsService:
                 "error": "Corruption threshold must be a valid integer",
                 "suggested_value": str(DEFAULT_CORRUPTION_DISCARD_THRESHOLD),
             }
-        
+
         if threshold < 0 or threshold > 100:
             return {
                 "valid": False,
@@ -570,7 +571,6 @@ class SettingsService:
 
     def _validate_data_directory(self, value: str) -> Dict[str, Any]:
         """Validate data directory setting."""
-        from pathlib import Path
 
         try:
             path = Path(value)
