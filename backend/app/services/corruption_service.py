@@ -278,7 +278,9 @@ class CorruptionService:
             logger.error(f"Error getting corruption settings: {e}")
             raise
 
-    async def update_corruption_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_corruption_settings(
+        self, settings: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Update corruption detection settings.
 
@@ -357,7 +359,9 @@ class CorruptionService:
             )
 
             # Calculate processing time
-            end_time = await timezone_utils.get_timezone_aware_timestamp_async(self.settings_ops)
+            end_time = await timezone_utils.get_timezone_aware_timestamp_async(
+                self.settings_ops
+            )
             processing_time = (end_time - start_time).total_seconds() * 1000
 
             # Determine if image is valid (not corrupted)
@@ -419,7 +423,9 @@ class CorruptionService:
         try:
             # Get corruption settings for decision thresholds
             global_settings = await self.get_corruption_settings()
-            discard_threshold = global_settings.get("corruption_discard_threshold", DEFAULT_CORRUPTION_DISCARD_THRESHOLD)
+            discard_threshold = global_settings.get(
+                "corruption_discard_threshold", DEFAULT_CORRUPTION_DISCARD_THRESHOLD
+            )
 
             # Basic threshold check
             should_discard = corruption_score >= discard_threshold
@@ -512,7 +518,9 @@ class CorruptionService:
 
             # Check detection frequency
             recent_detections = len(recent_history)
-            if recent_detections > HEALTH_HIGH_DETECTION_THRESHOLD:  # High detection frequency in 24h
+            if (
+                recent_detections > HEALTH_HIGH_DETECTION_THRESHOLD
+            ):  # High detection frequency in 24h
                 health_score -= HEALTH_HIGH_DETECTION_PENALTY
                 health_issues.append("High corruption detection frequency")
                 recommendations.append("Monitor camera environmental conditions")
@@ -532,7 +540,9 @@ class CorruptionService:
 
             # Use timezone-aware timestamp
             assessment_timestamp = (
-                await timezone_utils.get_timezone_aware_timestamp_async(self.settings_ops)
+                await timezone_utils.get_timezone_aware_timestamp_async(
+                    self.settings_ops
+                )
             )
 
             # Coordinate with camera service for health updates
@@ -717,7 +727,9 @@ class CorruptionService:
                     ),
                 },
                 settings_used={
-                    "corruption_threshold": settings.get("corruption_threshold", DEFAULT_CORRUPTION_TEST_THRESHOLD),
+                    "corruption_threshold": settings.get(
+                        "corruption_threshold", DEFAULT_CORRUPTION_TEST_THRESHOLD
+                    ),
                     "auto_discard_threshold": settings.get(
                         "auto_discard_threshold", DEFAULT_AUTO_DISCARD_THRESHOLD
                     ),
@@ -790,6 +802,9 @@ class SyncCorruptionService:
         """
         self.db = db
         self.operations = SyncCorruptionOperations(db)
+        from ..database.settings_operations import SyncSettingsOperations
+
+        self.settings_ops = SyncSettingsOperations(db)
         self.camera_service = camera_service
 
     def log_corruption_detection(
@@ -934,7 +949,9 @@ class SyncCorruptionService:
             )
             raise
 
-    def cleanup_old_corruption_logs(self, days_to_keep: int = DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS) -> int:
+    def cleanup_old_corruption_logs(
+        self, days_to_keep: int = DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS
+    ) -> int:
         """
         Clean up old corruption detection logs.
 
@@ -970,7 +987,9 @@ class SyncCorruptionService:
             Quality analysis results
         """
         try:
-            start_time = timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops)
+            start_time = timezone_utils.get_timezone_aware_timestamp_sync(
+                self.settings_ops
+            )
 
             # Get corruption settings for configuration
             settings = self.operations.get_corruption_settings()
@@ -1002,7 +1021,9 @@ class SyncCorruptionService:
             is_valid = not calculator.is_corrupted(final_score)
 
             # Calculate processing time
-            end_time = timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops)
+            end_time = timezone_utils.get_timezone_aware_timestamp_sync(
+                self.settings_ops
+            )
             processing_time = (end_time - start_time).total_seconds() * 1000
 
             return {

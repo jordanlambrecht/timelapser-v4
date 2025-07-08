@@ -26,16 +26,18 @@ from ..constants import (
 )
 
 
-def _process_corruption_settings_shared(settings_dict: Dict[str, str]) -> CorruptionSettings:
+def _process_corruption_settings_shared(
+    settings_dict: Dict[str, str],
+) -> CorruptionSettings:
     """
     Shared helper function for processing corruption settings from database.
-    
+
     This eliminates massive code duplication between async and sync get_corruption_settings methods.
     Handles type conversion, defaults, and validation for corruption settings.
-    
+
     Args:
         settings_dict: Dictionary of raw settings from database (key-value strings)
-        
+
     Returns:
         CorruptionSettings model instance with proper types
     """
@@ -274,14 +276,14 @@ class SettingsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        SELECT key, value FROM settings 
+                        SELECT key, value FROM settings
                         WHERE key LIKE 'corruption_%'
                         ORDER BY key
                     """
                     )
                     results = await cur.fetchall()
                     settings_dict = {row["key"]: row["value"] for row in results}
-                    
+
                     return _process_corruption_settings_shared(settings_dict)
         except Exception as e:
             logger.error(f"Failed to get corruption settings: {e}")
@@ -329,13 +331,19 @@ class SettingsOperations:
             return False, "Setting key cannot be empty"
 
         if len(key) > MAX_SETTING_KEY_LENGTH:
-            return False, f"Setting key cannot exceed {MAX_SETTING_KEY_LENGTH} characters"
+            return (
+                False,
+                f"Setting key cannot exceed {MAX_SETTING_KEY_LENGTH} characters",
+            )
 
         if value is None:
             return False, "Setting value cannot be None"
 
         if len(value) > MAX_SETTING_VALUE_LENGTH:
-            return False, f"Setting value too long (max {MAX_SETTING_VALUE_LENGTH} characters)"
+            return (
+                False,
+                f"Setting value too long (max {MAX_SETTING_VALUE_LENGTH} characters)",
+            )
 
         return True, None
 
@@ -398,7 +406,9 @@ class SyncSettingsOperations:
         Returns:
             Capture interval in seconds (default: from constants)
         """
-        value = self.get_setting("capture_interval", str(DEFAULT_CAPTURE_INTERVAL_SECONDS))
+        value = self.get_setting(
+            "capture_interval", str(DEFAULT_CAPTURE_INTERVAL_SECONDS)
+        )
         try:
             # value is guaranteed to be a string due to the default
             return int(value) if value is not None else DEFAULT_CAPTURE_INTERVAL_SECONDS
@@ -417,14 +427,14 @@ class SyncSettingsOperations:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT key, value FROM settings 
+                        SELECT key, value FROM settings
                         WHERE key LIKE 'corruption_%'
                         ORDER BY key
                     """
                     )
                     results = cur.fetchall()
                     settings_dict = {row["key"]: row["value"] for row in results}
-                    
+
                     return _process_corruption_settings_shared(settings_dict)
         except Exception as e:
             logger.error(f"Failed to get corruption settings: {e}")
@@ -452,9 +462,9 @@ class SyncSettingsOperations:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO settings (key, value) 
+                        INSERT INTO settings (key, value)
                         VALUES (%s, %s)
-                        ON CONFLICT (key) 
+                        ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                     """,
                         (key, value),

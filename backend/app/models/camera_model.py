@@ -106,13 +106,17 @@ class CameraBase(BaseModel):
     @classmethod
     def validate_rtsp_url(_cls, v: str) -> str:
         """Validate RTSP URL format and prevent injection"""
-        return validate_rtsp_url(v, allow_none=False)
+        result = validate_rtsp_url(v, allow_none=False)
+        assert result is not None  # Type assertion for Pylance
+        return result
 
     @field_validator("name")
     @classmethod
     def validate_name(_cls, v: str) -> str:
         """Validate camera name"""
-        return validate_camera_name(v, allow_none=False)
+        result = validate_camera_name(v, allow_none=False)
+        assert result is not None  # Type assertion for Pylance
+        return result
 
     @field_validator("min_time_seconds", "max_time_seconds")
     @classmethod

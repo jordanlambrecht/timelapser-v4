@@ -101,8 +101,8 @@ class SSEEventsOperations:
         try:
             query = """
                 SELECT id, event_type, event_data, created_at, priority, source
-                FROM sse_events 
-                WHERE processed_at IS NULL 
+                FROM sse_events
+                WHERE processed_at IS NULL
                   AND created_at > %s
                 ORDER BY priority DESC, created_at ASC
                 LIMIT %s
@@ -157,7 +157,7 @@ class SSEEventsOperations:
 
         try:
             query = """
-                UPDATE sse_events 
+                UPDATE sse_events
                 SET processed_at = NOW()
                 WHERE id = ANY(%s) AND processed_at IS NULL
             """
@@ -188,9 +188,9 @@ class SSEEventsOperations:
         """
         try:
             query = """
-                DELETE FROM sse_events 
-                WHERE processed_at IS NOT NULL 
-                  AND processed_at < %s
+                DELETE FROM sse_events
+                WHERE processed_at IS NOT NULL
+                    AND processed_at < %s
             """
 
             cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)
@@ -218,7 +218,7 @@ class SSEEventsOperations:
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     COUNT(*) as total_events,
                     COUNT(*) FILTER (WHERE processed_at IS NULL) as pending_events,
                     COUNT(*) FILTER (WHERE processed_at IS NOT NULL) as processed_events,

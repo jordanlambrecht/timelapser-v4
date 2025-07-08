@@ -10,7 +10,6 @@ This module handles all statistics-related database operations including:
 """
 
 from typing import List, Dict, Optional, Any
-from datetime import datetime
 
 from loguru import logger
 from app.models.statistics_model import (
@@ -37,9 +36,6 @@ from app.constants import (
     HEALTH_ACTIVITY_PERFECT_SCORE,
     DEFAULT_STATISTICS_RETENTION_DAYS,
 )
-from ..utils.timezone_utils import (
-    get_timezone_aware_timestamp_sync,
-)
 
 # Import database core for composition
 from .core import AsyncDatabase, SyncDatabase
@@ -64,7 +60,7 @@ class StatisticsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                    SELECT 
+                    SELECT
                         COUNT(*) as total_cameras,
                         COUNT(CASE WHEN enabled = true THEN 1 END) as enabled_cameras,
                         COUNT(CASE WHEN degraded_mode_active = true THEN 1 END) as degraded_cameras,
@@ -130,7 +126,7 @@ class StatisticsOperations:
                     """
                     )
                     automation_stats = await cur.fetchone()
-                    
+
                     # Calculate queue health using constants
                     pending_jobs = automation_stats["pending_jobs"]
                     if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
@@ -139,10 +135,9 @@ class StatisticsOperations:
                         queue_health = "degraded"
                     else:
                         queue_health = "healthy"
-                    
+
                     automation_model = AutomationStatsModel(
-                        **automation_stats,
-                        queue_health=queue_health
+                        **automation_stats, queue_health=queue_health
                     )
 
                     await cur.execute(
@@ -380,7 +375,9 @@ class StatisticsOperations:
                             camera_health["degraded_cameras"] or 0
                         ) / camera_health["total_cameras"]
                         camera_score = max(
-                            0, (enabled_ratio * 100) - (degraded_ratio * HEALTH_DEGRADED_PENALTY)
+                            0,
+                            (enabled_ratio * 100)
+                            - (degraded_ratio * HEALTH_DEGRADED_PENALTY),
                         )
 
                     quality_score = quality_health.get("avg_quality_score") or 100
@@ -388,10 +385,14 @@ class StatisticsOperations:
                         flagged_ratio = (
                             quality_health["flagged_images"] or 0
                         ) / quality_health["total_images"]
-                        quality_score = max(0, quality_score - (flagged_ratio * HEALTH_FLAGGED_PENALTY))
+                        quality_score = max(
+                            0, quality_score - (flagged_ratio * HEALTH_FLAGGED_PENALTY)
+                        )
 
                     activity_score = min(
-                        100, (activity_health["captures_last_hour"] or 0) * HEALTH_ACTIVITY_PERFECT_SCORE
+                        100,
+                        (activity_health["captures_last_hour"] or 0)
+                        * HEALTH_ACTIVITY_PERFECT_SCORE,
                     )  # Configurable perfect score threshold
 
                     # Weighted overall health score
@@ -430,7 +431,9 @@ class SyncStatisticsOperations:
         """Initialize with sync database instance."""
         self.db = db
 
-    def get_system_performance_metrics(self, timestamp: Optional[str] = None) -> Dict[str, Any]:
+    def get_system_performance_metrics(
+        self, timestamp: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get system performance metrics for monitoring.
 
@@ -474,11 +477,11 @@ class SyncStatisticsOperations:
                     **active_metrics,
                     **recent_metrics,
                 }
-                
+
                 # Add timestamp if provided by service layer
                 if timestamp:
                     result["timestamp"] = timestamp
-                    
+
                 return result
 
     def update_camera_statistics(self, camera_id: int) -> bool:
@@ -534,7 +537,9 @@ class SyncStatisticsOperations:
             )
             return 0.0
 
-    def cleanup_old_statistics(self, days_to_keep: int = DEFAULT_STATISTICS_RETENTION_DAYS) -> int:
+    def cleanup_old_statistics(
+        self, days_to_keep: int = DEFAULT_STATISTICS_RETENTION_DAYS
+    ) -> int:
         """
         Clean up old statistical data.
 

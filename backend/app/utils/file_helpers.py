@@ -11,7 +11,6 @@ from typing import Optional, Dict, Any
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, Response
 from loguru import logger
-import os
 
 from ..config import settings
 
@@ -433,3 +432,127 @@ def ensure_camera_directories(camera_id: int, date_str: str) -> Dict[str, Path]:
         dir_path.mkdir(parents=True, exist_ok=True)
 
     return directories
+
+
+def scan_directory_for_thumbnails(directory_path: str) -> list:
+    """
+    Recursively scan directory for thumbnail files.
+
+    Args:
+        directory_path: Directory to scan
+
+    Returns:
+        List of thumbnail file paths found
+    """
+    try:
+        path = Path(directory_path)
+        if not path.exists():
+            return []
+
+        thumbnail_files = []
+
+        # Scan for thumbnail files (looking for _thumb_ and _small_ patterns)
+        for file_path in path.rglob("*.jpg"):
+            filename = file_path.name
+            if "_thumb_" in filename or "_small_" in filename:
+                thumbnail_files.append(str(file_path))
+
+        return thumbnail_files
+
+    except Exception as e:
+        logger.error(f"Error scanning directory {directory_path}: {e}")
+        return []
+
+
+def parse_thumbnail_filename(filename: str) -> dict:
+    """
+    Parse thumbnail filename to extract metadata.
+
+    Args:
+        filename: Thumbnail filename to parse
+
+    Returns:
+        Dictionary with extracted metadata
+    """
+    try:
+        # Expected format: timelapse-{id}_thumb_day{XXX}_{HHMMSS}.jpg
+        # or: timelapse-{id}_small_day{XXX}_{HHMMSS}.jpg
+
+        base_name = Path(filename).stem
+        parts = base_name.split("_")
+
+        if len(parts) < 4:
+            return {"valid": False, "error": "Insufficient filename parts"}
+
+        # Extract timelapse ID
+        timelapse_part = parts[0]  # timelapse-{id}
+        if not timelapse_part.startswith("timelapse-"):
+            return {"valid": False, "error": "Invalid timelapse prefix"}
+
+        try:
+            timelapse_id = int(timelapse_part.split("-")[1])
+        except (IndexError, ValueError):
+            return {"valid": False, "error": "Invalid timelapse ID"}
+
+        # Extract type (thumb or small)
+        thumbnail_type = parts[1]  # thumb or small
+        if thumbnail_type not in ["thumb", "small"]:
+            return {"valid": False, "error": "Invalid thumbnail type"}
+
+        # Extract day number
+        day_part = parts[2]  # day{XXX}
+        if not day_part.startswith("day"):
+            return {"valid": False, "error": "Invalid day format"}
+
+        try:
+            day_number = int(day_part[3:])  # Remove 'day' prefix
+        except ValueError:
+            return {"valid": False, "error": "Invalid day number"}
+
+        # Extract time
+        time_part = parts[3]  # HHMMSS
+        if len(time_part) != 6:
+            return {"valid": False, "error": "Invalid time format"}
+
+        return {
+            "valid": True,
+            "timelapse_id": timelapse_id,
+            "type": thumbnail_type,
+            "day_number": day_number,
+            "time": time_part,
+            "filename": filename,
+        }
+
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+def calculate_directory_size(directory_path: str) -> float:
+    """
+    Calculate total size of directory in MB.
+
+    Args:
+        directory_path: Directory to calculate size for
+
+    Returns:
+        Size in MB
+    """
+    try:
+        path = Path(directory_path)
+        if not path.exists():
+            return 0.0
+
+        total_size = 0
+        for file_path in path.rglob("*"):
+            if file_path.is_file():
+                total_size += file_path.stat().st_size
+
+        return total_size / (1024 * 1024)  # Convert to MB
+
+    except Exception as e:
+        logger.error(f"Error calculating directory size {directory_path}: {e}")
+        return 0.0
+
+
+# Note: Use existing delete_file_safe() function instead of duplicating
+# Note: Use Path.exists() directly instead of wrapper function

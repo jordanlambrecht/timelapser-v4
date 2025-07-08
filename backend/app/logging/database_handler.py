@@ -96,6 +96,8 @@ class DatabaseLogHandler:
                 message=log_data.message,
                 source=log_data.source if log_data.source is not None else "api",
                 camera_id=log_data.camera_id,
+                logger_name=log_data.logger_name,
+                extra_data=log_data.extra_data,
             )
 
         except Exception as e:

@@ -17,6 +17,7 @@ from ..models.shared_models import (
     VideoGenerationJobWithDetails,
     VideoStatistics,
 )
+from ..constants import DEFAULT_OVERLAY_SETTINGS
 
 
 class VideoOperations:
@@ -1102,8 +1103,6 @@ class SyncVideoOperations:
             Dictionary with effective video generation settings
         """
         try:
-            # Import constants here to avoid circular imports
-            from ..constants import DEFAULT_OVERLAY_SETTINGS
 
             query = """
                 SELECT
@@ -1201,7 +1200,6 @@ class SyncVideoOperations:
 
     def _get_default_video_settings(self) -> Dict[str, Any]:
         """Get default video generation settings."""
-        from ..constants import DEFAULT_OVERLAY_SETTINGS
 
         return {
             "video_generation_mode": "standard",
@@ -1225,7 +1223,7 @@ class SyncVideoOperations:
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     COALESCE(t.video_automation_mode, c.video_automation_mode, 'manual') as mode,
                     COUNT(*) as count
                 FROM timelapses t

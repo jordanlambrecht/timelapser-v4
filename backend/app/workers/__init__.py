@@ -18,6 +18,7 @@ from .video_worker import VideoWorker
 from .scheduler_worker import SchedulerWorker
 from .sse_worker import SSEWorker
 from .cleanup_worker import CleanupWorker
+from .thumbnail_worker import ThumbnailWorker
 
 __all__ = [
     "BaseWorker",
@@ -27,4 +28,5 @@ __all__ = [
     "SchedulerWorker",
     "SSEWorker",
     "CleanupWorker",
+    "ThumbnailWorker",
 ]

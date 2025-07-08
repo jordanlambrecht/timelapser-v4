@@ -17,8 +17,7 @@ from ..database.settings_operations import SettingsOperations, SyncSettingsOpera
 from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
 from ..database.sse_events_operations import SSEEventsOperations
-from ..utils.timezone_utils import get_timezone_aware_timestamp_string_async
-from ..utils.hashing import hash_api_key, mask_api_key
+from ..utils.hashing import mask_api_key
 from ..utils.conversion_utils import safe_int
 from .api_key_service import APIKeyService, SyncAPIKeyService
 from ..constants import (

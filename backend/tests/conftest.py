@@ -193,3 +193,377 @@ def generate_test_images(camera_id: int, count: int = 5):
         )
 
     return images
+
+
+# ====================================================================
+# THUMBNAIL SYSTEM TEST FIXTURES
+# ====================================================================
+
+
+@pytest.fixture
+def mock_sync_database():
+    """Mock synchronous database for worker testing."""
+
+    class MockSyncDatabase:
+        def __init__(self):
+            self.connection_active = True
+
+        def get_connection(self):
+            return MockAsyncContext(self)
+
+        def execute(self, query, params=None):
+            # Mock cursor with rowcount
+            class MockCursor:
+                rowcount = 1
+
+            return MockCursor()
+
+        def fetch_one(self, query, params=None):
+            return {"id": 1, "status": "completed"}
+
+        def fetch_all(self, query, params=None):
+            return [{"id": 1, "status": "pending"}]
+
+    return MockSyncDatabase()
+
+
+@pytest.fixture
+def mock_async_database():
+    """Mock async database for service testing."""
+
+    class MockAsyncDatabase:
+        def __init__(self):
+            self.connection_active = True
+
+        def get_connection(self):
+            return MockAsyncContext(self)
+
+        async def execute(self, query, *params):
+            return None
+
+        async def fetch_one(self, query, *params):
+            return {"id": 1, "status": "completed"}
+
+        async def fetch_all(self, query, *params):
+            return [{"id": 1, "status": "pending"}]
+
+    return MockAsyncDatabase()
+
+
+@pytest.fixture
+def mock_thumbnail_job_operations(mock_async_database):
+    """Mock thumbnail job operations for testing."""
+    from app.database.thumbnail_job_operations import ThumbnailJobOperations
+    from app.models.shared_models import (
+        ThumbnailGenerationJob,
+        ThumbnailGenerationJobCreate,
+    )
+    from datetime import datetime
+
+    class MockThumbnailJobOperations:
+        def __init__(self):
+            self.jobs = {}
+            self.next_id = 1
+
+        async def create_job(self, job_data: ThumbnailGenerationJobCreate):
+            job = ThumbnailGenerationJob(
+                id=self.next_id,
+                image_id=job_data.image_id,
+                priority=job_data.priority,
+                status=job_data.status,
+                job_type=job_data.job_type,
+                created_at=datetime.utcnow(),
+                retry_count=0,
+            )
+            self.jobs[self.next_id] = job
+            self.next_id += 1
+            return job
+
+        async def get_pending_jobs(self, batch_size=5):
+            return [job for job in self.jobs.values() if job.status == "pending"][
+                :batch_size
+            ]
+
+        async def mark_job_started(self, job_id):
+            if job_id in self.jobs:
+                self.jobs[job_id].status = "processing"
+                return True
+            return False
+
+        async def mark_job_completed(self, job_id, processing_time_ms=None):
+            if job_id in self.jobs:
+                self.jobs[job_id].status = "completed"
+                return True
+            return False
+
+        async def mark_job_failed(self, job_id, error_message, retry_count=0):
+            if job_id in self.jobs:
+                self.jobs[job_id].status = "failed"
+                self.jobs[job_id].error_message = error_message
+                return True
+            return False
+
+        async def get_job_statistics(self):
+            """Get job queue statistics."""
+            from app.models.shared_models import ThumbnailJobStatistics
+
+            stats = {
+                "pending_jobs": len(
+                    [j for j in self.jobs.values() if j.status == "pending"]
+                ),
+                "processing_jobs": len(
+                    [j for j in self.jobs.values() if j.status == "processing"]
+                ),
+                "completed_jobs_24h": len(
+                    [j for j in self.jobs.values() if j.status == "completed"]
+                ),
+                "failed_jobs_24h": len(
+                    [j for j in self.jobs.values() if j.status == "failed"]
+                ),
+                "total_jobs_24h": len(self.jobs),
+                "average_processing_time_ms": 1500.0,
+                "success_rate_percentage": 95.0,
+            }
+
+            return stats
+
+        async def cancel_jobs_for_image(self, image_id):
+            """Cancel jobs for specific image."""
+            cancelled = 0
+            for job in self.jobs.values():
+                if job.image_id == image_id and job.status == "pending":
+                    job.status = "cancelled"
+                    cancelled += 1
+            return cancelled
+
+    return MockThumbnailJobOperations()
+
+
+@pytest.fixture
+def mock_sse_operations():
+    """Mock SSE operations for testing."""
+
+    class MockSSEOperations:
+        def __init__(self):
+            self.events = []
+
+        async def create_event(
+            self, event_type, event_data, priority="normal", source="test"
+        ):
+            event = {
+                "event_type": event_type,
+                "event_data": event_data,
+                "priority": priority,
+                "source": source,
+                "created_at": datetime.utcnow(),
+            }
+            self.events.append(event)
+            return event
+
+        def get_events(self, event_type=None):
+            if event_type:
+                return [e for e in self.events if e["event_type"] == event_type]
+            return self.events
+
+        def clear_events(self):
+            self.events.clear()
+
+    return MockSSEOperations()
+
+
+@pytest.fixture
+def sample_thumbnail_job_data():
+    """Sample data for thumbnail job testing."""
+    from app.models.shared_models import ThumbnailGenerationJobCreate
+    from app.constants import (
+        THUMBNAIL_JOB_PRIORITY_MEDIUM,
+        THUMBNAIL_JOB_STATUS_PENDING,
+        THUMBNAIL_JOB_TYPE_SINGLE,
+    )
+
+    return {
+        "basic_job": ThumbnailGenerationJobCreate(
+            image_id=1,
+            priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,
+            status=THUMBNAIL_JOB_STATUS_PENDING,
+            job_type=THUMBNAIL_JOB_TYPE_SINGLE,
+        ),
+        "high_priority_job": ThumbnailGenerationJobCreate(
+            image_id=2,
+            priority="high",
+            status=THUMBNAIL_JOB_STATUS_PENDING,
+            job_type=THUMBNAIL_JOB_TYPE_SINGLE,
+        ),
+        "batch_jobs": [
+            ThumbnailGenerationJobCreate(
+                image_id=i,
+                priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,
+                status=THUMBNAIL_JOB_STATUS_PENDING,
+                job_type="bulk",
+            )
+            for i in range(10, 15)
+        ],
+    }
+
+
+@pytest.fixture
+def mock_image_operations():
+    """Mock image operations for testing."""
+    from app.models.image_model import Image, ImageWithDetails
+    from datetime import datetime
+
+    class MockImageOperations:
+        def __init__(self):
+            self.images = {}
+            self.next_id = 1
+
+        async def get_image_by_id(self, image_id):
+            return self.images.get(image_id)
+
+        def get_image_by_id_sync(self, image_id):
+            return self.images.get(image_id)
+
+        async def get_images_by_ids(self, image_ids):
+            return [self.images[id] for id in image_ids if id in self.images]
+
+        async def get_images_by_cameras(self, camera_ids, limit=1000):
+            return [img for img in self.images.values() if img.camera_id in camera_ids][
+                :limit
+            ]
+
+        async def get_images_by_timelapses(self, timelapse_ids, limit=1000):
+            return [
+                img
+                for img in self.images.values()
+                if hasattr(img, "timelapse_id") and img.timelapse_id in timelapse_ids
+            ][:limit]
+
+        async def get_images_with_thumbnails(self, limit=1000):
+            return [
+                img
+                for img in self.images.values()
+                if hasattr(img, "thumbnail_path") and img.thumbnail_path
+            ][:limit]
+
+        def add_test_image(self, camera_id=1, timelapse_id=1, has_thumbnails=False):
+            image = ImageWithDetails(
+                id=self.next_id,
+                camera_id=camera_id,
+                timelapse_id=timelapse_id,
+                file_path=f"test_image_{self.next_id}.jpg",
+                captured_at=datetime.utcnow(),
+                created_at=datetime.utcnow(),
+                day_number=1,
+                file_size=1024,
+                corruption_score=100,
+                corruption_details=None,
+                is_flagged=False,
+                thumbnail_path=f"thumb_{self.next_id}.jpg" if has_thumbnails else None,
+                small_path=f"small_{self.next_id}.jpg" if has_thumbnails else None,
+            )
+            self.images[self.next_id] = image
+            self.next_id += 1
+            return image
+
+    return MockImageOperations()
+
+
+@pytest.fixture
+def mock_thumbnail_worker_dependencies(
+    mock_sync_database, mock_settings_service, mock_sse_operations
+):
+    """Bundle of dependencies needed for ThumbnailWorker testing."""
+
+    class MockSyncSSEOperations:
+        def __init__(self, async_sse_ops):
+            self.async_sse_ops = async_sse_ops
+
+        def create_event(
+            self, event_type, event_data, priority="normal", source="test"
+        ):
+            # For sync testing, just store the event
+            event = {
+                "event_type": event_type,
+                "event_data": event_data,
+                "priority": priority,
+                "source": source,
+                "created_at": datetime.utcnow(),
+            }
+            self.async_sse_ops.events.append(event)
+            return event
+
+    return {
+        "sync_db": mock_sync_database,
+        "settings_service": mock_settings_service,
+        "sse_ops": MockSyncSSEOperations(mock_sse_operations),
+        "async_sse_ops": mock_sse_operations,
+    }
+
+
+def generate_test_thumbnail_jobs(count=5, image_id_start=1):
+    """Generate test thumbnail job data."""
+    from app.models.shared_models import ThumbnailGenerationJobCreate
+    from app.constants import (
+        THUMBNAIL_JOB_PRIORITY_MEDIUM,
+        THUMBNAIL_JOB_STATUS_PENDING,
+        THUMBNAIL_JOB_TYPE_SINGLE,
+    )
+
+    jobs = []
+    for i in range(count):
+        jobs.append(
+            ThumbnailGenerationJobCreate(
+                image_id=image_id_start + i,
+                priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,
+                status=THUMBNAIL_JOB_STATUS_PENDING,
+                job_type=THUMBNAIL_JOB_TYPE_SINGLE,
+            )
+        )
+    return jobs
+
+
+def assert_job_status(job, expected_status):
+    """Assert that a job has the expected status."""
+    assert job is not None
+    assert job.status == expected_status
+
+
+def assert_sse_event_sent(sse_ops, event_type, expected_count=1):
+    """Assert that SSE events of specific type were sent."""
+    events = sse_ops.get_events(event_type)
+    assert len(events) == expected_count
+
+
+@pytest.fixture
+def mock_image_service():
+    """Mock image service for ThumbnailService testing."""
+    from app.models.shared_models import ThumbnailGenerationResult
+
+    class MockImageService:
+        def __init__(self):
+            self.generation_results = {}
+
+        async def coordinate_thumbnail_generation(
+            self, image_id: int, force_regenerate: bool = False
+        ):
+            """Mock thumbnail generation coordination."""
+            return ThumbnailGenerationResult(
+                success=True,
+                image_id=image_id,
+                thumbnail_path=f"/data/thumbnails/thumb_{image_id}.jpg",
+                small_path=f"/data/small/small_{image_id}.jpg",
+            )
+
+    return MockImageService()
+
+
+@pytest.fixture
+def mock_thumbnail_service_dependencies(
+    mock_async_database, mock_settings_service, mock_image_service
+):
+    """Mock dependencies for ThumbnailService initialization."""
+    return {
+        "db": mock_async_database,
+        "settings_service": mock_settings_service,
+        "image_service": mock_image_service,
+    }

@@ -24,7 +24,6 @@ from ..models.shared_models import (
     TimelapseForCleanup,
     TimelapseVideoSettings,
 )
-from ..utils.timezone_utils import get_timezone_aware_timestamp_async
 
 
 class TimelapseOperations:
@@ -327,9 +326,6 @@ class TimelapseOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    await self.db.broadcast_event(
-                        "timelapse_deleted", {"timelapse_id": timelapse_id}
-                    )
                     return True
                 return False
 
@@ -436,7 +432,9 @@ class TimelapseOperations:
                     # This will be removed once all SSE events are properly centralized
                     return completed_timelapse
 
-                raise ValueError(f"Timelapse {timelapse_id} not found or already completed")
+                raise ValueError(
+                    f"Timelapse {timelapse_id} not found or already completed"
+                )
 
     async def cleanup_completed_timelapses(self, retention_days: int = 90) -> int:
         """
@@ -463,6 +461,94 @@ class TimelapseOperations:
                     logger.info(f"Cleaned up {affected} completed timelapses")
 
                 return affected or 0
+
+    # ====================================================================
+    # THUMBNAIL COUNT TRACKING METHODS (ASYNC VERSION)
+    # ====================================================================
+
+    async def increment_thumbnail_counts(
+        self,
+        timelapse_id: int,
+        increment_thumbnail: bool = True,
+        increment_small: bool = True,
+    ) -> bool:
+        """
+        Increment thumbnail counts for a timelapse (async version).
+
+        Args:
+            timelapse_id: ID of the timelapse
+            increment_thumbnail: Whether to increment thumbnail_count
+            increment_small: Whether to increment small_count
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Build the SET clause dynamically
+            set_clauses = []
+            if increment_thumbnail:
+                set_clauses.append("thumbnail_count = thumbnail_count + 1")
+            if increment_small:
+                set_clauses.append("small_count = small_count + 1")
+
+            if not set_clauses:
+                return True  # Nothing to update
+
+            query = f"""
+                UPDATE timelapses 
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+            """
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id,))
+                    return cur.rowcount > 0
+
+        except Exception as e:
+            logger.error(
+                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}"
+            )
+            return False
+
+    async def recalculate_thumbnail_counts(self, timelapse_id: int) -> bool:
+        """
+        Recalculate thumbnail counts for a timelapse by counting actual files.
+
+        This method should be used for verification and repair operations.
+
+        Args:
+            timelapse_id: ID of the timelapse
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            query = """
+                UPDATE timelapses 
+                SET 
+                    thumbnail_count = COALESCE(thumb_stats.thumbnail_count, 0),
+                    small_count = COALESCE(thumb_stats.small_count, 0)
+                FROM (
+                    SELECT 
+                        COUNT(CASE WHEN thumbnail_path IS NOT NULL AND thumbnail_path != '' THEN 1 END) as thumbnail_count,
+                        COUNT(CASE WHEN small_path IS NOT NULL AND small_path != '' THEN 1 END) as small_count
+                    FROM images 
+                    WHERE timelapse_id = %s
+                ) as thumb_stats
+                WHERE timelapses.id = %s
+            """
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id, timelapse_id))
+                    return cur.rowcount > 0
+
+        except Exception as e:
+            logger.error(
+                f"Error recalculating thumbnail counts for timelapse {timelapse_id}: {e}"
+            )
+            return False
 
 
 class SyncTimelapseOperations:
@@ -761,3 +847,54 @@ class SyncTimelapseOperations:
                     return new_timelapse
 
                 raise Exception("Failed to create timelapse")
+
+    # ====================================================================
+    # THUMBNAIL COUNT TRACKING METHODS (SYNC VERSION)
+    # ====================================================================
+
+    def increment_thumbnail_counts_sync(
+        self,
+        timelapse_id: int,
+        increment_thumbnail: bool = True,
+        increment_small: bool = True,
+    ) -> bool:
+        """
+        Increment thumbnail counts for a timelapse (sync version for worker).
+
+        Args:
+            timelapse_id: ID of the timelapse
+            increment_thumbnail: Whether to increment thumbnail_count
+            increment_small: Whether to increment small_count
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Build the SET clause dynamically
+            set_clauses = []
+            if increment_thumbnail:
+                set_clauses.append("thumbnail_count = thumbnail_count + 1")
+            if increment_small:
+                set_clauses.append("small_count = small_count + 1")
+
+            if not set_clauses:
+                return True  # Nothing to update
+
+            query = f"""
+                UPDATE timelapses 
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+            """
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    return cur.rowcount > 0
+
+        except Exception as e:
+            logger.error(
+                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}"
+            )
+            return False
+
+    # ====================================================================

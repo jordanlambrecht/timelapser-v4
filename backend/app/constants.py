@@ -6,7 +6,7 @@ Centralized location for all application constants to avoid hardcoded values
 throughout the codebase.
 """
 
-from typing import Set
+from typing import Set, Literal
 
 # ====================================================================
 # FILE TYPE CONSTANTS
@@ -41,6 +41,46 @@ IMAGE_SIZE_VARIANTS = ["full", "small", "thumbnail"]
 # Thumbnail dimensions
 THUMBNAIL_DIMENSIONS = {"thumbnail": (150, 150), "small": (400, 400)}
 
+# Thumbnail generation modes
+THUMBNAIL_GENERATION_MODE_DISABLED = "disabled"
+THUMBNAIL_GENERATION_MODE_LATEST = "latest"
+THUMBNAIL_GENERATION_MODE_ALL = "all"
+
+# Thumbnail processing dimensions (optimized for performance)
+THUMBNAIL_SIZE = (200, 150)  # Small for dashboard cards
+SMALL_SIZE = (800, 600)  # Medium for detail pages
+
+# Thumbnail quality settings
+THUMBNAIL_QUALITY_FULL = 90  # High quality for full images
+THUMBNAIL_QUALITY_SMALL = 80  # Reduced from 85 for faster processing
+THUMBNAIL_QUALITY_THUMBNAIL = 70  # Reduced from 75 for speed
+
+# Thumbnail processing settings
+THUMBNAIL_PIL_OPTIMIZATION_ENABLED = True
+THUMBNAIL_WEBP_SUPPORT_ENABLED = False  # Disabled for compatibility
+THUMBNAIL_PROGRESSIVE_JPEG_ENABLED = True
+THUMBNAIL_MAX_IMAGE_DIMENSION = 4096  # Max dimension before downscaling
+THUMBNAIL_MEMORY_EFFICIENT_RESIZE = True
+
+# Thumbnail file naming
+THUMBNAIL_SIZE_PREFIX_THUMB = "thumb"
+THUMBNAIL_SIZE_PREFIX_SMALL = "small"
+THUMBNAIL_FILE_EXTENSION = ".jpg"
+THUMBNAIL_IMAGE_FORMAT = "JPEG"
+
+# Thumbnail optimization thresholds
+THUMBNAIL_SMALL_SIZE_THRESHOLD = 200  # For very small thumbnails
+THUMBNAIL_SMALL_QUALITY_REDUCTION = 5  # Quality reduction for small thumbnails
+THUMBNAIL_MIN_QUALITY = 60  # Minimum quality for small thumbnails
+
+# Thumbnail directory structure
+THUMBNAIL_DIR_CAMERAS = "cameras"
+THUMBNAIL_DIR_THUMBNAILS = "thumbnails"
+THUMBNAIL_DIR_SMALL = "small"
+THUMBNAIL_DIR_SMALLS = "smalls"  # New structure uses "smalls" instead of "small"
+THUMBNAIL_CAMERA_PREFIX = "camera-"
+THUMBNAIL_TIMELAPSE_PREFIX = "timelapse-"
+
 # ====================================================================
 # PAGINATION CONSTANTS
 # ====================================================================
@@ -73,6 +113,13 @@ CAMERA_STATUSES = ["active", "inactive", "error", "maintenance"]
 
 # Timelapse statuses
 TIMELAPSE_STATUSES = ["running", "paused", "completed", "archived"]
+TIMELAPSE_STATUS_RUNNING = "running"
+TIMELAPSE_STATUS_PAUSED = "paused"
+TIMELAPSE_STATUS_COMPLETED = "completed"
+TIMELAPSE_STATUS_ARCHIVED = "archived"
+
+# Timelapse status type
+TimelapseStatus = Literal["running", "paused", "completed", "archived"]
 
 # Video statuses
 VIDEO_STATUSES = ["pending", "processing", "completed", "failed"]
@@ -172,7 +219,9 @@ WEATHER_LOCATION_INVALID = "Invalid location coordinates"
 WEATHER_CONNECTION_ERROR = "Connection error"
 WEATHER_REFRESH_SKIPPED_LOCATION = "Weather refresh skipped: Location not configured"
 WEATHER_REFRESH_SKIPPED_DISABLED = "Weather functionality disabled, skipping refresh"
-WEATHER_REFRESH_MISSING_SETTINGS = "Weather refresh skipped: Missing required settings (lat/lng/api_key)"
+WEATHER_REFRESH_MISSING_SETTINGS = (
+    "Weather refresh skipped: Missing required settings (lat/lng/api_key)"
+)
 
 # Health scoring penalties and thresholds
 HEALTH_DEGRADED_MODE_PENALTY = 50
@@ -218,19 +267,19 @@ RATE_LIMIT_BURST = 20
 
 # Health check response times (milliseconds)
 HEALTH_DB_LATENCY_WARNING = 1000  # Warn if DB latency > 1 second
-HEALTH_DB_LATENCY_ERROR = 5000    # Error if DB latency > 5 seconds
+HEALTH_DB_LATENCY_ERROR = 5000  # Error if DB latency > 5 seconds
 
 # System resource thresholds
-HEALTH_CPU_WARNING = 90.0         # CPU usage warning threshold
-HEALTH_CPU_ERROR = 95.0           # CPU usage error threshold
-HEALTH_MEMORY_WARNING = 90.0      # Memory usage warning threshold
-HEALTH_MEMORY_ERROR = 95.0        # Memory usage error threshold
-HEALTH_DISK_WARNING = 90.0        # Disk usage warning threshold (used %)
-HEALTH_DISK_ERROR = 95.0          # Disk usage error threshold (used %)
+HEALTH_CPU_WARNING = 90.0  # CPU usage warning threshold
+HEALTH_CPU_ERROR = 95.0  # CPU usage error threshold
+HEALTH_MEMORY_WARNING = 90.0  # Memory usage warning threshold
+HEALTH_MEMORY_ERROR = 95.0  # Memory usage error threshold
+HEALTH_DISK_WARNING = 90.0  # Disk usage warning threshold (used %)
+HEALTH_DISK_ERROR = 95.0  # Disk usage error threshold (used %)
 
 # Video queue thresholds
-HEALTH_VIDEO_QUEUE_WARNING = 50   # Warn if pending jobs exceed this
-HEALTH_VIDEO_QUEUE_ERROR = 100    # Error if pending jobs exceed this
+HEALTH_VIDEO_QUEUE_WARNING = 50  # Warn if pending jobs exceed this
+HEALTH_VIDEO_QUEUE_ERROR = 100  # Error if pending jobs exceed this
 
 # ====================================================================
 # LOGGING CONSTANTS
@@ -243,10 +292,13 @@ LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 DEFAULT_LOG_RETENTION_DAYS = 30
 MAX_LOG_RETENTION_DAYS = 365
 
-# Log pagination constants  
+# Log pagination constants
 DEFAULT_LOG_PAGE_SIZE = 100
 MAX_LOG_PAGE_SIZE = 1000
 BULK_LOG_PAGE_SIZE = 10000
+
+# Log UI constants
+LOG_SEARCH_DEBOUNCE_MS = 500  # 500ms debounce for log search input
 
 # ====================================================================
 # VIDEO GENERATION CONSTANTS
@@ -285,7 +337,13 @@ VIDEO_QUEUE_ERROR_THRESHOLD = 100
 MAX_VIDEO_JOB_TIMEOUT_MINUTES = 30
 
 # Video automation health statuses
-VIDEO_AUTOMATION_HEALTH_STATUSES = ["healthy", "degraded", "unhealthy", "overloaded", "unknown"]
+VIDEO_AUTOMATION_HEALTH_STATUSES = [
+    "healthy",
+    "degraded",
+    "unhealthy",
+    "overloaded",
+    "unknown",
+]
 
 # Video service constants
 DEFAULT_VIDEO_CLEANUP_DAYS = 30
@@ -303,13 +361,13 @@ DEFAULT_IMAGE_RETENTION_DAYS = 30
 DEFAULT_DASHBOARD_QUALITY_TREND_DAYS = 7
 
 # ====================================================================
-# CAPTURE & RETRY CONSTANTS  
+# CAPTURE & RETRY CONSTANTS
 # ====================================================================
 
 # Capture settings
 DEFAULT_CAPTURE_INTERVAL_SECONDS = 300  # 5 minutes
-MIN_CAPTURE_INTERVAL_SECONDS = 30       # 30 seconds minimum
-MAX_CAPTURE_INTERVAL_SECONDS = 3600     # 1 hour maximum
+MIN_CAPTURE_INTERVAL_SECONDS = 30  # 30 seconds minimum
+MAX_CAPTURE_INTERVAL_SECONDS = 3600  # 1 hour maximum
 
 # Capture retry settings
 DEFAULT_MAX_RETRIES = 3
@@ -432,7 +490,9 @@ DEFAULT_OVERLAY_SETTINGS = {
 OVERLAY_FORMAT_DAY_ONLY = "Day {day}"
 OVERLAY_FORMAT_DAY_TEMP = "Day {day} • {temperature}°C"
 OVERLAY_FORMAT_DAY_WEATHER = "Day {day} • {temperature}°C • {weather}"
-OVERLAY_FORMAT_WEATHER_DETAILED = "{temperature}°C • {weather} • {humidity}% • {pressure}hPa"
+OVERLAY_FORMAT_WEATHER_DETAILED = (
+    "{temperature}°C • {weather} • {humidity}% • {pressure}hPa"
+)
 
 # ====================================================================
 # WORKER CONFIGURATION CONSTANTS
@@ -516,7 +576,14 @@ MAX_SETTING_KEY_LENGTH = 255
 MAX_SETTING_VALUE_LENGTH = 10000
 
 # Weather settings keys
-WEATHER_SETTINGS_KEYS = ["weather_enabled", "temperature_unit", "latitude", "longitude", "openweather_api_key", "sunrise_sunset_enabled"]
+WEATHER_SETTINGS_KEYS = [
+    "weather_enabled",
+    "temperature_unit",
+    "latitude",
+    "longitude",
+    "openweather_api_key",
+    "sunrise_sunset_enabled",
+]
 
 # Time window constants
 DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS = 5
@@ -543,27 +610,27 @@ THUMBNAIL_JOB_STATUS_FAILED = "failed"
 THUMBNAIL_JOB_STATUS_CANCELLED = "cancelled"
 
 # Thumbnail job priorities
-THUMBNAIL_JOB_PRIORITY_HIGH = "high"      # Manual operations from settings UI
+THUMBNAIL_JOB_PRIORITY_HIGH = "high"  # Manual operations from settings UI
 THUMBNAIL_JOB_PRIORITY_MEDIUM = "medium"  # New image captures
-THUMBNAIL_JOB_PRIORITY_LOW = "low"        # Bulk background operations
+THUMBNAIL_JOB_PRIORITY_LOW = "low"  # Bulk background operations
 
 # Thumbnail job types
-THUMBNAIL_JOB_TYPE_SINGLE = "single"      # Single image processing
-THUMBNAIL_JOB_TYPE_BULK = "bulk"          # Bulk operation processing
+THUMBNAIL_JOB_TYPE_SINGLE = "single"  # Single image processing
+THUMBNAIL_JOB_TYPE_BULK = "bulk"  # Bulk operation processing
 
 # Job queue configuration defaults - OPTIMIZED FOR PERFORMANCE
-DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 10      # Increased from 5 for better throughput
-DEFAULT_THUMBNAIL_WORKER_INTERVAL = 3     # Reduced from 10s for faster response 
+DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 10  # Increased from 5 for better throughput
+DEFAULT_THUMBNAIL_WORKER_INTERVAL = 3  # Reduced from 10s for faster response
 DEFAULT_THUMBNAIL_MAX_RETRIES = 3
 DEFAULT_THUMBNAIL_CLEANUP_HOURS = 24
 
 # High-load configuration (for busy systems)
-HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 20   # For systems with many cameras
+HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 20  # For systems with many cameras
 HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 1  # Near real-time processing
 
 # Memory optimization settings
-THUMBNAIL_MEMORY_LIMIT_MB = 512           # Memory limit per worker
-THUMBNAIL_CONCURRENT_JOBS = 3             # Concurrent processing limit
+THUMBNAIL_MEMORY_LIMIT_MB = 512  # Memory limit per worker
+THUMBNAIL_CONCURRENT_JOBS = 3  # Concurrent processing limit
 
 # Retry backoff timing (minutes) - OPTIMIZED
 THUMBNAIL_JOB_RETRY_DELAYS = [2, 10, 30]  # 2min, 10min, 30min - less aggressive
@@ -575,7 +642,9 @@ SETTING_KEY_THUMBNAIL_MAX_RETRIES = "thumbnail_max_retries"
 SETTING_KEY_THUMBNAIL_CLEANUP_HOURS = "thumbnail_cleanup_hours"
 SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
 SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
-SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = "thumbnail_purge_smalls_on_completion"
+SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
+    "thumbnail_purge_smalls_on_completion"
+)
 
 # Performance optimization settings
 SETTING_KEY_THUMBNAIL_HIGH_LOAD_MODE = "thumbnail_high_load_mode"
@@ -583,7 +652,12 @@ SETTING_KEY_THUMBNAIL_MEMORY_LIMIT = "thumbnail_memory_limit_mb"
 SETTING_KEY_THUMBNAIL_CONCURRENT_JOBS = "thumbnail_concurrent_jobs"
 
 # Performance thresholds for adaptive scaling
-THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50    # Switch to high-load mode
-THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10     # Switch back to normal mode
-THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000 # Log slow processing warning
-THUMBNAIL_MEMORY_WARNING_THRESHOLD = 0.8    # Memory usage warning (80%)
+THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50  # Switch to high-load mode
+THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10  # Switch back to normal mode
+THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000  # Log slow processing warning
+THUMBNAIL_MEMORY_WARNING_THRESHOLD = 0.8  # Memory usage warning (80%)
+
+# Thumbnail verification and maintenance constants
+THUMBNAIL_VERIFICATION_BATCH_SIZE = 10000  # Maximum images to verify at once
+BYTES_TO_MB_DIVISOR = 1024 * 1024  # Conversion factor for bytes to MB
+BYTES_TO_KB_DIVISOR = 1024  # Conversion factor for bytes to KB

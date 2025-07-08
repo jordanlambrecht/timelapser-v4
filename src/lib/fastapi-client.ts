@@ -1,20 +1,20 @@
 // src/lib/fastapi-client.ts
 // Updated TypeScript interfaces to match FastAPI Pydantic models exactly
 
-// Image interfaces (defined early for Camera relationships)
-export interface ImageForCamera {
-  id: number
-  captured_at: string // ISO datetime string
-  file_path: string
-  file_size: number | null
-  day_number: number
-  // Corruption detection fields
-  corruption_score: number
-  is_flagged: boolean
-  corruption_details: object | null
-}
+import {
+  ImageForCamera,
+  CameraWithLastImage,
+  VideoWithDetails,
+  TimelapseWithDetails as ApiTimelapseWithDetails,
+  LogForCamera,
+  CameraDetailStats,
+  CameraDetailsResponse,
+  VideoGenerationJob,
+  CorruptionLog,
+  CameraHealthStatus,
+} from "@/types/api"
 
-// Camera interfaces
+// Camera interfaces - only define what's not in the API types
 export interface CameraBase {
   name: string
   rtsp_url: string
@@ -72,10 +72,8 @@ export interface Camera extends CameraBase {
   last_image: ImageForCamera | null
 }
 
-export interface CameraWithLastImage extends Camera {
-  timelapse_status: "running" | "stopped" | "paused" | null
-  timelapse_id: number | null
-}
+/* Removed local CameraWithLastImage interface to resolve import conflict.
+   Use the imported CameraWithLastImage from "@/types/api" instead. */
 
 export interface CameraStats {
   total_images: number
@@ -148,9 +146,8 @@ export interface Video extends VideoBase {
   updated_at: string // ISO datetime string
 }
 
-export interface VideoWithDetails extends Video {
-  camera_name: string
-}
+// Removed local VideoWithDetails interface to resolve import conflict.
+// Use the imported VideoWithDetails from "@/types/api" instead.
 
 // Image interfaces
 export interface ImageBase {
@@ -268,33 +265,48 @@ export const api = {
       }),
     // Camera-centric timelapse management
     startTimelapse: (cameraId: number, data?: any) =>
-      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/start-timelapse`, {
-        method: "POST",
-        body: JSON.stringify(data || {}),
-      }),
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(
+        `/api/cameras/${cameraId}/start-timelapse`,
+        {
+          method: "POST",
+          body: JSON.stringify(data || {}),
+        }
+      ),
     pauseTimelapse: (cameraId: number) =>
-      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/pause-timelapse`, {
-        method: "POST",
-      }),
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(
+        `/api/cameras/${cameraId}/pause-timelapse`,
+        {
+          method: "POST",
+        }
+      ),
     resumeTimelapse: (cameraId: number) =>
-      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/resume-timelapse`, {
-        method: "POST",
-      }),
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(
+        `/api/cameras/${cameraId}/resume-timelapse`,
+        {
+          method: "POST",
+        }
+      ),
     stopTimelapse: (cameraId: number) =>
-      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/stop-timelapse`, {
-        method: "POST",
-      }),
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(
+        `/api/cameras/${cameraId}/stop-timelapse`,
+        {
+          method: "POST",
+        }
+      ),
     completeTimelapse: (cameraId: number) =>
-      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(`/api/cameras/${cameraId}/complete-timelapse`, {
-        method: "POST",
-      }),
+      apiRequest<{ success: boolean; timelapse_id: number; message: string }>(
+        `/api/cameras/${cameraId}/complete-timelapse`,
+        {
+          method: "POST",
+        }
+      ),
   },
-  
+
   // Timelapse data endpoints (for querying, not lifecycle management)
   timelapses: {
     list: (cameraId?: number) => {
       const params = cameraId ? `?camera_id=${cameraId}` : ""
-      return apiRequest<TimelapseWithDetails[]>(`/api/timelapses${params}`)
+      return apiRequest<ApiTimelapseWithDetails[]>(`/api/timelapses${params}`)
     },
     updateStatus: (cameraId: number, data: TimelapseUpdate) =>
       apiRequest<{ timelapse_id: number; status: string }>(

@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     // Call the correct backend endpoint with nested path
-    let response = await fetch(`${FASTAPI_BASE_URL}/api/images/bulk/download`, {
+    const response = await fetch(`${FASTAPI_BASE_URL}/api/images/bulk/download`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

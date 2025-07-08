@@ -23,6 +23,10 @@ from .services.statistics_service import StatisticsService
 from .services.log_service import LogService
 from .services.health_service import HealthService
 
+from .database.thumbnail_job_operations import ThumbnailJobOperations
+from .database.sse_events_operations import SSEEventsOperations
+from .database.image_operations import AsyncImageOperations
+
 
 # Database Dependencies
 async def get_async_database() -> AsyncDatabase:
@@ -50,10 +54,12 @@ async def get_video_service() -> VideoService:
 
 async def get_timelapse_service() -> TimelapseService:
     """Get TimelapseService with async database dependency injection"""
-    # Create image service dependency
+    # Create service dependencies
     settings_service = SettingsService(async_db)
     image_service = ImageService(async_db, settings_service)
-    return TimelapseService(async_db, image_service=image_service)
+    return TimelapseService(
+        async_db, image_service=image_service, settings_service=settings_service
+    )
 
 
 async def get_image_service() -> ImageService:
@@ -64,9 +70,18 @@ async def get_image_service() -> ImageService:
 
 async def get_thumbnail_service() -> ThumbnailService:
     """Get ThumbnailService with async database dependency injection"""
+
+    thumbnail_job_ops = ThumbnailJobOperations(async_db)
+    sse_operations = SSEEventsOperations(async_db)
+    image_operations = AsyncImageOperations(async_db)
     settings_service = SettingsService(async_db)
-    image_service = ImageService(async_db, settings_service)
-    return ThumbnailService(async_db, settings_service, image_service)
+
+    return ThumbnailService(
+        thumbnail_job_ops,
+        sse_operations,
+        image_operations=image_operations,
+        settings_service=settings_service,
+    )
 
 
 async def get_corruption_service() -> CorruptionService:
@@ -100,7 +115,12 @@ def get_sync_video_service() -> SyncVideoService:
     return SyncVideoService(sync_db)
 
 
-def get_video_automation_service() -> VideoAutomationService:
+async def get_video_automation_service() -> VideoAutomationService:
+    """Get VideoAutomationService with sync database dependency injection"""
+    return VideoAutomationService(sync_db)
+
+
+def get_sync_video_automation_service() -> VideoAutomationService:
     """Get VideoAutomationService with sync database dependency injection"""
     return VideoAutomationService(sync_db)
 
@@ -121,6 +141,13 @@ StatisticsServiceDep = Annotated[StatisticsService, Depends(get_statistics_servi
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 
+# Video automation service dependencies
+VideoAutomationServiceDep = Annotated[
+    VideoAutomationService, Depends(get_video_automation_service)
+]
+
 # Sync service dependencies
 SyncVideoServiceDep = Annotated[SyncVideoService, Depends(get_sync_video_service)]
-VideoAutomationServiceDep = Annotated[VideoAutomationService, Depends(get_video_automation_service)]
+SyncVideoAutomationServiceDep = Annotated[
+    VideoAutomationService, Depends(get_sync_video_automation_service)
+]

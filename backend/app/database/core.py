@@ -21,7 +21,6 @@ from ..config import settings
 from ..utils.timezone_utils import utc_now
 
 
-
 class AsyncDatabaseCore:
     """
     Core async database functionality for composition-based architecture.
@@ -62,7 +61,9 @@ class AsyncDatabaseCore:
             )
             await self._pool.open()
             self._pool_created_at = utc_now()
-            logger.info(f"Async database pool initialized (min: 2, max: {settings.db_pool_size}, overflow: {settings.db_max_overflow})")
+            logger.info(
+                f"Async database pool initialized (min: 2, max: {settings.db_pool_size}, overflow: {settings.db_max_overflow})"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize async database pool: {e}")
             raise
@@ -100,59 +101,78 @@ class AsyncDatabaseCore:
 
         self._connection_attempts += 1
         start_time = time.time()
-        
+
         try:
             async with self._pool.connection() as conn:
                 async with conn.transaction():
                     yield conn
-        except Exception as e:
+        except (psycopg.Error, psycopg.OperationalError, psycopg.DatabaseError, Exception) as e:
             self._failed_connections += 1
             connection_time = time.time() - start_time
-            logger.error(f"Database connection failed after {connection_time:.3f}s: {str(e) or type(e).__name__}")
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
+            logger.error(
+                f"Database connection failed after {connection_time:.3f}s: {error_msg}"
+            )
             raise
 
     async def get_pool_stats(self) -> Dict[str, Any]:
         """
         Get detailed connection pool statistics for monitoring.
-        
+
         Returns:
             Dict containing pool health metrics, connection counts, and performance data
         """
         if not self._pool:
             return {"status": "not_initialized"}
-        
+
         try:
             # Basic pool information
             stats = {
                 "status": "healthy",
-                "pool_created_at": self._pool_created_at.isoformat() if self._pool_created_at else None,
-                "uptime_seconds": (utc_now() - self._pool_created_at).total_seconds() if self._pool_created_at else 0,
+                "pool_created_at": (
+                    self._pool_created_at.isoformat() if self._pool_created_at else None
+                ),
+                "uptime_seconds": (
+                    (utc_now() - self._pool_created_at).total_seconds()
+                    if self._pool_created_at
+                    else 0
+                ),
                 "connection_attempts": self._connection_attempts,
                 "failed_connections": self._failed_connections,
-                "success_rate": (self._connection_attempts - self._failed_connections) / max(self._connection_attempts, 1) * 100,
+                "success_rate": (self._connection_attempts - self._failed_connections)
+                / max(self._connection_attempts, 1)
+                * 100,
                 "configuration": {
                     "min_size": 2,
                     "max_size": settings.db_pool_size,
                     "max_waiting": settings.db_max_overflow,
-                }
+                },
             }
-            
+
             # Try to get pool status (this may not be available in all psycopg3 versions)
             try:
-                if hasattr(self._pool, 'get_stats'):
+                if hasattr(self._pool, "get_stats"):
                     pool_stats = self._pool.get_stats()
-                    stats.update({
-                        "pool_stats": {
-                            "pool_size": getattr(pool_stats, 'pool_size', 'unknown'),
-                            "pool_available": getattr(pool_stats, 'pool_available', 'unknown'),
-                            "requests_waiting": getattr(pool_stats, 'requests_waiting', 'unknown'),
+                    stats.update(
+                        {
+                            "pool_stats": {
+                                "pool_size": getattr(
+                                    pool_stats, "pool_size", "unknown"
+                                ),
+                                "pool_available": getattr(
+                                    pool_stats, "pool_available", "unknown"
+                                ),
+                                "requests_waiting": getattr(
+                                    pool_stats, "requests_waiting", "unknown"
+                                ),
+                            }
                         }
-                    })
+                    )
             except Exception as e:
                 stats["pool_stats_error"] = str(e)
-            
+
             return stats
-            
+
         except Exception as e:
             return {
                 "status": "error",
@@ -164,18 +184,18 @@ class AsyncDatabaseCore:
     async def health_check(self, timeout: float = 5.0) -> Dict[str, Any]:
         """
         Perform a comprehensive health check of the database connection.
-        
+
         Args:
             timeout: Maximum time to wait for health check to complete
-            
+
         Returns:
             Dict containing health status and performance metrics
         """
         if not self._pool:
             return {"status": "unhealthy", "error": "Pool not initialized"}
-        
+
         start_time = time.time()
-        
+
         try:
             # Test connection with timeout - wrap the entire async context manager usage
             async with asyncio.timeout(timeout):
@@ -184,21 +204,21 @@ class AsyncDatabaseCore:
                         # Test basic connectivity
                         await cur.execute("SELECT 1")
                         await cur.fetchone()
-                        
+
                         # Test transaction capability
                         await cur.execute("SELECT NOW()")
                         result = await cur.fetchone()
-                    
+
             connection_time = time.time() - start_time
             self._last_health_check = utc_now()
-            
+
             return {
                 "status": "healthy",
                 "response_time_ms": round(connection_time * 1000, 2),
                 "last_check": self._last_health_check.isoformat(),
                 "database_time": result[0].isoformat() if result else None,
             }
-            
+
         except asyncio.TimeoutError:
             return {
                 "status": "unhealthy",
@@ -207,12 +227,10 @@ class AsyncDatabaseCore:
             }
         except Exception as e:
             return {
-                "status": "unhealthy", 
+                "status": "unhealthy",
                 "error": str(e),
                 "response_time_ms": round((time.time() - start_time) * 1000, 2),
             }
-
-
 
 
 class SyncDatabaseCore:
@@ -289,8 +307,6 @@ class SyncDatabaseCore:
         with self._pool.connection() as conn:
             with conn.transaction():
                 yield conn
-
-
 
 
 # Composition-based database classes for services and routers

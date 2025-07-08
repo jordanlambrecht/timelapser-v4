@@ -34,6 +34,8 @@ from ..models.shared_models import (
 )
 from ..constants import (
     TIMELAPSE_STATUSES,
+    TIMELAPSE_STATUS_COMPLETED,
+    TimelapseStatus,
     EVENT_TIMELAPSE_CREATED,
     EVENT_TIMELAPSE_UPDATED,
     EVENT_TIMELAPSE_COMPLETED,
@@ -41,10 +43,10 @@ from ..constants import (
     EVENT_TIMELAPSE_HEALTH_MONITORED,
     EVENT_TIMELAPSE_STATISTICS_UPDATED,
     EVENT_HEALTH_CHECK_COMPLETED,
+    SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
 )
 from ..utils.timezone_utils import (
     get_timezone_aware_timestamp_async,
-    get_timezone_aware_timestamp_sync,
     utc_now,
 )
 from ..utils.response_helpers import (
@@ -78,6 +80,7 @@ class TimelapseService:
         camera_service=None,
         video_automation_service=None,
         image_service=None,
+        settings_service=None,
     ):
         """
         Initialize TimelapseService with async database instance and service dependencies.
@@ -87,6 +90,7 @@ class TimelapseService:
             camera_service: Optional CameraService for active timelapse coordination
             video_automation_service: Optional VideoAutomationService for automation triggers
             image_service: Optional ImageService for image operations
+            settings_service: Optional SettingsService for configuration access
         """
         self.db = db
         self.timelapse_ops = TimelapseOperations(db)
@@ -94,6 +98,7 @@ class TimelapseService:
         self.camera_service = camera_service
         self.video_automation_service = video_automation_service
         self.image_service = image_service
+        self.settings_service = settings_service
 
     async def get_timelapses(
         self, camera_id: Optional[int] = None
@@ -178,10 +183,10 @@ class TimelapseService:
                     "timelapse_id": new_timelapse.id,
                     "camera_id": camera_id,
                     "status": new_timelapse.status,
-                    "name": new_timelapse.name
+                    "name": new_timelapse.name,
                 },
                 priority="normal",
-                source="api"
+                source="api",
             )
 
             # Enhanced health monitoring integration
@@ -227,12 +232,12 @@ class TimelapseService:
                     "timelapse_id": timelapse_id,
                     "camera_id": updated_timelapse.camera_id,
                     "status": updated_timelapse.status,
-                    "name": updated_timelapse.name
+                    "name": updated_timelapse.name,
                 },
                 priority="normal",
-                source="api"
+                source="api",
             )
-            
+
             # Invalidate statistics cache since updates may affect statistics
             self._invalidate_statistics_cache(timelapse_id)
 
@@ -259,7 +264,7 @@ class TimelapseService:
         try:
             # Get timelapse info before deletion for SSE event
             timelapse_to_delete = await self.get_timelapse_by_id(timelapse_id)
-            
+
             result = await self.timelapse_ops.delete_timelapse(timelapse_id)
             if result:
                 LoggingHelper.log_operation_success("delete", "timelapse", timelapse_id)
@@ -270,10 +275,10 @@ class TimelapseService:
                         event_data={
                             "timelapse_id": timelapse_id,
                             "camera_id": timelapse_to_delete.camera_id,
-                            "name": timelapse_to_delete.name
+                            "name": timelapse_to_delete.name,
                         },
                         priority="normal",
-                        source="api"
+                        source="api",
                     )
             return result
         except Exception as e:
@@ -294,32 +299,37 @@ class TimelapseService:
             TimelapseStatistics model instance or None if timelapse not found
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        
+
         cache_key = f"timelapse_stats_{timelapse_id}"
-        
+
         try:
             # Basic cache handling: check if we have a recently fetched result
-            if use_cache and hasattr(self, '_stats_cache'):
+            if use_cache and hasattr(self, "_stats_cache"):
                 cached_result = self._stats_cache.get(cache_key)
-                if cached_result and cached_result.get('expires_at', 0) > utc_now().timestamp():
-                    logger.debug(f"Using cached statistics for timelapse {timelapse_id}")
-                    return cached_result.get('data')
-            
+                if (
+                    cached_result
+                    and cached_result.get("expires_at", 0) > utc_now().timestamp()
+                ):
+                    logger.debug(
+                        f"Using cached statistics for timelapse {timelapse_id}"
+                    )
+                    return cached_result.get("data")
+
             # Fetch fresh statistics
             statistics = await self.timelapse_ops.get_timelapse_statistics(timelapse_id)
-            
+
             # Cache the result for 5 minutes
             if use_cache:
-                if not hasattr(self, '_stats_cache'):
+                if not hasattr(self, "_stats_cache"):
                     self._stats_cache = {}
                 self._stats_cache[cache_key] = {
-                    'data': statistics,
-                    'expires_at': utc_now().timestamp() + 300  # 5 minutes cache
+                    "data": statistics,
+                    "expires_at": utc_now().timestamp() + 300,  # 5 minutes cache
                 }
                 logger.debug(f"Cached statistics for timelapse {timelapse_id}")
-            
+
             return statistics
-            
+
         except Exception as e:
             LoggingHelper.log_operation_error(
                 "get_statistics", "timelapse", timelapse_id, e
@@ -329,11 +339,11 @@ class TimelapseService:
     def _invalidate_statistics_cache(self, timelapse_id: int) -> None:
         """
         Invalidate cached statistics for a timelapse.
-        
+
         Args:
             timelapse_id: ID of the timelapse to invalidate cache for
         """
-        if hasattr(self, '_stats_cache'):
+        if hasattr(self, "_stats_cache"):
             cache_key = f"timelapse_stats_{timelapse_id}"
             self._stats_cache.pop(cache_key, None)
             logger.debug(f"Invalidated statistics cache for timelapse {timelapse_id}")
@@ -362,7 +372,7 @@ class TimelapseService:
     async def _update_timelapse_status(
         self,
         timelapse_id: int,
-        status: Literal["running", "paused", "completed", "archived"],
+        status: TimelapseStatus,
         action_name: str,
     ) -> Timelapse:
         """
@@ -397,10 +407,10 @@ class TimelapseService:
                 "timelapse_id": timelapse_id,
                 "camera_id": updated_timelapse.camera_id,
                 "status": status,
-                "action": action_name
+                "action": action_name,
             },
             priority="high",
-            source="api"
+            source="api",
         )
 
         LoggingHelper.log_operation_success(action_name, "timelapse", timelapse_id)
@@ -416,10 +426,12 @@ class TimelapseService:
         Returns:
             Updated Timelapse model instance
         """
-        updated_timelapse = await self._update_timelapse_status(timelapse_id, "running", "start")
-        
+        updated_timelapse = await self._update_timelapse_status(
+            timelapse_id, "running", "start"
+        )
+
         # SSE broadcasting handled by higher-level service layer
-        
+
         return updated_timelapse
 
     async def pause_timelapse(self, timelapse_id: int) -> Timelapse:
@@ -432,10 +444,12 @@ class TimelapseService:
         Returns:
             Updated Timelapse model instance
         """
-        updated_timelapse = await self._update_timelapse_status(timelapse_id, "paused", "pause")
-        
+        updated_timelapse = await self._update_timelapse_status(
+            timelapse_id, "paused", "pause"
+        )
+
         # SSE broadcasting handled by higher-level service layer
-        
+
         return updated_timelapse
 
     async def stop_timelapse(self, timelapse_id: int) -> Timelapse:
@@ -448,10 +462,12 @@ class TimelapseService:
         Returns:
             Updated Timelapse model instance
         """
-        updated_timelapse = await self._update_timelapse_status(timelapse_id, "completed", "stop")
-        
+        updated_timelapse = await self._update_timelapse_status(
+            timelapse_id, TIMELAPSE_STATUS_COMPLETED, "stop"
+        )
+
         # SSE broadcasting handled by higher-level service layer
-        
+
         return updated_timelapse
 
     async def complete_timelapse(self, timelapse_id: int) -> Timelapse:
@@ -472,6 +488,18 @@ class TimelapseService:
                 timelapse_id
             )
 
+            # Check if we should purge small images on completion
+            if self.settings_service:
+                purge_setting = await self.settings_service.get_setting(
+                    SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION, "false"
+                )
+                if purge_setting.lower() == "true":
+                    # TODO: Call ThumbnailService.purge_small_images_for_timelapse(timelapse_id)
+                    # This should be moved to ThumbnailService for proper separation of concerns
+                    logger.info(
+                        f"Small image purge requested for timelapse {timelapse_id} but not yet implemented in ThumbnailService"
+                    )
+
             # Invalidate statistics cache since completion changes statistics
             self._invalidate_statistics_cache(timelapse_id)
 
@@ -480,15 +508,15 @@ class TimelapseService:
 
             # Create SSE event for completion
             await self.sse_ops.create_event(
-                event_type="timelapse_completed",
+                event_type=EVENT_TIMELAPSE_COMPLETED,
                 event_data={
                     "timelapse_id": timelapse_id,
                     "camera_id": completed_timelapse.camera_id,
                     "status": completed_timelapse.status,
-                    "name": completed_timelapse.name
+                    "name": completed_timelapse.name,
                 },
                 priority="high",
-                source="api"
+                source="api",
             )
 
             LoggingHelper.log_operation_success("complete", "timelapse", timelapse_id)
@@ -497,6 +525,8 @@ class TimelapseService:
         except Exception as e:
             LoggingHelper.log_operation_error("complete", "timelapse", timelapse_id, e)
             raise
+
+    # TODO: Move thumbnail purge functionality to ThumbnailService for proper separation of concerns
 
     async def get_timelapse_images(
         self, timelapse_id: int, page: int = 1, per_page: int = 50
@@ -629,10 +659,10 @@ class TimelapseService:
                         "timelapse_id": timelapse.id,
                         "camera_id": camera_id,
                         "status": timelapse.status,
-                        "name": timelapse.name
+                        "name": timelapse.name,
                     },
                     priority="normal",
-                    source="api"
+                    source="api",
                 )
 
             LoggingHelper.log_operation_success(
@@ -1011,60 +1041,74 @@ class TimelapseService:
                 "Progress tracking failed", error_code="progress_tracking_failed"
             )
 
-    async def _monitor_timelapse_health(self, timelapse_id: int, operation: str) -> None:
+    async def _monitor_timelapse_health(
+        self, timelapse_id: int, operation: str
+    ) -> None:
         """
         Enhanced health monitoring integration for timelapse operations.
-        
+
         Args:
             timelapse_id: ID of the timelapse to monitor
             operation: Type of operation being monitored (creation, completion, etc.)
         """
         try:
             timestamp = await get_timezone_aware_timestamp_async(self.db)
-            
+
             # Get basic timelapse health metrics
             timelapse = await self.timelapse_ops.get_timelapse_by_id(timelapse_id)
             if not timelapse:
-                logger.warning(f"Cannot monitor health for non-existent timelapse {timelapse_id}")
+                logger.warning(
+                    f"Cannot monitor health for non-existent timelapse {timelapse_id}"
+                )
                 return
-            
+
             # Calculate health metrics
             health_data = {
                 "timelapse_id": timelapse_id,
                 "operation": operation,
                 "status": timelapse.status,
                 "camera_id": timelapse.camera_id,
-                "created_at": timelapse.created_at.isoformat() if timelapse.created_at else None,
+                "created_at": (
+                    timelapse.created_at.isoformat() if timelapse.created_at else None
+                ),
                 "health_check_timestamp": timestamp.isoformat(),
             }
-            
+
             # Create SSE event for health monitoring
             await self.sse_ops.create_event(
                 event_type="timelapse_health_monitored",
                 event_data=health_data,
                 priority="low",
-                source="system"
+                source="system",
             )
-            
-            logger.info(f"Timelapse health monitoring completed for {timelapse_id} during {operation}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to monitor timelapse health for {timelapse_id}: {e}")
 
-    async def _coordinate_statistics_update(self, timelapse_id: int, trigger: str) -> None:
+            logger.info(
+                f"Timelapse health monitoring completed for {timelapse_id} during {operation}"
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to monitor timelapse health for {timelapse_id}: {e}"
+            )
+
+    async def _coordinate_statistics_update(
+        self, timelapse_id: int, trigger: str
+    ) -> None:
         """
         Enhanced statistics coordination for timelapse operations.
-        
+
         Args:
             timelapse_id: ID of the timelapse for statistics update
             trigger: What triggered the statistics update (completion, update, etc.)
         """
         try:
             timestamp = await get_timezone_aware_timestamp_async(self.db)
-            
+
             # Get fresh timelapse statistics (bypass cache for accurate coordination)
-            statistics = await self.get_timelapse_statistics(timelapse_id, use_cache=False)
-            
+            statistics = await self.get_timelapse_statistics(
+                timelapse_id, use_cache=False
+            )
+
             if statistics:
                 stats_data = {
                     "timelapse_id": timelapse_id,
@@ -1072,21 +1116,25 @@ class TimelapseService:
                     "statistics": statistics.model_dump(),
                     "update_timestamp": timestamp.isoformat(),
                 }
-                
+
                 # Create SSE event for statistics coordination
                 await self.sse_ops.create_event(
                     event_type="timelapse_statistics_updated",
                     event_data=stats_data,
                     priority="low",
-                    source="system"
+                    source="system",
                 )
-                
-                logger.info(f"Statistics coordination completed for timelapse {timelapse_id} via {trigger}")
+
+                logger.info(
+                    f"Statistics coordination completed for timelapse {timelapse_id} via {trigger}"
+                )
             else:
                 logger.warning(f"No statistics available for timelapse {timelapse_id}")
-                
+
         except Exception as e:
-            logger.warning(f"Failed to coordinate statistics update for timelapse {timelapse_id}: {e}")
+            logger.warning(
+                f"Failed to coordinate statistics update for timelapse {timelapse_id}: {e}"
+            )
 
     # SSE broadcasting methods removed per architectural guidelines
     # Real-time event broadcasting is handled at a higher service layer

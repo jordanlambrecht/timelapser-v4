@@ -9,8 +9,18 @@ Interactions: Uses TimelapseService for business logic, broadcasts SSE events fo
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Path, status, Depends, Body, Response
-
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Path,
+    status,
+    Depends,
+    Body,
+    Response,
+)
+from ..database.image_operations import ImageOperations
+from ..database.timelapse_operations import TimelapseOperations
 from ..database import async_db
 from ..dependencies import (
     TimelapseServiceDep,
@@ -18,12 +28,13 @@ from ..dependencies import (
     CameraServiceDep,
     VideoServiceDep,
     ImageServiceDep,
+    ThumbnailServiceDep,
 )
 from ..utils.cache_manager import (
     generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag
+    generate_timestamp_etag,
 )
 from ..services.timelapse_service import TimelapseService
 from ..services.settings_service import SettingsService
@@ -40,7 +51,11 @@ from ..models.shared_models import (
     TimelapseStatistics,
     VideoGenerationMode,
     VideoAutomationMode,
+    ThumbnailJobStatistics,
+    BulkThumbnailRequest,
+    BulkThumbnailResponse,
 )
+from ..database.timelapse_operations import TimelapseOperations
 from ..utils.router_helpers import handle_exceptions, validate_entity_exists
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.timezone_utils import (
@@ -204,9 +219,11 @@ async def get_timelapses(
             etag = generate_collection_etag([tl.updated_at for tl in timelapses])
         else:
             etag = generate_content_hash_etag(f"empty-{camera_id}")
-        
+
         # Add moderate cache for timelapse list
-        response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+        response.headers["Cache-Control"] = (
+            "public, max-age=300, s-maxage=300"  # 5 minutes
+        )
         response.headers["ETag"] = etag
 
         # Debug logging handled in service layer
@@ -239,14 +256,16 @@ async def get_timelapse(
     timelapse = await validate_entity_exists(
         timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
     )
-    
+
     # Generate ETag based on timelapse ID and updated timestamp
     etag = generate_composite_etag(timelapse.id, timelapse.updated_at)
-    
+
     # Add moderate cache for timelapse details
-    response.headers["Cache-Control"] = "public, max-age=600, s-maxage=600"  # 10 minutes
+    response.headers["Cache-Control"] = (
+        "public, max-age=600, s-maxage=600"  # 10 minutes
+    )
     response.headers["ETag"] = etag
-    
+
     return timelapse
 
 
@@ -553,14 +572,16 @@ async def get_timelapse_statistics(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Timelapse with ID {timelapse_id} not found",
             )
-        
+
         # Generate ETag based on timelapse ID and stats content
         etag = generate_content_hash_etag(f"{timelapse_id}-{stats}")
-        
+
         # Add longer cache for statistics (they change slowly)
-        response.headers["Cache-Control"] = "public, max-age=900, s-maxage=900"  # 15 minutes
+        response.headers["Cache-Control"] = (
+            "public, max-age=900, s-maxage=900"  # 15 minutes
+        )
         response.headers["ETag"] = etag
-        
+
         return stats
 
     except HTTPException:
@@ -639,9 +660,11 @@ async def get_timelapse_videos(
         etag = generate_collection_etag([v.created_at for v in videos])
     else:
         etag = generate_content_hash_etag(f"empty-videos-{timelapse_id}")
-    
+
     # Add moderate cache for video list
-    response.headers["Cache-Control"] = "public, max-age=600, s-maxage=600"  # 10 minutes
+    response.headers["Cache-Control"] = (
+        "public, max-age=600, s-maxage=600"  # 10 minutes
+    )
     response.headers["ETag"] = etag
 
     # Debug logging handled in service layer
@@ -687,20 +710,241 @@ async def get_timelapse_images(
     )
 
     images = result.get("images", [])
-    
+
     # Generate ETag based on timelapse ID, pagination, and images data
     if images:
         etag = generate_collection_etag([img.captured_at for img in images])
     else:
-        etag = generate_content_hash_etag(f"empty-images-{timelapse_id}-{offset}-{limit}")
-    
+        etag = generate_content_hash_etag(
+            f"empty-images-{timelapse_id}-{offset}-{limit}"
+        )
+
     # Add short cache for image list (changes when new images captured)
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
     response.headers["ETag"] = etag
-    
+
     # Debug logging handled in service layer
     return images
 
 
-# NOTE: Additional endpoints like images, video-settings, day-numbers, etc.
+# ====================================================================
+# TIMELAPSE-LEVEL THUMBNAIL OPERATIONS
+# ====================================================================
+
+
+@router.get("/timelapses/{timelapse_id}/thumbnails/stats", response_model=dict)
+@handle_exceptions("get timelapse thumbnail statistics")
+async def get_timelapse_thumbnail_stats(
+    response: Response,
+    timelapse_service: TimelapseServiceDep,
+    timelapse_id: int = Depends(valid_timelapse_id),
+):
+    """
+    Get thumbnail statistics for a specific timelapse.
+
+    Returns thumbnail count, small count, and generation status for the timelapse.
+    Uses the real-time counts stored in the timelapses table.
+    """
+    # Validate timelapse exists
+    timelapse = await validate_entity_exists(
+        timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
+    )
+
+    # Extract thumbnail statistics from timelapse model
+    stats = {
+        "timelapse_id": timelapse_id,
+        "thumbnail_count": timelapse.thumbnail_count,
+        "small_count": timelapse.small_count,
+        "total_images": timelapse.image_count,
+        "thumbnail_percentage": (
+            round((timelapse.thumbnail_count / timelapse.image_count) * 100, 2)
+            if timelapse.image_count > 0
+            else 0
+        ),
+        "small_percentage": (
+            round((timelapse.small_count / timelapse.image_count) * 100, 2)
+            if timelapse.image_count > 0
+            else 0
+        ),
+    }
+
+    # Generate ETag based on timelapse counts
+    etag = generate_content_hash_etag(
+        f"{timelapse_id}-{timelapse.thumbnail_count}-{timelapse.small_count}-{timelapse.image_count}"
+    )
+
+    # Add moderate cache for thumbnail stats
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
+    response.headers["ETag"] = etag
+
+    return stats
+
+
+@router.post(
+    "/timelapses/{timelapse_id}/thumbnails/regenerate",
+    response_model=BulkThumbnailResponse,
+)
+@handle_exceptions("regenerate timelapse thumbnails")
+async def regenerate_timelapse_thumbnails(
+    thumbnail_service: ThumbnailServiceDep,
+    timelapse_service: TimelapseServiceDep,
+    image_service: ImageServiceDep,
+    timelapse_id: int = Depends(valid_timelapse_id),
+    priority: str = Query("medium", description="Job priority: high, medium, low"),
+    force: bool = Query(
+        False, description="Force regeneration even if thumbnails exist"
+    ),
+):
+    """
+    Regenerate all thumbnails for a specific timelapse.
+
+    Queues thumbnail generation jobs for all images in the timelapse.
+    Optionally forces regeneration even if thumbnails already exist.
+    """
+    # Validate timelapse exists
+    await validate_entity_exists(
+        timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
+    )
+
+    try:
+        # Get all images for this timelapse
+        result = await image_service.get_images(
+            timelapse_id=timelapse_id,
+            page=1,
+            page_size=10000,  # Large page size to get all images
+            order_by="captured_at",
+            order_dir="ASC",
+        )
+
+        images = result.get("images", [])
+
+        if not images:
+            return BulkThumbnailResponse(
+                total_requested=0,
+                jobs_created=0,
+                jobs_failed=0,
+                created_job_ids=[],
+                failed_image_ids=[],
+            )
+
+        # Filter images if force=False (only queue jobs for images without thumbnails)
+        image_ids = []
+        if force:
+            # Queue all images
+            image_ids = [img.id for img in images]
+        else:
+            # Only queue images missing thumbnails
+            image_ids = [
+                img.id for img in images if not img.thumbnail_path or not img.small_path
+            ]
+
+        if not image_ids:
+            return BulkThumbnailResponse(
+                total_requested=len(images),
+                jobs_created=0,
+                jobs_failed=0,
+                created_job_ids=[],
+                failed_image_ids=[],
+            )
+
+        # Create bulk thumbnail request
+        bulk_request = BulkThumbnailRequest(image_ids=image_ids, priority=priority)
+
+        # Queue bulk thumbnail generation
+        response = await thumbnail_service.queue_bulk_thumbnails(bulk_request)
+
+        return response
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate thumbnails for timelapse {timelapse_id}: {str(e)}",
+        )
+
+
+@router.post("/timelapses/{timelapse_id}/thumbnails/verify", response_model=dict)
+@handle_exceptions("verify timelapse thumbnails")
+async def verify_timelapse_thumbnails(
+    thumbnail_service: ThumbnailServiceDep,
+    timelapse_service: TimelapseServiceDep,
+    timelapse_id: int = Depends(valid_timelapse_id),
+):
+    """
+    Verify thumbnail integrity for a specific timelapse.
+
+    Recalculates thumbnail counts from actual database data and compares
+    with the cached counts in the timelapses table. Updates cached counts if needed.
+    """
+    # Validate timelapse exists
+    await validate_entity_exists(
+        timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
+    )
+
+    try:
+        # Use service layer for verification
+
+        timelapse_ops = TimelapseOperations(async_db)
+
+        verification_result = await thumbnail_service.verify_timelapse_thumbnails(
+            timelapse_id, timelapse_ops
+        )
+
+        return verification_result
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify thumbnails for timelapse {timelapse_id}: {str(e)}",
+        )
+
+
+@router.delete("/timelapses/{timelapse_id}/thumbnails", response_model=dict)
+@handle_exceptions("remove timelapse thumbnails")
+async def remove_timelapse_thumbnails(
+    thumbnail_service: ThumbnailServiceDep,
+    timelapse_service: TimelapseServiceDep,
+    timelapse_id: int = Depends(valid_timelapse_id),
+    confirm: bool = Query(
+        False, description="Confirmation required for destructive operation"
+    ),
+):
+    """
+    Remove all thumbnails for a specific timelapse.
+
+    WARNING: This permanently deletes thumbnail files from disk and clears
+    thumbnail paths in the database. Requires explicit confirmation.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This operation requires confirmation. Add ?confirm=true to proceed.",
+        )
+
+    # Validate timelapse exists
+    await validate_entity_exists(
+        timelapse_service.get_timelapse_by_id, timelapse_id, "timelapse"
+    )
+
+    try:
+        # Use service layer for removal
+
+        image_ops = ImageOperations(async_db)
+        timelapse_ops = TimelapseOperations(async_db)
+
+        removal_result = await thumbnail_service.remove_all_timelapse_thumbnails(
+            timelapse_id, image_ops, timelapse_ops
+        )
+
+        return removal_result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to remove thumbnails for timelapse {timelapse_id}: {str(e)}",
+        )
+
+
+# NOTE: Additional endpoints like video-settings, day-numbers, etc.
 # will be added when the corresponding service methods are implemented

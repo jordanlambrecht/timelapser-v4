@@ -4,7 +4,6 @@ Scheduler worker for Timelapser v4.
 Handles job scheduling and interval management for all worker operations.
 """
 
-import asyncio
 from datetime import timedelta
 from typing import Dict, Any, Callable, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,7 +11,10 @@ from apscheduler.job import Job
 
 from .base_worker import BaseWorker
 from ..services.settings_service import SyncSettingsService
-from ..utils.timezone_utils import utc_now, get_timezone_from_settings, create_timezone_aware_datetime
+from ..utils.timezone_utils import (
+    get_timezone_from_settings,
+    create_timezone_aware_datetime,
+)
 from ..constants import (
     DEFAULT_CAPTURE_INTERVAL_SECONDS,
     SCHEDULER_MAX_INSTANCES,
@@ -342,19 +344,41 @@ class SchedulerWorker(BaseWorker):
                 timezone=timezone_str,
             ):
                 success_count += 1
-                self.log_info(f"Scheduled hourly weather refresh at minute {WEATHER_REFRESH_MINUTE} in timezone {timezone_str}")
+                self.log_info(
+                    f"Scheduled hourly weather refresh at minute {WEATHER_REFRESH_MINUTE} in timezone {timezone_str}"
+                )
 
             # Run weather refresh immediately on startup (add 2 seconds delay to ensure everything is initialized)
-            startup_time = create_timezone_aware_datetime(timezone_str) + timedelta(seconds=2)
+            startup_time = create_timezone_aware_datetime(timezone_str) + timedelta(
+                seconds=2
+            )
+
+            # Create a wrapper function that forces refresh on startup
+            async def weather_startup_func():
+                """Wrapper to force weather refresh on startup"""
+                if hasattr(weather_func, "__call__"):
+                    # Check if weather_func accepts force_refresh parameter
+                    import inspect
+
+                    sig = inspect.signature(weather_func)
+                    if "force_refresh" in sig.parameters:
+                        await weather_func(force_refresh=True)
+                    else:
+                        await weather_func()
+                else:
+                    await weather_func()
+
             if self.add_job(
                 job_id="weather_startup_job",
-                func=weather_func,
+                func=weather_startup_func,
                 trigger="date",
                 name="Initial Weather Data Refresh",
                 run_date=startup_time,
             ):
                 success_count += 1
-                self.log_info(f"Scheduled weather startup refresh for {startup_time.isoformat()}")
+                self.log_info(
+                    f"Scheduled weather startup refresh for {startup_time.isoformat()}"
+                )
 
             # Add weather catch-up job that runs every 15 minutes to check if we missed the hourly schedule
             if self.add_job(
@@ -401,8 +425,10 @@ class SchedulerWorker(BaseWorker):
             expected_jobs = STANDARD_JOBS_COUNT + 1  # Added weather_catchup_job
             if sse_cleanup_func:
                 expected_jobs += 1  # Added sse_cleanup_job
-                
-            self.log_info(f"Added {success_count}/{expected_jobs} standard jobs successfully")
+
+            self.log_info(
+                f"Added {success_count}/{expected_jobs} standard jobs successfully"
+            )
             return success_count == expected_jobs
 
         except Exception as e:
@@ -413,33 +439,35 @@ class SchedulerWorker(BaseWorker):
         """
         Create a wrapper function that checks if weather refresh should run
         to catch up on missed schedules.
-        
+
         Args:
             weather_func: The weather refresh function to wrap
-            
+
         Returns:
             Wrapped function that checks schedule and runs if needed
         """
+
         async def weather_catchup():
             try:
                 # Get timezone-aware current time
                 settings_dict = self.settings_service.get_all_settings()
                 timezone_str = get_timezone_from_settings(settings_dict)
                 now = create_timezone_aware_datetime(timezone_str)
-                
+
                 # Check if we're within the first 15 minutes of the hour
                 # If so, we might have missed the scheduled refresh at minute 0
                 if now.minute <= 15:
-                    # TODO: Check last weather refresh time from weather service
-                    # For now, just check if we're close to the top of the hour
-                    self.log_info("Checking if weather refresh was missed this hour...")
-                    
-                    # Run weather refresh - the weather service will check if it's needed
+                    self.log_debug(
+                        "Weather catch-up check: within potential miss window"
+                    )
+
+                    # Always call weather refresh - the weather worker will determine
+                    # if refresh is actually needed based on last refresh time
                     await weather_func()
                 else:
                     self.log_debug("Weather catch-up check: not in catch-up window")
-                    
+
             except Exception as e:
                 self.log_error("Error in weather catch-up check", e)
-        
+
         return weather_catchup

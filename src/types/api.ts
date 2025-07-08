@@ -136,7 +136,12 @@ export interface TimelapseWithDetails {
   fps_bounds_max: number | null
 
   // Video automation settings (inherit/override from camera)
-  video_automation_mode: "manual" | "per_capture" | "scheduled" | "milestone" | null
+  video_automation_mode:
+    | "manual"
+    | "per_capture"
+    | "scheduled"
+    | "milestone"
+    | null
   generation_schedule: any | null
   milestone_config: any | null
 
@@ -169,7 +174,12 @@ export interface TimelapseUpdate {
   target_time_seconds?: number | null
   fps_bounds_min?: number | null
   fps_bounds_max?: number | null
-  video_automation_mode?: "manual" | "per_capture" | "scheduled" | "milestone" | null
+  video_automation_mode?:
+    | "manual"
+    | "per_capture"
+    | "scheduled"
+    | "milestone"
+    | null
   generation_schedule?: any
   milestone_config?: any
 }
@@ -334,17 +344,6 @@ export interface VideoAutomationSettings {
   }
 }
 
-export interface VideoGenerationSettings {
-  video_generation_mode: "standard" | "target"
-  standard_fps: number
-  enable_time_limits: boolean
-  min_time_seconds?: number | null
-  max_time_seconds?: number | null
-  target_time_seconds?: number | null
-  fps_bounds_min: number
-  fps_bounds_max: number
-}
-
 // ============================================================================
 // CORRUPTION TYPES
 // ============================================================================
@@ -387,15 +386,24 @@ export interface CameraSSEEvents {
   camera_created: { camera_id: number; camera_name: string; rtsp_url: string }
   camera_updated: { camera_id: number; camera_name: string; changes: any }
   camera_deleted: { camera_id: number; camera_name: string }
-  camera_status_updated: { camera_id: number; status: string; error_message?: string }
+  camera_status_updated: {
+    camera_id: number
+    status: string
+    error_message?: string
+  }
   camera_health_updated: { camera_id: number; health_data: any }
   manual_capture_completed: { camera_id: number; capture_result: any }
 }
 
 export interface VideoSSEEvents {
-  video_created: { video_id: number; camera_id: number; video_name: string; status: string }
+  video_created: {
+    video_id: number
+    camera_id: number
+    video_name: string
+    status: string
+  }
   video_deleted: { video_id: number; video_name: string; camera_id: number }
-  video_generation_scheduled: { 
+  video_generation_scheduled: {
     camera_id: number
     timelapse_id: number
     timelapse_name: string

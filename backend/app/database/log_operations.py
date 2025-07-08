@@ -130,7 +130,7 @@ class LogOperations:
 
                 # Get logs with pagination
                 logs_query = f"""
-                SELECT 
+                SELECT
                     l.*,
                     c.name as camera_name
                 FROM logs l
@@ -169,7 +169,7 @@ class LogOperations:
             List of log source models with counts
         """
         query = """
-        SELECT 
+        SELECT
             source,
             COUNT(*) as log_count,
             MAX(timestamp) as last_log_at,
@@ -178,7 +178,7 @@ class LogOperations:
         FROM logs
         WHERE timestamp > NOW() - INTERVAL '{DEFAULT_DASHBOARD_QUALITY_TREND_DAYS} days'
         GROUP BY source
-        ORDER BY source 
+        ORDER BY source
         """
 
         async with self.db.get_connection() as conn:
@@ -203,7 +203,7 @@ class LogOperations:
             Log summary model with statistics
         """
         query = """
-        SELECT 
+        SELECT
             COUNT(*) as total_logs,
             COUNT(CASE WHEN level = 'CRITICAL' THEN 1 END) as critical_count,
             COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
@@ -245,7 +245,7 @@ class LogOperations:
 
         Args:
             days_to_keep: Number of days to keep logs (default: from constants)
-                         If 0, deletes ALL logs
+                        If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted
@@ -257,7 +257,7 @@ class LogOperations:
         else:
             # Delete logs older than specified days
             query = """
-            DELETE FROM logs 
+            DELETE FROM logs
             WHERE timestamp < NOW() - INTERVAL '%s days'
             """
             params = [days_to_keep]
@@ -376,7 +376,7 @@ class SyncLogOperations:
         """
         # Use the actual logs table schema including all fields
         query = """
-        INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp) 
+        INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
         VALUES (%s, %s, %s, %s, %s, %s, NOW())
         RETURNING *
         """
@@ -436,7 +436,7 @@ class SyncLogOperations:
 
         Args:
             days_to_keep: Number of days to keep logs (default: from constants)
-                         If 0, deletes ALL logs
+                        If 0, deletes ALL logs
 
         Returns:
             Number of logs deleted

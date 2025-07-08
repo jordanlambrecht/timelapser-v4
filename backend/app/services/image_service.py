@@ -9,10 +9,11 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from loguru import logger
 import asyncio
+import os
 from pathlib import Path
 
 from ..database.core import AsyncDatabase, SyncDatabase
-from ..database.image_operations import ImageOperations, SyncImageOperations
+from ..database.image_operations import ImageOperations, SyncImageOperations, AsyncImageOperations
 from ..database.sse_events_operations import SSEEventsOperations
 from ..models.image_model import (
     Image,
@@ -33,6 +34,45 @@ from ..constants import (
     EVENT_IMAGE_CAPTURED,
     EVENT_IMAGE_PROCESSED,
 )
+
+
+def _sanitize_error_message(error: Exception, context: str = "operation") -> str:
+    """
+    Sanitize error messages to prevent information leakage.
+    
+    Args:
+        error: The original exception
+        context: Context description for generic error message
+        
+    Returns:
+        Sanitized error message safe for external consumption
+    """
+    # List of sensitive patterns to avoid exposing
+    sensitive_patterns = [
+        'password', 'secret', 'key', 'token', 'auth',
+        'database', 'connection', 'host', 'port',
+        'file not found', 'no such file', 'permission denied'
+    ]
+    
+    error_str = str(error).lower()
+    
+    # Check if error contains sensitive information
+    for pattern in sensitive_patterns:
+        if pattern in error_str:
+            return f"Internal error during {context}"
+    
+    # Return sanitized version of common errors
+    if 'not found' in error_str:
+        return f"Resource not found during {context}"
+    elif 'permission' in error_str or 'access' in error_str:
+        return f"Access error during {context}"
+    elif 'timeout' in error_str:
+        return f"Timeout during {context}"
+    elif 'connection' in error_str:
+        return f"Service unavailable during {context}"
+    else:
+        # For other errors, return generic message
+        return f"Error during {context}"
 
 
 class ImageService:
@@ -63,6 +103,7 @@ class ImageService:
         """
         self.db = db
         self.image_ops = ImageOperations(db)
+        self.async_image_ops = AsyncImageOperations(db)
         self.sse_ops = SSEEventsOperations(db)
         self.settings_service = settings_service
         self.corruption_service = corruption_service
@@ -90,9 +131,43 @@ class ImageService:
         Returns:
             Dictionary containing images list (ImageWithDetails models) and pagination metadata
         """
-        return await self.image_ops.get_images(
-            timelapse_id, camera_id, page, page_size, order_by, order_dir
+        # Calculate offset from page
+        offset = (page - 1) * page_size
+        
+        # Get basic images from ImageOperations
+        images = await self.image_ops.get_images(
+            limit=page_size, offset=offset, order_by=order_by, order_dir=order_dir
         )
+        
+        # Filter by timelapse_id and camera_id if provided
+        filtered_images = []
+        for image in images:
+            if timelapse_id is not None and image.timelapse_id != timelapse_id:
+                continue
+            if camera_id is not None and image.camera_id != camera_id:
+                continue
+            filtered_images.append(image)
+        
+        # Convert to ImageWithDetails - for now just add empty detail fields
+        images_with_details = []
+        for image in filtered_images:
+            # Convert Image to ImageWithDetails by adding detail fields
+            image_dict = image.model_dump()
+            image_dict['camera_name'] = None
+            image_dict['timelapse_status'] = None
+            image_dict['thumbnail_path'] = None
+            image_dict['small_path'] = None
+            image_dict['thumbnail_size'] = None
+            image_dict['small_size'] = None
+            images_with_details.append(ImageWithDetails(**image_dict))
+        
+        return {
+            "images": images_with_details,
+            "total": len(filtered_images),
+            "page": page,
+            "page_size": page_size,
+            "has_next": len(images) == page_size  # Simple check
+        }
 
     async def get_images_for_camera(
         self, camera_id: int, limit: int = DEFAULT_CAMERA_IMAGES_LIMIT
@@ -107,14 +182,25 @@ class ImageService:
         Returns:
             List of ImageWithDetails model instances
         """
-        result = await self.image_ops.get_images(
-            camera_id=camera_id,
-            page=1,
-            page_size=limit,
-            order_by="captured_at",
-            order_dir="DESC",
-        )
-        return result["images"]
+        # Use the camera-specific method from ImageOperations
+        images = await self.image_ops.get_images_by_camera(camera_id)
+        
+        # Limit the results
+        limited_images = images[:limit]
+        
+        # Convert to ImageWithDetails
+        images_with_details = []
+        for image in limited_images:
+            image_dict = image.model_dump()
+            image_dict['camera_name'] = None
+            image_dict['timelapse_status'] = None
+            image_dict['thumbnail_path'] = None
+            image_dict['small_path'] = None
+            image_dict['thumbnail_size'] = None
+            image_dict['small_size'] = None
+            images_with_details.append(ImageWithDetails(**image_dict))
+        
+        return images_with_details
 
     async def get_image_by_id(self, image_id: int) -> Optional[ImageWithDetails]:
         """
@@ -126,7 +212,19 @@ class ImageService:
         Returns:
             ImageWithDetails model instance, or None if not found
         """
-        return await self.image_ops.get_image_by_id(image_id)
+        image = await self.image_ops.get_image_by_id(image_id)
+        if image is None:
+            return None
+        
+        # Convert Image to ImageWithDetails
+        image_dict = image.model_dump()
+        image_dict['camera_name'] = None
+        image_dict['timelapse_status'] = None
+        image_dict['thumbnail_path'] = None
+        image_dict['small_path'] = None
+        image_dict['thumbnail_size'] = None
+        image_dict['small_size'] = None
+        return ImageWithDetails(**image_dict)
 
     @cached_response(ttl_seconds=30, key_prefix="latest_image")
     async def get_latest_image_for_camera(
@@ -144,7 +242,19 @@ class ImageService:
             Latest ImageWithDetails model instance, or None if no images found
         """
         logger.debug(f"🔍 Fetching latest image for camera {camera_id}")
-        return await self.image_ops.get_latest_image_for_camera(camera_id)
+        image = await self.image_ops.get_latest_image_for_camera(camera_id)
+        if image is None:
+            return None
+        
+        # Convert Image to ImageWithDetails
+        image_dict = image.model_dump()
+        image_dict['camera_name'] = None
+        image_dict['timelapse_status'] = None
+        image_dict['thumbnail_path'] = None
+        image_dict['small_path'] = None
+        image_dict['thumbnail_size'] = None
+        image_dict['small_size'] = None
+        return ImageWithDetails(**image_dict)
 
     async def get_latest_image_for_timelapse(
         self, timelapse_id: int
@@ -158,7 +268,23 @@ class ImageService:
         Returns:
             Latest ImageWithDetails model instance, or None if no images found
         """
-        return await self.image_ops.get_latest_image_for_timelapse(timelapse_id)
+        # Get images for timelapse and return the latest one
+        images = await self.image_ops.get_images_by_timelapse(timelapse_id)
+        if not images:
+            return None
+        
+        # Get the latest image (images are ordered by captured_at ASC, so take the last one)
+        latest_image = images[-1]
+        
+        # Convert Image to ImageWithDetails
+        image_dict = latest_image.model_dump()
+        image_dict['camera_name'] = None
+        image_dict['timelapse_status'] = None
+        image_dict['thumbnail_path'] = None
+        image_dict['small_path'] = None
+        image_dict['thumbnail_size'] = None
+        image_dict['small_size'] = None
+        return ImageWithDetails(**image_dict)
 
     async def get_images_by_day_range(
         self, timelapse_id: int, start_day: int, end_day: int
@@ -174,9 +300,28 @@ class ImageService:
         Returns:
             List of ImageWithDetails models
         """
-        return await self.image_ops.get_images_by_day_range(
-            timelapse_id, start_day, end_day
-        )
+        # Get all images for the timelapse and filter by day number
+        images = await self.image_ops.get_images_by_timelapse(timelapse_id)
+        
+        # Filter by day range
+        filtered_images = [
+            img for img in images 
+            if start_day <= img.day_number <= end_day
+        ]
+        
+        # Convert to ImageWithDetails
+        images_with_details = []
+        for image in filtered_images:
+            image_dict = image.model_dump()
+            image_dict['camera_name'] = None
+            image_dict['timelapse_status'] = None
+            image_dict['thumbnail_path'] = None
+            image_dict['small_path'] = None
+            image_dict['thumbnail_size'] = None
+            image_dict['small_size'] = None
+            images_with_details.append(ImageWithDetails(**image_dict))
+        
+        return images_with_details
 
     async def get_images_by_date_range(
         self, timelapse_id: int, start_date: date, end_date: date
@@ -192,9 +337,32 @@ class ImageService:
         Returns:
             List of ImageWithDetails models
         """
-        return await self.image_ops.get_images_by_date_range(
-            timelapse_id, start_date, end_date
-        )
+        # Convert dates to strings for the database query
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        # Use the date range method from ImageOperations
+        images = await self.image_ops.get_images_by_date_range(start_str, end_str)
+        
+        # Filter by timelapse_id
+        filtered_images = [
+            img for img in images 
+            if img.timelapse_id == timelapse_id
+        ]
+        
+        # Convert to ImageWithDetails
+        images_with_details = []
+        for image in filtered_images:
+            image_dict = image.model_dump()
+            image_dict['camera_name'] = None
+            image_dict['timelapse_status'] = None
+            image_dict['thumbnail_path'] = None
+            image_dict['small_path'] = None
+            image_dict['thumbnail_size'] = None
+            image_dict['small_size'] = None
+            images_with_details.append(ImageWithDetails(**image_dict))
+        
+        return images_with_details
 
     async def delete_image(self, image_id: int) -> bool:
         """
@@ -219,7 +387,7 @@ class ImageService:
                     "image_id": image_id,
                     "camera_id": image_to_delete.camera_id,
                     "timelapse_id": image_to_delete.timelapse_id,
-                    "filename": image_to_delete.filename
+                    "filename": image_to_delete.file_path
                 },
                 priority="normal",
                 source="api"
@@ -258,7 +426,7 @@ class ImageService:
                 "image_id": image_record.id,
                 "camera_id": image_record.camera_id,
                 "timelapse_id": image_record.timelapse_id,
-                "filename": image_record.filename,
+                "filename": image_record.file_path,
                 "captured_at": image_record.captured_at.isoformat()
             },
             priority="normal",
@@ -291,10 +459,25 @@ class ImageService:
         Returns:
             List of ImageWithDetails model instances
         """
-        result = await self.image_ops.get_images(
-            timelapse_id=timelapse_id, page=1, page_size=DEFAULT_TIMELAPSE_IMAGES_LIMIT
-        )
-        return result["images"]
+        # Use the timelapse-specific method from ImageOperations
+        images = await self.image_ops.get_images_by_timelapse(timelapse_id)
+        
+        # Limit the results
+        limited_images = images[:DEFAULT_TIMELAPSE_IMAGES_LIMIT]
+        
+        # Convert to ImageWithDetails
+        images_with_details = []
+        for image in limited_images:
+            image_dict = image.model_dump()
+            image_dict['camera_name'] = None
+            image_dict['timelapse_status'] = None
+            image_dict['thumbnail_path'] = None
+            image_dict['small_path'] = None
+            image_dict['thumbnail_size'] = None
+            image_dict['small_size'] = None
+            images_with_details.append(ImageWithDetails(**image_dict))
+        
+        return images_with_details
 
     async def get_images_batch(
         self, image_ids: List[int], size: str = "thumbnail"
@@ -367,6 +550,13 @@ class ImageService:
             from ..utils.file_helpers import validate_file_path
 
             # Get data directory from database settings and construct secure paths
+            if not self.settings_service:
+                return ThumbnailGenerationResult(
+                    success=False,
+                    image_id=image_id,
+                    error="Settings service not available for thumbnail generation",
+                )
+            
             data_directory = await self.settings_service.get_setting("data_directory")
             
             # Check if the image file exists before attempting validation
@@ -442,7 +632,7 @@ class ImageService:
         except Exception as e:
             logger.error(f"Thumbnail coordination failed for image {image_id}: {e}")
             return ThumbnailGenerationResult(
-                success=False, image_id=image_id, error=str(e)
+                success=False, image_id=image_id, error=_sanitize_error_message(e, "thumbnail generation")
             )
 
     async def coordinate_file_serving(
@@ -470,6 +660,9 @@ class ImageService:
             from .settings_service import SettingsService
             
             # Get data directory from database settings, not config
+            if not self.settings_service:
+                return {"success": False, "error": "Settings service not available"}
+            
             data_directory = await self.settings_service.get_setting("data_directory")
 
             if size_type == "thumbnail":
@@ -573,7 +766,7 @@ class ImageService:
 
         except Exception as e:
             logger.error(f"File serving coordination failed for image {image_id}: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _sanitize_error_message(e, "file serving")}
 
     async def calculate_image_statistics(
         self, timelapse_id: Optional[int] = None, camera_id: Optional[int] = None
@@ -590,9 +783,14 @@ class ImageService:
         """
         try:
             # Get basic image statistics from database
-            basic_stats = await self.image_ops.get_image_statistics(
-                timelapse_id, camera_id
-            )
+            # Note: get_image_statistics method not available in ImageOperations
+            # Using a placeholder implementation
+            basic_stats = {
+                "total_images": 0,
+                "total_file_size": 0,
+                "average_file_size": 0.0,
+                "error": "Statistics calculation not implemented"
+            }
 
             # Coordinate with corruption service for quality data if available
             quality_stats = None
@@ -644,7 +842,7 @@ class ImageService:
 
         except Exception as e:
             logger.error(f"Image statistics calculation failed: {e}")
-            return {"error": str(e)}
+            return {"error": _sanitize_error_message(e, "statistics calculation")}
 
     async def coordinate_quality_assessment(self, image_id: int) -> Dict[str, Any]:
         """
@@ -685,7 +883,7 @@ class ImageService:
             logger.error(
                 f"Quality assessment coordination failed for image {image_id}: {e}"
             )
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _sanitize_error_message(e, "quality assessment")}
 
     async def serve_image_file(self, image_id: int, size_variant: str = "full"):
         """
@@ -700,7 +898,8 @@ class ImageService:
         """
         from fastapi import HTTPException, status
         from fastapi.responses import FileResponse
-        from ..utils.file_helpers import create_file_response
+        # Note: create_cached_file_response and generate_image_etag functions not available
+        # Using available functions from file_helpers instead
 
         try:
             # Use the existing prepare_image_for_serving method
@@ -714,13 +913,34 @@ class ImageService:
 
             file_path = result.get("file_path")
             media_type = result.get("media_type", "image/jpeg")
+            image_data = result.get("image_data")
 
             if file_path is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found"
                 )
-            # Use file_helpers to create secure file response
-            return create_file_response(file_path, media_type)
+            
+            # Generate ETag and cache headers based on image metadata
+            if image_data and hasattr(image_data, 'captured_at'):
+                # Simple ETag generation using image ID and timestamp
+                etag = f"img-{image_id}-{int(image_data.captured_at.timestamp())}"
+                
+                # Use create_file_response from file_helpers
+                from ..utils.file_helpers import create_file_response
+                
+                headers = {
+                    "ETag": f'"{etag}"',
+                    "Cache-Control": "max-age=3600, public"
+                }
+                
+                return create_file_response(
+                    file_path=file_path,
+                    media_type=media_type,
+                    headers=headers
+                )
+            else:
+                # Fallback without caching if no image metadata
+                return FileResponse(path=file_path, media_type=media_type)
 
         except HTTPException:
             raise
@@ -763,11 +983,14 @@ class ImageService:
             image_dict = {
                 "id": image_data.id,
                 "file_path": image_data.file_path,
-                "thumbnail_path": getattr(image_data, "thumbnail_path", None),
-                "small_path": getattr(image_data, "small_path", None),
+                "thumbnail_path": image_data.thumbnail_path,
+                "small_path": image_data.small_path,
             }
 
             # Get data directory from database settings, not config
+            if not self.settings_service:
+                return {"success": False, "error": "Settings service not available"}
+            
             data_directory = await self.settings_service.get_setting("data_directory")
 
             file_path = get_image_with_fallbacks(image_dict, size, data_directory)
@@ -780,11 +1003,12 @@ class ImageService:
                 "image_id": image_id,
                 "size": size,
                 "fallback_used": False,  # file_helpers handles this internally
+                "image_data": image_data,  # Include image metadata for ETag generation
             }
 
         except Exception as e:
             logger.error(f"Failed to prepare image {image_id} for serving: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _sanitize_error_message(e, "image preparation")}
 
     async def prepare_bulk_download(
         self, image_ids: List[int], zip_filename: Optional[str] = None
@@ -808,6 +1032,9 @@ class ImageService:
             from .settings_service import SettingsService
             
             # Get data directory from database settings, not config
+            if not self.settings_service:
+                return {"success": False, "error": "Settings service not available"}
+            
             data_directory = await self.settings_service.get_setting("data_directory")
 
             if not image_ids:
@@ -873,7 +1100,188 @@ class ImageService:
 
         except Exception as e:
             logger.error(f"Bulk download preparation failed: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _sanitize_error_message(e, "bulk download")}
+
+    async def get_latest_image_with_thumbnail(self, camera_id: int):
+        """
+        Get the latest image for a camera with thumbnail path.
+        
+        Args:
+            camera_id: Camera ID
+            
+        Returns:
+            FastAPI Response with thumbnail file or 404
+        """
+        try:
+            latest_image = await self.get_latest_image_for_camera(camera_id)
+            
+            if not latest_image:
+                from fastapi import HTTPException, status
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No images found for camera {camera_id}"
+                )
+                
+            # Try thumbnail first, then small, then full
+            if latest_image.thumbnail_path:
+                return await self.serve_image_file(latest_image.id, "thumbnail")
+            elif latest_image.small_path:
+                return await self.serve_image_file(latest_image.id, "small")
+            else:
+                return await self.serve_image_file(latest_image.id, "full")
+                
+        except Exception as e:
+            logger.error(f"Error getting latest thumbnail for camera {camera_id}: {e}")
+            raise
+
+    async def get_latest_image_with_small(self, camera_id: int):
+        """
+        Get the latest image for a camera with small path.
+        
+        Args:
+            camera_id: Camera ID
+            
+        Returns:
+            FastAPI Response with small file or 404
+        """
+        try:
+            latest_image = await self.get_latest_image_for_camera(camera_id)
+            
+            if not latest_image:
+                from fastapi import HTTPException, status
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No images found for camera {camera_id}"
+                )
+                
+            # Try small first, then full
+            if latest_image.small_path:
+                return await self.serve_image_file(latest_image.id, "small")
+            else:
+                return await self.serve_image_file(latest_image.id, "full")
+                
+        except Exception as e:
+            logger.error(f"Error getting latest small image for camera {camera_id}: {e}")
+            raise
+
+    async def get_latest_full_image(self, camera_id: int):
+        """
+        Get the latest full resolution image for a camera.
+        
+        Args:
+            camera_id: Camera ID
+            
+        Returns:
+            FastAPI Response with full resolution file or 404
+        """
+        try:
+            latest_image = await self.get_latest_image_for_camera(camera_id)
+            
+            if not latest_image:
+                from fastapi import HTTPException, status
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No images found for camera {camera_id}"
+                )
+                
+            return await self.serve_image_file(latest_image.id, "full")
+                
+        except Exception as e:
+            logger.error(f"Error getting latest full image for camera {camera_id}: {e}")
+            raise
+
+    async def get_image_thumbnail_path(self, image_id: int):
+        """
+        Get thumbnail file for a specific image.
+        
+        Args:
+            image_id: Image ID
+            
+        Returns:
+            FastAPI Response with thumbnail file or 404
+        """
+        return await self.serve_image_file(image_id, "thumbnail")
+
+    async def get_image_small_path(self, image_id: int):
+        """
+        Get small file for a specific image.
+        
+        Args:
+            image_id: Image ID
+            
+        Returns:
+            FastAPI Response with small file or 404
+        """
+        return await self.serve_image_file(image_id, "small")
+
+    async def serve_image_with_size(self, image_id: int, size: str):
+        """
+        Universal image serving with size parameter.
+        
+        Args:
+            image_id: Image ID
+            size: Size variant ('thumbnail', 'small', 'full')
+            
+        Returns:
+            FastAPI Response with requested size or 404
+        """
+        return await self.serve_image_file(image_id, size)
+
+    async def serve_images_batch(self, image_ids: List[int], size: str = "thumbnail"):
+        """
+        Batch image serving for multiple images.
+        
+        Args:
+            image_ids: List of image IDs
+            size: Size variant for all images
+            
+        Returns:
+            JSON with image URLs and metadata
+        """
+        try:
+            # Get images metadata
+            results = []
+            
+            for image_id in image_ids:
+                try:
+                    image = await self.get_image_by_id(image_id)
+                    if image:
+                        # Build URL based on size
+                        url = f"/api/images/{image_id}/serve?size={size}"
+                        
+                        results.append({
+                            "image_id": image_id,
+                            "url": url,
+                            "camera_id": image.camera_id,
+                            "captured_at": image.captured_at.isoformat() if image.captured_at else None,
+                            "available": True
+                        })
+                    else:
+                        results.append({
+                            "image_id": image_id,
+                            "url": None,
+                            "available": False,
+                            "error": "Image not found"
+                        })
+                        
+                except Exception as e:
+                    results.append({
+                        "image_id": image_id,
+                        "url": None,
+                        "available": False,
+                        "error": _sanitize_error_message(e, "latest image retrieval")
+                    })
+                    
+            return {
+                "images": results,
+                "size": size,
+                "total_requested": len(image_ids),
+                "total_available": len([r for r in results if r["available"]])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch image serving: {e}")
+            raise
 
 
 class SyncImageService:

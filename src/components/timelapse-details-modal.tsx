@@ -27,6 +27,7 @@ import { VideoPlayer } from "@/components/ui/video-player"
 import { ImageThumbnail } from "@/components/ui/image-thumbnail"
 import { StatsGrid, StatItem } from "@/components/ui/stats-grid"
 import { ActionButtonGroup } from "@/components/ui/action-button-group"
+import { useThumbnailProgress } from "@/hooks/use-thumbnail-progress"
 import {
   GlassTable,
   GlassTableHeader,
@@ -60,6 +61,7 @@ import {
   AlertTriangle,
   FileVideo,
   Zap,
+  Layers,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "@/lib/toast"
@@ -139,8 +141,30 @@ export const TimelapseDetailsModal = memo(
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [showImageDeleteConfirm, setShowImageDeleteConfirm] = useState(false)
     const [showVideoRegenConfirm, setShowVideoRegenConfirm] = useState(false)
+    const [showThumbnailRegenConfirm, setShowThumbnailRegenConfirm] = useState(false)
     const [editingVideoSettings, setEditingVideoSettings] = useState(false)
     const [videoSettings, setVideoSettings] = useState<any>(null)
+    
+    // Thumbnail states
+    const [thumbnailStats, setThumbnailStats] = useState<{
+      thumbnail_count: number
+      small_count: number
+      total_images: number
+    } | null>(null)
+    // Use custom hook for thumbnail progress tracking
+    const { progress: thumbnailProgress, isActive: thumbnailJobActive, startTracking: startThumbnailTracking } = useThumbnailProgress({
+      timelapseId: typeof timelapseId === 'number' ? timelapseId : undefined,
+      onComplete: () => {
+        // Refresh data when thumbnail regeneration completes
+        fetchTimelapseData()
+        setActionLoading(null)
+      },
+      onError: (error: string) => {
+        // Handle errors
+        console.error('Thumbnail regeneration error:', error)
+        setActionLoading(null)
+      }
+    })
 
     // Fetch timelapse details and videos
     const fetchTimelapseData = useCallback(async () => {
@@ -184,6 +208,19 @@ export const TimelapseDetailsModal = memo(
           if (completedVideo) {
             setSelectedVideo(completedVideo)
           }
+        }
+
+        // Fetch thumbnail statistics for this timelapse
+        try {
+          const thumbnailStatsResponse = await fetch(
+            `/api/timelapses/${timelapseId}/thumbnails/stats`
+          )
+          if (thumbnailStatsResponse.ok) {
+            const thumbnailStatsData = await thumbnailStatsResponse.json()
+            setThumbnailStats(thumbnailStatsData)
+          }
+        } catch (error) {
+          console.warn("Failed to fetch thumbnail stats:", error)
         }
       } catch (error) {
         console.error("Error fetching timelapse data:", error)
@@ -280,6 +317,8 @@ export const TimelapseDetailsModal = memo(
         setActiveTab("overview") // Reset to overview tab
       }
     }, [isOpen])
+
+    // Thumbnail progress is now handled by the custom hook
 
     // Custom selectable row with shift-click support
     const ShiftSelectableTableRow = ({
@@ -518,6 +557,36 @@ export const TimelapseDetailsModal = memo(
         toast.error("Failed to start video regeneration")
       } finally {
         setActionLoading(null)
+      }
+    }
+
+    const handleRegenerateThumbnails = async () => {
+      try {
+        setActionLoading("regenerate-thumbnails")
+        const response = await fetch(
+          `/api/timelapses/${timelapseId}/thumbnails/regenerate`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+
+        if (!response.ok) throw new Error("Failed to start thumbnail regeneration")
+
+        const result = await response.json()
+        
+        // Start progress tracking using the custom hook
+        startThumbnailTracking(result.jobs_created || 0)
+        
+        toast.success(`Thumbnail regeneration started for ${result.jobs_created} images`)
+        setShowThumbnailRegenConfirm(false)
+
+        // Note: Loading state will be cleared when all jobs complete via the custom hook's onComplete callback
+        // Don't refresh data immediately - let SSE handle real-time updates
+      } catch (error) {
+        console.error("Error regenerating thumbnails:", error)
+        toast.error("Failed to start thumbnail regeneration")
+        setActionLoading(null) // Clear loading state on error
       }
     }
 
@@ -767,6 +836,12 @@ export const TimelapseDetailsModal = memo(
                           disabled: actionLoading === "archive",
                         },
                         {
+                          icon: Layers,
+                          label: "Regenerate Thumbnails",
+                          onClick: () => setShowThumbnailRegenConfirm(true),
+                          disabled: actionLoading === "regenerate-thumbnails",
+                        },
+                        {
                           icon: RefreshCw,
                           label: "Regenerate Video",
                           onClick: () => setShowVideoRegenConfirm(true),
@@ -840,7 +915,7 @@ export const TimelapseDetailsModal = memo(
                 <div className='max-h-[calc(80vh-200px)] overflow-y-auto'>
                   <TabsContent value='overview' className='space-y-6 mt-0'>
                     {/* Stats Grid */}
-                    <StatsGrid columns={4}>
+                    <StatsGrid columns={5}>
                       <StatItem
                         icon={ImageIcon}
                         label='Total Images'
@@ -852,6 +927,12 @@ export const TimelapseDetailsModal = memo(
                         label='Videos Generated'
                         value={videos.length}
                         accent='purple'
+                      />
+                      <StatItem
+                        icon={Layers}
+                        label='Thumbnail Coverage'
+                        value={thumbnailStats ? `${Math.round((thumbnailStats.thumbnail_count / Math.max(thumbnailStats.total_images, 1)) * 100)}%` : "Loading..."}
+                        accent='pink'
                       />
                       <StatItem
                         icon={Calendar}
@@ -1356,6 +1437,52 @@ export const TimelapseDetailsModal = memo(
                   <>
                     <Video className='w-4 h-4 mr-2' />
                     Generate Video
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Thumbnail Regeneration Confirmation */}
+        <AlertDialog
+          open={showThumbnailRegenConfirm}
+          onOpenChange={setShowThumbnailRegenConfirm}
+        >
+          <AlertDialogContent className='glass-strong border-purple-muted/50'>
+            <AlertDialogHeader>
+              <AlertDialogTitle className='flex items-center space-x-2'>
+                <Layers className='w-5 h-5 text-pink' />
+                <span>Regenerate Thumbnails</span>
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will regenerate thumbnails for all images in this timelapse.
+                {thumbnailStats && (
+                  <div className="mt-2 text-sm">
+                    <strong>Current Status:</strong> {thumbnailStats.thumbnail_count} of {thumbnailStats.total_images} images have thumbnails
+                  </div>
+                )}
+                The process will run in the background and may take several minutes.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className='border-purple-muted/40 hover:bg-purple-muted/20'>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleRegenerateThumbnails}
+                disabled={actionLoading === "regenerate-thumbnails"}
+                className='bg-gradient-to-r from-pink to-purple hover:from-pink-dark hover:to-purple-dark text-black font-medium'
+              >
+                {actionLoading === "regenerate-thumbnails" ? (
+                  <>
+                    <Loader2 className='w-4 h-4 mr-2 animate-spin' />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Layers className='w-4 h-4 mr-2' />
+                    Regenerate Thumbnails
                   </>
                 )}
               </AlertDialogAction>

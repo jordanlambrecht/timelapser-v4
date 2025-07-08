@@ -4,19 +4,18 @@
 import { Button } from "@/components/ui/button"
 import { Save, RefreshCw } from "lucide-react"
 import { useSettings, useSettingsActions } from "@/contexts/settings-context"
+import { StickySaveButton } from "@/components/ui/sticky-save-button"
 import { DangerZoneCard } from "./components/danger-zone-card"
 import { TimezoneSettingsCard } from "./components/timezone-settings-card"
 import { LoggingSettingsCard } from "./components/logging-settings-card"
-import { SeparatedLoggingSettingsCard } from "./components/separated-logging-settings-card"
-import { CaptureSettingsCard } from "./components/capture-settings-card"
+import { ImageSettingsCard } from "./components/image-settings-card"
 import { CorruptionSettingsCard } from "./components/corruption-settings-card"
 import { WeatherSettingsCard } from "./components/weather-settings-card"
 import { CurrentConfigurationCard } from "./components/current-configuration-card"
 import { InfoCards } from "./components/info-cards"
-import { Separator } from "@/components/ui/separator"
-import { Badge } from "@/components/ui/badge"
-import { toast } from "@/lib/toast"
 import CorruptionTestComponent from "@/components/corruption-test-component"
+import { ThumbnailJobSettingsCard } from "./components/thumbnail-job-settings-card"
+import { ThumbnailManagementCard } from "./components/thumbnail-management-card"
 
 export default function Settings() {
   // Get all settings from global context
@@ -25,6 +24,10 @@ export default function Settings() {
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
+    await saveAllSettings()
+  }
+
+  const handleStickySave = async () => {
     await saveAllSettings()
   }
 
@@ -43,7 +46,13 @@ export default function Settings() {
       {/* Unified Settings Form */}
       <form onSubmit={handleSaveSettings} className='space-y-6'>
         {/* Capture Settings*/}
-        <CaptureSettingsCard />
+        <ImageSettingsCard />
+
+        {/* Thumbnail Job Settings - Full Width */}
+        <ThumbnailJobSettingsCard />
+
+        {/* Thumbnail System Management - Full Width */}
+        <ThumbnailManagementCard />
 
         {/* Timezone Settings - Full Width */}
         <TimezoneSettingsCard />
@@ -52,7 +61,7 @@ export default function Settings() {
         <WeatherSettingsCard />
 
         {/* System Maintenance */}
-        <SeparatedLoggingSettingsCard />
+        <LoggingSettingsCard />
 
         {/* Corruption Detection Settings - Full Width */}
         <CorruptionSettingsCard />
@@ -87,7 +96,7 @@ export default function Settings() {
         settings={{
           timezone: settings.timezone,
           openWeatherApiKey: settings.openWeatherApiKey,
-          generateThumbnails: settings.generateThumbnails,
+          generateThumbnails: settings.enableThumbnailGeneration,
           imageCaptureType: settings.imageCaptureType,
           logLevel: settings.dbLogLevel,
         }}
@@ -95,6 +104,13 @@ export default function Settings() {
 
       {/* Info Cards */}
       <InfoCards />
+
+      {/* Sticky Save Button */}
+      <StickySaveButton
+        show={settings.hasUnsavedChanges}
+        onSave={handleStickySave}
+        saving={saving}
+      />
     </div>
   )
 }

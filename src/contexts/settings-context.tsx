@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useMemo,
   ReactNode,
 } from "react"
 import { toast } from "@/lib/toast"
@@ -13,7 +14,9 @@ import { toast } from "@/lib/toast"
 interface SettingsContextType {
   // Core settings
   timezone: string
-  generateThumbnails: boolean
+  enableThumbnailGeneration: boolean
+  smallGenerationMode: "all" | "latest" | "disabled"
+  purgeSmalllsOnCompletion: boolean
   imageCaptureType: "PNG" | "JPG"
 
   // API settings
@@ -59,10 +62,19 @@ interface SettingsContextType {
   corruptionDegradedFailurePercentage: number
   corruptionHeavyDetectionEnabled: boolean
 
+  // Thumbnail job settings
+  thumbnailJobBatchSize: number
+  thumbnailWorkerInterval: number
+  thumbnailMaxRetries: number
+  thumbnailHighLoadMode: boolean
+  thumbnailConcurrentJobs: number
+  thumbnailMemoryLimit: number
+
   // Loading states
   loading: boolean
   saving: boolean
   error: string | null
+  hasUnsavedChanges: boolean
 
   // Actions
   updateSetting: (key: string, value: any) => Promise<boolean>
@@ -74,7 +86,11 @@ interface SettingsContextType {
 
   // Setters for controlled components
   setTimezone: (value: string) => void
-  setGenerateThumbnails: (value: boolean) => void
+  setEnableThumbnailGeneration: (value: boolean) => Promise<void>
+  setSmallGenerationMode: (
+    value: "all" | "latest" | "disabled"
+  ) => Promise<void>
+  setPurgeSmalllsOnCompletion: (value: boolean) => Promise<void>
   setImageCaptureType: (value: "PNG" | "JPG") => void
   setOpenWeatherApiKey: (value: string) => void
   setApiKeyModified: (value: boolean) => void
@@ -100,6 +116,12 @@ interface SettingsContextType {
   setCorruptionDegradedTimeWindowMinutes: (value: number) => void
   setCorruptionDegradedFailurePercentage: (value: number) => void
   setCorruptionHeavyDetectionEnabled: (value: boolean) => void
+  setThumbnailJobBatchSize: (value: number) => void
+  setThumbnailWorkerInterval: (value: number) => void
+  setThumbnailMaxRetries: (value: number) => void
+  setThumbnailHighLoadMode: (value: boolean) => void
+  setThumbnailConcurrentJobs: (value: number) => void
+  setThumbnailMemoryLimit: (value: number) => void
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(
@@ -114,8 +136,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const [settings, setSettings] = useState({
     // Core settings
     timezone: "America/Chicago",
-    generateThumbnails: true,
-    imageCaptureType: "JPG" as const,
+    enableThumbnailGeneration: true,
+    smallGenerationMode: "disabled" as "all" | "latest" | "disabled",
+    purgeSmalllsOnCompletion: false,
+    imageCaptureType: "JPG" as "PNG" | "JPG",
 
     // API settings
     openWeatherApiKey: "",
@@ -126,7 +150,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     weatherIntegrationEnabled: false,
     weatherRecordData: false,
     sunriseSunsetEnabled: false,
-    temperatureUnit: "celsius" as const,
+    temperatureUnit: "celsius" as "celsius" | "fahrenheit",
     latitude: null as number | null,
     longitude: null as number | null,
 
@@ -159,6 +183,14 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     corruptionDegradedTimeWindowMinutes: 30,
     corruptionDegradedFailurePercentage: 50,
     corruptionHeavyDetectionEnabled: false,
+
+    // Thumbnail job settings
+    thumbnailJobBatchSize: 10,
+    thumbnailWorkerInterval: 3,
+    thumbnailMaxRetries: 3,
+    thumbnailHighLoadMode: false,
+    thumbnailConcurrentJobs: 3,
+    thumbnailMemoryLimit: 512,
   })
 
   const [loading, setLoading] = useState(true)
@@ -219,8 +251,18 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         const newSettings = {
           // Core settings
           timezone: data.data.timezone || "America/Chicago",
-          generateThumbnails: data.data.generate_thumbnails === "true",
-          imageCaptureType: data.data.image_capture_type || "JPG",
+          enableThumbnailGeneration: data.data.generate_thumbnails === "true",
+          smallGenerationMode: (data.data.thumbnail_small_generation_mode ===
+          "all"
+            ? "all"
+            : data.data.thumbnail_small_generation_mode === "latest"
+            ? "latest"
+            : "disabled") as "all" | "latest" | "disabled",
+          purgeSmalllsOnCompletion:
+            data.data.thumbnail_purge_smalls_on_completion === "true",
+          imageCaptureType: (data.data.image_capture_type || "JPG") as
+            | "PNG"
+            | "JPG",
 
           // API settings - the backend now returns the actual key for display
           openWeatherApiKey: data.data.openweather_api_key || "", // Store actual key for display
@@ -255,9 +297,13 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           sunsetTimestamp: data.data.sunset_timestamp || null,
 
           // Logging settings
-          logRetentionDays: parseInt(data.data.log_retention_days || "30"),
+          dbLogRetentionDays: parseInt(data.data.log_retention_days || "30"),
+          dbLogLevel: data.data.log_level || "info",
+          fileLogRetentionDays: parseInt(
+            data.data.file_log_retention_days || "7"
+          ),
           maxLogFileSize: parseInt(data.data.max_log_file_size || "100"),
-          logLevel: data.data.log_level || "info",
+          fileLogLevel: data.data.file_log_level || "info",
           enableLogRotation: data.data.enable_log_rotation !== "false",
           enableLogCompression: data.data.enable_log_compression === "true",
           maxLogFiles: parseInt(data.data.max_log_files || "10"),
@@ -285,6 +331,22 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
               "50"
           ),
           corruptionHeavyDetectionEnabled: false, // Will be set based on camera settings
+
+          // Thumbnail job settings
+          thumbnailJobBatchSize: parseInt(
+            data.data.thumbnail_job_batch_size || "10"
+          ),
+          thumbnailWorkerInterval: parseInt(
+            data.data.thumbnail_worker_interval || "3"
+          ),
+          thumbnailMaxRetries: parseInt(data.data.thumbnail_max_retries || "3"),
+          thumbnailHighLoadMode: data.data.thumbnail_high_load_mode === "true",
+          thumbnailConcurrentJobs: parseInt(
+            data.data.thumbnail_concurrent_jobs || "3"
+          ),
+          thumbnailMemoryLimit: parseInt(
+            data.data.thumbnail_memory_limit_mb || "512"
+          ),
         }
 
         setSettings(newSettings)
@@ -415,9 +477,62 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSettings((prev) => ({ ...prev, timezone: value }))
   }, [])
 
-  const setGenerateThumbnails = useCallback((value: boolean) => {
-    setSettings((prev) => ({ ...prev, generateThumbnails: value }))
-  }, [])
+  const setEnableThumbnailGeneration = useCallback(
+    async (value: boolean) => {
+      setSettings((prev) => ({ ...prev, enableThumbnailGeneration: value }))
+      // Auto-save immediately
+      try {
+        await updateSetting("enable_thumbnail_generation", value)
+        // Update original settings to reflect saved state
+        setOriginalSettings((prev) =>
+          prev ? { ...prev, enableThumbnailGeneration: value } : null
+        )
+        toast.success("Thumbnail generation setting saved")
+      } catch (error) {
+        console.error("Failed to save thumbnail generation setting:", error)
+        toast.error("Failed to save setting")
+      }
+    },
+    [updateSetting]
+  )
+
+  const setSmallGenerationMode = useCallback(
+    async (value: "all" | "latest" | "disabled") => {
+      setSettings((prev) => ({ ...prev, smallGenerationMode: value }))
+      // Auto-save immediately
+      try {
+        await updateSetting("small_generation_mode", value)
+        // Update original settings to reflect saved state
+        setOriginalSettings((prev) =>
+          prev ? { ...prev, smallGenerationMode: value } : null
+        )
+        toast.success("Small image mode setting saved")
+      } catch (error) {
+        console.error("Failed to save small generation mode:", error)
+        toast.error("Failed to save setting")
+      }
+    },
+    [updateSetting]
+  )
+
+  const setPurgeSmalllsOnCompletion = useCallback(
+    async (value: boolean) => {
+      setSettings((prev) => ({ ...prev, purgeSmalllsOnCompletion: value }))
+      // Auto-save immediately
+      try {
+        await updateSetting("purge_smalls_on_completion", value)
+        // Update original settings to reflect saved state
+        setOriginalSettings((prev) =>
+          prev ? { ...prev, purgeSmalllsOnCompletion: value } : null
+        )
+        toast.success("Auto-purge setting saved")
+      } catch (error) {
+        console.error("Failed to save auto-purge setting:", error)
+        toast.error("Failed to save setting")
+      }
+    },
+    [updateSetting]
+  )
 
   const setImageCaptureType = useCallback((value: "PNG" | "JPG") => {
     setSettings((prev) => ({ ...prev, imageCaptureType: value }))
@@ -459,16 +574,24 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSettings((prev) => ({ ...prev, longitude: value }))
   }, [])
 
-  const setLogRetentionDays = useCallback((value: number) => {
-    setSettings((prev) => ({ ...prev, logRetentionDays: value }))
+  const setDbLogRetentionDays = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, dbLogRetentionDays: value }))
+  }, [])
+
+  const setDbLogLevel = useCallback((value: string) => {
+    setSettings((prev) => ({ ...prev, dbLogLevel: value }))
+  }, [])
+
+  const setFileLogRetentionDays = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, fileLogRetentionDays: value }))
   }, [])
 
   const setMaxLogFileSize = useCallback((value: number) => {
     setSettings((prev) => ({ ...prev, maxLogFileSize: value }))
   }, [])
 
-  const setLogLevel = useCallback((value: string) => {
-    setSettings((prev) => ({ ...prev, logLevel: value }))
+  const setFileLogLevel = useCallback((value: string) => {
+    setSettings((prev) => ({ ...prev, fileLogLevel: value }))
   }, [])
 
   const setEnableLogRotation = useCallback((value: boolean) => {
@@ -533,6 +656,215 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSettings((prev) => ({ ...prev, corruptionHeavyDetectionEnabled: value }))
   }, [])
 
+  // Thumbnail job setter functions
+  const setThumbnailJobBatchSize = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, thumbnailJobBatchSize: value }))
+  }, [])
+
+  const setThumbnailWorkerInterval = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, thumbnailWorkerInterval: value }))
+  }, [])
+
+  const setThumbnailMaxRetries = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, thumbnailMaxRetries: value }))
+  }, [])
+
+  const setThumbnailHighLoadMode = useCallback((value: boolean) => {
+    setSettings((prev) => ({ ...prev, thumbnailHighLoadMode: value }))
+  }, [])
+
+  const setThumbnailConcurrentJobs = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, thumbnailConcurrentJobs: value }))
+  }, [])
+
+  const setThumbnailMemoryLimit = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, thumbnailMemoryLimit: value }))
+  }, [])
+
+  // Helper function to detect changed settings
+  const detectChangedSettings = useCallback(() => {
+    if (!originalSettings) return []
+
+    const changes: string[] = []
+
+    // Core settings
+    if (settings.timezone !== originalSettings.timezone) {
+      changes.push(`Timezone (${settings.timezone})`)
+    }
+    if (
+      settings.enableThumbnailGeneration !==
+      originalSettings.enableThumbnailGeneration
+    ) {
+      changes.push(
+        `Thumbnails (${
+          settings.enableThumbnailGeneration ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (settings.smallGenerationMode !== originalSettings.smallGenerationMode) {
+      changes.push(`Small Images (${settings.smallGenerationMode})`)
+    }
+    if (
+      settings.purgeSmalllsOnCompletion !==
+      originalSettings.purgeSmalllsOnCompletion
+    ) {
+      changes.push(
+        `Auto-purge (${
+          settings.purgeSmalllsOnCompletion ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (settings.imageCaptureType !== originalSettings.imageCaptureType) {
+      changes.push(`Image Type (${settings.imageCaptureType})`)
+    }
+
+    // API Key
+    if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
+      changes.push("OpenWeather API Key")
+    }
+
+    // Weather settings
+    if (
+      settings.weatherIntegrationEnabled !==
+      originalSettings.weatherIntegrationEnabled
+    ) {
+      changes.push(
+        `Weather Integration (${
+          settings.weatherIntegrationEnabled ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (settings.weatherRecordData !== originalSettings.weatherRecordData) {
+      changes.push(
+        `Weather Data Recording (${
+          settings.weatherRecordData ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (
+      settings.sunriseSunsetEnabled !== originalSettings.sunriseSunsetEnabled
+    ) {
+      changes.push(
+        `Sunrise/Sunset (${
+          settings.sunriseSunsetEnabled ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (settings.temperatureUnit !== originalSettings.temperatureUnit) {
+      changes.push(`Temperature Unit (${settings.temperatureUnit})`)
+    }
+
+    // Location
+    if (settings.latitude !== originalSettings.latitude) {
+      changes.push(`Latitude (${settings.latitude})`)
+    }
+    if (settings.longitude !== originalSettings.longitude) {
+      changes.push(`Longitude (${settings.longitude})`)
+    }
+
+    // Logging settings
+    if (settings.dbLogRetentionDays !== originalSettings.dbLogRetentionDays) {
+      changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
+    }
+    if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
+      changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
+    }
+    if (settings.dbLogLevel !== originalSettings.dbLogLevel) {
+      changes.push(`DB Log Level (${settings.dbLogLevel})`)
+    }
+    if (
+      settings.corruptionAutoDiscardEnabled !==
+      originalSettings.corruptionAutoDiscardEnabled
+    ) {
+      changes.push(
+        `Auto Discard (${
+          settings.corruptionAutoDiscardEnabled ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (settings.fileLogLevel !== originalSettings.fileLogLevel) {
+      changes.push(`File Log Level (${settings.fileLogLevel})`)
+    }
+
+    // Corruption settings
+    if (
+      settings.corruptionAutoDisableDegraded !==
+      originalSettings.corruptionAutoDisableDegraded
+    ) {
+      changes.push(
+        `Auto Disable Degraded (${
+          settings.corruptionAutoDisableDegraded ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (
+      settings.corruptionDetectionEnabled !==
+      originalSettings.corruptionDetectionEnabled
+    ) {
+      changes.push(
+        `Corruption Detection (${
+          settings.corruptionDetectionEnabled ? "enabled" : "disabled"
+        })`
+      )
+    }
+    if (
+      settings.corruptionScoreThreshold !==
+      originalSettings.corruptionScoreThreshold
+    ) {
+      changes.push(`Score Threshold (${settings.corruptionScoreThreshold})`)
+    }
+    if (
+      settings.corruptionDegradedConsecutiveThreshold !==
+      originalSettings.corruptionDegradedConsecutiveThreshold
+    ) {
+      changes.push(
+        `Consecutive Threshold (${settings.corruptionDegradedConsecutiveThreshold})`
+      )
+    }
+    if (
+      settings.corruptionDegradedTimeWindowMinutes !==
+      originalSettings.corruptionDegradedTimeWindowMinutes
+    ) {
+      changes.push(
+        `Time Window (${settings.corruptionDegradedTimeWindowMinutes} min)`
+      )
+    }
+    if (
+      settings.corruptionDegradedFailurePercentage !==
+      originalSettings.corruptionDegradedFailurePercentage
+    ) {
+      changes.push(
+        `Failure Percentage (${settings.corruptionDegradedFailurePercentage}%)`
+      )
+    }
+    if (
+      settings.corruptionHeavyDetectionEnabled !==
+      originalSettings.corruptionHeavyDetectionEnabled
+    ) {
+      changes.push(
+        `Heavy Detection (${
+          settings.corruptionHeavyDetectionEnabled ? "enabled" : "disabled"
+        })`
+      )
+    }
+
+    // Thumbnail settings
+    if (
+      settings.thumbnailMemoryLimit !== originalSettings.thumbnailMemoryLimit
+    ) {
+      changes.push(
+        `Thumbnail Memory Limit (${settings.thumbnailMemoryLimit}MB)`
+      )
+    }
+
+    return changes
+  }, [settings, originalSettings])
+
+  // Computed property for unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    return detectChangedSettings().length > 0
+  }, [detectChangedSettings])
+
   // Save all settings function (equivalent to the page-specific hook's saveSettings)
   const saveAllSettings = useCallback(async (): Promise<boolean> => {
     setSaving(true)
@@ -548,11 +880,27 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           changes.push(`Timezone (${settings.timezone})`)
         }
         if (
-          settings.generateThumbnails !== originalSettings.generateThumbnails
+          settings.enableThumbnailGeneration !==
+          originalSettings.enableThumbnailGeneration
         ) {
           changes.push(
             `Thumbnails (${
-              settings.generateThumbnails ? "enabled" : "disabled"
+              settings.enableThumbnailGeneration ? "enabled" : "disabled"
+            })`
+          )
+        }
+        if (
+          settings.smallGenerationMode !== originalSettings.smallGenerationMode
+        ) {
+          changes.push(`Small Images (${settings.smallGenerationMode})`)
+        }
+        if (
+          settings.purgeSmalllsOnCompletion !==
+          originalSettings.purgeSmalllsOnCompletion
+        ) {
+          changes.push(
+            `Auto-purge (${
+              settings.purgeSmalllsOnCompletion ? "enabled" : "disabled"
             })`
           )
         }
@@ -610,14 +958,27 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         }
 
         // Logging settings
-        if (settings.logRetentionDays !== originalSettings.logRetentionDays) {
-          changes.push(`Log Retention (${settings.logRetentionDays} days)`)
+        if (
+          settings.dbLogRetentionDays !== originalSettings.dbLogRetentionDays
+        ) {
+          changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
         }
         if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
           changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
         }
-        if (settings.logLevel !== originalSettings.logLevel) {
-          changes.push(`Log Level (${settings.logLevel})`)
+        if (settings.dbLogLevel !== originalSettings.dbLogLevel) {
+          changes.push(`DB Log Level (${settings.dbLogLevel})`)
+        }
+        if (
+          settings.fileLogRetentionDays !==
+          originalSettings.fileLogRetentionDays
+        ) {
+          changes.push(
+            `File Log Retention (${settings.fileLogRetentionDays} days)`
+          )
+        }
+        if (settings.fileLogLevel !== originalSettings.fileLogLevel) {
+          changes.push(`File Log Level (${settings.fileLogLevel})`)
         }
 
         // Corruption settings
@@ -714,13 +1075,19 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         "📤 Saving settings with imageCaptureType:",
         settings.imageCaptureType
       )
-      const coreSettings = {
+      const coreSettings: Record<string, string> = {
         timezone: settings.timezone,
-        generate_thumbnails: settings.generateThumbnails.toString(),
+        generate_thumbnails: settings.enableThumbnailGeneration.toString(),
+        thumbnail_small_generation_mode:
+          settings.smallGenerationMode.toString(),
+        thumbnail_purge_smalls_on_completion:
+          settings.purgeSmalllsOnCompletion.toString(),
         image_capture_type: settings.imageCaptureType,
-        log_retention_days: settings.logRetentionDays.toString(),
+        log_retention_days: settings.dbLogRetentionDays.toString(),
         max_log_file_size: settings.maxLogFileSize.toString(),
-        log_level: settings.logLevel,
+        log_level: settings.dbLogLevel,
+        file_log_retention_days: settings.fileLogRetentionDays.toString(),
+        file_log_level: settings.fileLogLevel,
         enable_log_rotation: settings.enableLogRotation.toString(),
         enable_log_compression: settings.enableLogCompression.toString(),
         max_log_files: settings.maxLogFiles.toString(),
@@ -746,7 +1113,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
       // Add API key if modified
       if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
-        coreSettings["openweather_api_key"] = settings.openWeatherApiKey
+        coreSettings.openweather_api_key = settings.openWeatherApiKey
       }
 
       // Save core settings in bulk (now includes corruption settings)
@@ -797,7 +1164,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         // Need to create a new object with the current values
         const updatedSettings = {
           timezone: settings.timezone,
-          generateThumbnails: settings.generateThumbnails,
+          enableThumbnailGeneration: settings.enableThumbnailGeneration,
+          smallGenerationMode: settings.smallGenerationMode,
+          purgeSmalllsOnCompletion: settings.purgeSmalllsOnCompletion,
           imageCaptureType: settings.imageCaptureType,
           openWeatherApiKey: settings.openWeatherApiKey,
           apiKeyModified: false, // Reset after save
@@ -809,12 +1178,28 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           temperatureUnit: settings.temperatureUnit,
           latitude: settings.latitude,
           longitude: settings.longitude,
-          logRetentionDays: settings.logRetentionDays,
+
+          // Weather data (cached from hourly updates)
+          weatherDateFetched: settings.weatherDateFetched,
+          currentTemp: settings.currentTemp,
+          currentWeatherIcon: settings.currentWeatherIcon,
+          currentWeatherDescription: settings.currentWeatherDescription,
+          sunriseTimestamp: settings.sunriseTimestamp,
+          sunsetTimestamp: settings.sunsetTimestamp,
+
+          // Database logging settings
+          dbLogRetentionDays: settings.dbLogRetentionDays,
+          dbLogLevel: settings.dbLogLevel,
+
+          // File logging settings
+          fileLogRetentionDays: settings.fileLogRetentionDays,
           maxLogFileSize: settings.maxLogFileSize,
-          logLevel: settings.logLevel,
+          fileLogLevel: settings.fileLogLevel,
           enableLogRotation: settings.enableLogRotation,
           enableLogCompression: settings.enableLogCompression,
           maxLogFiles: settings.maxLogFiles,
+
+          // Corruption detection settings
           corruptionDetectionEnabled: settings.corruptionDetectionEnabled,
           corruptionScoreThreshold: settings.corruptionScoreThreshold,
           corruptionAutoDiscardEnabled: settings.corruptionAutoDiscardEnabled,
@@ -827,6 +1212,14 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
             settings.corruptionDegradedFailurePercentage,
           corruptionHeavyDetectionEnabled:
             settings.corruptionHeavyDetectionEnabled,
+
+          // Thumbnail job settings
+          thumbnailJobBatchSize: settings.thumbnailJobBatchSize,
+          thumbnailWorkerInterval: settings.thumbnailWorkerInterval,
+          thumbnailMaxRetries: settings.thumbnailMaxRetries,
+          thumbnailHighLoadMode: settings.thumbnailHighLoadMode,
+          thumbnailConcurrentJobs: settings.thumbnailConcurrentJobs,
+          thumbnailMemoryLimit: settings.thumbnailMemoryLimit,
         }
         setOriginalSettings(updatedSettings)
 
@@ -853,8 +1246,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       setSaving(false)
     }
   }, [
-    settings,
-    originalSettings,
+    detectChangedSettings,
     updateMultipleSettings,
     setApiKeyModified,
     setOpenWeatherApiKey,
@@ -870,6 +1262,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     loading,
     saving,
     error,
+    hasUnsavedChanges,
     updateSetting,
     updateMultipleSettings,
     getSetting,
@@ -879,7 +1272,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
     // Setters
     setTimezone,
-    setGenerateThumbnails,
+    setEnableThumbnailGeneration,
+    setSmallGenerationMode,
+    setPurgeSmalllsOnCompletion,
     setImageCaptureType,
     setOpenWeatherApiKey,
     setApiKeyModified,
@@ -889,9 +1284,11 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setTemperatureUnit,
     setLatitude,
     setLongitude,
-    setLogRetentionDays,
+    setDbLogRetentionDays,
     setMaxLogFileSize,
-    setLogLevel,
+    setDbLogLevel,
+    setFileLogRetentionDays,
+    setFileLogLevel,
     setEnableLogRotation,
     setEnableLogCompression,
     setMaxLogFiles,
@@ -903,6 +1300,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setCorruptionDegradedTimeWindowMinutes,
     setCorruptionDegradedFailurePercentage,
     setCorruptionHeavyDetectionEnabled,
+    setThumbnailJobBatchSize,
+    setThumbnailWorkerInterval,
+    setThumbnailMaxRetries,
+    setThumbnailHighLoadMode,
+    setThumbnailConcurrentJobs,
+    setThumbnailMemoryLimit,
   }
 
   return (

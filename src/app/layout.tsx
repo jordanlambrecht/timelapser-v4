@@ -58,8 +58,11 @@ export default function RootLayout({
           <div className='px-6 py-4 mx-auto max-w-7xl'>
             <div className='flex items-center justify-between'>
               {/* Logo area with spirograph */}
-              <div className='flex items-center space-x-4'>
-                <Link href={"/"}>
+              <div>
+                <Link
+                  href={"/"}
+                  className=' flex flex-row relative items-center space-x-4'
+                >
                   <SpirographLogo size={48} />
                   <div>
                     <h1 className='text-2xl font-bold gradient-text'>

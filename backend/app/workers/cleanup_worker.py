@@ -22,7 +22,6 @@ from ..services.timelapse_service import SyncTimelapseService
 from ..database.image_operations import SyncImageOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.statistics_operations import SyncStatisticsOperations
-from ..middleware.rate_limiter import SlidingWindowRateLimiter
 from ..constants import (
     DEFAULT_LOG_RETENTION_DAYS,
     DEFAULT_IMAGE_RETENTION_DAYS,

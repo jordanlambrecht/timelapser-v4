@@ -1,5 +1,9 @@
-import { ImageForCamera } from "./images"
-import { LogForCamera } from "./logs"
+import {
+  ImageForCamera,
+  CameraDetailStats,
+  CameraDetailsResponse,
+  LogForCamera,
+} from "./api"
 import { Timelapse } from "./timelapses"
 import { Video } from "./videos"
 
@@ -46,28 +50,6 @@ export interface Camera {
 
 export interface CameraWithLastImage extends Camera {
   last_image?: ImageForCamera
-}
-
-export interface CameraDetailStats {
-  totalImages: number
-  currentTimelapseImages: number
-  currentTimelapseName?: string
-  videoCount: number
-  totalTimelapses: number
-  daysSinceFirstCapture?: number
-  storageUsedMb?: number
-  last24hImages: number
-  successRatePercent?: number
-}
-
-export interface CameraDetailsResponse {
-  camera: CameraWithLastImage
-  active_timelapse?: Timelapse
-  timelapses: Timelapse[]
-  recent_images: ImageForCamera[]
-  videos: Video[]
-  recent_activity: LogForCamera[]
-  stats: CameraDetailStats
 }
 
 // Camera Component Props

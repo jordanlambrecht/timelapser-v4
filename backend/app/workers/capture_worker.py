@@ -54,6 +54,7 @@ class CaptureWorker(BaseWorker):
         video_automation_service: VideoAutomationService,
         weather_manager: WeatherManager,
         sse_ops: SyncSSEEventsOperations,
+        thumbnail_job_service=None,  # Optional for backward compatibility
     ):
         """
         Initialize capture worker with injected dependencies.
@@ -66,6 +67,7 @@ class CaptureWorker(BaseWorker):
             video_automation_service: Video automation service
             weather_manager: Weather manager for sun window calculations
             sse_ops: Server-sent events operations
+            thumbnail_job_service: Optional thumbnail job service for queuing jobs
         """
         super().__init__("CaptureWorker")
         self.camera_service = camera_service
@@ -75,6 +77,7 @@ class CaptureWorker(BaseWorker):
         self.video_automation_service = video_automation_service
         self.weather_manager = weather_manager
         self.sse_ops = sse_ops
+        self.thumbnail_job_service = thumbnail_job_service
 
     async def initialize(self) -> None:
         """Initialize capture worker resources."""
@@ -331,6 +334,23 @@ class CaptureWorker(BaseWorker):
                 if updated_timelapse:
                     image_count = getattr(updated_timelapse, "image_count", 0)
                     self.log_info(f"Image captured, count: {image_count}")
+                    
+                # Queue thumbnail generation job if service available and thumbnails enabled
+                if (self.thumbnail_job_service and generate_thumbnails and 
+                    capture_result and hasattr(capture_result, 'image_id') and capture_result.image_id):
+                    try:
+                        job = await self.run_in_executor(
+                            self.thumbnail_job_service.queue_job,
+                            capture_result.image_id,
+                            "medium"  # Medium priority for auto-generated jobs
+                        )
+                        if job:
+                            self.log_debug(f"Queued thumbnail job {job.id} for image {capture_result.image_id}")
+                        else:
+                            self.log_warning(f"Failed to queue thumbnail job for image {capture_result.image_id}")
+                    except Exception as e:
+                        self.log_warning(f"Error queuing thumbnail job: {e}")
+                        # Don't fail the capture if thumbnail queuing fails
 
                 # Trigger per-capture video automation if enabled
                 try:

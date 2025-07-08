@@ -14,12 +14,14 @@ from typing import Optional
 from fastapi import APIRouter, Query, UploadFile, File, HTTPException, Response
 from loguru import logger
 
-from ..dependencies import CorruptionServiceDep, CameraServiceDep, SettingsServiceDep, AsyncDatabaseDep
+from ..dependencies import (
+    CorruptionServiceDep,
+    CameraServiceDep,
+    SettingsServiceDep,
+    AsyncDatabaseDep,
+)
 from ..utils.cache_manager import (
-    generate_collection_etag,
-    generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag
 )
 from ..models.corruption_model import (
     CorruptionHistoryResponse,
@@ -56,17 +58,21 @@ router = APIRouter(tags=["corruption"])
 # ETag based on latest corruption log timestamp + total count
 @router.get("/corruption/stats")
 @handle_exceptions("get corruption system stats")
-async def get_corruption_system_stats(response: Response, corruption_service: CorruptionServiceDep):
+async def get_corruption_system_stats(
+    response: Response, corruption_service: CorruptionServiceDep
+):
     """Get system-wide corruption detection statistics"""
     stats = await corruption_service.get_system_corruption_stats()
-    
+
     # Generate ETag based on stats content for cache validation
     etag = generate_content_hash_etag(stats)
-    
+
     # Add moderate cache for corruption statistics
-    response.headers["Cache-Control"] = "public, max-age=600, s-maxage=600"  # 10 minutes
+    response.headers["Cache-Control"] = (
+        "public, max-age=600, s-maxage=600"  # 10 minutes
+    )
     response.headers["ETag"] = etag
-    
+
     return ResponseFormatter.success(
         "System corruption statistics retrieved successfully", data=stats
     )
@@ -88,14 +94,16 @@ async def get_camera_corruption_stats(
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
 
     stats = await corruption_service.get_camera_corruption_stats(camera_id)
-    
+
     # Generate ETag based on camera ID, days parameter, and stats content
     etag = generate_content_hash_etag(f"{camera_id}-{days}-{stats}")
-    
+
     # Add longer cache for camera corruption statistics
-    response.headers["Cache-Control"] = "public, max-age=900, s-maxage=900"  # 15 minutes
+    response.headers["Cache-Control"] = (
+        "public, max-age=900, s-maxage=900"  # 15 minutes
+    )
     response.headers["ETag"] = etag
-    
+
     return ResponseFormatter.success(
         f"Camera {camera_id} corruption statistics retrieved successfully", data=stats
     )
@@ -125,14 +133,16 @@ async def get_camera_corruption_history(
     history = await corruption_service.get_camera_corruption_history(
         camera_id, hours=hours_int
     )
-    
+
     # Generate ETag based on camera ID, hours, and history content
-    etag = generate_content_hash_etag(f"{camera_id}-{hours_int}-{len(history) if history else 0}")
-    
+    etag = generate_content_hash_etag(
+        f"{camera_id}-{hours_int}-{len(history) if history else 0}"
+    )
+
     # Add short cache for corruption history (mostly static historical data)
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
     response.headers["ETag"] = etag
-    
+
     return ResponseFormatter.success(
         "Camera corruption history fetched", data={"logs": history}
     )
@@ -142,17 +152,21 @@ async def get_camera_corruption_history(
 # ETag based on corruption settings updated_at timestamp
 @router.get("/corruption/settings", response_model=CorruptionSettings)
 @handle_exceptions("get corruption settings")
-async def get_corruption_settings(response: Response, corruption_service: CorruptionServiceDep):
+async def get_corruption_settings(
+    response: Response, corruption_service: CorruptionServiceDep
+):
     """Get corruption detection settings"""
     settings = await corruption_service.get_corruption_settings()
-    
+
     # Generate ETag based on settings content
     etag = generate_content_hash_etag(settings)
-    
+
     # Add long cache for corruption settings (they change rarely)
-    response.headers["Cache-Control"] = "public, max-age=1200, s-maxage=1200"  # 20 minutes
+    response.headers["Cache-Control"] = (
+        "public, max-age=1200, s-maxage=1200"  # 20 minutes
+    )
     response.headers["ETag"] = etag
-    
+
     return ResponseFormatter.success(
         "Corruption settings retrieved successfully", data=settings
     )
@@ -161,19 +175,19 @@ async def get_corruption_settings(response: Response, corruption_service: Corrup
 @router.put("/corruption/settings")
 @handle_exceptions("update corruption settings")
 async def update_corruption_settings(
-    settings_data: dict,
-    corruption_service: CorruptionServiceDep
+    settings_data: dict, corruption_service: CorruptionServiceDep
 ):
     """Update corruption detection settings"""
     # Extract global settings from the request
     global_settings = settings_data.get("global_settings", {})
-    
+
     # Update corruption settings
-    updated_settings = await corruption_service.update_corruption_settings(global_settings)
-    
+    updated_settings = await corruption_service.update_corruption_settings(
+        global_settings
+    )
+
     return ResponseFormatter.success(
-        "Corruption settings updated successfully",
-        data=updated_settings
+        "Corruption settings updated successfully", data=updated_settings
     )
 
 
@@ -210,11 +224,11 @@ async def get_corruption_logs(
 
     # Generate ETag based on query parameters and result metadata
     etag_data = f"{camera_id}-{page}-{page_size}-{min_score}-{max_score}"
-    if result and hasattr(result, 'model_dump'):
+    if result and hasattr(result, "model_dump"):
         etag_data += f"-{result.model_dump().get('total', 0)}"
     etag = generate_content_hash_etag(etag_data)
-    
-    # Add moderate cache for corruption logs 
+
+    # Add moderate cache for corruption logs
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
     response.headers["ETag"] = etag
 
@@ -254,7 +268,7 @@ async def reset_camera_degraded_mode(
             "camera_name": camera.name if camera else f"Camera {camera_id}",
         },
         priority="high",
-        source="api"
+        source="api",
     )
 
     return ResponseFormatter.success(
@@ -302,7 +316,7 @@ async def test_image_corruption(
             "test_type": "manual_upload",
         },
         priority="normal",
-        source="api"
+        source="api",
     )
 
     return corruption_result
@@ -382,7 +396,7 @@ async def get_corruption_system_health(
                 "issues_count": len(issues),
             },
             priority="normal",
-            source="api"
+            source="api",
         )
 
         return ResponseFormatter.success(

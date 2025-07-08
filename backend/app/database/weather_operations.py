@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 
 from .core import AsyncDatabaseCore, SyncDatabaseCore
-from ..exceptions import TimelapserError
 
 
 class WeatherOperations:
@@ -19,7 +18,7 @@ class WeatherOperations:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT * FROM weather_data 
+                    SELECT * FROM weather_data
                     WHERE single_row_enforcer = 1
                 """
                 )

@@ -46,6 +46,7 @@ from app.workers import (
     SchedulerWorker,
     SSEWorker,
     CleanupWorker,
+    ThumbnailWorker,
 )
 
 # Import composition-based services
@@ -56,6 +57,7 @@ from app.services.video_automation_service import VideoAutomationService
 from app.services.corruption_service import SyncCorruptionService
 from app.services.timelapse_service import SyncTimelapseService
 from app.services.settings_service import SyncSettingsService
+from app.services.thumbnail_service import ThumbnailService
 from app.services.weather.service import WeatherManager
 
 
@@ -103,16 +105,19 @@ class AsyncTimelapseWorker:
         from app.database.image_operations import SyncImageOperations
         from app.database.settings_operations import SyncSettingsOperations
         from app.database.weather_operations import SyncWeatherOperations
+        from app.database.thumbnail_job_operations import SyncThumbnailJobOperations
 
         camera_ops = SyncCameraOperations(sync_db)
         image_ops = SyncImageOperations(sync_db)
         settings_ops = SyncSettingsOperations(sync_db)
         weather_ops = SyncWeatherOperations(sync_db)
+        thumbnail_job_ops = SyncThumbnailJobOperations(sync_db)
         self.sse_ops = SyncSSEEventsOperations(sync_db)
 
         # Initialize core services
         self.image_capture_service = ImageCaptureService(
-            sync_db, camera_ops, image_ops, settings_ops
+            sync_db, camera_ops, image_ops, settings_ops, 
+            thumbnail_job_ops=thumbnail_job_ops
         )
         self.camera_service = SyncCameraService(sync_db, self.image_capture_service)
         self.video_service = SyncVideoService(sync_db)
@@ -120,6 +125,12 @@ class AsyncTimelapseWorker:
         self.corruption_service = SyncCorruptionService(sync_db)
         self.timelapse_service = SyncTimelapseService(sync_db)
         self.settings_service = SyncSettingsService(sync_db)
+        self.thumbnail_service = ThumbnailService(
+            thumbnail_job_ops, 
+            self.sse_ops, 
+            image_operations=image_ops,
+            settings_service=self.settings_service
+        )
 
         # Initialize weather manager with proper dependency injection
         self.weather_manager = WeatherManager(weather_ops, self.settings_service)
@@ -136,7 +147,7 @@ class AsyncTimelapseWorker:
     def _initialize_workers(self):
         """Initialize all specialized worker instances."""
         try:
-            # Initialize CaptureWorker
+            # Initialize CaptureWorker (will add thumbnail_job_service after it's created)
             self.capture_worker = CaptureWorker(
                 camera_service=self.camera_service,
                 image_capture_service=self.image_capture_service,
@@ -175,6 +186,22 @@ class AsyncTimelapseWorker:
                 settings_service=self.settings_service,
                 cleanup_interval_hours=6,  # Run cleanup every 6 hours
             )
+
+            # Initialize ThumbnailJobService 
+            from app.services.thumbnail_job_service import SyncThumbnailJobService
+            self.thumbnail_job_service = SyncThumbnailJobService(
+                sync_db=sync_db,
+                settings_service=self.settings_service
+            )
+            
+            self.thumbnail_worker = ThumbnailWorker(
+                thumbnail_job_service=self.thumbnail_job_service,
+                thumbnail_service=self.thumbnail_service,
+                sse_ops=self.sse_ops,
+            )
+            
+            # Now connect the thumbnail job service to the capture worker
+            self.capture_worker.thumbnail_job_service = self.thumbnail_job_service
 
             logger.info("All specialized workers initialized successfully")
 
@@ -219,6 +246,7 @@ class AsyncTimelapseWorker:
                 self.video_worker,
                 self.scheduler_worker,
                 self.cleanup_worker,
+                self.thumbnail_worker,
             ]
 
             # Stop all workers concurrently
@@ -240,6 +268,7 @@ class AsyncTimelapseWorker:
                 self.video_worker,
                 self.scheduler_worker,
                 self.cleanup_worker,
+                self.thumbnail_worker,
             ]
 
             # Start all workers concurrently
@@ -266,9 +295,9 @@ class AsyncTimelapseWorker:
         """Check camera health status (delegates to CaptureWorker)."""
         return await self.capture_worker.check_camera_health()
 
-    async def refresh_weather_data(self):
+    async def refresh_weather_data(self, force_refresh: bool = False):
         """Refresh weather data (delegates to WeatherWorker)."""
-        return await self.weather_worker.refresh_weather_data()
+        return await self.weather_worker.refresh_weather_data(force_refresh=force_refresh)
 
     async def process_video_automation(self):
         """Process video automation (delegates to VideoWorker)."""

@@ -7,6 +7,11 @@ from typing import Optional, Dict, Any, Literal, List
 from enum import Enum
 from datetime import datetime, date
 from pydantic import BaseModel, Field, ConfigDict
+from ..constants import (
+    THUMBNAIL_JOB_PRIORITY_MEDIUM,
+    THUMBNAIL_JOB_STATUS_PENDING,
+    THUMBNAIL_JOB_TYPE_SINGLE,
+)
 
 
 class ImageStatisticsResponse(BaseModel):
@@ -320,6 +325,7 @@ class ThumbnailGenerationResult(BaseModel):
 
     success: bool
     image_id: int
+    timelapse_id: Optional[int] = None
     thumbnail_path: Optional[str] = None
     small_path: Optional[str] = None
     thumbnail_size: Optional[int] = None
@@ -334,12 +340,12 @@ class ThumbnailRegenerationStatus(BaseModel):
     """Status of thumbnail regeneration process"""
 
     active: bool = False
-    progress: int = 0  # Percentage 0-100
-    total_images: int = 0
-    completed_images: int = 0
-    failed_images: int = 0
+    progress: int = 0  # Percentage 0-100 
+    total: int = 0  # Frontend expects "total"
+    completed: int = 0  # Frontend expects "completed"
+    errors: int = 0  # Frontend expects "errors" 
     current_image_id: Optional[int] = None
-    current_image_name: Optional[str] = None
+    current_image: Optional[str] = None  # Frontend expects "current_image"
     estimated_time_remaining_seconds: Optional[int] = None
     started_at: Optional[datetime] = None
     status_message: str = "idle"
@@ -460,7 +466,7 @@ class CameraLatestImageData(BaseModel):
     image_id: int = Field(..., description="ID of the latest image")
     captured_at: str = Field(..., description="ISO timestamp when image was captured")
     day_number: int = Field(..., description="Day number in timelapse sequence")
-    timelapse_id: int = Field(..., description="ID of associated timelapse")
+    timelapse_id: Optional[int] = Field(None, description="ID of associated timelapse")
     file_size: Optional[int] = Field(None, description="Original file size in bytes")
     corruption_score: int = Field(..., description="Image quality score (0-100)")
     is_flagged: bool = Field(..., description="Whether image is flagged as corrupted")
@@ -656,5 +662,224 @@ class ActiveTimePeriodResult(BaseModel):
     active_duration_seconds: int = Field(..., description="Total active time in seconds")
     daily_window_seconds: Optional[int] = Field(default=None, description="Daily window duration in seconds")
     has_time_restrictions: bool = Field(..., description="Whether time window restrictions apply")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ====================================================================
+# THUMBNAIL VERIFICATION MODELS
+# ====================================================================
+
+class ThumbnailVerificationResult(BaseModel):
+    """Result of thumbnail file verification for a single image"""
+    
+    image_id: int
+    camera_id: int
+    timelapse_id: Optional[int] = None
+    thumbnail_exists: bool = False
+    small_exists: bool = False
+    thumbnail_path: Optional[str] = None
+    small_path: Optional[str] = None
+    thumbnail_size_bytes: Optional[int] = None
+    small_size_bytes: Optional[int] = None
+    missing_files: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    verified_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailVerificationSummary(BaseModel):
+    """Summary of bulk thumbnail verification results"""
+    
+    total_images_checked: int = 0
+    images_with_thumbnails: int = 0
+    images_with_small: int = 0
+    images_missing_thumbnails: int = 0
+    images_missing_small: int = 0
+    images_missing_both: int = 0
+    total_missing_files: int = 0
+    verification_errors: int = 0
+    total_thumbnail_size_mb: float = 0.0
+    total_small_size_mb: float = 0.0
+    verification_started_at: datetime
+    verification_completed_at: Optional[datetime] = None
+    processing_time_seconds: Optional[float] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailRepairRequest(BaseModel):
+    """Request model for thumbnail repair operations"""
+    
+    image_ids: Optional[List[int]] = None  # Specific images to repair
+    camera_ids: Optional[List[int]] = None  # All images from specific cameras
+    timelapse_ids: Optional[List[int]] = None  # All images from specific timelapses
+    repair_missing_thumbnails: bool = True
+    repair_missing_small: bool = True
+    priority: str = Field(default="medium", description="Job priority for repair jobs")
+    force_regenerate: bool = False  # Regenerate even if files exist
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailRepairResult(BaseModel):
+    """Result of thumbnail repair operations"""
+    
+    success: bool
+    repair_jobs_queued: int = 0
+    images_processed: int = 0
+    errors: List[str] = Field(default_factory=list)
+    repair_started_at: datetime
+    estimated_completion_time: Optional[datetime] = None
+    message: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ====================================================================
+# ORPHANED FILE REPAIR MODELS
+# ====================================================================
+
+class OrphanedFileResult(BaseModel):
+    """Result of orphaned file analysis for a single file"""
+    
+    file_path: str = Field(..., description="Full path to the orphaned file")
+    file_type: str = Field(..., description="Type of file: thumbnail or small")
+    file_size_bytes: int = Field(..., description="Size of the file in bytes")
+    camera_id: Optional[int] = Field(None, description="Camera ID extracted from directory structure")
+    timelapse_id: Optional[int] = Field(None, description="Timelapse ID extracted from directory structure")
+    potential_image_id: Optional[int] = Field(None, description="Best guess image ID match")
+    structure_type: str = Field(..., description="File structure type: legacy or timelapse")
+    match_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence in the match (0.0-1.0)")
+    timestamp_extracted: Optional[datetime] = Field(None, description="Timestamp extracted from filename if possible")
+    can_repair: bool = Field(default=False, description="Whether this file can be automatically repaired")
+    repair_reason: Optional[str] = Field(None, description="Reason why file can/cannot be repaired")
+    error: Optional[str] = Field(None, description="Any error in processing this file")
+    analyzed_at: datetime = Field(default_factory=datetime.utcnow, description="When this file was analyzed")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrphanedFileScanSummary(BaseModel):
+    """Summary of orphaned file filesystem scan results"""
+    
+    total_files_scanned: int = 0
+    orphaned_files_found: int = 0
+    matched_files: int = 0
+    unmatched_files: int = 0
+    repair_candidates: int = 0
+    legacy_structure_files: int = 0
+    timelapse_structure_files: int = 0
+    total_orphaned_size_mb: float = 0.0
+    scan_started_at: datetime
+    scan_completed_at: Optional[datetime] = None
+    processing_time_seconds: Optional[float] = None
+    directories_scanned: int = 0
+    scan_errors: int = 0
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrphanFileRepairRequest(BaseModel):
+    """Request model for orphaned file repair operations"""
+    
+    file_paths: Optional[List[str]] = Field(None, description="Specific orphaned files to repair")
+    camera_ids: Optional[List[int]] = Field(None, description="Repair orphaned files for specific cameras")
+    timelapse_ids: Optional[List[int]] = Field(None, description="Repair orphaned files for specific timelapses")
+    structure_type: Optional[str] = Field(None, description="Only repair files from specific structure: legacy or timelapse")
+    min_confidence: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum match confidence for automatic repair")
+    repair_action: str = Field(default="update_database", description="Repair action: update_database or queue_regeneration")
+    force_repair: bool = Field(default=False, description="Force repair even for low confidence matches")
+    delete_unmatched: bool = Field(default=False, description="Delete orphaned files that cannot be matched")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrphanFileRepairResult(BaseModel):
+    """Result of orphaned file repair operations"""
+    
+    success: bool
+    files_processed: int = 0
+    files_repaired: int = 0
+    database_updates: int = 0
+    regeneration_jobs_queued: int = 0
+    files_deleted: int = 0
+    files_skipped: int = 0
+    errors: List[str] = Field(default_factory=list)
+    repair_started_at: datetime
+    repair_completed_at: Optional[datetime] = None
+    processing_time_seconds: Optional[float] = None
+    storage_recovered_mb: float = 0.0
+    message: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ====================================================================
+# THUMBNAIL JOB MODELS
+# ====================================================================
+
+class ThumbnailGenerationJobCreate(BaseModel):
+    """Model for creating thumbnail generation jobs"""
+    
+    image_id: int = Field(..., description="ID of the image to generate thumbnails for")
+    priority: str = Field(default=THUMBNAIL_JOB_PRIORITY_MEDIUM, description="Job priority: high, medium, low")
+    status: str = Field(default=THUMBNAIL_JOB_STATUS_PENDING, description="Initial job status")
+    job_type: str = Field(default=THUMBNAIL_JOB_TYPE_SINGLE, description="Job type: single, bulk")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailGenerationJob(BaseModel):
+    """Complete thumbnail generation job model"""
+    
+    id: int
+    image_id: int
+    priority: str
+    status: str
+    job_type: str
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    processing_time_ms: Optional[int] = None
+    retry_count: int = 0
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThumbnailJobStatistics(BaseModel):
+    """Statistics for thumbnail job queue monitoring"""
+    
+    total_jobs_24h: int = 0
+    pending_jobs: int = 0
+    processing_jobs: int = 0
+    completed_jobs_24h: int = 0
+    failed_jobs_24h: int = 0
+    cancelled_jobs_24h: int = 0
+    avg_processing_time_ms: int = 0
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BulkThumbnailRequest(BaseModel):
+    """Request model for bulk thumbnail generation"""
+    
+    image_ids: List[int] = Field(..., description="List of image IDs to generate thumbnails for")
+    priority: str = Field(default=THUMBNAIL_JOB_PRIORITY_MEDIUM, description="Job priority for all images")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BulkThumbnailResponse(BaseModel):
+    """Response model for bulk thumbnail generation"""
+    
+    total_requested: int = Field(..., description="Total number of images requested")
+    jobs_created: int = Field(default=0, description="Number of jobs successfully created")
+    jobs_failed: int = Field(default=0, description="Number of jobs that failed to create")
+    created_job_ids: List[int] = Field(default_factory=list, description="IDs of successfully created jobs")
+    failed_image_ids: List[int] = Field(default_factory=list, description="IDs of images that failed to queue")
     
     model_config = ConfigDict(from_attributes=True)

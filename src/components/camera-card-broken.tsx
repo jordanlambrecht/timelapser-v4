@@ -38,7 +38,7 @@ import Image from "next/image"
 import { useState, useEffect, useReducer, useCallback, useMemo, memo } from "react"
 import { toast } from "@/lib/toast"
 import { useCameraCountdown } from "@/hooks/use-camera-countdown"
-import { useCaptureSettings } from "@/contexts/settings-context"
+import { useSettings } from "@/contexts/settings-context"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { isWithinTimeWindow } from "@/lib/time-utils"
 import { TimestampWithWarning } from "@/components/suspicious-timestamp-warning"
@@ -195,12 +195,14 @@ const CameraCardComponent = ({
   // ✅ PERFORMANCE OPTIMIZATION: Replace 10+ useState with single useReducer
   const [state, dispatch] = useReducer(cameraCardReducer, initialCameraCardState)
 
-  // Use the new capture settings hook for consistent interval data
+  // Use the settings hook for timezone data
   const {
-    captureInterval,
     timezone,
     loading: settingsLoading,
-  } = useCaptureSettings()
+  } = useSettings()
+  
+  // Default capture interval (5 minutes in seconds)
+  const captureInterval = 300
 
   // ✅ PERFORMANCE OPTIMIZATION: Memoize computed values
   const completedVideos = useMemo(() => 
@@ -365,9 +367,7 @@ const CameraCardComponent = ({
     dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoProgress', open: true } })
 
     // Generate video with the provided name
-    const generatingToastId = toast.loading("🎬 Generating video...", { 
-      duration: Infinity 
-    })
+    const generatingToastId = toast.loading("🎬 Generating video...")
 
     try {
       const response = await fetch("/api/videos/generate", {
@@ -412,11 +412,8 @@ const CameraCardComponent = ({
     }
   }, [timelapse?.id, camera.id, toast])
 
-  // ✅ PERFORMANCE OPTIMIZATION: Memoized computed values
-  const completedVideos = useMemo(() => videos.filter((v) => v.status === "completed"), [videos])
-  const completedTimelapses = videos.length // Total timelapses (completed videos)
-  const isTimelapseRunning = timelapse?.status === "running"
-  const isTimelapsePaused = timelapse?.status === "paused"
+  // ✅ PERFORMANCE OPTIMIZATION: Use values from earlier memoization
+  // completedVideos, completedTimelapses, isTimelapseRunning, isTimelapsePaused are already defined above
 
   const handlePauseResume = () => {
     if (isTimelapsePaused && onResumeTimelapse) {
@@ -426,100 +423,12 @@ const CameraCardComponent = ({
     }
   }
 
-  const generateDefaultVideoName = () => {
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-")
-    return `${camera.name}_timelapse_${timestamp}`
-  }
-
-  const handleGenerateVideoClick = () => {
-    const defaultName = generateDefaultVideoName()
-    dispatch({ type: 'SET_VIDEO_NAME', payload: defaultName })
-    dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoName', open: true } })
-  }
-
-  const handleVideoNameConfirm = async (videoName: string) => {
-    dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoName', open: false } })
-    dispatch({ type: 'SET_VIDEO_NAME', payload: videoName })
-    dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoProgress', open: true } })
-
-    // Show generating toast
-    const generatingToastId = toast.videoGenerating(videoName)
-
-    try {
-      const response = await fetch("/api/videos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          camera_id: camera.id,
-          video_name: videoName,
-        }),
-      })
-
-      const result = await response.json()
-
-      dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoProgress', open: false } })
-
-      // Dismiss the generating toast
-      toast.dismiss(generatingToastId)
-
-      if (result.success) {
-        toast.videoGenerated(videoName)
-
-        // Refresh data to show new video
-        if (onGenerateVideo) {
-          onGenerateVideo(camera.id)
-        }
-      } else {
-        toast.error("Video generation failed", {
-          description: result.error || "An unknown error occurred",
-          duration: 7000,
-        })
-      }
-    } catch (error) {
-      dispatch({ type: 'TOGGLE_MODAL', payload: { modal: 'videoProgress', open: false } })
-
-      // Dismiss the generating toast
-      toast.dismiss(generatingToastId)
-
-      toast.error("Video generation failed", {
-        description: "Network error or server unavailable",
-        duration: 7000,
-      })
-      console.error("Error generating video:", error)
-    }
-  }
+  // Functions generateDefaultVideoName, handleGenerateVideoClick, and handleVideoNameConfirm are already defined above with useCallback
 
   // TODO: OPTIMIZATION - Replace with optimistic capture from useOptimisticCamera hook
   // const { captureNow } = useOptimisticCamera(camera.id);
   // Then: await captureNow(); // Immediate UI feedback + automatic error handling
-  const handleCaptureNow = async () => {
-    try {
-      const response = await fetch(`/api/cameras/${camera.id}/capture-now`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      })
-
-      const result = await response.json()
-
-      if (response.ok) {
-        toast.success("Capture triggered", {
-          description: "Image capture has been requested",
-          duration: 3000,
-        })
-      } else {
-        toast.error("Capture failed", {
-          description: result.detail || "Failed to trigger capture",
-          duration: 5000,
-        })
-      }
-    } catch (error) {
-      console.error("Error triggering capture:", error)
-      toast.error("Capture failed", {
-        description: "Network error or server unavailable",
-        duration: 5000,
-      })
-    }
-  }
+  // handleCaptureNow is already defined above with useCallback
 
   const handleNewTimelapseConfirm = async (config: any) => {
     try {

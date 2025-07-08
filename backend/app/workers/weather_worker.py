@@ -6,6 +6,7 @@ Handles weather data refresh and management for sunrise/sunset calculations.
 
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from .base_worker import BaseWorker
 from ..services.weather.service import WeatherManager
@@ -67,18 +68,20 @@ class WeatherWorker(BaseWorker):
         """Cleanup weather worker resources."""
         self.log_info("Cleaned up weather worker")
 
-    async def refresh_weather_data(self):
+    async def refresh_weather_data(self, force_refresh: bool = False):
         """Refresh weather data if needed and weather is enabled."""
-        self.log_info("🌤️ Weather refresh triggered")
+        self.log_info(f"🌤️ Weather refresh triggered (force_refresh={force_refresh})")
         try:
             # Check if weather functionality is enabled
             settings_dict = await self.run_in_executor(
                 self.settings_service.get_all_settings
             )
+            self.log_debug(f"Retrieved settings dict with {len(settings_dict)} keys")
 
             weather_enabled = (
                 settings_dict.get(SETTING_KEY_WEATHER_ENABLED, DEFAULT_WEATHER_ENABLED).lower() == BOOLEAN_TRUE_STRING
             )
+            self.log_debug(f"Weather enabled: {weather_enabled}")
             if not weather_enabled:
                 self.log_debug(WEATHER_REFRESH_SKIPPED_DISABLED)
                 return
@@ -86,11 +89,14 @@ class WeatherWorker(BaseWorker):
             # Check if we have required settings
             latitude = settings_dict.get("latitude")
             longitude = settings_dict.get("longitude")
+            self.log_debug(f"Location configured - lat: {latitude}, lng: {longitude}")
 
             # Get API key securely through settings service
             api_key = await self.run_in_executor(
                 self.settings_service.get_openweather_api_key
             )
+            api_key_status = "configured" if api_key else "missing"
+            self.log_debug(f"API key status: {api_key_status}")
 
             if not all([latitude, longitude, api_key]):
                 self.log_warning(WEATHER_REFRESH_MISSING_SETTINGS)
@@ -99,66 +105,113 @@ class WeatherWorker(BaseWorker):
             # Type narrowing - at this point we know api_key is not None
             assert api_key is not None, "api_key should not be None after validation"
 
-            # Check if weather data is stale using the new weather_data table
-            latest_weather = self.weather_manager.weather_ops.get_latest_weather()
+            should_refresh = force_refresh
+            
+            if not force_refresh:
+                # Check if weather data is stale using the new weather_data table
+                latest_weather = self.weather_manager.weather_ops.get_latest_weather()
 
-            if latest_weather:
-                # Get timezone-aware today for comparison
-                try:
-                    timezone_str = get_timezone_from_settings(settings_dict)
-                    tz = ZoneInfo(timezone_str)
-                    today = datetime.now(tz).date().isoformat()
-                except Exception as e:
-                    self.log_warning(f"Failed to get timezone aware date: {e}")
-                    today = datetime.now().date().isoformat()
+                if latest_weather:
+                    # Check if weather data is fresh (within the last hour)
+                    weather_date = latest_weather.get("weather_date_fetched")
+                    if weather_date:
+                        try:
+                            # Convert to datetime if needed
+                            if isinstance(weather_date, str):
+                                # Handle ISO format strings
+                                weather_datetime = datetime.fromisoformat(weather_date.replace("Z", "+00:00"))
+                            elif isinstance(weather_date, datetime):
+                                weather_datetime = weather_date
+                            else:
+                                # Invalid format, treat as stale
+                                weather_datetime = None
 
-                # Check if weather data is from today
-                weather_date = latest_weather.get("weather_date_fetched")
-                if weather_date:
-                    if isinstance(weather_date, datetime):
-                        weather_date_str = weather_date.date().isoformat()
-                    else:
-                        weather_date_str = str(weather_date)[:DATE_STRING_LENGTH]
+                            if weather_datetime:
+                                # Calculate hours since last refresh using timezone-aware comparison
+                                try:
+                                    # Get timezone-aware current time
+                                    timezone_str = get_timezone_from_settings(settings_dict)
+                                    tz = ZoneInfo(timezone_str)
+                                    now = datetime.now(tz)
+                                    
+                                    # Convert weather_datetime to the same timezone if needed
+                                    if weather_datetime.tzinfo is None:
+                                        # If weather datetime has no timezone, assume it's in the same timezone
+                                        weather_datetime = weather_datetime.replace(tzinfo=tz)
+                                    else:
+                                        # Convert to the configured timezone for comparison
+                                        weather_datetime = weather_datetime.astimezone(tz)
+                                    
+                                    hours_since_refresh = (now - weather_datetime).total_seconds() / 3600
+                                    
+                                    # Check if data is fresh (less than 1 hour old)
+                                    if hours_since_refresh < 1.0:
+                                        self.log_debug(f"Weather data is current ({hours_since_refresh:.1f}h old), skipping refresh")
+                                        return
+                                    else:
+                                        self.log_info(f"Weather data is stale ({hours_since_refresh:.1f}h old), refreshing...")
+                                        should_refresh = True
+                                except Exception as tz_e:
+                                    self.log_warning(f"Failed to get timezone for comparison: {tz_e}")
+                                    # Fallback to naive datetime comparison
+                                    now = datetime.now()
+                                    if weather_datetime.tzinfo is not None:
+                                        weather_datetime = weather_datetime.replace(tzinfo=None)
+                                    
+                                    hours_since_refresh = (now - weather_datetime).total_seconds() / 3600
+                                    
+                                    if hours_since_refresh < 1.0:
+                                        self.log_debug(f"Weather data is current ({hours_since_refresh:.1f}h old, fallback), skipping refresh")
+                                        return
+                                    else:
+                                        self.log_info(f"Weather data is stale ({hours_since_refresh:.1f}h old, fallback), refreshing...")
+                                        should_refresh = True
+                            
+                        except Exception as e:
+                            self.log_warning(f"Failed to parse weather date for staleness check: {e}")
+                            # If we can't parse the date, assume it's stale and refresh
+                            should_refresh = True
+                else:
+                    # No weather data found, need to refresh
+                    self.log_info("No weather data found, refreshing...")
+                    should_refresh = True
 
-                    if weather_date_str == today:
-                        self.log_debug("Weather data is current, skipping refresh")
-                        return
+            if should_refresh:
+                self.log_info("Refreshing weather data...")
 
-            self.log_info("Refreshing weather data...")
-
-            # Call the async weather refresh method directly with plain text API key
-            self.log_info(f"🌡️ Calling weather manager refresh with API key: {'***' + api_key[-4:] if len(api_key) > 4 else '***'}")
-            weather_data: Optional[OpenWeatherApiData] = (
-                await self.weather_manager.refresh_weather_if_needed(api_key)
-            )
-
-            if weather_data:
-                self.log_info(
-                    f"✅ Weather data refreshed successfully: {weather_data.temperature}°C, {weather_data.description}"
+                # Call the async weather refresh method directly with plain text API key
+                self.log_info(f"🌡️ Calling weather manager refresh with API key: {'***' + api_key[-4:] if len(api_key) > 4 else '***'}")
+                weather_data: Optional[OpenWeatherApiData] = (
+                    await self.weather_manager.refresh_weather_if_needed(api_key, force=force_refresh)
                 )
 
-                # Broadcast weather update event
-                try:
-                    event_id = await self.run_in_executor(
-                        self.sse_ops.create_event,
-                        EVENT_WEATHER_UPDATED,
-                        {
-                            "temperature": weather_data.temperature,
-                            "icon": weather_data.icon,
-                            "description": weather_data.description,
-                            "date_fetched": weather_data.date_fetched.isoformat(),
-                        },
-                        SSE_PRIORITY_NORMAL,
-                        SSE_SOURCE_WORKER,
+                if weather_data:
+                    self.log_info(
+                        f"✅ Weather data refreshed successfully: {weather_data.temperature}°C, {weather_data.description}"
                     )
-                    if event_id:
-                        self.log_debug(f"Created weather update SSE event with ID: {event_id}")
-                    else:
-                        self.log_warning("SSE event creation returned no ID")
-                except Exception as e:
-                    self.log_error("Failed to create weather update SSE event", e)
-            else:
-                self.log_warning("❌ Failed to refresh weather data - no data returned from weather manager")
+
+                    # Broadcast weather update event
+                    try:
+                        event_id = await self.run_in_executor(
+                            self.sse_ops.create_event,
+                            EVENT_WEATHER_UPDATED,
+                            {
+                                "temperature": weather_data.temperature,
+                                "icon": weather_data.icon,
+                                "description": weather_data.description,
+                                "date_fetched": weather_data.date_fetched.isoformat(),
+                            },
+                            SSE_PRIORITY_NORMAL,
+                            SSE_SOURCE_WORKER,
+                        )
+                        if event_id:
+                            self.log_debug(f"Created weather update SSE event with ID: {event_id}")
+                        else:
+                            self.log_warning("SSE event creation returned no ID")
+                    except Exception as e:
+                        self.log_error("Failed to create weather update SSE event", e)
+                else:
+                    self.log_warning("❌ Failed to refresh weather data - no data returned from weather manager")
 
         except Exception as e:
             self.log_error("💥 Error refreshing weather data", e)

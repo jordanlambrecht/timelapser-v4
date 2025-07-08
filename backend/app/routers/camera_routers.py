@@ -753,6 +753,7 @@ async def serve_camera_latest_image_small(
 @router.get("/cameras/{camera_id}/latest-image/full")
 @handle_exceptions("serve camera latest image full")
 async def serve_camera_latest_image_full(
+    request: Request,
     response: Response,
     image_service: ImageServiceDep,
     camera_service: CameraServiceDep,
@@ -771,6 +772,14 @@ async def serve_camera_latest_image_full(
 
     # Generate ETag based on image ID and captured timestamp for cache validation
     etag = generate_composite_etag(latest_image.id, latest_image.captured_at)
+    
+    # Check If-None-Match header for 304 Not Modified
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and validate_etag_match(if_none_match, etag):
+        response.status_code = status.HTTP_304_NOT_MODIFIED
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "public, max-age=60, s-maxage=60"  # 1 minute
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
     # Add caching for full images with proper ETag
     response.headers["Cache-Control"] = "public, max-age=60, s-maxage=60"  # 1 minute

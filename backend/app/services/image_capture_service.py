@@ -62,6 +62,14 @@ from ..constants import (
     FILE_NOT_FOUND,
 )
 from .rtsp_capture_service import RTSPCaptureService
+from ..database.thumbnail_job_operations import SyncThumbnailJobOperations
+from ..models.shared_models import ThumbnailGenerationJobCreate
+from ..constants import (
+    THUMBNAIL_JOB_PRIORITY_MEDIUM,
+    THUMBNAIL_JOB_STATUS_PENDING,
+    THUMBNAIL_JOB_TYPE_SINGLE,
+    SETTING_KEY_THUMBNAIL_GENERATION_ENABLED,
+)
 
 
 class ImageCaptureService:
@@ -79,6 +87,7 @@ class ImageCaptureService:
         settings_ops: SyncSettingsOperations,
         corruption_service=None,
         image_service=None,
+        thumbnail_job_ops: Optional[SyncThumbnailJobOperations] = None,
     ):
         """Initialize with all dependencies injected (no direct instantiation)."""
         self.db = db
@@ -87,6 +96,7 @@ class ImageCaptureService:
         self.settings_ops = settings_ops
         self.corruption_service = corruption_service
         self.image_service = image_service
+        self.thumbnail_job_ops = thumbnail_job_ops or SyncThumbnailJobOperations(db)
 
         self.rtsp_capture = RTSPCaptureService(self.db)
 
@@ -234,10 +244,10 @@ class ImageCaptureService:
                 camera_id, capture_result.image_path
             )
 
-        # Coordinate thumbnail generation
-        thumbnail_result = None
+        # Queue thumbnail generation job (non-blocking)
+        thumbnail_job_queued = False
         if capture_result.image_id:
-            thumbnail_result = self._coordinate_thumbnail_generation(
+            thumbnail_job_queued = self._queue_thumbnail_generation_job(
                 capture_result.image_id
             )
 
@@ -260,7 +270,9 @@ class ImageCaptureService:
             capture_scheduling=CameraCaptureScheduleResult(
                 success=True,
                 camera_id=camera_id,
-                scheduled_at=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
+                scheduled_at=timezone_utils.get_timezone_aware_timestamp_sync(
+                    self.settings_ops
+                ),
                 message="Image captured and processed successfully",
             ),
             overall_success=True,
@@ -455,7 +467,9 @@ class ImageCaptureService:
                     file_path=filepath,
                     day_number=self._calculate_day_number(
                         camera_id,
-                        timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
+                        timezone_utils.get_timezone_aware_timestamp_sync(
+                            self.settings_ops
+                        ),
                     ),
                     file_size=None,  # File size will be calculated by database
                     corruption_score=100,  # Default perfect score
@@ -564,160 +578,56 @@ class ImageCaptureService:
                 error=str(e),
             )
 
-    def _coordinate_thumbnail_generation(
-        self, image_id: int
-    ) -> ThumbnailGenerationResult:
-        """Coordinate thumbnail generation using basic implementation."""
-        from PIL import Image
-        from ..utils.file_helpers import validate_file_path, ensure_directory_exists
+    def _queue_thumbnail_generation_job(self, image_id: int) -> bool:
+        """
+        Queue a thumbnail generation job for background processing.
 
-        # Get image record from database
-        image_record = self.image_ops.get_image_by_id(image_id)
-        if not image_record:
-            return ThumbnailGenerationResult(
-                success=False,
-                image_id=image_id,
-                error=IMAGE_NOT_FOUND,
+        Args:
+            image_id: ID of the image to generate thumbnails for
+
+        Returns:
+            True if job was successfully queued, False otherwise
+        """
+        try:
+            # Check if thumbnail generation is enabled
+            thumbnail_enabled = self.settings_ops.get_setting(
+                SETTING_KEY_THUMBNAIL_GENERATION_ENABLED, "true"
             )
 
-        # Construct full image path using settings from database
-        camera_id = image_record.camera_id
-        data_directory = self.settings_ops.get_setting("data_directory")
-        if not data_directory:
-            return ThumbnailGenerationResult(
-                success=False,
-                image_id=image_id,
-                error="Data directory setting not configured",
-            )
-        
-        image_path = (
-            Path(data_directory)
-            / "cameras"
-            / f"camera-{camera_id}"
-            / "images"
-            / image_record.file_path
-        )
-
-        if not image_path.exists():
-            return ThumbnailGenerationResult(
-                success=False,
-                image_id=image_id,
-                error=FILE_NOT_FOUND,
-            )
-
-        # Generate thumbnails using constants
-        thumbnail_results = {}
-
-        with Image.open(image_path) as img:
-            for size_name in IMAGE_SIZE_VARIANTS:
-                if size_name == "full":
-                    continue  # Skip full, as it's the original image
-                dimensions = THUMBNAIL_DIMENSIONS.get(size_name)
-                if not dimensions:
-                    logger.warning(
-                        f"No dimensions defined for thumbnail size '{size_name}'"
-                    )
-                    continue
-                try:
-                    # Create thumbnail directory
-                    thumbnail_dir = (
-                        Path(data_directory)
-                        / "cameras"
-                        / f"camera-{camera_id}"
-                        / "thumbnails"
-                        / size_name
-                    )
-                    ensure_directory_exists(str(thumbnail_dir))
-
-                    # Generate thumbnail filename
-                    base_name = Path(image_record.file_path).stem
-                    thumbnail_filename = f"{base_name}_{size_name}.jpg"
-                    thumbnail_path = thumbnail_dir / thumbnail_filename
-
-                    # Create thumbnail with proper aspect ratio
-                    img_copy = img.copy()
-                    img_copy.thumbnail(dimensions, Image.Resampling.LANCZOS)
-
-                    # Save thumbnail
-                    img_copy.save(thumbnail_path, "JPEG", quality=85, optimize=True)
-
-                    # Calculate relative path for database
-                    relative_thumbnail_path = str(
-                        thumbnail_path.relative_to(
-                            Path(data_directory) / "cameras" / f"camera-{camera_id}"
-                        )
-                    )
-
-                    thumbnail_results[size_name] = {
-                        "path": str(thumbnail_path),
-                        "relative_path": relative_thumbnail_path,
-                        "size_bytes": thumbnail_path.stat().st_size,
-                        "dimensions": img_copy.size,
-                    }
-
-                except Exception as thumb_error:
-                    logger.error(
-                        f"Failed to generate {size_name} thumbnail for image {image_id}: {thumb_error}"
-                    )
-                    thumbnail_results[size_name] = {"error": str(thumb_error)}
-
-        # Update image record with thumbnail paths
-        update_data = {}
-        if (
-            "thumbnail" in thumbnail_results
-            and "path" in thumbnail_results["thumbnail"]
-        ):
-            update_data["thumbnail_path"] = thumbnail_results["thumbnail"][
-                "relative_path"
-            ]
-            update_data["thumbnail_size"] = thumbnail_results["thumbnail"]["size_bytes"]
-
-        if "small" in thumbnail_results and "path" in thumbnail_results["small"]:
-            update_data["small_path"] = thumbnail_results["small"]["relative_path"]
-            update_data["small_size"] = thumbnail_results["small"]["size_bytes"]
-
-        if update_data:
-            try:
-                self.image_ops.update_image_thumbnails(image_id, update_data)
-            except Exception as update_error:
-                logger.error(
-                    f"Failed to update image thumbnails in database: {update_error}"
+            if str(thumbnail_enabled).lower() != "true":
+                logger.debug(
+                    f"Thumbnail generation disabled, skipping job for image {image_id}"
                 )
+                return False
 
-        logger.info(
-            f"Generated thumbnails for image {image_id}: {list(thumbnail_results.keys())}"
-        )
+            # Create job data
+            job_data = ThumbnailGenerationJobCreate(
+                image_id=image_id,
+                priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,  # Medium priority for automatic captures
+                status=THUMBNAIL_JOB_STATUS_PENDING,
+                job_type=THUMBNAIL_JOB_TYPE_SINGLE,
+            )
 
-        # Extract thumbnail paths for ThumbnailGenerationResult
-        thumbnail_path = None
-        small_path = None
-        thumbnail_size = None
-        small_size = None
+            # Queue the job
+            job = self.thumbnail_job_ops.create_job(job_data)
 
-        if (
-            "thumbnail" in thumbnail_results
-            and "path" in thumbnail_results["thumbnail"]
-        ):
-            thumbnail_path = thumbnail_results["thumbnail"]["relative_path"]
-            thumbnail_size = thumbnail_results["thumbnail"]["size_bytes"]
+            if job:
+                logger.debug(
+                    f"Successfully queued thumbnail job {job.id} for image {image_id}"
+                )
+                return True
+            else:
+                logger.warning(f"Failed to queue thumbnail job for image {image_id}")
+                return False
 
-        if "small" in thumbnail_results and "path" in thumbnail_results["small"]:
-            small_path = thumbnail_results["small"]["relative_path"]
-            small_size = thumbnail_results["small"]["size_bytes"]
-
-        return ThumbnailGenerationResult(
-            success=True,
-            image_id=image_id,
-            thumbnail_path=thumbnail_path,
-            small_path=small_path,
-            thumbnail_size=thumbnail_size,
-            small_size=small_size,
-        )
+        except Exception as e:
+            logger.error(f"Error queuing thumbnail job for image {image_id}: {e}")
+            return False
 
     def _save_captured_image(
         self, camera_id: int, image_data: bytes, metadata: Dict[str, Any]
     ) -> Image:
-        """Save captured image to filesystem and database using timezone-aware timestamps."""
+        """Save captured image to filesystem ßand database using timezone-aware timestamps."""
         # Get timezone-aware timestamp using database settings (cache-backed)
         timezone_str = timezone_utils.get_timezone_from_cache_sync(self.settings_ops)
         timestamp = timezone_utils.create_timezone_aware_datetime(timezone_str)
@@ -729,7 +639,7 @@ class ImageCaptureService:
         data_directory = self.settings_ops.get_setting("data_directory")
         if not data_directory:
             raise ValueError("Data directory setting not configured")
-        
+
         camera_dir = (
             Path(data_directory)
             / "cameras"

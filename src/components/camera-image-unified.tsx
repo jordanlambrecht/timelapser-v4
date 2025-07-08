@@ -44,6 +44,7 @@ export function CameraImageUnified({
 }: CameraImageUnifiedProps) {
   const [hasError, setHasError] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [fallbackLevel, setFallbackLevel] = useState(0) // 0: requested size, 1: next fallback, 2: final fallback
 
   // Use the appropriate hook based on use case
   const {
@@ -55,22 +56,32 @@ export function CameraImageUnified({
     refetch,
   } = useLatestImageThumbnail(cameraId)
 
-  // Determine the actual image URL based on size
-  const getImageUrl = () => {
+  // Define cascading fallback chain based on requested size
+  const getFallbackChain = () => {
     switch (size) {
       case "thumbnail":
-        return `/api/cameras/${cameraId}/latest-image/thumbnail`
+        return [
+          `/api/cameras/${cameraId}/latest-image/thumbnail`,
+          `/api/cameras/${cameraId}/latest-image/small`,
+          `/api/cameras/${cameraId}/latest-image/full`,
+        ]
       case "small":
-        return `/api/cameras/${cameraId}/latest-image/small`
+        return [
+          `/api/cameras/${cameraId}/latest-image/small`,
+          `/api/cameras/${cameraId}/latest-image/full`,
+        ]
       case "full":
-        return `/api/cameras/${cameraId}/latest-image/full`
+        return [`/api/cameras/${cameraId}/latest-image/full`]
       default:
-        return thumbnailUrl
+        return [thumbnailUrl]
     }
   }
 
-  const imageUrl = hasImage && !hasError ? getImageUrl() : fallbackSrc
-  const showFallback = !hasImage || hasError || dataError
+  const fallbackChain = getFallbackChain()
+  const currentImageUrl = hasImage && !hasError && fallbackLevel < fallbackChain.length 
+    ? fallbackChain[fallbackLevel] 
+    : fallbackSrc
+  const showFallback = !hasImage || (hasError && fallbackLevel >= fallbackChain.length) || dataError
 
   const handleImageLoad = () => {
     setIsLoading(false)
@@ -78,13 +89,22 @@ export function CameraImageUnified({
   }
 
   const handleImageError = () => {
-    setIsLoading(false)
-    setHasError(true)
+    // Try next image in fallback chain
+    if (fallbackLevel < fallbackChain.length - 1) {
+      setFallbackLevel(prev => prev + 1)
+      setIsLoading(true)
+      setHasError(false)
+    } else {
+      // All fallbacks exhausted
+      setIsLoading(false)
+      setHasError(true)
+    }
   }
 
   const handleRetry = () => {
     setHasError(false)
     setIsLoading(true)
+    setFallbackLevel(0) // Reset to original requested size
     refetch()
   }
 
@@ -92,7 +112,7 @@ export function CameraImageUnified({
     <div className={cn("relative overflow-hidden", className)}>
       {/* Main Image */}
       <Image
-        src={imageUrl}
+        src={currentImageUrl}
         alt={
           showFallback
             ? `${cameraName} placeholder`
@@ -180,6 +200,17 @@ export function CameraImageUnified({
         <div className='absolute bottom-2 right-2'>
           <div className='px-2 py-1 text-xs text-white bg-black/60 rounded backdrop-blur-sm'>
             No captures yet
+          </div>
+        </div>
+      )}
+      
+      {/* Fallback indicator */}
+      {hasImage && fallbackLevel > 0 && !isLoading && (
+        <div className='absolute top-2 right-2'>
+          <div className='px-2 py-1 text-xs text-white bg-yellow-500/20 border border-yellow-500/30 rounded backdrop-blur-sm'>
+            {size === "thumbnail" && fallbackLevel === 1 && "Using small image"}
+            {size === "thumbnail" && fallbackLevel === 2 && "Using full image"}
+            {size === "small" && fallbackLevel === 1 && "Using full image"}
           </div>
         </div>
       )}

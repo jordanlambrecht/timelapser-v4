@@ -1,9 +1,12 @@
 [tool.pytest.ini_options]
+minversion = "6.0"
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
+    "-ra",
+    "-q",
     "--verbose",
     "--tb=short",
     "--strict-markers",
@@ -11,12 +14,22 @@ addopts = [
     "--asyncio-mode=auto"
 ]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
-    "cache: marks tests related to caching functionality"
+    "unit: Unit tests for individual components",
+    "integration: Integration tests for component interactions",
+    "performance: Performance and load tests",
+    "slow: Tests that take more than 1 second",
+    "database: Tests that require database connection",
+    "worker: Tests that involve worker processes",
+    "sse: Tests for SSE event broadcasting",
+    "thumbnail: Tests for thumbnail generation system",
+    "cache: Tests related to caching functionality",
+    "frontend: Tests as frontend integration tests"
 ]
 asyncio_mode = "auto"
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning"

@@ -28,7 +28,7 @@ from ..utils.cache_manager import (
     generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag
+    generate_timestamp_etag,
 )
 from ..constants import IMAGE_SIZE_VARIANTS, CACHE_CONTROL_PUBLIC
 
@@ -84,15 +84,15 @@ async def get_image_count(
     total_count = (
         images_result.get("total", 0) if isinstance(images_result, dict) else 0
     )
-    
+
     # Generate ETag based on count and filter parameters for cache validation
     etag_data = f"count-{total_count}-{camera_id}-{timelapse_id}"
     etag = generate_content_hash_etag(etag_data)
-    
+
     # Add moderate cache for count data
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
     response.headers["ETag"] = etag
-    
+
     return ResponseFormatter.success(
         "Image count retrieved successfully",
         data={
@@ -119,14 +119,14 @@ async def get_image(response: Response, image_id: int, image_service: ImageServi
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
         )
-    
+
     # Generate ETag based on image ID and captured timestamp
     etag = generate_composite_etag(image.id, image.captured_at)
-    
+
     # Add long cache for immutable image metadata
     response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"  # 1 hour
     response.headers["ETag"] = etag
-    
+
     return image
 
 
@@ -317,7 +317,9 @@ async def bulk_download_images(
 # Cache-Control: public, max-age=31536000, immutable + ETag based on image.id
 @router.get("/images/{image_id}/small")
 @handle_exceptions("serve small image")
-async def serve_small_image(response: Response, image_id: int, image_service: ImageServiceDep):
+async def serve_small_image(
+    response: Response, image_id: int, image_service: ImageServiceDep
+):
     """Serve small/medium-sized version of an image (800x600)"""
     # Delegate to service layer for file preparation
     serving_result = await image_service.prepare_image_for_serving(image_id, "small")
@@ -355,7 +357,9 @@ async def serve_small_image(response: Response, image_id: int, image_service: Im
 # Cache-Control: public, max-age=31536000, immutable + ETag based on image.id
 @router.get("/images/{image_id}/thumbnail")
 @handle_exceptions("serve thumbnail image")
-async def serve_thumbnail_image(response: Response, image_id: int, image_service: ImageServiceDep):
+async def serve_thumbnail_image(
+    response: Response, image_id: int, image_service: ImageServiceDep
+):
     """Serve thumbnail version of an image (200x150)"""
     # Delegate to service layer for file preparation
     serving_result = await image_service.prepare_image_for_serving(

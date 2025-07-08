@@ -3,7 +3,9 @@ import { ReactNode } from "react"
 export interface SettingsState {
   // Core settings
   timezone: string
-  generateThumbnails: boolean
+  enableThumbnailGeneration: boolean
+  smallGenerationMode: boolean
+  purgeSmalllsOnCompletion: boolean
   imageCaptureType: "PNG" | "JPG"
 
   // API settings
@@ -45,7 +47,9 @@ export interface SettingsState {
 export interface SettingsActions {
   // Core settings
   setTimezone: (value: string) => void
-  setGenerateThumbnails: (value: boolean) => void
+  setEnableThumbnailGeneration: (value: boolean) => void
+  setSmallGenerationMode: (value: boolean) => void
+  setPurgeSmalllsOnCompletion: (value: boolean) => void
   setImageCaptureType: (value: "PNG" | "JPG") => void
 
   // API settings
@@ -94,8 +98,12 @@ export interface ApiKeySettingsCardProps {
 }
 
 export interface CaptureSettingsCardProps {
-  generateThumbnails: boolean
-  setGenerateThumbnails: (value: boolean) => void
+  enableThumbnailGeneration: boolean
+  setEnableThumbnailGeneration: (value: boolean) => void
+  smallGenerationMode: boolean
+  setSmallGenerationMode: (value: boolean) => void
+  purgeSmalllsOnCompletion: boolean
+  setPurgeSmalllsOnCompletion: (value: boolean) => void
   imageCaptureType: "PNG" | "JPG"
   setImageCaptureType: (value: "PNG" | "JPG") => void
   saving: boolean

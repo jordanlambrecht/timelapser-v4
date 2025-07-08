@@ -1,7 +1,7 @@
 """Merge logging separation and weather table changes
 
 Revision ID: 44e164e68feb
-Revises: 021_separate_logging_systems, 020_weather_single_row_table
+Revises: 020_separate_logging_systems, 020_weather_single_row_table
 Create Date: 2025-07-06 04:14:44.282661
 
 """
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "44e164e68feb"
-down_revision: Union[str, Sequence[str], None] = (
-    "021_separate_logging_systems",
+down_revision: tuple[str, ...] = (
+    "020_separate_logging_systems",
     "020_weather_single_row_table",
 )
 branch_labels: Union[str, Sequence[str], None] = None

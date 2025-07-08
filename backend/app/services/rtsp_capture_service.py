@@ -95,7 +95,9 @@ class RTSPCaptureService:
                 try:
                     quality = int(quality_setting)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid image_quality setting '{quality_setting}', using default {DEFAULT_RTSP_QUALITY}")
+                    logger.warning(
+                        f"Invalid image_quality setting '{quality_setting}', using default {DEFAULT_RTSP_QUALITY}"
+                    )
 
             # Safe int conversion for timeout setting
             timeout = DEFAULT_RTSP_TIMEOUT_SECONDS
@@ -103,7 +105,9 @@ class RTSPCaptureService:
                 try:
                     timeout = int(timeout_setting)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid rtsp_timeout_seconds setting '{timeout_setting}', using default {DEFAULT_RTSP_TIMEOUT_SECONDS}")
+                    logger.warning(
+                        f"Invalid rtsp_timeout_seconds setting '{timeout_setting}', using default {DEFAULT_RTSP_TIMEOUT_SECONDS}"
+                    )
 
             return {
                 "quality": quality,
@@ -146,7 +150,9 @@ class RTSPCaptureService:
                 response_time_ms=response_time_ms,
                 connection_status="online" if success else "offline",
                 error=None if success else message,
-                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
+                    self.settings_ops
+                ),
             )
 
         except Exception as e:
@@ -158,7 +164,9 @@ class RTSPCaptureService:
                 response_time_ms=None,
                 connection_status="error",
                 error=str(e),
-                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(self.settings_ops),
+                test_timestamp=timezone_utils.get_timezone_aware_timestamp_sync(
+                    self.settings_ops
+                ),
             )
 
     def capture_image_entity_based(
@@ -193,7 +201,9 @@ class RTSPCaptureService:
                 )
 
             # Calculate day number using timezone utilities
-            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.settings_ops)
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(
+                self.settings_ops
+            )
             current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
             start_date = (
                 timelapse.get("start_date")
@@ -255,9 +265,12 @@ class RTSPCaptureService:
                 file_size=file_size,
                 corruption_score=DEFAULT_CORRUPTION_SCORE,  # Will be updated by corruption service
                 is_flagged=DEFAULT_IS_FLAGGED,
+                corruption_details=None,  # Will be updated by corruption service
             )
 
-            image_record = self.image_ops.record_captured_image(image_create.model_dump())
+            image_record = self.image_ops.record_captured_image(
+                image_create.model_dump()
+            )
             image_id = image_record.id
 
             # SSE broadcasting handled by higher-level service layer
@@ -311,7 +324,9 @@ class RTSPCaptureService:
                 )
             timelapse_id = getattr(camera, "active_timelapse_id", None)
             # Calculate day number
-            current_date_str = timezone_utils.get_timezone_aware_date_sync(self.settings_ops)
+            current_date_str = timezone_utils.get_timezone_aware_date_sync(
+                self.settings_ops
+            )
             current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
             start_date = getattr(camera, "timelapse_start_date", None)
             if not start_date:
@@ -387,14 +402,16 @@ class RTSPCaptureService:
                 file_size=file_size,
                 corruption_score=DEFAULT_CORRUPTION_SCORE,  # Will be updated by corruption service
                 is_flagged=DEFAULT_IS_FLAGGED,
-                # Add thumbnail data if available
-                thumbnail_path=thumbnail_data.get("thumbnail_path"),
-                thumbnail_size=thumbnail_data.get("thumbnail_size"),
-                small_path=thumbnail_data.get("small_path"),
-                small_size=thumbnail_data.get("small_size"),
+                corruption_details=None,  # Will be updated by corruption service
             )
 
-            image_record = self.image_ops.record_captured_image(image_create.model_dump())
+            image_record = self.image_ops.record_captured_image(
+                image_create.model_dump()
+            )
+
+            # Update thumbnail paths separately if they were generated
+            if thumbnail_data:
+                self.image_ops.update_image_thumbnails(image_record.id, thumbnail_data)
             image_id = image_record.id
 
             # SSE broadcasting handled by higher-level service layer
