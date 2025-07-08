@@ -30,13 +30,13 @@ from ..constants import (
 def _row_to_log_shared(row: Dict[str, Any]) -> Log:
     """
     Shared helper function for converting database row to Log model.
-    
+
     This eliminates duplicate logic between async and sync classes.
     Filters fields that belong to Log model and creates proper instance.
-    
+
     Args:
         row: Database row data as dictionary
-        
+
     Returns:
         Log model instance
     """
@@ -190,7 +190,9 @@ class LogOperations:
     # DEPRECATED: get_log_levels() method removed - use static LOG_LEVELS constant from constants.py
     # Log levels are hardcoded constants and don't require database queries
 
-    async def get_log_summary(self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS) -> LogSummaryModel:
+    async def get_log_summary(
+        self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
+    ) -> LogSummaryModel:
         """
         Get log summary statistics for a time period.
 
@@ -235,7 +237,9 @@ class LogOperations:
                     last_log_at=None,
                 )
 
-    async def delete_old_logs(self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS) -> int:
+    async def delete_old_logs(
+        self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS
+    ) -> int:
         """
         Delete old logs based on retention policy.
 
@@ -353,6 +357,8 @@ class SyncLogOperations:
         message: str,
         source: str = "system",
         camera_id: Optional[int] = None,
+        logger_name: Optional[str] = None,
+        extra_data: Optional[Dict[str, Any]] = None,
     ) -> Log:
         """
         Write a log entry to the database using the actual table schema.
@@ -362,14 +368,16 @@ class SyncLogOperations:
             message: Log message
             source: Source of the log (e.g., 'system', 'camera_1', 'worker')
             camera_id: Optional camera ID if log is camera-specific
+            logger_name: Optional logger name
+            extra_data: Optional additional data as JSON
 
         Returns:
             Created Log model instance
         """
-        # Use the actual logs table schema: id, level, message, camera_id, timestamp
+        # Use the actual logs table schema including all fields
         query = """
-        INSERT INTO logs (level, message, camera_id, timestamp) 
-        VALUES (%s, %s, %s, NOW())
+        INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp) 
+        VALUES (%s, %s, %s, %s, %s, %s, NOW())
         RETURNING *
         """
 
@@ -381,6 +389,9 @@ class SyncLogOperations:
                         level.upper(),
                         message,
                         camera_id,
+                        source,
+                        logger_name,
+                        extra_data,
                     ),
                 )
                 results = cur.fetchall()
@@ -393,7 +404,9 @@ class SyncLogOperations:
 
                 raise Exception("Failed to write log entry")
 
-    def get_camera_logs(self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS) -> List[Log]:
+    def get_camera_logs(
+        self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
+    ) -> List[Log]:
         """
         Get logs for a specific camera.
 

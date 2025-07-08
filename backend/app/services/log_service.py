@@ -838,8 +838,15 @@ class SyncLogService:
         Returns:
             Created Log model instance
         """
-        # Pass arguments in the correct order: level, message, logger_name, camera_id, source, extra_data
-        return self.log_ops.write_log_entry(level, message, logger_name, camera_id)
+        # Pass all arguments to the database operation
+        return self.log_ops.write_log_entry(
+            level=level,
+            message=message,
+            source=source,
+            camera_id=camera_id,
+            logger_name=logger_name,
+            extra_data=extra_data,
+        )
 
     def get_camera_logs(self, camera_id: int, hours: int = 24) -> List[Log]:
         """

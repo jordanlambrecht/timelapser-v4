@@ -1,11 +1,3 @@
-export interface LogForCamera {
-  id: number
-  timestamp: string
-  level: string
-  message: string
-  camera_id?: number
-}
-
 export interface LogSource {
   source: string
   log_count: number

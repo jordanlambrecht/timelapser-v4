@@ -38,12 +38,12 @@ export interface CountdownOptions {
  */
 export function getConfiguredTimezone(providedTimezone?: string): string {
   if (providedTimezone) return providedTimezone
-  
+
   // Try to get from browser's Intl API
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
-    return 'America/Chicago' // Default to Lincoln, NE timezone
+    return "America/Chicago" // Default to Lincoln, NE timezone
   }
 }
 
@@ -56,16 +56,16 @@ export function createDateInTimezone(
   timezone?: string
 ): Date {
   const tz = getConfiguredTimezone(timezone)
-  
+
   if (!timestamp) {
     // Return current time in specified timezone
     return new Date()
   }
-  
-  if (typeof timestamp === 'string') {
+
+  if (typeof timestamp === "string") {
     return new Date(timestamp)
   }
-  
+
   return timestamp
 }
 
@@ -78,17 +78,17 @@ export function formatDateInTimezone(
   options?: Intl.DateTimeFormatOptions
 ): string {
   const tz = getConfiguredTimezone(timezone)
-  
+
   const defaultOptions: Intl.DateTimeFormatOptions = {
     timeZone: tz,
     month: "short",
-    day: "numeric", 
+    day: "numeric",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    ...options
+    ...options,
   }
-  
+
   try {
     return date.toLocaleDateString("en-US", defaultOptions)
   } catch {
@@ -138,11 +138,15 @@ export function parseTimestamp(
   try {
     // If timestamp doesn't end with 'Z' and doesn't have timezone info, assume it's UTC
     let timestampStr = timestamp
-    if (!timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
+    if (
+      !timestamp.includes("Z") &&
+      !timestamp.includes("+") &&
+      !timestamp.includes("-", 10)
+    ) {
       // Add 'Z' to indicate UTC timezone
-      timestampStr = timestamp + 'Z'
+      timestampStr = timestamp + "Z"
     }
-    
+
     const date = new Date(timestampStr)
     if (isNaN(date.getTime())) return null
     return date
@@ -157,26 +161,26 @@ export function parseTimestamp(
  */
 export function isSuspiciousTimestamp(
   timestamp: string | null | undefined,
-  type: 'last_capture' | 'next_capture' = 'last_capture'
+  type: "last_capture" | "next_capture" = "last_capture"
 ): boolean {
   if (!timestamp) return false
-  
+
   const date = parseTimestamp(timestamp)
   if (!date) return false
-  
+
   const now = new Date()
   const diffInMs = date.getTime() - now.getTime()
-  
+
   // Last capture should never be in the future (allow 30 second grace period for clock skew)
-  if (type === 'last_capture') {
+  if (type === "last_capture") {
     return diffInMs > 30000
   }
-  
+
   // Next capture should be in reasonable future (not more than 24 hours)
-  if (type === 'next_capture') {
+  if (type === "next_capture") {
     return diffInMs > 24 * 60 * 60 * 1000 // 24 hours
   }
-  
+
   return false
 }
 
@@ -203,8 +207,12 @@ export function formatRelativeTime(
   // Get current time in the specified timezone
   const configuredTz = getConfiguredTimezone(timezone)
   let now: Date
-  
-  if (configuredTz === 'Etc/GMT' || configuredTz === 'GMT' || configuredTz === 'UTC') {
+
+  if (
+    configuredTz === "Etc/GMT" ||
+    configuredTz === "GMT" ||
+    configuredTz === "UTC"
+  ) {
     // For GMT/UTC timezones, use actual UTC time
     now = new Date()
   } else {
@@ -286,24 +294,30 @@ export function formatAbsoluteTimeForCounter(
   const configuredTz = getConfiguredTimezone(timezone)
   const currentYear = new Date().getFullYear()
   const timestampYear = date.getFullYear()
-  
+
   // Get timezone abbreviation using Intl.DateTimeFormat
   let timezoneDisplay = "Local"
   try {
-    if (configuredTz === 'Etc/GMT' || configuredTz === 'GMT' || configuredTz === 'UTC') {
+    if (
+      configuredTz === "Etc/GMT" ||
+      configuredTz === "GMT" ||
+      configuredTz === "UTC"
+    ) {
       timezoneDisplay = "UTC"
     } else {
       // Use Intl to get the timezone abbreviation for this specific date
-      const timezoneName = new Intl.DateTimeFormat('en-US', {
+      const timezoneName = new Intl.DateTimeFormat("en-US", {
         timeZone: configuredTz,
-        timeZoneName: 'short'
-      }).formatToParts(date).find(part => part.type === 'timeZoneName')?.value
-      
-      timezoneDisplay = timezoneName || configuredTz.split('/').pop() || "Local"
+        timeZoneName: "short",
+      })
+        .formatToParts(date)
+        .find((part) => part.type === "timeZoneName")?.value
+
+      timezoneDisplay = timezoneName || configuredTz.split("/").pop() || "Local"
     }
   } catch {
     // Fallback to last part of timezone name if Intl fails
-    timezoneDisplay = configuredTz.split('/').pop() || "Local"
+    timezoneDisplay = configuredTz.split("/").pop() || "Local"
   }
 
   const options: Intl.DateTimeFormatOptions = {
@@ -338,7 +352,8 @@ export function formatAbsoluteTime(
 ): string {
   if (!date) return "Unknown"
 
-  const dateObj = typeof date === "string" ? parseTimestamp(date, timezone) : date
+  const dateObj =
+    typeof date === "string" ? parseTimestamp(date, timezone) : date
   if (!dateObj) return "Invalid time"
 
   const options: Intl.DateTimeFormatOptions = {
@@ -363,14 +378,17 @@ export function formatAbsoluteTime(
  * Check if current time is within a time window
  * Uses specified timezone for time calculations
  */
-export function isWithinTimeWindow(timeWindow?: TimeWindow, timezone?: string): boolean {
+export function isWithinTimeWindow(
+  timeWindow?: TimeWindow,
+  timezone?: string
+): boolean {
   if (!timeWindow?.enabled || !timeWindow.start || !timeWindow.end) {
     return true // No restrictions
   }
 
   try {
     const tz = getConfiguredTimezone(timezone)
-    
+
     // Get current time in the specified timezone
     const now = new Date()
     const timeInTz = new Date(now.toLocaleString("en-US", { timeZone: tz }))
@@ -501,8 +519,12 @@ export function formatCountdown(
   // Get current time in the specified timezone
   const configuredTz = getConfiguredTimezone(timezone)
   let now: Date
-  
-  if (configuredTz === 'Etc/GMT' || configuredTz === 'GMT' || configuredTz === 'UTC') {
+
+  if (
+    configuredTz === "Etc/GMT" ||
+    configuredTz === "GMT" ||
+    configuredTz === "UTC"
+  ) {
     // For GMT/UTC timezones, use actual UTC time
     now = new Date()
   } else {
@@ -580,8 +602,12 @@ function getTimeWindowMessage(
     // Get current time in configured timezone
     const configuredTz = getConfiguredTimezone(timezone)
     let now: Date
-    
-    if (configuredTz === 'Etc/GMT' || configuredTz === 'GMT' || configuredTz === 'UTC') {
+
+    if (
+      configuredTz === "Etc/GMT" ||
+      configuredTz === "GMT" ||
+      configuredTz === "UTC"
+    ) {
       now = new Date()
     } else {
       now = new Date()
@@ -590,7 +616,7 @@ function getTimeWindowMessage(
     const [startHour, startMin] = timeWindow.start.split(":").map(Number)
 
     // Calculate when the window will open next
-    let windowStart = new Date(now)
+    const windowStart = new Date(now)
     windowStart.setHours(startHour, startMin, 0, 0)
 
     // If start time has passed today, use tomorrow
@@ -656,9 +682,9 @@ export function getSmartRefreshInterval(
   if (!nextCaptureTime) return 5000 // 5 seconds
 
   const now = new Date()
-  const secondsUntilNext = Math.abs(Math.floor(
-    (nextCaptureTime.getTime() - now.getTime()) / 1000
-  ))
+  const secondsUntilNext = Math.abs(
+    Math.floor((nextCaptureTime.getTime() - now.getTime()) / 1000)
+  )
 
   // Ultra-fast refresh for "Now" state and immediate post-capture
   if (secondsUntilNext <= 3) return 500 // 0.5 seconds - for "Now" detection
@@ -697,9 +723,9 @@ export function isNowState(
   if (!nextCaptureTime) return false
 
   const now = new Date()
-  const diffInSeconds = Math.abs(Math.floor(
-    (nextCaptureTime.getTime() - now.getTime()) / 1000
-  ))
+  const diffInSeconds = Math.abs(
+    Math.floor((nextCaptureTime.getTime() - now.getTime()) / 1000)
+  )
 
   return diffInSeconds <= threshold
 }

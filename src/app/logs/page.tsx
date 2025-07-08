@@ -1,7 +1,7 @@
 // src/app/logs/page.tsx
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import {
   Search,
   FunnelIcon,
@@ -11,8 +11,21 @@ import {
   CircleAlert,
   Bug,
   Sigma,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react"
 import { useTimezoneSettings } from "@/contexts/settings-context"
+import {
+  formatDateInTimezone,
+  parseTimestamp,
+  getConfiguredTimezone,
+} from "@/lib/time-utils"
+import { Camera } from "@/types"
+
+// Log page constants - aligned with backend constants
+const DEFAULT_LOG_PAGE_SIZE = 100
+const LOG_SEARCH_DEBOUNCE_MS = 500
 
 interface Log {
   id: number
@@ -23,14 +36,21 @@ interface Log {
   timestamp: string
 }
 
-import { Camera } from "@/types"
-
 interface LogStats {
   errors: number
   warnings: number
   info: number
   debug: number
   total: number
+}
+
+interface LogPagination {
+  page: number
+  limit: number
+  total_pages: number
+  total_items: number
+  has_next: boolean
+  has_previous: boolean
 }
 
 export default function LogsPage() {
@@ -47,6 +67,17 @@ export default function LogsPage() {
     total: 0,
   })
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
+
+  // Pagination state
+  const [pagination, setPagination] = useState<LogPagination>({
+    page: 1,
+    limit: DEFAULT_LOG_PAGE_SIZE,
+    total_pages: 1,
+    total_items: 0,
+    has_next: false,
+    has_previous: false,
+  })
 
   // Filter states
   const [filters, setFilters] = useState({
@@ -56,18 +87,55 @@ export default function LogsPage() {
     camera: "all",
   })
 
+  // Debounced search state
+  const [debouncedSearch, setDebouncedSearch] = useState("")
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   const [showFilters, setShowFilters] = useState(true)
+
+  // ETag caching for logs and stats
+  const [logsETag, setLogsETag] = useState<string | null>(null)
+  const [statsETag, setStatsETag] = useState<string | null>(null)
 
   // Fetch cameras for filter dropdown
   useEffect(() => {
     fetchCameras()
   }, [])
 
-  // Fetch logs and stats when filters change
+  // Fetch stats only on initial load (not when filters change)
   useEffect(() => {
-    fetchLogs()
     fetchStats()
-  }, [filters])
+  }, [])
+
+  // Debounce search input
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      setDebouncedSearch(filters.search)
+    }, LOG_SEARCH_DEBOUNCE_MS) // Use constant instead of hardcoded value
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [filters.search])
+
+  // Fetch logs when filters change (including debounced search)
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, page: 1 })) // Reset to page 1 when filters change
+    fetchLogs(1)
+  }, [filters.level, filters.source, filters.camera, debouncedSearch])
+
+  // Fetch logs when page changes
+  useEffect(() => {
+    if (pagination.page > 1) {
+      fetchLogs(pagination.page)
+    }
+  }, [pagination.page])
 
   const fetchCameras = async () => {
     try {
@@ -81,37 +149,119 @@ export default function LogsPage() {
   }
 
   const fetchStats = async () => {
+    setStatsLoading(true)
     try {
-      const response = await fetch("/api/logs/stats")
+      const headers: Record<string, string> = {}
+      if (statsETag) {
+        headers["If-None-Match"] = statsETag
+      }
+
+      const response = await fetch("/api/logs/stats", { headers })
+
+      if (response.status === 304) {
+        // Not modified, use cached data
+        setStatsLoading(false)
+        return
+      }
+
       if (response.ok) {
+        const newETag = response.headers.get("etag")
+        if (newETag) {
+          setStatsETag(newETag)
+        }
+
         const data = await response.json()
-        setStats(data)
+
+        // Handle the correct API response structure
+        if (data && data.success && data.data && data.data.summary) {
+          const summary = data.data.summary
+          setStats({
+            errors: summary.error_count || 0,
+            warnings: summary.warning_count || 0,
+            info: summary.info_count || 0,
+            debug: summary.debug_count || 0,
+            total: summary.total_logs || 0,
+          })
+        } else {
+          console.error("Unexpected stats response structure:", data)
+          setStats({
+            errors: 0,
+            warnings: 0,
+            info: 0,
+            debug: 0,
+            total: 0,
+          })
+        }
       }
     } catch (error) {
       console.error("Failed to fetch log stats:", error)
+      setStats({
+        errors: 0,
+        warnings: 0,
+        info: 0,
+        debug: 0,
+        total: 0,
+      })
+    } finally {
+      setStatsLoading(false)
     }
   }
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (page = 1) => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
 
-      if (filters.level !== "all") params.set("level", filters.level)
-      if (filters.camera !== "all") params.set("camera_id", filters.camera)
-      if (filters.search.trim()) params.set("search", filters.search.trim())
+      // Add pagination
+      params.set("page", page.toString())
+      params.set("limit", pagination.limit.toString())
 
-      const response = await fetch(`/api/logs?${params.toString()}`)
+      // Add filters
+      if (filters.level !== "all") params.set("level", filters.level)
+      if (filters.source !== "all") params.set("source", filters.source)
+      if (filters.camera !== "all") params.set("camera_id", filters.camera)
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim())
+
+      const headers: Record<string, string> = {}
+      if (logsETag) {
+        headers["If-None-Match"] = logsETag
+      }
+
+      const response = await fetch(`/api/logs?${params.toString()}`, {
+        headers,
+      })
+
+      if (response.status === 304) {
+        // Not modified, use cached data
+        setLoading(false)
+        return
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
+      const newETag = response.headers.get("etag")
+      if (newETag) {
+        setLogsETag(newETag)
+      }
+
       const data = await response.json()
 
       // Handle standardized API response structure
-      if (data && data.success && data.data && data.data.logs) {
-        setLogs(Array.isArray(data.data.logs) ? data.data.logs : [])
+      if (data && data.success && data.data) {
+        const logsData = data.data.logs || []
+        const paginationData = data.data.pagination || {}
+
+        setLogs(Array.isArray(logsData) ? logsData : [])
+        setPagination((prev) => ({
+          ...prev,
+          page: paginationData.page || page,
+          total_pages: paginationData.total_pages || 1,
+          total_items: paginationData.total_items || 0,
+          has_next: paginationData.has_next || false,
+          has_previous: paginationData.has_previous || false,
+        }))
       } else if (data && data.logs) {
         setLogs(Array.isArray(data.logs) ? data.logs : [])
       } else if (Array.isArray(data)) {
@@ -129,7 +279,16 @@ export default function LogsPage() {
   }
 
   const handleFilterChange = (key: string, value: string) => {
-    setFilters((prev) => ({ ...prev, [key]: value }))
+    setFilters((prev) => {
+      const newFilters = { ...prev, [key]: value }
+
+      // Clear camera filter when source is set to system
+      if (key === "source" && value === "system") {
+        newFilters.camera = "all"
+      }
+
+      return newFilters
+    })
   }
 
   const clearFilters = () => {
@@ -141,9 +300,52 @@ export default function LogsPage() {
     })
   }
 
+  const handlePageChange = (newPage: number) => {
+    setPagination((prev) => ({ ...prev, page: newPage }))
+  }
+
+  const clearAllLogs = async () => {
+    if (
+      !confirm(
+        "Are you sure you want to delete ALL logs? This action cannot be undone."
+      )
+    ) {
+      return
+    }
+
+    try {
+      const response = await fetch("/api/logs/cleanup?days_to_keep=0", {
+        method: "DELETE",
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          // Refresh logs and stats after clearing
+          await fetchLogs(1)
+          await fetchStats()
+          // Show success message
+          console.log(
+            `Successfully deleted ${data.data?.deleted_count || 0} logs`
+          )
+        } else {
+          throw new Error(data.message || "Failed to clear logs")
+        }
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+    } catch (error) {
+      console.error("Failed to clear all logs:", error)
+      alert("Failed to clear logs. Please try again.")
+    }
+  }
+
   const hasActiveFilters = Object.values(filters).some(
     (value) => value !== "all" && value !== ""
   )
+
+  // Check if camera filter should be disabled
+  const isCameraFilterDisabled = filters.source === "system"
 
   const getLogLevelColor = (level: string) => {
     switch (level.toLowerCase()) {
@@ -162,14 +364,16 @@ export default function LogsPage() {
   }
 
   const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp)
-    return date.toLocaleString("en-US", {
-      timeZone: timezone,
+    const parsedDate = parseTimestamp(timestamp, timezone)
+    if (!parsedDate) return "Invalid date"
+
+    return formatDateInTimezone(parsedDate, timezone, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      hour12: false,
     })
   }
 
@@ -184,6 +388,41 @@ export default function LogsPage() {
     return "⚙️"
   }
 
+  const StatCard = ({
+    icon,
+    count,
+    label,
+    colorClass,
+    isLoading,
+  }: {
+    icon: React.ReactNode
+    count: number
+    label: string
+    colorClass: string
+    isLoading: boolean
+  }) => (
+    <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
+      <div className='flex items-center'>
+        <div className='flex-shrink-0'>{icon}</div>
+        <div className='ml-4'>
+          {isLoading ? (
+            <>
+              <div className='w-8 h-8 bg-gray-700 rounded animate-pulse mb-1'></div>
+              <div className='w-16 h-4 bg-gray-700 rounded animate-pulse'></div>
+            </>
+          ) : (
+            <>
+              <div className={`text-2xl font-bold ${colorClass.split(" ")[0]}`}>
+                {count}
+              </div>
+              <div className='text-sm text-gray-400'>{label}</div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div className='min-h-screen bg-gray-900'>
       <div className='px-4 py-8 mx-auto max-w-7xl sm:px-6 lg:px-8'>
@@ -197,77 +436,45 @@ export default function LogsPage() {
 
         {/* Stats Cards */}
         <div className='grid grid-cols-2 gap-4 mb-8 md:grid-cols-5'>
-          <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
-            <div className='flex items-center'>
-              <div className='flex-shrink-0'>
-                <CircleAlert className='w-8 h-8 text-red-400' />
-              </div>
-              <div className='ml-4'>
-                <div className='text-2xl font-bold text-red-400'>
-                  {stats.errors}
-                </div>
-                <div className='text-sm text-gray-400'>Errors</div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon={<CircleAlert className='w-8 h-8 text-red-400' />}
+            count={stats.errors}
+            label='Errors'
+            colorClass='text-red-400'
+            isLoading={statsLoading}
+          />
 
-          <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
-            <div className='flex items-center'>
-              <div className='flex-shrink-0'>
-                <TriangleAlert className='w-8 h-8 text-yellow-400' />
-              </div>
-              <div className='ml-4'>
-                <div className='text-2xl font-bold text-yellow-400'>
-                  {stats.warnings}
-                </div>
-                <div className='text-sm text-gray-400'>Warnings</div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon={<TriangleAlert className='w-8 h-8 text-yellow-400' />}
+            count={stats.warnings}
+            label='Warnings'
+            colorClass='text-yellow-400'
+            isLoading={statsLoading}
+          />
 
-          <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
-            <div className='flex items-center'>
-              <div className='flex-shrink-0'>
-                <CircleAlert className='w-8 h-8 text-blue-400' />
-              </div>
-              <div className='ml-4'>
-                <div className='text-2xl font-bold text-blue-400'>
-                  {stats.info}
-                </div>
-                <div className='text-sm text-gray-400'>Info</div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon={<CircleAlert className='w-8 h-8 text-blue-400' />}
+            count={stats.info}
+            label='Info'
+            colorClass='text-blue-400'
+            isLoading={statsLoading}
+          />
 
-          <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
-            <div className='flex items-center'>
-              <div className='flex-shrink-0'>
-                <Bug className='w-8 h-8 text-gray-400' />
-              </div>
-              <div className='ml-4'>
-                <div className='text-2xl font-bold text-gray-400'>
-                  {stats.debug}
-                </div>
-                <div className='text-sm text-gray-400'>Debug</div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon={<Bug className='w-8 h-8 text-gray-400' />}
+            count={stats.debug}
+            label='Debug'
+            colorClass='text-gray-400'
+            isLoading={statsLoading}
+          />
 
-          <div className='p-6 bg-gray-800 border border-gray-700 rounded-lg'>
-            <div className='flex items-center'>
-              <div className='flex-shrink-0'>
-                <div className='flex-shrink-0'>
-                  <Sigma className='w-8 h-8 text-cyan' />
-                </div>
-              </div>
-              <div className='ml-4'>
-                <div className='text-2xl font-bold text-white'>
-                  {stats.total}
-                </div>
-                <div className='text-sm text-gray-400'>Total Logs</div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon={<Sigma className='w-8 h-8 text-cyan' />}
+            count={stats.total}
+            label='Total Logs'
+            colorClass='text-white'
+            isLoading={statsLoading}
+          />
         </div>
 
         {/* Filters */}
@@ -357,7 +564,12 @@ export default function LogsPage() {
                     onChange={(e) =>
                       handleFilterChange("camera", e.target.value)
                     }
-                    className='block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                    disabled={isCameraFilterDisabled}
+                    className={`block w-full px-3 py-2 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isCameraFilterDisabled
+                        ? "bg-gray-700 text-gray-500 cursor-not-allowed opacity-50"
+                        : "bg-gray-700 hover:bg-gray-600"
+                    }`}
                   >
                     <option value='all'>All Cameras</option>
                     {cameras.map((camera) => (
@@ -371,7 +583,12 @@ export default function LogsPage() {
 
               <div className='flex items-center justify-between pt-4'>
                 <div className='text-sm text-gray-400'>
-                  Showing {logs.length} of {logs.length} logs
+                  Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
+                  {Math.min(
+                    pagination.page * pagination.limit,
+                    pagination.total_items
+                  )}{" "}
+                  of {pagination.total_items} logs
                   {hasActiveFilters && (
                     <span className='ml-2 text-blue-400'>(filtered)</span>
                   )}
@@ -387,8 +604,15 @@ export default function LogsPage() {
                     </button>
                   )}
                   <button
+                    onClick={clearAllLogs}
+                    className='inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500'
+                  >
+                    <Trash2 className='w-4 h-4 mr-1' />
+                    Clear All Logs
+                  </button>
+                  <button
                     onClick={() => {
-                      fetchLogs()
+                      fetchLogs(pagination.page)
                       fetchStats()
                     }}
                     className='inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -442,53 +666,90 @@ export default function LogsPage() {
               )}
             </div>
           ) : (
-            <div className='overflow-x-auto'>
-              <table className='min-w-full divide-y divide-gray-700'>
-                <thead className='bg-gray-900'>
-                  <tr>
-                    <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
-                      Time
-                    </th>
-                    <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
-                      Level
-                    </th>
-                    <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
-                      Source
-                    </th>
-                    <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
-                      Message
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className='bg-gray-800 divide-y divide-gray-700'>
-                  {logs.map((log) => (
-                    <tr key={log.id} className='hover:bg-gray-700'>
-                      <td className='px-6 py-4 text-sm text-gray-300 whitespace-nowrap'>
-                        {formatTimestamp(log.timestamp)}
-                      </td>
-                      <td className='px-6 py-4 whitespace-nowrap'>
-                        <span
-                          className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${getLogLevelColor(
-                            log.level
-                          )}`}
-                        >
-                          {log.level.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className='px-6 py-4 text-sm text-gray-300 whitespace-nowrap'>
-                        <div className='flex items-center'>
-                          <span className='mr-2'>{getSourceIcon(log)}</span>
-                          {getCameraDisplay(log)}
-                        </div>
-                      </td>
-                      <td className='max-w-md px-6 py-4 text-sm text-gray-300'>
-                        <div className='break-words'>{log.message}</div>
-                      </td>
+            <>
+              <div className='overflow-x-auto'>
+                <table className='min-w-full divide-y divide-gray-700'>
+                  <thead className='bg-gray-900'>
+                    <tr>
+                      <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
+                        Time
+                      </th>
+                      <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
+                        Level
+                      </th>
+                      <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
+                        Source
+                      </th>
+                      <th className='px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-300 uppercase'>
+                        Message
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className='bg-gray-800 divide-y divide-gray-700'>
+                    {logs.map((log) => (
+                      <tr key={log.id} className='hover:bg-gray-700'>
+                        <td className='px-6 py-4 text-sm text-gray-300 whitespace-nowrap'>
+                          {formatTimestamp(log.timestamp)}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap'>
+                          <span
+                            className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${getLogLevelColor(
+                              log.level
+                            )}`}
+                          >
+                            {log.level.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className='px-6 py-4 text-sm text-gray-300 whitespace-nowrap'>
+                          <div className='flex items-center'>
+                            <span className='mr-2'>{getSourceIcon(log)}</span>
+                            {getCameraDisplay(log)}
+                          </div>
+                        </td>
+                        <td className='max-w-md px-6 py-4 text-sm text-gray-300'>
+                          <div className='break-words'>{log.message}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {pagination.total_pages > 1 && (
+                <div className='flex items-center justify-between px-6 py-3 bg-gray-900 border-t border-gray-700'>
+                  <div className='text-sm text-gray-400'>
+                    Page {pagination.page} of {pagination.total_pages}
+                  </div>
+                  <div className='flex items-center space-x-2'>
+                    <button
+                      onClick={() => handlePageChange(pagination.page - 1)}
+                      disabled={!pagination.has_previous}
+                      className={`inline-flex items-center px-3 py-2 text-sm font-medium border rounded-md ${
+                        pagination.has_previous
+                          ? "text-white bg-gray-700 border-gray-600 hover:bg-gray-600"
+                          : "text-gray-500 bg-gray-800 border-gray-700 cursor-not-allowed"
+                      }`}
+                    >
+                      <ChevronLeft className='w-4 h-4 mr-1' />
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => handlePageChange(pagination.page + 1)}
+                      disabled={!pagination.has_next}
+                      className={`inline-flex items-center px-3 py-2 text-sm font-medium border rounded-md ${
+                        pagination.has_next
+                          ? "text-white bg-gray-700 border-gray-600 hover:bg-gray-600"
+                          : "text-gray-500 bg-gray-800 border-gray-700 cursor-not-allowed"
+                      }`}
+                    >
+                      Next
+                      <ChevronRight className='w-4 h-4 ml-1' />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

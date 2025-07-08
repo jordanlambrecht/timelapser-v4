@@ -15,7 +15,6 @@ from ..models.video_model import Video, VideoWithDetails
 from ..models.shared_models import (
     VideoGenerationJob,
     VideoGenerationJobWithDetails,
-    VideoGenerationJobCreate,  # why is this not used?
     VideoStatistics,
 )
 
@@ -145,7 +144,7 @@ class VideoOperations:
             video = await video_ops.get_video_by_id(1)
         """
         query = """
-        SELECT 
+        SELECT
             v.*,
             t.name as timelapse_name,
             c.name as camera_name
@@ -197,9 +196,6 @@ class VideoOperations:
                 if results:
                     row = results[0]
                     created_video = self._row_to_video(row)
-                    await self.db.broadcast_event(
-                        "video_created", {"video": created_video.model_dump()}
-                    )
                     return created_video
                 raise Exception("Failed to create video record")
 
@@ -262,9 +258,6 @@ class VideoOperations:
                 if results:
                     row = results[0]
                     updated_video = self._row_to_video(row)
-                    await self.db.broadcast_event(
-                        "video_updated", {"video": updated_video.model_dump()}
-                    )
                     return updated_video
                 raise Exception(f"Failed to update video {video_id}")
 
@@ -288,9 +281,6 @@ class VideoOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    await self.db.broadcast_event(
-                        "video_deleted", {"video_id": video_id}
-                    )
                     return True
                 return False
 
@@ -371,9 +361,6 @@ class VideoOperations:
                 results = await cur.fetchall()
                 if results:
                     job = self._row_to_video_generation_job(results[0])
-                    await self.db.broadcast_event(
-                        "video_job_created", {"job": job.model_dump()}
-                    )
                     return job
                 raise Exception("Failed to create video generation job")
 
@@ -419,9 +406,6 @@ class VideoOperations:
                 results = await cur.fetchall()
                 if results:
                     job = self._row_to_video_generation_job(results[0])
-                    await self.db.broadcast_event(
-                        "video_job_status_changed", {"job_id": job_id, "status": status}
-                    )
                     return job
                 raise Exception(f"Failed to update video generation job {job_id}")
 
@@ -569,50 +553,6 @@ class SyncVideoOperations:
                 cur.execute(query, (job_id,))
                 return cur.rowcount > 0
 
-    def complete_video_generation_job(
-        self,
-        job_id: int,
-        video_path: str,
-        success: bool = True,
-        error_message: Optional[str] = None,
-    ) -> bool:
-        """
-        Complete a video generation job.
-
-        Args:
-            job_id: ID of the job
-            video_path: Path to the generated video
-            success: Whether the job completed successfully
-            error_message: Optional error message if failed
-
-        Returns:
-            True if job was successfully completed
-
-        Usage:
-            completed = video_ops.complete_video_generation_job(1, '/path/to/video.mp4')
-        """
-        status = "completed" if success else "failed"
-
-        query = """
-        UPDATE video_generation_jobs 
-        SET status = %s,
-            video_path = %s,
-            error_message = %s,
-            completed_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (status, video_path, error_message, job_id))
-                if cur.rowcount > 0:
-                    self.db.broadcast_event(
-                        "video_job_completed",
-                        {"job_id": job_id, "status": status, "video_path": video_path},
-                    )
-                    return True
-                return False
-
     def create_video_record(self, video_data: Dict[str, Any]) -> Video:
         """
         Create a new video record.
@@ -645,9 +585,6 @@ class SyncVideoOperations:
                 if results:
                     video_row = results[0]
                     video = self._row_to_video(video_row)
-                    self.db.broadcast_event(
-                        "video_created", {"video": video.model_dump()}
-                    )
                     return video
                 raise Exception("Failed to create video record")
 
@@ -671,7 +608,7 @@ class SyncVideoOperations:
             deleted_count = video_ops.cleanup_old_video_jobs(7)
         """
         query = """
-        DELETE FROM video_generation_jobs 
+        DELETE FROM video_generation_jobs
         WHERE status IN ('completed', 'failed')
         AND completed_at < NOW() - INTERVAL '%s days'
         """
@@ -685,17 +622,19 @@ class SyncVideoOperations:
 
                 return affected or 0
 
-    def create_video_generation_job(self, job_data: Dict[str, Any], event_timestamp: Optional[str] = None) -> Optional[int]:
+    def create_video_generation_job(
+        self, job_data: Dict[str, Any], event_timestamp: Optional[str] = None
+    ) -> Optional[int]:
         """
         Create a new video generation job (sync version).
-        
+
         Args:
             job_data: Dictionary containing job configuration
             event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
-            
+
         Returns:
             Job ID if successful, None if failed
-            
+
         Usage:
             job_id = video_ops.create_video_generation_job({
                 'timelapse_id': 1,
@@ -711,7 +650,7 @@ class SyncVideoOperations:
             %(timelapse_id)s, %(trigger_type)s, %(priority)s, %(settings)s, 'pending'
         ) RETURNING id
         """
-        
+
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -720,42 +659,26 @@ class SyncVideoOperations:
                     if result:
                         job_id = dict(result)["id"]
                         conn.commit()
-                        
-                        # Broadcast SSE event
-                        if event_timestamp:
-                            try:
-                                from ..constants import EVENT_VIDEO_JOB_QUEUED
-                                
-                                self.db.broadcast_event(
-                                    EVENT_VIDEO_JOB_QUEUED,
-                                    {
-                                        "job_id": job_id,
-                                        "timelapse_id": job_data.get("timelapse_id"),
-                                        "trigger_type": job_data.get("trigger_type"),
-                                        "priority": job_data.get("priority", "medium"),
-                                        "timestamp": event_timestamp,
-                                    },
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to broadcast job queued event: {e}")
-                        
+
                         return job_id
                     return None
         except Exception as e:
             logger.error(f"Failed to create video generation job: {e}")
             return None
 
-    def start_video_generation_job(self, job_id: int, event_timestamp: Optional[str] = None) -> bool:
+    def start_video_generation_job(
+        self, job_id: int, event_timestamp: Optional[str] = None
+    ) -> bool:
         """
         Mark a video generation job as started.
-        
+
         Args:
             job_id: ID of the job to start
             event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
-            
+
         Returns:
             True if successful, False otherwise
-            
+
         Usage:
             success = video_ops.start_video_generation_job(123)
         """
@@ -764,7 +687,7 @@ class SyncVideoOperations:
         SET status = 'processing', started_at = NOW()
         WHERE id = %s AND status = 'pending'
         """
-        
+
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -772,51 +695,43 @@ class SyncVideoOperations:
                     success = cur.rowcount > 0
                     if success:
                         conn.commit()
-                        
-                        # Broadcast SSE event
-                        if event_timestamp:
-                            try:
-                                from ..constants import EVENT_VIDEO_JOB_STARTED
-                                
-                                self.db.broadcast_event(
-                                    EVENT_VIDEO_JOB_STARTED,
-                                    {
-                                        "job_id": job_id,
-                                        "timestamp": event_timestamp,
-                                    },
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to broadcast job started event: {e}")
-                    
+
                     return success
         except Exception as e:
             logger.error(f"Failed to start video generation job {job_id}: {e}")
             return False
 
-    def complete_video_generation_job(self, job_id: int, success: bool, error_message: Optional[str] = None, video_path: Optional[str] = None, event_timestamp: Optional[str] = None) -> bool:
+    def complete_video_generation_job(
+        self,
+        job_id: int,
+        success: bool,
+        error_message: Optional[str] = None,
+        video_path: Optional[str] = None,
+        event_timestamp: Optional[str] = None,
+    ) -> bool:
         """
         Mark a video generation job as completed.
-        
+
         Args:
             job_id: ID of the job to complete
             success: Whether the job completed successfully
             error_message: Error message if job failed
             video_path: Path to generated video if successful
             event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
-            
+
         Returns:
             True if update successful, False otherwise
-            
+
         Usage:
             video_ops.complete_video_generation_job(123, True, video_path="/path/to/video.mp4")
         """
         status = "completed" if success else "failed"
         query = """
-        UPDATE video_generation_jobs 
+        UPDATE video_generation_jobs
         SET status = %s, completed_at = NOW(), error_message = %s, video_path = %s
         WHERE id = %s
         """
-        
+
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -824,24 +739,7 @@ class SyncVideoOperations:
                     update_success = cur.rowcount > 0
                     if update_success:
                         conn.commit()
-                        
-                        # Broadcast SSE event
-                        if event_timestamp:
-                            try:
-                                from ..constants import EVENT_VIDEO_JOB_COMPLETED
-                                
-                                self.db.broadcast_event(
-                                    EVENT_VIDEO_JOB_COMPLETED,
-                                    {
-                                        "job_id": job_id,
-                                        "success": success,
-                                        "video_path": video_path,
-                                        "timestamp": event_timestamp,
-                                    },
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to broadcast job completed event: {e}")
-                    
+
                     return update_success
         except Exception as e:
             logger.error(f"Failed to complete video generation job {job_id}: {e}")
@@ -850,10 +748,10 @@ class SyncVideoOperations:
     def get_queue_status(self) -> Dict[str, int]:
         """
         Get current queue status with job counts by status.
-        
+
         Returns:
             Dictionary with job counts
-            
+
         Usage:
             status = video_ops.get_queue_status()
             # Returns: {"pending": 5, "processing": 2, "completed": 10, "failed": 1}
@@ -863,31 +761,33 @@ class SyncVideoOperations:
         FROM video_generation_jobs
         GROUP BY status
         """
-        
+
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     results = cur.fetchall()
-                    
+
                     status_counts = {}
                     for row in results:
                         row_dict = dict(row)
                         status_counts[row_dict["status"]] = row_dict["count"]
-                    
+
                     return status_counts
         except Exception as e:
             logger.error(f"Failed to get queue status: {e}")
             return {}
-    
-    def get_video_generation_jobs_by_status(self, status: Optional[str] = None, limit: int = 50) -> List[VideoGenerationJobWithDetails]:
+
+    def get_video_generation_jobs_by_status(
+        self, status: Optional[str] = None, limit: int = 50
+    ) -> List[VideoGenerationJobWithDetails]:
         """
         Get video generation jobs with optional status filtering and limit.
-        
+
         Args:
             status: Optional status to filter by
             limit: Maximum number of jobs to return
-            
+
         Returns:
             List of VideoGenerationJobWithDetails
         """
@@ -911,12 +811,12 @@ class SyncVideoOperations:
                     ORDER BY j.created_at DESC LIMIT %s
                 """
                 params = (limit,)
-                
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, params)
                     results = cur.fetchall()
-                    
+
                     return [
                         self._row_to_video_generation_job_with_details(row)
                         for row in results
@@ -924,22 +824,22 @@ class SyncVideoOperations:
         except Exception as e:
             logger.error(f"Failed to get video generation jobs by status: {e}")
             return []
-    
+
     def get_timelapse_automation_settings(self, timelapse_id: int) -> Dict[str, Any]:
         """
         Get effective automation settings for a timelapse.
-        
+
         Follows inheritance pattern: timelapse settings override camera defaults.
-        
+
         Args:
             timelapse_id: ID of the timelapse
-            
+
         Returns:
             Dictionary with automation settings
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     t.video_automation_mode as t_mode,
                     t.generation_schedule as t_schedule,
                     t.milestone_config as t_milestone,
@@ -950,35 +850,41 @@ class SyncVideoOperations:
                 JOIN cameras c ON t.camera_id = c.id
                 WHERE t.id = %s
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (timelapse_id,))
                     row = cur.fetchone()
-                    
+
                     if not row:
                         return {"video_automation_mode": "manual"}
-                    
+
                     # Apply inheritance pattern
                     row_dict = dict(row)
                     return {
-                        "video_automation_mode": row_dict["t_mode"] or row_dict["c_mode"] or "manual",
-                        "generation_schedule": row_dict["t_schedule"] or row_dict["c_schedule"],
-                        "milestone_config": row_dict["t_milestone"] or row_dict["c_milestone"],
+                        "video_automation_mode": row_dict["t_mode"]
+                        or row_dict["c_mode"]
+                        or "manual",
+                        "generation_schedule": row_dict["t_schedule"]
+                        or row_dict["c_schedule"],
+                        "milestone_config": row_dict["t_milestone"]
+                        or row_dict["c_milestone"],
                     }
-                    
+
         except Exception as e:
-            logger.error(f"Failed to get automation settings for timelapse {timelapse_id}: {e}")
+            logger.error(
+                f"Failed to get automation settings for timelapse {timelapse_id}: {e}"
+            )
             return {"video_automation_mode": "manual"}
-    
+
     def check_per_capture_throttle(self, camera_id: int, throttle_minutes: int) -> bool:
         """
         Check if per-capture generation should be throttled for a camera.
-        
+
         Args:
             camera_id: ID of the camera
             throttle_minutes: Throttle window in minutes
-            
+
         Returns:
             True if should throttle (recent job exists), False otherwise
         """
@@ -991,31 +897,33 @@ class SyncVideoOperations:
                 AND j.trigger_type = 'per_capture'
                 AND j.created_at > NOW() - INTERVAL '%s minutes'
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (camera_id, throttle_minutes))
                     result = cur.fetchone()
-                    
+
                     if result:
                         count = dict(result)["count"]
                         return count > 0
                     return False
-                    
+
         except Exception as e:
-            logger.error(f"Failed to check per-capture throttle for camera {camera_id}: {e}")
+            logger.error(
+                f"Failed to check per-capture throttle for camera {camera_id}: {e}"
+            )
             return True  # Err on the side of caution
-    
+
     def get_milestone_automation_timelapses(self) -> List[Dict[str, Any]]:
         """
         Get all running timelapses with milestone automation enabled.
-        
+
         Returns:
             List of dicts with timelapse_id, image_count, and milestone_config
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     t.id,
                     COUNT(i.id) as image_count,
                     COALESCE(t.milestone_config, c.milestone_config) as milestone_config
@@ -1024,93 +932,99 @@ class SyncVideoOperations:
                 LEFT JOIN images i ON t.id = i.timelapse_id
                 WHERE t.status = 'running'
                 AND (
-                    (t.video_automation_mode = 'milestone') OR 
+                    (t.video_automation_mode = 'milestone') OR
                     (t.video_automation_mode IS NULL AND c.video_automation_mode = 'milestone')
                 )
                 GROUP BY t.id, t.milestone_config, c.milestone_config
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     results = cur.fetchall()
-                    
+
                     return [dict(row) for row in results]
-                    
+
         except Exception as e:
             logger.error(f"Failed to get milestone automation timelapses: {e}")
             return []
-    
-    def check_milestone_already_generated(self, timelapse_id: int, threshold: int) -> bool:
+
+    def check_milestone_already_generated(
+        self, timelapse_id: int, threshold: int
+    ) -> bool:
         """
         Check if a milestone video was already generated for a specific threshold.
-        
+
         Args:
             timelapse_id: ID of the timelapse
             threshold: The milestone threshold
-            
+
         Returns:
             True if already generated, False otherwise
         """
         try:
             query = """
                 SELECT id FROM video_generation_jobs
-                WHERE timelapse_id = %s 
+                WHERE timelapse_id = %s
                 AND trigger_type = 'milestone'
                 AND settings::json->>'threshold' = %s
                 LIMIT 1
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (timelapse_id, str(threshold)))
                     return cur.fetchone() is not None
-                    
+
         except Exception as e:
-            logger.error(f"Failed to check milestone generation for timelapse {timelapse_id}: {e}")
+            logger.error(
+                f"Failed to check milestone generation for timelapse {timelapse_id}: {e}"
+            )
             return True  # Err on the side of caution
-    
+
     def get_scheduled_automation_timelapses(self) -> List[Dict[str, Any]]:
         """
         Get all running timelapses with scheduled automation enabled.
-        
+
         Returns:
             List of dicts with timelapse_id and schedule config
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     t.id,
                     COALESCE(t.generation_schedule, c.generation_schedule) as schedule
                 FROM timelapses t
                 JOIN cameras c ON t.camera_id = c.id
                 WHERE t.status = 'running'
                 AND (
-                    (t.video_automation_mode = 'scheduled') OR 
+                    (t.video_automation_mode = 'scheduled') OR
                     (t.video_automation_mode IS NULL AND c.video_automation_mode = 'scheduled')
                 )
                 AND (t.generation_schedule IS NOT NULL OR c.generation_schedule IS NOT NULL)
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     results = cur.fetchall()
-                    
+
                     return [dict(row) for row in results]
-                    
+
         except Exception as e:
             logger.error(f"Failed to get scheduled automation timelapses: {e}")
             return []
-    
-    def check_scheduled_already_generated(self, timelapse_id: int, schedule_type: str) -> bool:
+
+    def check_scheduled_already_generated(
+        self, timelapse_id: int, schedule_type: str
+    ) -> bool:
         """
         Check if a scheduled video was already generated for the current period.
-        
+
         Args:
             timelapse_id: ID of the timelapse
             schedule_type: 'daily' or 'weekly'
-            
+
         Returns:
             True if already generated, False otherwise
         """
@@ -1118,7 +1032,7 @@ class SyncVideoOperations:
             if schedule_type == "daily":
                 query = """
                     SELECT id FROM video_generation_jobs
-                    WHERE timelapse_id = %s 
+                    WHERE timelapse_id = %s
                     AND trigger_type = 'scheduled'
                     AND created_at >= CURRENT_DATE
                     LIMIT 1
@@ -1126,27 +1040,29 @@ class SyncVideoOperations:
             elif schedule_type == "weekly":
                 query = """
                     SELECT id FROM video_generation_jobs
-                    WHERE timelapse_id = %s 
+                    WHERE timelapse_id = %s
                     AND trigger_type = 'scheduled'
                     AND created_at >= date_trunc('week', CURRENT_DATE)
                     LIMIT 1
                 """
             else:
                 return False
-                
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (timelapse_id,))
                     return cur.fetchone() is not None
-                    
+
         except Exception as e:
-            logger.error(f"Failed to check scheduled generation for timelapse {timelapse_id}: {e}")
+            logger.error(
+                f"Failed to check scheduled generation for timelapse {timelapse_id}: {e}"
+            )
             return True  # Err on the side of caution
-    
+
     def get_active_job_count(self) -> int:
         """
         Get count of currently processing jobs.
-        
+
         Returns:
             Number of jobs with 'processing' status
         """
@@ -1156,39 +1072,41 @@ class SyncVideoOperations:
                 FROM video_generation_jobs
                 WHERE status = 'processing'
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     result = cur.fetchone()
-                    
+
                     if result:
                         return dict(result)["count"]
                     return 0
-                    
+
         except Exception as e:
             logger.error(f"Failed to get active job count: {e}")
             return 0
-    
-    def get_timelapse_video_settings(self, timelapse_id: int, job_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+
+    def get_timelapse_video_settings(
+        self, timelapse_id: int, job_settings: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Get effective video generation settings for a timelapse.
-        
+
         Follows inheritance pattern: job_settings > timelapse settings > camera defaults > system defaults.
-        
+
         Args:
             timelapse_id: ID of the timelapse
             job_settings: Optional job-specific settings (highest priority)
-            
+
         Returns:
             Dictionary with effective video generation settings
         """
         try:
             # Import constants here to avoid circular imports
             from ..constants import DEFAULT_OVERLAY_SETTINGS
-            
+
             query = """
-                SELECT 
+                SELECT
                     t.video_generation_mode as t_mode,
                     t.standard_fps as t_fps,
                     t.enable_time_limits as t_time_limits,
@@ -1209,22 +1127,26 @@ class SyncVideoOperations:
                 JOIN cameras c ON t.camera_id = c.id
                 WHERE t.id = %s
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (timelapse_id,))
                     row = cur.fetchone()
-                    
+
                     if not row:
-                        logger.warning(f"Timelapse {timelapse_id} not found, using defaults")
+                        logger.warning(
+                            f"Timelapse {timelapse_id} not found, using defaults"
+                        )
                         return self._get_default_video_settings()
-                        
+
                     row_dict = dict(row)
                     job_settings = job_settings or {}
-                    
+
                     # Apply inheritance: job_settings > timelapse > camera > defaults
                     settings = {
-                        "video_generation_mode": job_settings.get("video_generation_mode")
+                        "video_generation_mode": job_settings.get(
+                            "video_generation_mode"
+                        )
                         or row_dict["t_mode"]
                         or row_dict["c_mode"]
                         or "standard",
@@ -1270,15 +1192,17 @@ class SyncVideoOperations:
                     }
 
                     return settings
-                    
+
         except Exception as e:
-            logger.error(f"Failed to get effective video settings for timelapse {timelapse_id}: {e}")
+            logger.error(
+                f"Failed to get effective video settings for timelapse {timelapse_id}: {e}"
+            )
             return self._get_default_video_settings()
-    
+
     def _get_default_video_settings(self) -> Dict[str, Any]:
         """Get default video generation settings."""
         from ..constants import DEFAULT_OVERLAY_SETTINGS
-        
+
         return {
             "video_generation_mode": "standard",
             "fps": 24.0,
@@ -1291,11 +1215,11 @@ class SyncVideoOperations:
             "quality": "medium",
             "overlay_settings": DEFAULT_OVERLAY_SETTINGS,
         }
-    
+
     def get_automation_mode_stats(self) -> Dict[str, int]:
         """
         Get distribution of automation modes for running timelapses.
-        
+
         Returns:
             Dictionary with mode counts
         """
@@ -1309,19 +1233,19 @@ class SyncVideoOperations:
                 WHERE t.status = 'running'
                 GROUP BY COALESCE(t.video_automation_mode, c.video_automation_mode, 'manual')
             """
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     results = cur.fetchall()
-                    
+
                     mode_stats = {}
                     for row in results:
                         row_dict = dict(row)
                         mode_stats[row_dict["mode"]] = row_dict["count"]
-                        
+
                     return mode_stats
-                    
+
         except Exception as e:
             logger.error(f"Failed to get automation mode stats: {e}")
             return {}

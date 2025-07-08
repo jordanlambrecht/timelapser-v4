@@ -23,7 +23,7 @@ from ..utils.timezone_utils import (
     get_timezone_aware_timestamp_async,
     parse_iso_timestamp_safe,
 )
-from ..constants import LOG_LEVELS
+from ..constants import LOG_LEVELS, DEFAULT_LOG_PAGE_SIZE, MAX_LOG_PAGE_SIZE
 
 # TODO: CACHING STRATEGY - MIXED APPROACH
 # Log endpoints use mixed caching strategy:
@@ -99,9 +99,14 @@ async def get_logs(
         None, description=f"Filter by log level ({', '.join(LOG_LEVELS)})"
     ),
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
+    source: Optional[str] = Query(
+        None, description="Filter by log source (system, camera)"
+    ),
     search: Optional[str] = Query(None, description="Search in log messages"),
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    limit: int = Query(
+        DEFAULT_LOG_PAGE_SIZE, ge=1, le=MAX_LOG_PAGE_SIZE, description="Items per page"
+    ),
     start_date: Optional[str] = Query(
         None, description="Start date filter (ISO format)"
     ),
@@ -110,7 +115,7 @@ async def get_logs(
     """Get logs with optional filtering and pagination"""
 
     # Validate pagination parameters
-    limit, offset = paginate_query_params(page, limit, max_per_page=100)
+    limit, offset = paginate_query_params(page, limit, max_per_page=MAX_LOG_PAGE_SIZE)
 
     # Parse date strings with proper timezone handling
     parsed_start_date = None
@@ -142,6 +147,7 @@ async def get_logs(
     result = await log_service.get_logs(
         camera_id=camera_id,
         level=level.upper() if level else None,
+        source=source,
         search_query=search,
         start_date=parsed_start_date,
         end_date=parsed_end_date,
@@ -162,6 +168,7 @@ async def get_logs(
             "filters_applied": {
                 "level": level,
                 "camera_id": camera_id,
+                "source": source,
                 "search": search,
                 "start_date": start_date,
                 "end_date": end_date,
@@ -195,14 +202,16 @@ async def search_logs(
     log_service: LogServiceDep,
     query: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    limit: int = Query(
+        DEFAULT_LOG_PAGE_SIZE, ge=1, le=MAX_LOG_PAGE_SIZE, description="Items per page"
+    ),
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
     level: Optional[str] = Query(None, description="Filter by log level"),
 ):
     """Search logs by message content"""
 
     # Validate pagination parameters
-    limit, offset = paginate_query_params(page, limit, max_per_page=100)
+    limit, offset = paginate_query_params(page, limit, max_per_page=MAX_LOG_PAGE_SIZE)
 
     # Validate log level if provided
     if level and level.upper() not in LOG_LEVELS:
@@ -244,7 +253,10 @@ async def search_logs(
 async def cleanup_old_logs(
     log_service: LogServiceDep,
     days_to_keep: int = Query(
-        30, ge=0, le=365, description="Number of days of logs to keep (0 = delete all logs)"
+        30,
+        ge=0,
+        le=365,
+        description="Number of days of logs to keep (0 = delete all logs)",
     ),
 ):
     """Clean up logs older than the specified number of days (0 = delete all logs)"""
@@ -268,7 +280,12 @@ async def cleanup_old_logs(
 async def get_camera_logs(
     camera_id: int,
     log_service: LogServiceDep,
-    limit: int = Query(50, ge=1, le=200, description="Number of recent logs to return"),
+    limit: int = Query(
+        DEFAULT_LOG_PAGE_SIZE,
+        ge=1,
+        le=MAX_LOG_PAGE_SIZE,
+        description="Number of recent logs to return",
+    ),
 ) -> dict:
     """Get recent logs for a specific camera"""
 
