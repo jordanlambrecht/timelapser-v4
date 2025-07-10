@@ -13,7 +13,6 @@ Follows architectural patterns:
 """
 
 import asyncio
-import time
 import psutil
 from pathlib import Path
 from typing import Optional

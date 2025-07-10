@@ -1,4 +1,4 @@
-// src/components/ui/toggle-group.tsx
+// src/components/ui/multi-toggle-group.tsx
 "use client"
 
 import * as React from "react"
@@ -9,9 +9,9 @@ import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 
 /**
- * Option configuration for ToggleGroup
+ * Option configuration for MultiToggleGroup
  */
-export interface ToggleGroupOption {
+export interface MultiToggleGroupOption {
   /** Display label for the option */
   label: string
   /** Unique value identifier for the option */
@@ -21,15 +21,15 @@ export interface ToggleGroupOption {
 }
 
 /**
- * ToggleGroup component props interface
+ * MultiToggleGroup component props interface
  */
-export interface ToggleGroupProps {
+export interface MultiToggleGroupProps {
   /** Array of selectable options */
-  options: ToggleGroupOption[]
-  /** Currently selected option value */
-  value: string
+  options: MultiToggleGroupOption[]
+  /** Currently selected option values */
+  values: string[]
   /** Callback fired when selection changes */
-  onValueChange: (value: string) => void
+  onValueChange: (values: string[]) => void
   /** Label text for the toggle group (required) */
   label: string
   /** Color theme variant */
@@ -50,8 +50,8 @@ export interface ToggleGroupProps {
   id?: string
 }
 
-// Container styling variants
-const toggleGroupVariants = cva(
+// Container styling variants (reuse from ToggleGroup)
+const multiToggleGroupVariants = cva(
   "relative inline-flex rounded-lg shadow-sm transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] w-full",
   {
     variants: {
@@ -153,7 +153,7 @@ const backgroundTrackVariants = cva(
   }
 )
 
-// Sliding indicator styling
+// Sliding indicator styling for multiple selections
 const indicatorVariants = cva(
   "absolute rounded-sm shadow-lg transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] border border-primary/20",
   {
@@ -208,10 +208,10 @@ const optionVariants = cva(
 )
 
 /**
- * ToggleGroup - A flexible toggle component with multiple selectable options
+ * MultiToggleGroup - A flexible multi-select toggle component
  *
- * Styled consistently with the labeled switch component, supporting the same
- * color variants and accessibility features. Always includes a visible label.
+ * Styled consistently with the ToggleGroup component but supports multiple selections.
+ * Shows indicators for all selected options.
  *
  * @example
  * ```tsx
@@ -221,33 +221,21 @@ const optionVariants = cva(
  *   { label: "Option 3", value: "opt3" }
  * ]
  *
- * // With faded border
- * <ToggleGroup
+ * <MultiToggleGroup
  *   options={options}
- *   value={selectedValue}
- *   onValueChange={setSelectedValue}
- *   label="Choose an option"
+ *   values={selectedValues}
+ *   onValueChange={setSelectedValues}
+ *   label="Choose options"
  *   colorTheme="cyan"
- *   size="lg"
  *   borderFaded={true}
- * />
- *
- * // Without border
- * <ToggleGroup
- *   options={options}
- *   value={selectedValue}
- *   onValueChange={setSelectedValue}
- *   label="Choose an option"
- *   colorTheme="pink"
- *   borderNone={true}
  * />
  * ```
  */
-export const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps>(
+export const MultiToggleGroup = React.forwardRef<HTMLDivElement, MultiToggleGroupProps>(
   (
     {
       options,
-      value,
+      values,
       onValueChange,
       label,
       colorTheme = "pink",
@@ -265,31 +253,39 @@ export const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps>(
     const id = providedId || generatedId
     const groupId = `${id}-group`
 
-    // Find the index of the currently selected option
-    const selectedIndex = options.findIndex((option) => option.value === value)
     const optionCount = options.length
 
-    // Calculate indicator position and dimensions based on orientation
-    const indicatorStyle = selectedIndex >= 0 ? (
-      orientation === "horizontal" ? {
-        left: `${(selectedIndex / optionCount) * 100}%`,
-        width: `calc(${100 / optionCount}% - 8px)`,
-        marginLeft: "4px",
-        marginRight: "4px",
-      } : {
-        top: `${(selectedIndex / optionCount) * 100}%`,
-        height: `calc(${100 / optionCount}% - 8px)`,
-        marginTop: "4px",
-        marginBottom: "4px",
-      }
-    ) : { display: "none" }
+    // Calculate indicator positions for all selected options
+    const getIndicatorStyles = () => {
+      return values.map((value) => {
+        const selectedIndex = options.findIndex((option) => option.value === value)
+        if (selectedIndex < 0) return { display: "none" }
+        
+        return orientation === "horizontal" ? {
+          left: `${(selectedIndex / optionCount) * 100}%`,
+          width: `calc(${100 / optionCount}% - 8px)`,
+          marginLeft: "4px",
+          marginRight: "4px",
+        } : {
+          top: `${(selectedIndex / optionCount) * 100}%`,
+          height: `calc(${100 / optionCount}% - 8px)`,
+          marginTop: "4px",
+          marginBottom: "4px",
+        }
+      })
+    }
 
     const handleOptionClick = (
       optionValue: string,
       optionDisabled?: boolean
     ) => {
       if (disabled || optionDisabled) return
-      onValueChange(optionValue)
+      
+      const newValues = values.includes(optionValue)
+        ? values.filter(v => v !== optionValue)
+        : [...values, optionValue]
+      
+      onValueChange(newValues)
     }
 
     const handleKeyDown = (
@@ -310,14 +306,14 @@ export const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps>(
           {label}
         </Label>
 
-        {/* Toggle Group Container */}
+        {/* Multi Toggle Group Container */}
         <div
           ref={ref}
           id={groupId}
-          role='radiogroup'
+          role='group'
           aria-labelledby={`${id}-label`}
           className={cn(
-            toggleGroupVariants({
+            multiToggleGroupVariants({
               colorTheme,
               orientation,
               borderFaded,
@@ -332,41 +328,46 @@ export const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps>(
             className={backgroundTrackVariants({ colorTheme, borderNone })}
           />
 
-          {/* Sliding indicator */}
-          {selectedIndex >= 0 && (
+          {/* Sliding indicators for all selected options */}
+          {getIndicatorStyles().map((style, index) => (
             <div
+              key={index}
               className={indicatorVariants({ colorTheme, orientation, borderNone })}
-              style={indicatorStyle}
+              style={style}
               aria-hidden='true'
             />
-          )}
+          ))}
 
           {/* Options */}
-          {options.map((option, index) => (
-            <button
-              key={option.value}
-              type='button'
-              role='radio'
-              aria-checked={value === option.value}
-              aria-disabled={disabled || option.disabled}
-              tabIndex={disabled || option.disabled ? -1 : 0}
-              className={optionVariants({
-                size,
-                selected: value === option.value,
-                disabled: disabled || option.disabled,
-              })}
-              onClick={() => handleOptionClick(option.value, option.disabled)}
-              onKeyDown={(e) => handleKeyDown(e, option.value, option.disabled)}
-            >
-              <span className='text-ellipsis overflow-hidden px-1'>
-                {option.label}
-              </span>
-            </button>
-          ))}
+          {options.map((option, index) => {
+            const isSelected = values.includes(option.value)
+            
+            return (
+              <button
+                key={option.value}
+                type='button'
+                role='checkbox'
+                aria-checked={isSelected}
+                aria-disabled={disabled || option.disabled}
+                tabIndex={disabled || option.disabled ? -1 : 0}
+                className={optionVariants({
+                  size,
+                  selected: isSelected,
+                  disabled: disabled || option.disabled,
+                })}
+                onClick={() => handleOptionClick(option.value, option.disabled)}
+                onKeyDown={(e) => handleKeyDown(e, option.value, option.disabled)}
+              >
+                <span className='text-ellipsis overflow-hidden px-1'>
+                  {option.label}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </div>
     )
   }
 )
 
-ToggleGroup.displayName = "ToggleGroup"
+MultiToggleGroup.displayName = "MultiToggleGroup"

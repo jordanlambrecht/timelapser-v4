@@ -42,7 +42,7 @@ export function StatusBadge({
 
   // For online cameras, determine combined status
   const isTimelapsePaused = timelapseStatus === "paused"
-  const isTimelapseStopped = !timelapseStatus || timelapseStatus === "stopped"
+  const isTimelapseCompleted = !timelapseStatus || timelapseStatus === "completed"
 
   if (isTimelapseRunning) {
     const isWithinTime = isWithinTimeWindow({
@@ -99,12 +99,12 @@ export function StatusBadge({
     <div
       className={cn(
         "inline-flex items-center space-x-2 text-xs font-medium px-3 py-1.5 rounded-full border transition-all duration-300 whitespace-nowrap",
-        "bg-grey-light/10 text-grey-light border-grey-light/20",
+        "bg-cyan/20 text-cyan border-cyan/30",
         className
       )}
     >
-      <Square className='w-3 h-3' />
-      <span>Stopped</span>
+      <Circle className='w-3 h-3' />
+      <span>Completed</span>
     </div>
   )
 }

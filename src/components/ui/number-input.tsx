@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronUpIcon, Plus, Minus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -74,6 +74,7 @@ interface NumberInputProps {
   // New props for enhanced functionality
   hideLabel?: boolean // Hide the internal label to allow external labels
   allowFloat?: boolean // Allow floating point numbers (default: false for integers only)
+  variant?: "arrows" | "buttons" // Choose between up/down arrows or +/- buttons (default: "arrows")
 }
 
 const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
@@ -93,6 +94,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
       id,
       hideLabel = false,
       allowFloat = false,
+      variant = "arrows",
       ...props
     },
     ref
@@ -170,6 +172,55 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
 
     const canIncrement = max === undefined || value < max
     const canDecrement = min === undefined || value > min
+
+    if (variant === "buttons") {
+      return (
+        <div className={cn("space-y-2", className)}>
+          {label && !hideLabel && (
+            <Label htmlFor={id} className='text-sm font-medium'>
+              {label}
+            </Label>
+          )}
+          <div className='flex items-center space-x-2'>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={decrement}
+              disabled={disabled || !canDecrement}
+              className='h-8 w-8 p-0'
+            >
+              <Minus size={12} aria-hidden='true' />
+              <span className='sr-only'>Decrement</span>
+            </Button>
+            <Input
+              ref={ref}
+              id={id}
+              type='text'
+              value={displayValue}
+              onChange={handleInputChange}
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
+              placeholder={placeholder}
+              disabled={disabled}
+              className='flex-1 text-center tabular-nums'
+              {...props}
+            />
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={increment}
+              disabled={disabled || !canIncrement}
+              className='h-8 w-8 p-0'
+            >
+              <Plus size={12} aria-hidden='true' />
+              <span className='sr-only'>Increment</span>
+            </Button>
+          </div>
+        </div>
+      )
+    }
 
     return (
       <div className={cn("space-y-2", className)}>

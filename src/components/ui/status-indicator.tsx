@@ -24,8 +24,6 @@ const statusIndicatorVariants = cva(
         running: "bg-success/20 text-success border-success/40",
         paused: "bg-yellow/20 text-yellow border-yellow/40",
         completed: "bg-cyan/20 text-cyan border-cyan/40",
-        stopped: "bg-purple-muted/20 text-purple-light border-purple-muted/40",
-        archived: "bg-grey-light/20 text-grey-light border-grey-light/40",
         failed: "bg-failure/20 text-failure border-failure/40",
         generating: "bg-purple/20 text-purple-light border-purple/40",
         // Health states
@@ -77,16 +75,6 @@ const statusIndicatorVariants = cva(
         variant: "ghost",
         status: "completed",
         class: "text-cyan hover:bg-cyan/10 border-transparent",
-      },
-      {
-        variant: "ghost",
-        status: "stopped",
-        class: "text-purple-light hover:bg-purple-muted/10 border-transparent",
-      },
-      {
-        variant: "ghost",
-        status: "archived",
-        class: "text-grey-light hover:bg-grey-light/10 border-transparent",
       },
       {
         variant: "ghost",
@@ -151,7 +139,7 @@ const statusIndicatorVariants = cva(
       },
     ],
     defaultVariants: {
-      status: "stopped",
+      status: "completed",
       variant: "default",
       size: "md",
       glow: false,
@@ -170,8 +158,6 @@ const statusDotVariants = cva("rounded-full", {
       running: "bg-success",
       paused: "bg-yellow",
       completed: "bg-cyan",
-      stopped: "bg-purple-muted",
-      archived: "bg-grey-light",
       failed: "bg-failure",
       generating: "bg-purple",
       // Health states
@@ -222,7 +208,7 @@ const statusDotVariants = cva("rounded-full", {
     },
   ],
   defaultVariants: {
-    status: "stopped",
+    status: "completed",
     size: "md",
     pulse: false,
   },
@@ -281,8 +267,6 @@ const statusLabels = {
   running: "Running",
   paused: "Paused",
   completed: "Completed",
-  stopped: "Stopped",
-  archived: "Archived",
   failed: "Failed",
   generating: "Generating",
   // Health states
@@ -303,8 +287,6 @@ const statusIcons = {
   running: Circle,
   paused: Pause,
   completed: Circle,
-  stopped: Square,
-  archived: Square,
   failed: AlertTriangle,
   generating: Circle,
   // Health states
@@ -365,7 +347,7 @@ const statusIcons = {
  * ```
  */
 export function StatusIndicator({
-  status = "stopped",
+  status = "completed",
   variant = "default",
   size = "md",
   glow = false,

@@ -1,6 +1,6 @@
 // src/components/ui/combined-status-badge.tsx
 import { cn } from "@/lib/utils"
-import { Pause, Square } from "lucide-react"
+import { Pause, Square, Circle } from "lucide-react"
 import { isWithinTimeWindow } from "@/lib/time-utils"
 
 interface CombinedStatusBadgeProps {
@@ -77,9 +77,9 @@ export function CombinedStatusBadge({
       break
 
     default:
-      statusClass = "bg-grey-light/10 text-grey-light border-grey-light/20"
-      icon = <Square className="w-3 h-3" />
-      label = "Stopped"
+      statusClass = "bg-cyan/20 text-cyan border-cyan/30"
+      icon = <Circle className="w-3 h-3" />
+      label = "Completed"
       break
   }
 
