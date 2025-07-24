@@ -61,6 +61,10 @@ data/
 │   │   │   │   ├── timelapse-{id}_day001_143022.jpg  # ID + Day number + timestamp
 │   │   │   │   ├── timelapse-{id}_day001_143522.jpg
 │   │   │   │   └── timelapse-{id}_day002_064512.jpg
+│   │   │   ├── overlays/                # generated frame overlays
+│   │   │   │   ├── timelapse-{id}_day001_143022_overlay.jpg  # ID + Day number + timestamp
+│   │   │   │   ├── timelapse-{id}_day001_143522_overlay.jpg
+│   │   │   │   └── timelapse-{id}_day002_064512_overlay.jpg
 │   │   │   ├── thumbnails/            # Generated thumbnails
 │   │   │   │   ├── timelapse-{id}_thumb_day001_143022.jpg  # 200×150 dashboard optimized
 │   │   │   │   ├── timelapse-{id}_thumb_day001_143522.jpg
@@ -72,14 +76,22 @@ data/
 │   │   │   └── videos/                # Generated videos
 │   │   │       ├── daily_v01.mp4
 │   │   │       └── weekly_v02.mp4
-│   │   ├── timelapse-{id2}/          # Next timelapse session
+│   │   ├── timelapse-{id2}/
 │   │   │   ├── frames/
+│   │   │       ├── ...
+│   │   │   ├── overlays/
+│   │   │       ├── ...
 │   │   │   ├── thumbnails/
+│   │   │       ├── ...
 │   │   │   ├── smalls/
+│   │   │       ├── ...
 │   │   │   └── videos/
+│   │   │       ├── ...
 │   │   └── timelapse-{id3}/          # Historical timelapses
 │   └── camera-{id2}/
 │       └── timelapse-{id}/
+│   │       ├── ...
+
 ```
 
 ### Design Rationale
@@ -445,11 +457,16 @@ updates counts accordingly
 
 #### App Settings Actions
 
-- **"Verify All Thumbnails"**: System-wide verification across all cameras and timelapses
-- **"Repair Orphaned Thumbnails"**: Scan entire filesystem for orphaned files and match back to database
-- **"Regenerate All Thumbnails"**: Force regenerate thumbnails for all images in the system
-- **"Cleanup Orphaned Files"**: Delete orphaned thumbnail files from filesystem that cannot be matched to database records
-- **"Delete All Thumbnails"**: Remove all thumbnail files and database references (complete cleanup)
+- **"Verify All Thumbnails"**: System-wide verification across all cameras and
+  timelapses
+- **"Repair Orphaned Thumbnails"**: Scan entire filesystem for orphaned files
+  and match back to database
+- **"Regenerate All Thumbnails"**: Force regenerate thumbnails for all images in
+  the system
+- **"Cleanup Orphaned Files"**: Delete orphaned thumbnail files from filesystem
+  that cannot be matched to database records
+- **"Delete All Thumbnails"**: Remove all thumbnail files and database
+  references (complete cleanup)
 
 #### Smart Prompting
 
@@ -737,80 +754,120 @@ freshness when thumbnails are regenerated.
 ### Service Layer Methods (Business Logic - NOT placeholders)
 
 #### ThumbnailService (thumbnail_service.py)
-- [ ] `generate_thumbnail_for_image(image_id, force_regenerate)` - Generate thumbnails for single image using thumbnail_utils
-- [ ] `get_thumbnail_statistics()` - Query database for comprehensive statistics across all images
-- [ ] `start_thumbnail_regeneration(limit)` - Queue jobs for bulk regeneration using thumbnail_job_service
-- [ ] `get_thumbnail_regeneration_status()` - Get current bulk operation status from job service
-- [ ] `cancel_thumbnail_regeneration()` - Cancel running bulk operation and cleanup jobs
-- [ ] `verify_all_thumbnails()` - Check file existence for all images, update database for missing files
-- [ ] `repair_orphaned_thumbnails()` - Scan filesystem, match orphaned files to database records, update paths
-- [ ] `cleanup_orphaned_thumbnails(dry_run)` - Delete orphaned files that can't be matched to database
-- [ ] `delete_all_thumbnails()` - Remove all thumbnail files and clear database paths
 
-#### ThumbnailJobService (thumbnail_job_service.py)  
-- [ ] `queue_job(image_id, priority)` - Create thumbnail generation job in database queue
-- [ ] `get_pending_jobs(batch_size)` - Retrieve jobs for worker processing by priority
-- [ ] `mark_job_completed(job_id, result)` - Update job status and record processing results
+- [ ] `generate_thumbnail_for_image(image_id, force_regenerate)` - Generate
+      thumbnails for single image using thumbnail_utils
+- [ ] `get_thumbnail_statistics()` - Query database for comprehensive statistics
+      across all images
+- [ ] `start_thumbnail_regeneration(limit)` - Queue jobs for bulk regeneration
+      using thumbnail_job_service
+- [ ] `get_thumbnail_regeneration_status()` - Get current bulk operation status
+      from job service
+- [ ] `cancel_thumbnail_regeneration()` - Cancel running bulk operation and
+      cleanup jobs
+- [ ] `verify_all_thumbnails()` - Check file existence for all images, update
+      database for missing files
+- [ ] `repair_orphaned_thumbnails()` - Scan filesystem, match orphaned files to
+      database records, update paths
+- [ ] `cleanup_orphaned_thumbnails(dry_run)` - Delete orphaned files that can't
+      be matched to database
+- [ ] `delete_all_thumbnails()` - Remove all thumbnail files and clear database
+      paths
+
+#### ThumbnailJobService (thumbnail_job_service.py)
+
+- [ ] `queue_job(image_id, priority)` - Create thumbnail generation job in
+      database queue
+- [ ] `get_pending_jobs(batch_size)` - Retrieve jobs for worker processing by
+      priority
+- [ ] `mark_job_completed(job_id, result)` - Update job status and record
+      processing results
 - [ ] `mark_job_failed(job_id, error)` - Handle job failure with retry logic
 - [ ] `get_job_statistics()` - Get queue statistics for monitoring and dashboard
-- [ ] `cleanup_completed_jobs(hours)` - Remove completed jobs older than threshold
+- [ ] `cleanup_completed_jobs(hours)` - Remove completed jobs older than
+      threshold
 - [ ] `cancel_pending_jobs()` - Cancel all pending jobs for bulk cancellation
 
 #### OrphanedFileRepairService (orphaned_file_repair_service.py)
-- [ ] `scan_orphaned_files()` - Scan thumbnail directories for files without database records
-- [ ] `match_file_to_image(file_path)` - Parse filename and match to database image
-- [ ] `repair_orphaned_file(file_path, image_id)` - Update database with correct thumbnail path
+
+- [ ] `scan_orphaned_files()` - Scan thumbnail directories for files without
+      database records
+- [ ] `match_file_to_image(file_path)` - Parse filename and match to database
+      image
+- [ ] `repair_orphaned_file(file_path, image_id)` - Update database with correct
+      thumbnail path
 - [ ] `delete_unmatched_files(file_paths)` - Remove files that can't be matched
 - [ ] `generate_repair_report()` - Create summary of repair operations
 
 #### ThumbnailPerformanceService (thumbnail_performance_service.py)
-- [ ] `track_generation_performance(duration, image_size, result)` - Record generation metrics
-- [ ] `get_performance_statistics()` - Calculate average processing times and success rates
+
+- [ ] `track_generation_performance(duration, image_size, result)` - Record
+      generation metrics
+- [ ] `get_performance_statistics()` - Calculate average processing times and
+      success rates
 - [ ] `identify_performance_issues()` - Detect slow generation patterns
 - [ ] `optimize_generation_settings()` - Recommend quality/performance settings
 
 ### Database Operations Layer (Pure CRUD - NO business logic)
 
 #### ThumbnailJobOperations (thumbnail_job_operations.py)
+
 - [ ] `create_job(image_id, priority, job_type)` - Insert job record
 - [ ] `get_pending_jobs(limit, priority_order)` - Query pending jobs by priority
-- [ ] `update_job_status(job_id, status, started_at, completed_at, error_message, processing_time)` - Update job progress
+- [ ] `update_job_status(job_id, status, started_at, completed_at, error_message, processing_time)` -
+      Update job progress
 - [ ] `get_jobs_by_status(status, limit)` - Query jobs by status for monitoring
 - [ ] `delete_jobs_older_than(hours)` - Cleanup old completed jobs
 - [ ] `get_job_statistics_data()` - Query for statistics calculation
 - [ ] `cancel_jobs_by_status(status)` - Mark jobs as cancelled
 
 #### ImageOperations (image_operations.py) - Additions for thumbnails
-- [ ] `get_images_without_thumbnails(limit)` - Query images missing thumbnail paths
-- [ ] `update_thumbnail_paths(image_id, thumbnail_path, small_path, sizes)` - Set generated paths
+
+- [ ] `get_images_without_thumbnails(limit)` - Query images missing thumbnail
+      paths
+- [ ] `update_thumbnail_paths(image_id, thumbnail_path, small_path, sizes)` -
+      Set generated paths
 - [ ] `clear_thumbnail_paths(image_id)` - Remove thumbnail references
-- [ ] `get_thumbnail_coverage_statistics()` - Count images with/without thumbnails
-- [ ] `get_images_by_timelapse_for_verification(timelapse_id)` - Get images for verification
+- [ ] `get_thumbnail_coverage_statistics()` - Count images with/without
+      thumbnails
+- [ ] `get_images_by_timelapse_for_verification(timelapse_id)` - Get images for
+      verification
 - [ ] `bulk_clear_thumbnail_paths()` - Clear all thumbnail references
 
 ### Utility Layer (Pure Functions - NO side effects)
 
-#### ThumbnailUtils (thumbnail_utils.py) 
-- [ ] `generate_thumbnail(source_path, output_path, size, quality)` - PIL image processing
-- [ ] `generate_small_image(source_path, output_path, size, quality)` - PIL medium size processing  
+#### ThumbnailUtils (thumbnail_utils.py)
+
+- [ ] `generate_thumbnail(source_path, output_path, size, quality)` - PIL image
+      processing
+- [ ] `generate_small_image(source_path, output_path, size, quality)` - PIL
+      medium size processing
 - [ ] `validate_image_file(file_path)` - Check if file is valid image
-- [ ] `calculate_thumbnail_dimensions(source_size, target_size)` - Aspect ratio preservation
+- [ ] `calculate_thumbnail_dimensions(source_size, target_size)` - Aspect ratio
+      preservation
 - [ ] `get_file_size(file_path)` - Get file size in bytes
-- [ ] `create_thumbnail_directories(base_path, timelapse_id)` - Ensure directory structure
-- [ ] `generate_thumbnail_filename(original_path, size_type)` - Create standardized filenames
+- [ ] `create_thumbnail_directories(base_path, timelapse_id)` - Ensure directory
+      structure
+- [ ] `generate_thumbnail_filename(original_path, size_type)` - Create
+      standardized filenames
 
 #### FileSystemUtils (file_helpers.py) - Additions for thumbnail management
-- [ ] `scan_directory_for_thumbnails(directory_path)` - Find thumbnail files recursively
-- [ ] `parse_thumbnail_filename(filename)` - Extract metadata from filename  
-- [ ] `calculate_directory_size(directory_path)` - Get total size of thumbnail directories
+
+- [ ] `scan_directory_for_thumbnails(directory_path)` - Find thumbnail files
+      recursively
+- [ ] `parse_thumbnail_filename(filename)` - Extract metadata from filename
+- [ ] `calculate_directory_size(directory_path)` - Get total size of thumbnail
+      directories
 - [ ] `safe_delete_file(file_path)` - Delete file with error handling
 - [ ] `verify_file_exists(file_path)` - Check file existence
 
 ### Worker Layer (Background Processing)
 
 #### ThumbnailWorker (thumbnail_worker.py)
+
 - [ ] `process_thumbnail_jobs()` - Main worker loop to process queued jobs
-- [ ] `process_single_job(job)` - Handle individual job processing using thumbnail_service
+- [ ] `process_single_job(job)` - Handle individual job processing using
+      thumbnail_service
 - [ ] `handle_job_failure(job, error)` - Retry logic and failure handling
 - [ ] `update_job_progress(job_id, status)` - Report progress for monitoring
 - [ ] `cleanup_expired_jobs()` - Remove old completed jobs periodically
@@ -818,11 +875,13 @@ freshness when thumbnails are regenerated.
 ### Integration Points
 
 #### CaptureWorker Integration
+
 - [ ] Queue thumbnail job after successful image capture
 - [ ] Respect generate_thumbnails setting before queuing
 - [ ] Handle queuing failures gracefully without affecting capture
 
-#### SSE Event Broadcasting  
+#### SSE Event Broadcasting
+
 - [ ] Broadcast thumbnail generation progress events
 - [ ] Broadcast bulk operation status updates
 - [ ] Broadcast completion/failure events for real-time UI updates
@@ -830,36 +889,57 @@ freshness when thumbnails are regenerated.
 ### Implementation Status Tracking
 
 #### ✅ Completed (Real Implementation)
+
 - **ThumbnailJobService**: All job queue operations fully implemented
-- **ThumbnailJobOperations**: All database operations fully implemented  
+- **ThumbnailJobOperations**: All database operations fully implemented
 - **ThumbnailUtils**: All image processing utilities fully implemented
-- **ThumbnailWorker**: Complete worker with performance scaling and batch processing
-- **ThumbnailPerformanceService**: Metrics collection and analysis (except worker metrics)
-- **ThumbnailService** (partial): Job management, timelapse operations, job statistics
+- **ThumbnailWorker**: Complete worker with performance scaling and batch
+  processing
+- **ThumbnailPerformanceService**: Metrics collection and analysis (except
+  worker metrics)
+- **ThumbnailService** (partial): Job management, timelapse operations, job
+  statistics
 
 #### ✅ Completed (Real Implementation)
-- **ThumbnailService**: `start_thumbnail_regeneration()` - Global regeneration session tracking ✅
-- **ThumbnailService**: `get_thumbnail_regeneration_status()` - Session progress tracking ✅
-- **ThumbnailService**: `cancel_thumbnail_regeneration()` - Session cancellation ✅
-- **ThumbnailJobService**: `cancel_pending_jobs()` - Database job cancellation ✅
-- **ImageOperations**: `get_images_without_thumbnails()` - Query missing thumbnails ✅
+
+- **ThumbnailService**: `start_thumbnail_regeneration()` - Global regeneration
+  session tracking ✅
+- **ThumbnailService**: `get_thumbnail_regeneration_status()` - Session progress
+  tracking ✅
+- **ThumbnailService**: `cancel_thumbnail_regeneration()` - Session cancellation
+  ✅
+- **ThumbnailJobService**: `cancel_pending_jobs()` - Database job cancellation
+  ✅
+- **ImageOperations**: `get_images_without_thumbnails()` - Query missing
+  thumbnails ✅
 - **ImageOperations**: `update_thumbnail_paths()` - Set thumbnail paths ✅
-- **ImageOperations**: `clear_thumbnail_paths()` - Remove thumbnail references ✅
-- **ImageOperations**: `get_thumbnail_coverage_statistics()` - Real coverage stats ✅
+- **ImageOperations**: `clear_thumbnail_paths()` - Remove thumbnail references
+  ✅
+- **ImageOperations**: `get_thumbnail_coverage_statistics()` - Real coverage
+  stats ✅
 
 #### ❌ Placeholder/Missing (Needs Implementation)
-- **ThumbnailService**: `verify_all_thumbnails()` - Actual file existence verification
+
+- **ThumbnailService**: `verify_all_thumbnails()` - Actual file existence
+  verification
 - **ThumbnailService**: `repair_orphaned_thumbnails()` - Complete placeholder
 - **ThumbnailService**: `cleanup_orphaned_thumbnails()` - Complete placeholder
-- **ThumbnailService**: `delete_all_thumbnails()` - Intentionally disabled for safety
-- **OrphanedFileRepairService**: `repair_orphaned_files()` - Database updates and file operations
+- **ThumbnailService**: `delete_all_thumbnails()` - Intentionally disabled for
+  safety
+- **OrphanedFileRepairService**: `repair_orphaned_files()` - Database updates
+  and file operations
 
 #### 🔄 Partial (Needs Completion)
-- **ThumbnailService**: `get_thumbnail_statistics()` - Missing filesystem scanning and storage sizes
-- **OrphanedFileRepairService**: `scan_for_orphaned_files()` - Missing result caching
-- **ThumbnailPerformanceService**: `_get_worker_metrics()` - Returns placeholder data
+
+- **ThumbnailService**: `get_thumbnail_statistics()` - Missing filesystem
+  scanning and storage sizes
+- **OrphanedFileRepairService**: `scan_for_orphaned_files()` - Missing result
+  caching
+- **ThumbnailPerformanceService**: `_get_worker_metrics()` - Returns placeholder
+  data
 
 ### Priority Implementation Order
+
 1. **Global regeneration session tracking** - Enable proper progress monitoring
 2. **Orphaned file repair operations** - Database consistency and file cleanup
 3. **Filesystem-based statistics** - Accurate storage and coverage metrics
