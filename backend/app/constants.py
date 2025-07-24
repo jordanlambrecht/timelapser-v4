@@ -7,6 +7,64 @@ throughout the codebase.
 """
 
 from typing import Set, Literal
+from enum import Enum
+
+from .models.health_model import HealthStatus
+from .enums import (
+    # Priority Systems
+    JobPriority,
+    SSEPriority,
+    # Job Systems
+    JobStatus,
+    JobTypes,
+    # Video Systems
+    VideoAutomationMode,
+    VideoGenerationMode,
+    VideoQuality,
+    # Thumbnail Systems
+    ThumbnailJobPriority,
+    ThumbnailJobStatus,
+    ThumbnailJobType,
+    # Overlay Systems
+    OverlayJobPriority,
+    OverlayJobStatus,
+    OverlayJobType,
+    OverlayType,
+    # Timelapse Systems
+    TimelapseAction,
+)
+
+# =============================================================================
+# JOB COORDINATION - ALIASES FOR IMPORTED ENUMS
+# =============================================================================
+
+# Create backward-compatible aliases for centralized enums
+JOB_TYPE = JobTypes
+JOB_TYPE_LIST = [job_type.value for job_type in JobTypes]
+
+JOB_STATUS = JobStatus
+JOB_STATUS_LIST = [status.value for status in JobStatus]
+
+JOB_PRIORITY = JobPriority
+JOB_PRIORITIES_LIST = [priority.value for priority in JobPriority]
+JOB_PRIORITY_LIST = JOB_PRIORITIES_LIST  # Alias for backwards compatibility
+
+# SSE Priority System Alias
+SSE_PRIORITY = SSEPriority
+
+# Thumbnail System Aliases
+THUMBNAIL_JOB_PRIORITY = ThumbnailJobPriority
+THUMBNAIL_JOB_STATUS = ThumbnailJobStatus
+THUMBNAIL_JOB_TYPE = ThumbnailJobType
+
+# Overlay System Aliases
+OVERLAY_JOB_PRIORITY = OverlayJobPriority
+OVERLAY_JOB_STATUS = OverlayJobStatus
+OVERLAY_JOB_TYPE = OverlayJobType
+OVERLAY_TYPE = OverlayType
+
+# Timelapse System Aliases
+TIMELAPSE_ACTION = TimelapseAction
 
 # ====================================================================
 # FILE TYPE CONSTANTS
@@ -111,68 +169,42 @@ DEFAULT_CAMERA_SERVICE_CACHE_TTL = 15
 # Camera statuses
 CAMERA_STATUSES = ["active", "inactive", "error", "maintenance"]
 
-# Timelapse statuses
-TIMELAPSE_STATUSES = ["running", "paused", "completed", "archived"]
-TIMELAPSE_STATUS_RUNNING = "running"
-TIMELAPSE_STATUS_PAUSED = "paused"
-TIMELAPSE_STATUS_COMPLETED = "completed"
-TIMELAPSE_STATUS_ARCHIVED = "archived"
-
-# Timelapse status type
-TimelapseStatus = Literal["running", "paused", "completed", "archived"]
-
-# Video statuses
-VIDEO_STATUSES = ["pending", "processing", "completed", "failed"]
-
-# Health statuses
-HEALTH_STATUSES = ["healthy", "degraded", "unhealthy", "unknown"]
-
 # ====================================================================
-# ERROR MESSAGES
+# CAMERA HEALTH AND FAILURE CONSTANTS
 # ====================================================================
 
-# Camera error messages
-CAMERA_NOT_FOUND = "Camera not found"
-CAMERA_CONNECTION_FAILED = "Camera connection test failed"
-CAMERA_CAPTURE_FAILED = "Manual capture failed"
-CAMERA_OFFLINE = "Camera is offline and cannot capture images"
+# Camera health status thresholds
+CAMERA_HEALTH_FAILURE_THRESHOLD = 5  # Consecutive failures before marking offline
+CAMERA_HEALTH_DEGRADED_THRESHOLD = 1  # Consecutive failures before marking degraded
 
-# Timelapse error messages
-TIMELAPSE_NOT_FOUND = "Timelapse not found"
-TIMELAPSE_NOT_ACTIVE = "No active timelapse found for this camera"
+# Camera health statuses
+CAMERA_HEALTH_ONLINE = "online"
+CAMERA_HEALTH_DEGRADED = "degraded"
+CAMERA_HEALTH_OFFLINE = "offline"
+CAMERA_HEALTH_UNKNOWN = "unknown"
 
-# Image error messages
-IMAGE_NOT_FOUND = "Image not found"
-NO_IMAGES_FOUND = "No images found for camera"
+CAMERA_HEALTH_STATUSES = [
+    CAMERA_HEALTH_ONLINE,
+    CAMERA_HEALTH_DEGRADED,
+    CAMERA_HEALTH_OFFLINE,
+    CAMERA_HEALTH_UNKNOWN,
+]
 
-# Video error messages
-VIDEO_NOT_FOUND = "Video not found"
-VIDEO_GENERATION_FAILED = "Video generation failed"
+# Camera capture readiness criteria
+CAMERA_CAPTURE_READY_STATUSES = ["active"]
+CAMERA_TIMELAPSE_READY_STATUSES = ["running"]
 
-# File error messages
-FILE_NOT_FOUND = "File not found"
-FILE_ACCESS_DENIED = "Access denied"
+# Camera health status values
+CAMERA_HEALTH_STATUS_HEALTHY = "healthy"
+CAMERA_HEALTH_STATUS_DEGRADED = "degraded"
+CAMERA_HEALTH_STATUS_FAILED = "failed"
 
-# General error messages
-OPERATION_FAILED = "Operation failed"
-INVALID_REQUEST_DATA = "Invalid request data"
-INSUFFICIENT_PERMISSIONS = "Insufficient permissions"
-
-# ====================================================================
-# SUCCESS MESSAGES
-# ====================================================================
-
-# Camera success messages
-CAMERA_CREATED_SUCCESS = "Camera created successfully"
-CAMERA_UPDATED_SUCCESS = "Camera updated successfully"
-CAMERA_DELETED_SUCCESS = "Camera deleted successfully"
-CAMERA_STATUS_UPDATED_SUCCESS = "Camera status updated successfully"
-CAMERA_HEALTH_UPDATED_SUCCESS = "Camera health updated successfully"
-CAMERA_CONNECTION_SUCCESS = "Camera connection successful"
-CAMERA_CAPTURE_SUCCESS = "Manual capture triggered successfully"
-
-# General success messages
-OPERATION_SUCCESS = "Operation completed successfully"
+# List of all valid health statuses
+HEALTH_STATUSES = [
+    CAMERA_HEALTH_STATUS_HEALTHY,
+    CAMERA_HEALTH_STATUS_DEGRADED,
+    CAMERA_HEALTH_STATUS_FAILED,
+]
 
 # ====================================================================
 # CORRUPTION DETECTION CONSTANTS
@@ -182,7 +214,7 @@ OPERATION_SUCCESS = "Operation completed successfully"
 CORRUPTION_SCORE_EXCELLENT = 95
 CORRUPTION_SCORE_GOOD = 80
 CORRUPTION_SCORE_POOR = 60
-CORRUPTION_SCORE_FAILED = 40
+CORRUPTION_SCORE_FAILED = -1  # Indicates corruption detection failed
 
 # Corruption detection defaults
 DEFAULT_CORRUPTION_HISTORY_HOURS = 24
@@ -194,6 +226,63 @@ MAX_CORRUPTION_LOGS_PAGE_SIZE = 200
 CORRUPTION_CRITICAL_THRESHOLD = 90
 CORRUPTION_FAST_CRITICAL_THRESHOLD = 95
 CORRUPTION_HEAVY_CRITICAL_THRESHOLD = 95
+
+# Corruption detection thresholds
+DEFAULT_CORRUPTION_DISCARD_THRESHOLD = 80  # Images below this score are discarded
+
+# Degraded mode thresholds
+DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD = (
+    5  # Number of failures to trigger degraded mode
+)
+DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES = 60  # Time window for failure counting
+DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE = 50  # Percentage threshold for degraded mode
+
+# Corruption analysis constants
+DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS = 30  # Days to keep corruption logs
+DEFAULT_CORRUPTION_LOGS_PAGE_SIZE = 50  # Default page size for corruption log queries
+MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE = (
+    10  # Minimum images needed for corruption analysis
+)
+
+# ====================================================================
+# STATISTICS AND HEALTH SCORING CONSTANTS
+# ====================================================================
+
+# Video queue health thresholds
+VIDEO_QUEUE_WARNING_THRESHOLD = 10  # Number of queued jobs to trigger warning
+VIDEO_QUEUE_ERROR_THRESHOLD = 25  # Number of queued jobs to trigger error
+
+# Health scoring weights (must sum to 1.0)
+HEALTH_CAMERA_WEIGHT = 0.4  # Weight for camera health in overall score
+HEALTH_QUALITY_WEIGHT = 0.3  # Weight for image quality in overall score
+HEALTH_ACTIVITY_WEIGHT = 0.3  # Weight for system activity in overall score
+
+# Health scoring penalties
+HEALTH_DEGRADED_PENALTY = 20  # Points to subtract for degraded cameras
+HEALTH_FLAGGED_PENALTY = 10  # Points to subtract for flagged images
+
+# Health scoring perfect scores
+HEALTH_ACTIVITY_PERFECT_SCORE = 100  # Perfect activity score baseline
+
+# Statistics retention
+DEFAULT_STATISTICS_RETENTION_DAYS = 90  # Days to keep statistical data
+
+# ====================================================================
+# TIME WINDOW SERVICE CONSTANTS
+# ====================================================================
+
+# Time window validation settings
+DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS = (
+    30  # Timeout for time window validation
+)
+DEFAULT_TIME_WINDOW_GRACE_PERIOD_SECONDS = (
+    60  # Grace period for time window calculations
+)
+
+# Time window event types
+EVENT_TIME_WINDOW_VALIDATED = "time_window_validated"
+EVENT_TIME_WINDOW_STATUS_CALCULATED = "time_window_status_calculated"
+EVENT_CAPTURE_COUNT_ESTIMATED = "capture_count_estimated"
 
 # ====================================================================
 # WEATHER SYSTEM CONSTANTS
@@ -265,6 +354,9 @@ RATE_LIMIT_BURST = 20
 # HEALTH CHECK CONSTANTS
 # ====================================================================
 
+HEALTH_STATUS = HealthStatus
+HEALTH_STATUSES = [status.value for status in HealthStatus]
+
 # Health check response times (milliseconds)
 HEALTH_DB_LATENCY_WARNING = 1000  # Warn if DB latency > 1 second
 HEALTH_DB_LATENCY_ERROR = 5000  # Error if DB latency > 5 seconds
@@ -285,8 +377,19 @@ HEALTH_VIDEO_QUEUE_ERROR = 100  # Error if pending jobs exceed this
 # LOGGING CONSTANTS
 # ====================================================================
 
+
 # Log levels
-LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+# LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+class LogLevel(str, Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+LOG_LEVELS = LogLevel
+LOG_LEVELS_LIST = [level.value for level in LogLevel]
 
 # Log retention (days)
 DEFAULT_LOG_RETENTION_DAYS = 30
@@ -305,9 +408,20 @@ LOG_SEARCH_DEBOUNCE_MS = 500  # 500ms debounce for log search input
 # ====================================================================
 
 # Video generation modes
-VIDEO_GENERATION_MODES = ["manual", "per_capture", "scheduled", "milestone"]
-VIDEO_AUTOMATION_MODES = ["manual", "per_capture", "scheduled", "milestone"]
-VIDEO_QUALITIES = ["low", "medium", "high", "ultra"]
+# VIDEO_GENERATION_MODES = ["manual", "per_capture", "scheduled", "milestone"]
+
+
+VIDEO_GENERATION_MODE = VideoGenerationMode
+VIDEO_AUTOMATION_MODE = VideoAutomationMode
+VIDEO_QUALITIES = VideoQuality
+VIDEO_QUALITY_LEVEL = VideoQuality  # Alias for backwards compatibility
+
+# If we need a list of all modes:
+VIDEO_AUTOMATION_MODES_LIST = [mode.value for mode in VideoAutomationMode]
+VIDEO_GENERATION_MODES_LIST = [mode.value for mode in VideoGenerationMode]
+VIDEO_QUALITIES_LIST = [quality.value for quality in VideoQuality]
+
+# VIDEO_QUALITIES = ["low", "medium", "high", "ultra"]
 
 # FPS bounds
 MIN_FPS = 1
@@ -324,11 +438,16 @@ MIN_VIDEO_DURATION = 1
 MAX_VIDEO_DURATION = 3600  # 1 hour
 DEFAULT_TARGET_DURATION = 30
 
-# Video generation job statuses
-VIDEO_JOB_STATUSES = ["pending", "processing", "completed", "failed", "cancelled"]
+# # Video generation job statuses
+# VIDEO_JOB_STATUSES = [
+#     "unknown",
+#     "pending",
+#     "processing",
+#     "completed",
+#     "failed",
+#     "cancelled",
+# ]
 
-# Video generation priorities
-VIDEO_JOB_PRIORITIES = ["low", "medium", "high", "urgent"]
 
 # Video generation limits
 MAX_CONCURRENT_VIDEO_JOBS = 3
@@ -348,7 +467,7 @@ VIDEO_AUTOMATION_HEALTH_STATUSES = [
 # Video service constants
 DEFAULT_VIDEO_CLEANUP_DAYS = 30
 DEFAULT_VIDEO_ARCHIVE_DIRECTORY = "archive/videos"
-DEFAULT_VIDEO_GENERATION_PRIORITY = "medium"
+# DEFAULT_VIDEO_GENERATION_PRIORITY = JOB_PRIORITY.MEDIUM
 
 # Image retention constants
 DEFAULT_IMAGE_RETENTION_DAYS = 30
@@ -416,12 +535,13 @@ EVENT_CAMERA_HEALTH_UPDATED = "camera_health_updated"
 EVENT_TIMELAPSE_CREATED = "timelapse_created"
 EVENT_TIMELAPSE_UPDATED = "timelapse_updated"
 EVENT_TIMELAPSE_COMPLETED = "timelapse_completed"
-EVENT_TIMELAPSE_ARCHIVED = "timelapse_archived"
 EVENT_TIMELAPSE_HEALTH_MONITORED = "timelapse_health_monitored"
 EVENT_TIMELAPSE_STATISTICS_UPDATED = "timelapse_statistics_updated"
+EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
 
 # Image events
 EVENT_IMAGE_CAPTURED = "image_captured"
+EVENT_IMAGE_DELETED = "image_deleted"
 EVENT_IMAGE_PROCESSED = "image_processed"
 EVENT_IMAGE_CORRUPTED = "image_corrupted"
 
@@ -431,10 +551,17 @@ EVENT_CORRUPTION_TEST_COMPLETED = "corruption_test_completed"
 EVENT_CORRUPTION_HEALTH_UPDATED = "corruption_health_updated"
 
 # Video events
+EVENT_VIDEO_CREATED = "video_created"
+EVENT_VIDEO_UPDATED = "video_updated"
+EVENT_VIDEO_DELETED = "video_deleted"
+EVENT_VIDEO_STATS_CALCULATED = "video_stats_calculated"
 EVENT_VIDEO_JOB_QUEUED = "video_job_queued"
 EVENT_VIDEO_JOB_STARTED = "video_job_started"
 EVENT_VIDEO_JOB_COMPLETED = "video_job_completed"
-EVENT_VIDEO_GENERATED = "video_generated"
+
+# Generic job events
+EVENT_JOB_CREATED = "job_created"
+EVENT_JOB_FAILED = "job_failed"
 
 # System events
 EVENT_SETTING_UPDATED = "setting_updated"
@@ -476,15 +603,7 @@ OVERLAY_POSITION_BOTTOM_LEFT = "bottom-left"
 OVERLAY_POSITION_BOTTOM_RIGHT = "bottom-right"
 OVERLAY_POSITION_CENTER = "center"
 
-# Default overlay settings
-DEFAULT_OVERLAY_SETTINGS = {
-    "enabled": True,
-    "position": OVERLAY_POSITION_BOTTOM_RIGHT,
-    "font_size": 48,
-    "font_color": "white",
-    "background_color": "black@0.5",
-    "format": "Day {day}",
-}
+# Note: DEFAULT_OVERLAY_SETTINGS removed - overlay settings are now handled by the overlay system
 
 # Overlay template formats
 OVERLAY_FORMAT_DAY_ONLY = "Day {day}"
@@ -494,9 +613,11 @@ OVERLAY_FORMAT_WEATHER_DETAILED = (
     "{temperature}°C • {weather} • {humidity}% • {pressure}hPa"
 )
 
+
 # ====================================================================
 # WORKER CONFIGURATION CONSTANTS
 # ====================================================================
+
 
 # Scheduler job configuration
 # Increased from 1 to 3 to prevent "maximum number of running instances reached"
@@ -520,9 +641,16 @@ DUMMY_API_KEY = "dummy"
 SETTING_KEY_WEATHER_ENABLED = "weather_enabled"
 SETTING_KEY_TEMPERATURE_UNIT = "temperature_unit"
 SETTING_KEY_GENERATE_THUMBNAILS = "generate_thumbnails"
+SETTING_KEY_GENERATE_OVERLAYS = "generate_overlays"
+SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
+    "thumbnail_purge_smalls_on_completion"
+)
+SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
+SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
 DEFAULT_WEATHER_ENABLED = "false"
 DEFAULT_TEMPERATURE_UNIT = "celsius"
 DEFAULT_GENERATE_THUMBNAILS = "true"
+DEFAULT_GENERATE_OVERLAYS = "true"
 BOOLEAN_TRUE_STRING = "true"
 
 # Temperature unit constants
@@ -530,7 +658,6 @@ TEMPERATURE_UNIT_CELSIUS = "celsius"
 TEMPERATURE_UNIT_FAHRENHEIT = "fahrenheit"
 
 # SSE event configuration
-SSE_PRIORITY_NORMAL = "normal"
 SSE_SOURCE_WORKER = "worker"
 
 # Logging configuration
@@ -541,123 +668,221 @@ LOG_RETENTION_PERIOD = "30 days"
 # VALIDATION CONSTANTS
 # ====================================================================
 
-# RTSP URL validation
-DANGEROUS_CHARS = [";", "&", "|", "`", "$", "(", ")", "<", ">", '"', "'"]
-RTSP_URL_PATTERN = r"^rtsps?://[^\s/$.?#].[^\s]*$"
+# File path validation
+# MOVED TO: utils/validation_constants.py to avoid circular imports
+# DANGEROUS_CHARS = r'[<>:"|?*\x00-\x1f]'
 
-# Time format validation
-TIME_WINDOW_PATTERN = r"^([01]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+# RTSP URL validation pattern
+# MOVED TO: utils/validation_constants.py to avoid circular imports
+# RTSP_URL_PATTERN = r"^rtsp://[^\s]+$"
 
-# Maximum bounds for validation
-MAX_TIME_BOUNDS_SECONDS = MAX_VIDEO_DURATION  # 1 hour max for time limits
+# Time window validation pattern
+# MOVED TO: utils/validation_constants.py to avoid circular imports
+# TIME_WINDOW_PATTERN = r"^\d{2}:\d{2}-\d{2}:\d{2}$"
 
-# ====================================================================
-# THRESHOLD CONSTANTS
-# ====================================================================
+# FPS validation bounds
+# MOVED TO: utils/validation_constants.py to avoid circular imports
+# MIN_FPS = 1
+# MAX_FPS = 60
 
-# Default thresholds
-DEFAULT_CORRUPTION_DISCARD_THRESHOLD = 70
-DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD = 10
-DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES = 30
-DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE = 50
-DEFAULT_PER_CAPTURE_THROTTLE_MINUTES = 5
-DEFAULT_HEALTH_CHECK_INTERVAL_MINUTES = 15
-
-# Corruption analysis constants
-MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE = 20
-
-# Time window constants
-TIME_WINDOW_TYPE_MANUAL = "manual"
-TIME_WINDOW_TYPE_SUNRISE_SUNSET = "sunrise_sunset"
-TIME_WINDOW_TYPE_DISABLED = "disabled"
-
-# Settings validation constants
-MAX_SETTING_KEY_LENGTH = 255
-MAX_SETTING_VALUE_LENGTH = 10000
-
-# Weather settings keys
-WEATHER_SETTINGS_KEYS = [
-    "weather_enabled",
-    "temperature_unit",
-    "latitude",
-    "longitude",
-    "openweather_api_key",
-    "sunrise_sunset_enabled",
-]
-
-# Time window constants
-DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS = 5
-DEFAULT_TIME_WINDOW_GRACE_PERIOD_SECONDS = 300  # 5 minutes
-
-# Health scoring constants
-HEALTH_CAMERA_WEIGHT = 0.3
-HEALTH_QUALITY_WEIGHT = 0.4
-HEALTH_ACTIVITY_WEIGHT = 0.3
-HEALTH_DEGRADED_PENALTY = 50
-HEALTH_FLAGGED_PENALTY = 30
-HEALTH_ACTIVITY_PERFECT_SCORE = 10
-DEFAULT_STATISTICS_RETENTION_DAYS = 365
+# Time bounds validation (in seconds)
+# MOVED TO: utils/validation_constants.py to avoid circular imports
+# MAX_TIME_BOUNDS_SECONDS = 86400  # 24 hours in seconds
 
 # ====================================================================
-# THUMBNAIL JOB CONSTANTS
+# CAMERA STATUS MESSAGES
 # ====================================================================
 
-# Thumbnail job statuses
-THUMBNAIL_JOB_STATUS_PENDING = "pending"
-THUMBNAIL_JOB_STATUS_PROCESSING = "processing"
-THUMBNAIL_JOB_STATUS_COMPLETED = "completed"
-THUMBNAIL_JOB_STATUS_FAILED = "failed"
-THUMBNAIL_JOB_STATUS_CANCELLED = "cancelled"
+# Error and success messages for camera operations
+CAMERA_NOT_FOUND = "Camera not found"
+CAMERA_CAPTURE_SUCCESS = "Capture successful"
 
-# Thumbnail job priorities
-THUMBNAIL_JOB_PRIORITY_HIGH = "high"  # Manual operations from settings UI
-THUMBNAIL_JOB_PRIORITY_MEDIUM = "medium"  # New image captures
-THUMBNAIL_JOB_PRIORITY_LOW = "low"  # Bulk background operations
+
+# ====================================================================
+# OVERLAY SYSTEM CONSTANTS
+# ====================================================================
+
+# Thumbnail job priorities - MOVED TO enums.py, use THUMBNAIL_JOB_PRIORITY enum instead
+
+# Thumbnail job statuses - MOVED TO enums.py, use JobStatus enum instead
 
 # Thumbnail job types
-THUMBNAIL_JOB_TYPE_SINGLE = "single"  # Single image processing
-THUMBNAIL_JOB_TYPE_BULK = "bulk"  # Bulk operation processing
+THUMBNAIL_JOB_TYPE_SINGLE = "single"
+THUMBNAIL_JOB_TYPE_BULK = "bulk"
 
-# Job queue configuration defaults - OPTIMIZED FOR PERFORMANCE
-DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 10  # Increased from 5 for better throughput
-DEFAULT_THUMBNAIL_WORKER_INTERVAL = 3  # Reduced from 10s for faster response
+# Thumbnail job processing constants
+DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 5
+DEFAULT_THUMBNAIL_WORKER_INTERVAL = 10
 DEFAULT_THUMBNAIL_MAX_RETRIES = 3
 DEFAULT_THUMBNAIL_CLEANUP_HOURS = 24
 
-# High-load configuration (for busy systems)
-HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 20  # For systems with many cameras
-HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 1  # Near real-time processing
+# Thumbnail job retry and performance constants
+THUMBNAIL_JOB_RETRY_DELAYS = [30, 120, 300]  # Minutes: 30s, 2min, 5min
+HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 15
+HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 3
+THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50
+THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10
+THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000
+THUMBNAIL_MEMORY_WARNING_THRESHOLD = 100  # MB
+THUMBNAIL_CONCURRENT_JOBS = 3
 
-# Memory optimization settings
-THUMBNAIL_MEMORY_LIMIT_MB = 512  # Memory limit per worker
-THUMBNAIL_CONCURRENT_JOBS = 3  # Concurrent processing limit
+# Overlay job priorities - MOVED TO enums.py, use OVERLAY_JOB_PRIORITY enum instead
 
-# Retry backoff timing (minutes) - OPTIMIZED
-THUMBNAIL_JOB_RETRY_DELAYS = [2, 10, 30]  # 2min, 10min, 30min - less aggressive
+# Overlay job statuses - MOVED TO enums.py, use JobStatus enum instead
 
-# Thumbnail job settings keys
-SETTING_KEY_THUMBNAIL_JOB_BATCH_SIZE = "thumbnail_job_batch_size"
-SETTING_KEY_THUMBNAIL_WORKER_INTERVAL = "thumbnail_worker_interval"
-SETTING_KEY_THUMBNAIL_MAX_RETRIES = "thumbnail_max_retries"
-SETTING_KEY_THUMBNAIL_CLEANUP_HOURS = "thumbnail_cleanup_hours"
-SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
-SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
+# Overlay job types
+OVERLAY_JOB_TYPE_SINGLE = "single"
+OVERLAY_JOB_TYPE_BATCH = "batch"
+
+# Overlay job processing constants
+DEFAULT_OVERLAY_JOB_BATCH_SIZE = 5
+DEFAULT_OVERLAY_WORKER_INTERVAL = 10
+DEFAULT_OVERLAY_MAX_RETRIES = 3
+DEFAULT_OVERLAY_CLEANUP_HOURS = 24
+
+# Overlay job retry and performance constants
+OVERLAY_JOB_RETRY_DELAYS = [30, 120, 300]  # Minutes: 30s, 2min, 5min
+HIGH_LOAD_OVERLAY_JOB_BATCH_SIZE = 15
+HIGH_LOAD_OVERLAY_WORKER_INTERVAL = 3
+OVERLAY_QUEUE_SIZE_HIGH_THRESHOLD = 50
+OVERLAY_QUEUE_SIZE_LOW_THRESHOLD = 10
+OVERLAY_PROCESSING_TIME_WARNING_MS = 5000
+OVERLAY_MEMORY_WARNING_THRESHOLD = 100  # MB
+OVERLAY_CONCURRENT_JOBS = 3
+
+# Overlay types
+OVERLAY_TYPE_DATE = "date"
+OVERLAY_TYPE_DATE_TIME = "date_time"
+OVERLAY_TYPE_TIME = "time"
+OVERLAY_TYPE_FRAME_NUMBER = "frame_number"
+OVERLAY_TYPE_DAY_NUMBER = "day_number"
+OVERLAY_TYPE_CUSTOM_TEXT = "custom_text"
+OVERLAY_TYPE_TIMELAPSE_NAME = "timelapse_name"
+OVERLAY_TYPE_TEMPERATURE = "temperature"
+OVERLAY_TYPE_WEATHER_CONDITIONS = "weather_conditions"
+OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS = "weather_temp_conditions"
+OVERLAY_TYPE_WATERMARK = "watermark"
+
+# ====================================================================
+# TIMELAPSE ACTION CONSTANTS
+# ====================================================================
+
+# Timelapse action types
+TIMELAPSE_ACTION_CREATE = "create"
+TIMELAPSE_ACTION_PAUSE = "pause"
+TIMELAPSE_ACTION_RESUME = "resume"
+TIMELAPSE_ACTION_END = "end"
+
+# Valid timelapse actions list
+TIMELAPSE_ACTIONS = [
+    TIMELAPSE_ACTION_CREATE,
+    TIMELAPSE_ACTION_PAUSE,
+    TIMELAPSE_ACTION_RESUME,
+    TIMELAPSE_ACTION_END,
+]
+
+# Type alias for timelapse actions
+# MOVED TO: models/enums.py to avoid circular imports
+# TimelapseAction = Literal["create", "pause", "resume", "end"]
+
+# ====================================================================
+# SETTINGS SYSTEM CONSTANTS
+# ====================================================================
+
+# Settings validation limits
+MAX_SETTING_KEY_LENGTH = 255
+MAX_SETTING_VALUE_LENGTH = 1000
+
+# ====================================================================
+# VIDEO AUTOMATION CONSTANTS
+# ====================================================================
+
+# Video automation throttling
+DEFAULT_PER_CAPTURE_THROTTLE_MINUTES = (
+    15  # Minutes between per-capture video generations
+)
+
+# Video automation event types
+EVENT_VIDEO_JOB_QUEUED = "video_job_queued"
+EVENT_VIDEO_JOB_STARTED = "video_job_started"
+EVENT_VIDEO_JOB_COMPLETED = "video_job_completed"
+
+# ====================================================================
+# TIMELAPSE SYSTEM CONSTANTS
+# ====================================================================
+
+# Timelapse statuses
+TIMELAPSE_STATUS_CREATED = "created"
+TIMELAPSE_STATUS_RUNNING = "running"
+TIMELAPSE_STATUS_PAUSED = "paused"
+TIMELAPSE_STATUS_COMPLETED = "completed"
+TIMELAPSE_STATUS_FAILED = "failed"
+
+# Valid timelapse statuses list
+TIMELAPSE_STATUSES = [
+    TIMELAPSE_STATUS_CREATED,
+    TIMELAPSE_STATUS_RUNNING,
+    TIMELAPSE_STATUS_PAUSED,
+    TIMELAPSE_STATUS_COMPLETED,
+    TIMELAPSE_STATUS_FAILED,
+]
+
+# Type alias for timelapse statuses
+TimelapseStatus = Literal["created", "running", "paused", "completed", "failed"]
+
+# Timelapse event types
+EVENT_TIMELAPSE_CREATED = "timelapse_created"
+EVENT_TIMELAPSE_UPDATED = "timelapse_updated"
+EVENT_TIMELAPSE_COMPLETED = "timelapse_completed"
+EVENT_TIMELAPSE_HEALTH_MONITORED = "timelapse_health_monitored"
+EVENT_TIMELAPSE_STATISTICS_UPDATED = "timelapse_statistics_updated"
+EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
+
+# Timelapse setting keys
 SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
     "thumbnail_purge_smalls_on_completion"
 )
+SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
 
-# Performance optimization settings
-SETTING_KEY_THUMBNAIL_HIGH_LOAD_MODE = "thumbnail_high_load_mode"
-SETTING_KEY_THUMBNAIL_MEMORY_LIMIT = "thumbnail_memory_limit_mb"
-SETTING_KEY_THUMBNAIL_CONCURRENT_JOBS = "thumbnail_concurrent_jobs"
+# ====================================================================
+# RTSP SERVICE CONSTANTS
+# ====================================================================
 
-# Performance thresholds for adaptive scaling
-THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50  # Switch to high-load mode
-THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10  # Switch back to normal mode
-THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000  # Log slow processing warning
-THUMBNAIL_MEMORY_WARNING_THRESHOLD = 0.8  # Memory usage warning (80%)
+# RTSP operation defaults
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RTSP_TIMEOUT_SECONDS = 10
+DEFAULT_RTSP_QUALITY = 90
+DEFAULT_IMAGE_EXTENSION = ".jpg"
 
-# Thumbnail verification and maintenance constants
-THUMBNAIL_VERIFICATION_BATCH_SIZE = 10000  # Maximum images to verify at once
-BYTES_TO_MB_DIVISOR = 1024 * 1024  # Conversion factor for bytes to MB
-BYTES_TO_KB_DIVISOR = 1024  # Conversion factor for bytes to KB
+# RTSP capture defaults
+DEFAULT_CORRUPTION_SCORE = 100
+DEFAULT_IS_FLAGGED = False
+
+# RTSP connection messages
+CAMERA_CONNECTION_SUCCESS = "Connection successful"
+CAMERA_CONNECTION_FAILED = "Connection failed"
+CAMERA_CAPTURE_FAILED = "Capture failed"
+
+# =============================================================================
+# JOB PRIORITY CONSTANTS (REFERENCE ENUM VALUES)
+# =============================================================================
+
+# Thumbnail job priority constants (reference enum values)
+THUMBNAIL_JOB_PRIORITY_HIGH = ThumbnailJobPriority.HIGH
+THUMBNAIL_JOB_PRIORITY_MEDIUM = ThumbnailJobPriority.MEDIUM
+THUMBNAIL_JOB_PRIORITY_LOW = ThumbnailJobPriority.LOW
+
+# Job priority constants (reference enum values)
+JOB_PRIORITY_HIGH = JobPriority.HIGH
+JOB_PRIORITY_MEDIUM = JobPriority.MEDIUM
+JOB_PRIORITY_LOW = JobPriority.LOW
+
+# =============================================================================
+# SSE (SERVER-SENT EVENTS) CONSTANTS
+# =============================================================================
+
+
+# SSE source constants
+SSE_SOURCE_WORKER = "worker"
+SSE_SOURCE_API = "api"
+SSE_SOURCE_SCHEDULER = "scheduler"

@@ -51,6 +51,24 @@ class FileOperationError(TimelapserError):
     pass
 
 
+class ImageNotFoundError(TimelapserError):
+    """Custom exception for when an image is not found."""
+
+    pass
+
+
+class InvalidImageSizeError(TimelapserError):
+    """Custom exception for invalid image size variants."""
+
+    pass
+
+
+class ImageServiceError(TimelapserError):
+    """Custom exception for general image service errors."""
+
+    pass
+
+
 class ConfigurationError(TimelapserError):
     """Custom exception for configuration errors."""
 
@@ -59,5 +77,17 @@ class ConfigurationError(TimelapserError):
 
 class ValidationError(TimelapserError):
     """Custom exception for data validation errors."""
+
+    pass
+
+
+class CameraNotFoundError(TimelapserError):
+    """Custom exception for camera not found errors."""
+
+    pass
+
+
+class WorkflowError(TimelapserError):
+    """Custom exception for workflow orchestration errors."""
 
     pass
