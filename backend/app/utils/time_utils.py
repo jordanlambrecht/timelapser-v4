@@ -1,4 +1,4 @@
-# backend/app/utils/timezone_utils.py
+# backend/app/utils/time_utils.py
 """
 Centralized timezone and time utilities for database-aware operations.
 CRITICAL: Never use hardcoded timezones or system timezone.
@@ -47,7 +47,7 @@ from app.utils.cache_manager import get_timezone_async
 def get_timezone_from_cache_sync(settings_service) -> str:
     """
     Get timezone using SettingsService (sync version, bypasses async cache).
-    
+
     This function directly accesses settings without using the async cache infrastructure
     to avoid event loop conflicts in worker processes.
     """
@@ -685,3 +685,37 @@ def parse_iso_timestamp_safe(timestamp_str: str) -> datetime:
     except (ValueError, TypeError) as e:
         logger.error(f"❌ Failed to parse timestamp '{timestamp_str}': {e}")
         raise ValueError(f"Invalid timestamp format: {timestamp_str}")
+
+
+def calculate_day_number_for_timelapse(timelapse, settings_service) -> int:
+    """
+    Calculate day number for timelapse sequence using database timezone.
+
+    Moved from RTSPService for better reusability across the codebase.
+
+    Args:
+        timelapse: Timelapse object or dictionary with start_date
+        settings_service: SettingsService instance for timezone lookup
+
+    Returns:
+        Day number starting from 1 (defaults to 1 if calculation fails)
+    """
+    try:
+        current_date_str = get_timezone_aware_date_sync(settings_service)
+        current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+
+        start_date = (
+            timelapse.get("start_date")
+            if isinstance(timelapse, dict)
+            else getattr(timelapse, "start_date", None)
+        )
+
+        if not start_date:
+            logger.warning("Timelapse has no start_date, defaulting day_number to 1")
+            return 1
+
+        return (current_date - start_date).days + 1
+
+    except Exception as e:
+        logger.warning(f"Error calculating day number: {e}")
+        return 1
