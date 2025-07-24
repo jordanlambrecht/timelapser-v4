@@ -1,0 +1,316 @@
+# backend/app/services/overlay_pipeline/generators/batch_overlay_generator.py
+"""
+Batch Overlay Generator - Handles batch overlay operations for multiple images.
+"""
+
+from typing import List, Dict, Any, Optional
+from PIL import Image
+from datetime import datetime
+from pathlib import Path
+from loguru import logger
+
+from .text_overlay_generator import TextOverlayGenerator
+from .weather_overlay_generator import WeatherOverlayGenerator
+from .image_overlay_generator import ImageOverlayGenerator
+
+
+class BatchOverlayGenerator:
+    """
+    Generator for batch overlay operations across multiple images.
+    Provides efficient processing for bulk overlay generation.
+    """
+
+    def __init__(self):
+        """Initialize batch overlay generator."""
+        self.text_generator = TextOverlayGenerator()
+        self.weather_generator = WeatherOverlayGenerator()
+        self.image_generator = ImageOverlayGenerator()
+
+    def generate_batch_overlays(
+        self,
+        image_configs: List[Dict[str, Any]],
+        overlay_config: Dict[str, Any],
+        progress_callback: Optional[callable] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate overlays for a batch of images.
+
+        Args:
+            image_configs: List of image configurations with paths and metadata
+            overlay_config: Common overlay configuration to apply to all images
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            List of results with success/failure status for each image
+
+        Example image_configs:
+        [
+            {
+                "image_path": "/path/to/image1.jpg",
+                "output_path": "/path/to/output1.jpg",
+                "timestamp": datetime(...),
+                "camera_id": 1,
+                "frame_number": 1
+            },
+            ...
+        ]
+        """
+        results = []
+        total_images = len(image_configs)
+
+        for i, image_config in enumerate(image_configs):
+            try:
+                # Load image
+                image_path = Path(image_config["image_path"])
+                if not image_path.exists():
+                    results.append({
+                        "image_path": str(image_path),
+                        "success": False,
+                        "error": "Image file not found"
+                    })
+                    continue
+
+                image = Image.open(image_path)
+                
+                # Apply overlays based on configuration
+                result_image = self._apply_overlays(image, image_config, overlay_config)
+                
+                # Save result
+                output_path = Path(image_config["output_path"])
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                result_image.save(output_path, quality=95)
+                
+                results.append({
+                    "image_path": str(image_path),
+                    "output_path": str(output_path),
+                    "success": True
+                })
+
+                # Progress callback
+                if progress_callback:
+                    progress_callback(i + 1, total_images)
+
+            except Exception as e:
+                logger.error(f"Failed to process image {image_config.get('image_path')}: {e}")
+                results.append({
+                    "image_path": image_config.get("image_path", "unknown"),
+                    "success": False,
+                    "error": str(e)
+                })
+
+        return results
+
+    def generate_timelapse_overlays(
+        self,
+        timelapse_id: int,
+        image_list: List[Dict[str, Any]],
+        overlay_preset: Dict[str, Any],
+        start_date: datetime,
+        progress_callback: Optional[callable] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate overlays for an entire timelapse sequence.
+
+        Args:
+            timelapse_id: ID of the timelapse
+            image_list: List of images with metadata
+            overlay_preset: Overlay preset configuration
+            start_date: Timelapse start date for day calculations
+            progress_callback: Optional progress callback
+
+        Returns:
+            Summary of batch processing results
+        """
+        try:
+            results = []
+            total_images = len(image_list)
+            success_count = 0
+            failed_count = 0
+
+            for i, image_info in enumerate(image_list):
+                try:
+                    # Load image
+                    image_path = Path(image_info["file_path"])
+                    if not image_path.exists():
+                        failed_count += 1
+                        continue
+
+                    image = Image.open(image_path)
+                    
+                    # Prepare image-specific configuration
+                    image_config = {
+                        **image_info,
+                        "timelapse_id": timelapse_id,
+                        "start_date": start_date,
+                        "frame_number": i + 1,
+                        "total_frames": total_images
+                    }
+                    
+                    # Apply overlays
+                    result_image = self._apply_overlays(image, image_config, overlay_preset)
+                    
+                    # Save with overlay
+                    overlay_path = self._get_overlay_output_path(image_path, timelapse_id)
+                    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+                    result_image.save(overlay_path, quality=95)
+                    
+                    success_count += 1
+
+                    # Progress callback
+                    if progress_callback:
+                        progress_callback(i + 1, total_images)
+
+                except Exception as e:
+                    logger.error(f"Failed to process timelapse image {i}: {e}")
+                    failed_count += 1
+
+            return {
+                "timelapse_id": timelapse_id,
+                "total_images": total_images,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "success_rate": (success_count / total_images * 100) if total_images > 0 else 0
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to process timelapse overlays for {timelapse_id}: {e}")
+            return {
+                "timelapse_id": timelapse_id,
+                "total_images": len(image_list),
+                "success_count": 0,
+                "failed_count": len(image_list),
+                "success_rate": 0,
+                "error": str(e)
+            }
+
+    def _apply_overlays(
+        self,
+        image: Image.Image,
+        image_config: Dict[str, Any],
+        overlay_config: Dict[str, Any]
+    ) -> Image.Image:
+        """Apply all configured overlays to an image."""
+        result_image = image.copy()
+        
+        from ....constants import (
+            OVERLAY_TYPE_DATE,
+            OVERLAY_TYPE_DATE_TIME,
+            OVERLAY_TYPE_TIME,
+            OVERLAY_TYPE_FRAME_NUMBER,
+            OVERLAY_TYPE_DAY_NUMBER,
+            OVERLAY_TYPE_CUSTOM_TEXT,
+            OVERLAY_TYPE_TIMELAPSE_NAME,
+            OVERLAY_TYPE_TEMPERATURE,
+            OVERLAY_TYPE_WEATHER_CONDITIONS,
+            OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
+            OVERLAY_TYPE_WATERMARK,
+        )
+        
+        # Apply each overlay type based on configuration
+        for overlay in overlay_config.get("overlays", []):
+            overlay_type = overlay.get("type")
+            
+            if overlay_type == OVERLAY_TYPE_CUSTOM_TEXT:
+                result_image = self._apply_text_overlay(result_image, image_config, overlay)
+            elif overlay_type in [OVERLAY_TYPE_DATE, OVERLAY_TYPE_DATE_TIME, OVERLAY_TYPE_TIME]:
+                result_image = self._apply_timestamp_overlay(result_image, image_config, overlay)
+            elif overlay_type in [OVERLAY_TYPE_TEMPERATURE, OVERLAY_TYPE_WEATHER_CONDITIONS, OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS]:
+                result_image = self._apply_weather_overlay(result_image, image_config, overlay)
+            elif overlay_type == OVERLAY_TYPE_WATERMARK:
+                result_image = self._apply_image_overlay(result_image, image_config, overlay)
+            elif overlay_type == OVERLAY_TYPE_FRAME_NUMBER:
+                result_image = self._apply_frame_number_overlay(result_image, image_config, overlay)
+            elif overlay_type == OVERLAY_TYPE_DAY_NUMBER:
+                result_image = self._apply_day_number_overlay(result_image, image_config, overlay)
+            elif overlay_type == OVERLAY_TYPE_TIMELAPSE_NAME:
+                result_image = self._apply_timelapse_name_overlay(result_image, image_config, overlay)
+        
+        return result_image
+
+    def _apply_text_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply text overlay."""
+        text = overlay.get("text", "")
+        return self.text_generator.generate_text_overlay(image, text, **overlay)
+
+    def _apply_timestamp_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply timestamp overlay."""
+        timestamp = image_config.get("timestamp")
+        if not timestamp:
+            return image
+        
+        format_string = overlay.get("format", "%Y-%m-%d %H:%M:%S")
+        return self.text_generator.generate_timestamp_overlay(
+            image, timestamp, format_string, **overlay
+        )
+
+    def _apply_weather_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply weather overlay."""
+        from ....constants import (
+            OVERLAY_TYPE_TEMPERATURE,
+            OVERLAY_TYPE_WEATHER_CONDITIONS,
+            OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
+        )
+        
+        timestamp = image_config.get("timestamp")
+        camera_id = image_config.get("camera_id")
+        if not timestamp or not camera_id:
+            return image
+        
+        overlay_type = overlay.get("type")
+        unit = overlay.get("unit", "F")
+        
+        if overlay_type == OVERLAY_TYPE_TEMPERATURE:
+            return self.weather_generator.generate_temperature_overlay(
+                image, timestamp, camera_id, unit, **overlay
+            )
+        elif overlay_type == OVERLAY_TYPE_WEATHER_CONDITIONS:
+            return self.weather_generator.generate_weather_conditions_overlay(
+                image, timestamp, camera_id, **overlay
+            )
+        elif overlay_type == OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS:
+            return self.weather_generator.generate_combined_weather_overlay(
+                image, timestamp, camera_id, unit, **overlay
+            )
+        
+        return image
+
+    def _apply_image_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply image overlay."""
+        overlay_path = overlay.get("image_path")
+        if not overlay_path:
+            return image
+        
+        return self.image_generator.generate_image_overlay(image, overlay_path, **overlay)
+
+    def _apply_frame_number_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply frame number overlay."""
+        frame_number = image_config.get("frame_number")
+        total_frames = image_config.get("total_frames")
+        if not frame_number:
+            return image
+        
+        return self.text_generator.generate_frame_number_overlay(
+            image, frame_number, total_frames, **overlay
+        )
+
+    def _apply_day_number_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply day number overlay."""
+        start_date = image_config.get("start_date")
+        timestamp = image_config.get("timestamp")
+        if not start_date or not timestamp:
+            return image
+        
+        return self.text_generator.generate_day_number_overlay(
+            image, start_date, timestamp, **overlay
+        )
+
+    def _apply_timelapse_name_overlay(self, image: Image.Image, image_config: Dict[str, Any], overlay: Dict[str, Any]) -> Image.Image:
+        """Apply timelapse name overlay."""
+        timelapse_name = image_config.get("timelapse_name", "Timelapse")
+        return self.text_generator.generate_text_overlay(image, timelapse_name, **overlay)
+
+    def _get_overlay_output_path(self, original_path: Path, timelapse_id: int) -> Path:
+        """Generate output path for overlay image."""
+        # This would be configured based on your file structure
+        overlay_dir = original_path.parent / "overlays" / str(timelapse_id)
+        return overlay_dir / original_path.name

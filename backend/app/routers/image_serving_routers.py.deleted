@@ -6,14 +6,11 @@ Critical endpoints required by frontend for thumbnail display.
 Missing these endpoints means the frontend cannot show thumbnails.
 """
 
-from fastapi import APIRouter, Path, Query, HTTPException, Response
-
-
+from fastapi import APIRouter, Path, Query, Response
 from typing import Literal
 
 from ..dependencies import ImageServiceDep, CameraServiceDep
 from ..utils.router_helpers import handle_exceptions, validate_entity_exists
-from ..constants import MAX_BULK_OPERATION_ITEMS
 
 router = APIRouter()
 
@@ -152,19 +149,5 @@ async def serve_images_batch(
     Returns JSON array with image URLs and metadata for efficient loading.
     Used by frontend for gallery views and thumbnail grids.
     """
-    try:
-        image_ids = [int(id_str.strip()) for id_str in ids.split(",")]
-        if len(image_ids) > MAX_BULK_OPERATION_ITEMS:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Batch size too large (max {MAX_BULK_OPERATION_ITEMS} images)",
-            )
-
-        # Serve images batch
-        return await image_service.serve_images_batch(image_ids, size)
-
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid image IDs format - must be comma-separated integers",
-        )
+    # Delegate parsing and validation to service layer
+    return await image_service.serve_images_batch_from_string(ids, size)

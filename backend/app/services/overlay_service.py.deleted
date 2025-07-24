@@ -1,0 +1,102 @@
+# backend/app/services/overlay_service.py
+"""
+Overlay Service Compatibility Layer
+
+This module provides backward compatibility for existing code that imports OverlayService.
+It delegates to the new overlay pipeline structure while maintaining the expected interface.
+"""
+
+from typing import Optional
+from loguru import logger
+
+from .overlay_pipeline import (
+    OverlayPipeline,
+    create_overlay_pipeline,
+    create_sync_overlay_pipeline,
+)
+from ..database.core import AsyncDatabase, SyncDatabase
+
+
+class OverlayService:
+    """
+    Compatibility wrapper for sync overlay operations.
+    Maintains backward compatibility while delegating to new pipeline.
+    """
+
+    def __init__(
+        self, db: SyncDatabase, settings_service=None, weather_manager=None, sse_ops=None
+    ):
+        """Initialize overlay service with sync database."""
+        self.db = db
+        self.settings_service = settings_service
+        self.weather_manager = weather_manager
+        self.sse_ops = sse_ops
+        
+        # Create pipeline instance
+        self.pipeline = create_sync_overlay_pipeline(
+            database=db,
+            settings_service=settings_service,
+            weather_manager=weather_manager,
+        )
+        
+        # Expose pipeline components for compatibility
+        self.overlay_ops = self.pipeline.sync_integration_service.overlay_ops if hasattr(self.pipeline, 'sync_integration_service') else None
+        self.image_ops = self.pipeline.sync_integration_service.image_ops if hasattr(self.pipeline, 'sync_integration_service') else None
+
+    def generate_overlay_for_image(
+        self, image_id: int, force_regenerate: bool = False
+    ) -> bool:
+        """Generate overlay for a specific image."""
+        return self.pipeline.generate_overlay_for_image(image_id, force_regenerate)
+
+    def generate_preview_overlay(self, *args, **kwargs):
+        """Generate preview overlay."""
+        if hasattr(self.pipeline, 'sync_integration_service'):
+            return self.pipeline.sync_integration_service.generate_preview_overlay(*args, **kwargs)
+        logger.warning("Preview overlay generation not available")
+        return None
+
+    def _get_effective_overlay_config_for_timelapse(self, timelapse_overlay):
+        """Get effective overlay configuration (compatibility method)."""
+        if hasattr(self.pipeline, 'sync_integration_service'):
+            return self.pipeline.sync_integration_service.settings_resolver.resolve_overlay_settings(
+                timelapse_overlay.preset_id,
+                timelapse_overlay.custom_overrides or {}
+            )
+        return {}
+
+
+class AsyncOverlayService:
+    """
+    Compatibility wrapper for async overlay operations.
+    Maintains backward compatibility while delegating to new pipeline.
+    """
+
+    def __init__(
+        self, db: AsyncDatabase, settings_service=None, weather_manager=None, sse_ops=None
+    ):
+        """Initialize overlay service with async database."""
+        self.db = db
+        self.settings_service = settings_service
+        self.weather_manager = weather_manager
+        self.sse_ops = sse_ops
+        
+        # Create pipeline instance
+        self.pipeline = create_overlay_pipeline(
+            async_database=db,
+            settings_service=settings_service,
+            weather_manager=weather_manager,
+        )
+
+    async def generate_overlay_for_image(
+        self, image_id: int, force_regenerate: bool = False
+    ) -> bool:
+        """Generate overlay for a specific image (async)."""
+        return await self.pipeline.generate_overlay_for_image_async(image_id, force_regenerate)
+
+    async def generate_preview_overlay(self, *args, **kwargs):
+        """Generate preview overlay (async)."""
+        if hasattr(self.pipeline, 'integration_service'):
+            return await self.pipeline.integration_service.generate_preview_overlay(*args, **kwargs)
+        logger.warning("Preview overlay generation not available")
+        return None

@@ -272,6 +272,57 @@ data/cameras/camera-{id}/
    table
 4. **SSE events for corruption** - Real-time UI updates
 
+### Capture Pipeline Architecture
+
+**CRITICAL**: Use dependency injection pattern for all capture operations. Never create services per-capture.
+
+#### Factory Pattern Usage
+
+```python
+# ✅ CORRECT - Use factory pattern
+from app.services.capture_pipeline import create_capture_pipeline
+
+# Create once at startup
+workflow_orchestrator = create_capture_pipeline(settings_service=settings_service)
+
+# Use for all captures
+result = workflow_orchestrator.execute_capture_workflow(camera_id, timelapse_id)
+```
+
+#### Service Dependency Injection
+
+All capture pipeline services use standardized dependency injection:
+
+```python
+# ✅ CORRECT - Services use 'db' as first parameter
+service = SomeService(db=database, optional_param=None)
+
+# ❌ WRONG - Per-capture service creation
+service = SomeService()  # Creates new database connections
+```
+
+#### Scheduler Trust Model
+
+1. **SchedulingService performs comprehensive validation** - Camera health, timing, time windows
+2. **Workers trust scheduler decisions** - Minimal validation in CaptureWorker
+3. **Use `validate_capture_readiness()`** before delegating to workers
+4. **Rich error classification** - Detailed error types for debugging
+
+```python
+# ✅ CORRECT - Trust scheduler validation
+validation_result = scheduling_service.validate_capture_readiness(camera_id, timelapse_id)
+if validation_result.valid:
+    # Proceed with capture - worker trusts scheduler
+    await capture_worker.capture_single_timelapse(timelapse_id)
+```
+
+#### Service Lifecycle Management
+
+1. **Long-lived services** - Created once at startup, reused for all captures
+2. **Factory health checks** - Use `get_capture_pipeline_health()` for monitoring
+3. **Proper cleanup** - Services handle their own resource management
+4. **Connection pooling** - Shared database connections across all services
+
 ### File Structure & Organization
 
 #### Backend Structure
@@ -318,6 +369,48 @@ Complete chain required for new endpoints:
 2. Service method in `*_service.py`
 3. Backend router in `*_routers.py`
 4. Frontend proxy in `/src/app/api/`
+
+### Capture Pipeline Development
+
+Follow these patterns for all capture-related functionality:
+
+```python
+# ✅ CORRECT - Worker initialization
+from app.services.capture_pipeline import create_capture_pipeline
+
+# Initialize at startup
+workflow_orchestrator = create_capture_pipeline(settings_service=settings_service)
+capture_worker = CaptureWorker(workflow_orchestrator=workflow_orchestrator)
+
+# ✅ CORRECT - Capture execution
+validation_result = scheduling_service.validate_capture_readiness(camera_id, timelapse_id)
+if validation_result.valid:
+    result = workflow_orchestrator.execute_capture_workflow(camera_id, timelapse_id)
+```
+
+### Service Development
+
+All services should follow dependency injection patterns:
+
+```python
+# ✅ CORRECT - Service constructor (Step 11 Completed)
+class MyService:
+    def __init__(self, db: SyncDatabase, optional_param: Optional[str] = None):
+        self.db = db
+        self.optional_param = optional_param
+        
+        # Create operations from database
+        self.my_ops = MyOperations(db)
+
+# ✅ CORRECT - Service usage
+service = MyService(db=database, optional_param="value")
+```
+
+**Service Constructor Standardization (Step 11 - ✅ COMPLETED)**:
+- All services now use `db` as the first parameter (not `sync_db`)
+- All service instantiations updated to use correct parameter names
+- Type hints added for database parameters
+- Services standardized: `SyncOverlayJobService`, `OverlayService`, `SyncThumbnailJobService`, `ThumbnailService`
 
 ### Component Development
 
@@ -384,6 +477,58 @@ NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
 - Tailwind CSS 4.1.10
 - TypeScript 5.8.3
 
+## Testing & Integration
+
+### Integration Testing
+
+Use pytest for all integration tests with proper service mocking:
+
+```python
+# ✅ CORRECT - Integration test pattern
+@pytest.mark.integration
+@pytest.mark.capture_pipeline
+class TestCaptureIntegration:
+    def test_capture_flow(self, capture_pipeline_dependencies):
+        # Use factory for service creation
+        workflow_orchestrator = create_capture_pipeline(
+            settings_service=capture_pipeline_dependencies["settings_service"]
+        )
+        
+        # Mock external dependencies
+        with patch.object(workflow_orchestrator.rtsp_service, 'capture_and_process_frame'):
+            result = workflow_orchestrator.execute_capture_workflow(1, 1)
+            assert result.success is True
+```
+
+### Performance Testing
+
+```python
+# ✅ CORRECT - Performance validation
+@pytest.mark.performance
+def test_capture_performance(self, capture_pipeline_dependencies):
+    # Measure timing with mocked services
+    timings = []
+    for _ in range(5):
+        start = time.time()
+        result = workflow_orchestrator.execute_capture_workflow(1, 1)
+        timings.append(time.time() - start)
+    
+    avg_time = sum(timings) / len(timings)
+    assert avg_time < 0.1  # Should be fast with mocks
+```
+
+### Test Markers
+
+Use pytest markers for test organization:
+
+```bash
+# Run specific test categories
+pytest -m integration          # Integration tests
+pytest -m performance          # Performance tests
+pytest -m capture_pipeline     # Capture pipeline tests
+pytest -m scheduler_trust_model # Scheduler trust model tests
+```
+
 ## Health Checks & Debugging
 
 ### Service Health
@@ -392,6 +537,20 @@ NEXT_PUBLIC_FASTAPI_URL=http://localhost:8000
 curl http://localhost:3000/api/health    # Frontend + Backend
 curl http://localhost:8000/api/health    # Backend only
 ./start-services.sh                      # Coordinated startup
+```
+
+### Capture Pipeline Health
+
+```python
+# ✅ CORRECT - Check capture pipeline health
+from app.services.capture_pipeline import get_capture_pipeline_health
+
+workflow_orchestrator = create_capture_pipeline(settings_service=settings_service)
+health = get_capture_pipeline_health(workflow_orchestrator)
+
+# Returns service status and database connectivity
+assert health["status"] == "healthy"
+assert len(health["services"]) == 12  # All services should be present
 ```
 
 ### SSE Connection
@@ -413,6 +572,10 @@ psql $DATABASE_URL -c "SELECT * FROM cameras WHERE health_status = 'offline';"
 5. **Mixing thumbnails with full images** - Separate folder structure required
 6. **Hardcoded paths** - Use config-driven path management
 7. **Bypassing corruption detection** - All captures must go through pipeline
+8. **Per-capture service creation** - Use factory pattern for dependency injection
+9. **Redundant validation in workers** - Use scheduler trust model
+10. **Direct service instantiation** - Always use `create_capture_pipeline()` factory
+11. **Skipping comprehensive validation** - Use `validate_capture_readiness()` in scheduler
 
 ## Production Considerations
 

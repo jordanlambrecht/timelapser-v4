@@ -1,0 +1,224 @@
+# backend/app/services/overlay_pipeline/generators/text_overlay_generator.py
+"""
+Text Overlay Generator - Handles text-based overlay generation.
+"""
+
+from typing import Dict, Any, Optional
+from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
+from pathlib import Path
+from loguru import logger
+
+from ..utils.constants import (
+    DEFAULT_OVERLAY_FONT_SIZE,
+    DEFAULT_OVERLAY_FONT_FAMILY,
+    DEFAULT_OVERLAY_COLOR,
+    DEFAULT_OVERLAY_X_MARGIN,
+    DEFAULT_OVERLAY_Y_MARGIN,
+)
+from ..utils.font_cache import FontCache
+
+
+class TextOverlayGenerator:
+    """
+    Generator for text-based overlays including timestamps, frame numbers,
+    dates, and custom text.
+    """
+
+    def __init__(self):
+        """Initialize text overlay generator."""
+        self.font_cache = FontCache()
+
+    def generate_text_overlay(
+        self,
+        image: Image.Image,
+        text: str,
+        position: str,
+        font_family: str = DEFAULT_OVERLAY_FONT_FAMILY,
+        font_size: int = DEFAULT_OVERLAY_FONT_SIZE,
+        color: str = DEFAULT_OVERLAY_COLOR,
+        x_margin: int = DEFAULT_OVERLAY_X_MARGIN,
+        y_margin: int = DEFAULT_OVERLAY_Y_MARGIN,
+        opacity: int = 100,
+        background_color: Optional[str] = None,
+        shadow: bool = False,
+    ) -> Image.Image:
+        """
+        Generate text overlay on image.
+
+        Args:
+            image: PIL Image to add overlay to
+            text: Text content to overlay
+            position: Position on 9-grid system (e.g., 'top_left', 'bottom_right')
+            font_family: Font family name
+            font_size: Font size in pixels
+            color: Text color in hex format
+            x_margin: Horizontal margin from edge
+            y_margin: Vertical margin from edge
+            opacity: Text opacity (0-100)
+            background_color: Optional background color for text
+            shadow: Whether to add drop shadow
+
+        Returns:
+            Image with text overlay applied
+        """
+        try:
+            # Create a copy to avoid modifying original
+            overlay_image = image.copy()
+            
+            # Create drawing context
+            draw = ImageDraw.Draw(overlay_image)
+            
+            # Get font
+            font = self.font_cache.get_font(font_family, font_size)
+            
+            # Calculate text position
+            text_x, text_y = self._calculate_text_position(
+                overlay_image, text, font, position, x_margin, y_margin
+            )
+            
+            # Convert hex color to RGB
+            text_color = self._hex_to_rgb(color, opacity)
+            
+            # Add shadow if requested
+            if shadow:
+                shadow_color = (0, 0, 0, int(255 * (opacity / 100) * 0.5))
+                draw.text((text_x + 2, text_y + 2), text, font=font, fill=shadow_color)
+            
+            # Add background if specified
+            if background_color:
+                bg_color = self._hex_to_rgb(background_color, opacity)
+                bbox = draw.textbbox((text_x, text_y), text, font=font)
+                draw.rectangle(bbox, fill=bg_color)
+            
+            # Draw the text
+            draw.text((text_x, text_y), text, font=font, fill=text_color)
+            
+            return overlay_image
+            
+        except Exception as e:
+            logger.error(f"Failed to generate text overlay: {e}")
+            return image
+
+    def generate_timestamp_overlay(
+        self,
+        image: Image.Image,
+        timestamp: datetime,
+        format_string: str = "%Y-%m-%d %H:%M:%S",
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate timestamp overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            timestamp: Datetime to format and display
+            format_string: strftime format string
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with timestamp overlay
+        """
+        timestamp_text = timestamp.strftime(format_string)
+        return self.generate_text_overlay(image, timestamp_text, **kwargs)
+
+    def generate_frame_number_overlay(
+        self,
+        image: Image.Image,
+        frame_number: int,
+        total_frames: Optional[int] = None,
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate frame number overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            frame_number: Current frame number
+            total_frames: Total frames (optional, for "X of Y" format)
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with frame number overlay
+        """
+        if total_frames:
+            frame_text = f"Frame {frame_number} of {total_frames}"
+        else:
+            frame_text = f"Frame {frame_number}"
+            
+        return self.generate_text_overlay(image, frame_text, **kwargs)
+
+    def generate_day_number_overlay(
+        self,
+        image: Image.Image,
+        start_date: datetime,
+        current_date: datetime,
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate day number overlay for timelapse.
+
+        Args:
+            image: PIL Image to add overlay to
+            start_date: Timelapse start date
+            current_date: Current image date
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with day number overlay
+        """
+        days_elapsed = (current_date.date() - start_date.date()).days + 1
+        day_text = f"Day {days_elapsed}"
+        return self.generate_text_overlay(image, day_text, **kwargs)
+
+    def _calculate_text_position(
+        self,
+        image: Image.Image,
+        text: str,
+        font: ImageFont.ImageFont,
+        position: str,
+        x_margin: int,
+        y_margin: int,
+    ) -> tuple[int, int]:
+        """Calculate text position based on position string and margins."""
+        from ..utils.constants import POSITION_MAPPING
+        
+        width, height = image.size
+        
+        # Get text dimensions
+        bbox = ImageDraw.Draw(image).textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        # Convert position to camelCase if needed
+        if position in POSITION_MAPPING:
+            camel_position = POSITION_MAPPING[position]
+        else:
+            # Already in camelCase or handle as-is
+            camel_position = position
+        
+        # Calculate position based on 9-grid system
+        if camel_position.startswith("top"):
+            y = y_margin
+        elif camel_position == "centerLeft" or camel_position == "centerRight":
+            y = (height - text_height) // 2
+        elif camel_position == "center":
+            y = (height - text_height) // 2
+        else:  # bottom
+            y = height - text_height - y_margin
+            
+        if camel_position.endswith("Left"):
+            x = x_margin
+        elif camel_position.endswith("Center") or camel_position == "center":
+            x = (width - text_width) // 2
+        else:  # Right
+            x = width - text_width - x_margin
+            
+        return x, y
+
+    def _hex_to_rgb(self, hex_color: str, opacity: int = 100) -> tuple[int, int, int, int]:
+        """Convert hex color to RGBA tuple."""
+        hex_color = hex_color.lstrip('#')
+        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        alpha = int(255 * (opacity / 100))
+        return (*rgb, alpha)

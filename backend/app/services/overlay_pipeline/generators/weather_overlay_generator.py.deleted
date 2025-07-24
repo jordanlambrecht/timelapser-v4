@@ -1,0 +1,232 @@
+# backend/app/services/overlay_pipeline/generators/weather_overlay_generator.py
+"""
+Weather Overlay Generator - Handles weather-based overlay generation.
+"""
+
+from typing import Dict, Any, Optional
+from PIL import Image
+from datetime import datetime
+from loguru import logger
+
+from .text_overlay_generator import TextOverlayGenerator
+
+
+class WeatherOverlayGenerator:
+    """
+    Generator for weather-based overlays including temperature,
+    weather conditions, and combined weather information.
+    """
+
+    def __init__(self, weather_manager=None):
+        """
+        Initialize weather overlay generator.
+
+        Args:
+            weather_manager: Weather manager for accessing weather data
+        """
+        self.weather_manager = weather_manager
+        self.text_generator = TextOverlayGenerator()
+
+    def generate_temperature_overlay(
+        self,
+        image: Image.Image,
+        timestamp: datetime,
+        camera_id: int,
+        unit: str = "F",
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate temperature overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            timestamp: Timestamp for weather data lookup
+            camera_id: Camera ID for location-specific weather
+            unit: Temperature unit ('F' or 'C')
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with temperature overlay
+        """
+        try:
+            if not self.weather_manager:
+                logger.warning("Weather manager not available for temperature overlay")
+                return image
+
+            # Get weather data for timestamp
+            weather_data = self.weather_manager.get_weather_for_timestamp(
+                timestamp, camera_id
+            )
+            
+            if not weather_data or not weather_data.get('temperature'):
+                logger.debug(f"No temperature data available for {timestamp}")
+                return image
+
+            # Format temperature
+            temp = weather_data['temperature']
+            if unit == 'C':
+                temp_c = (temp - 32) * 5/9
+                temp_text = f"{temp_c:.1f}°C"
+            else:
+                temp_text = f"{temp:.1f}°F"
+
+            return self.text_generator.generate_text_overlay(
+                image, temp_text, **kwargs
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate temperature overlay: {e}")
+            return image
+
+    def generate_weather_conditions_overlay(
+        self,
+        image: Image.Image,
+        timestamp: datetime,
+        camera_id: int,
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate weather conditions overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            timestamp: Timestamp for weather data lookup
+            camera_id: Camera ID for location-specific weather
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with weather conditions overlay
+        """
+        try:
+            if not self.weather_manager:
+                logger.warning("Weather manager not available for conditions overlay")
+                return image
+
+            # Get weather data for timestamp
+            weather_data = self.weather_manager.get_weather_for_timestamp(
+                timestamp, camera_id
+            )
+            
+            if not weather_data or not weather_data.get('description'):
+                logger.debug(f"No weather conditions data available for {timestamp}")
+                return image
+
+            conditions_text = weather_data['description'].title()
+
+            return self.text_generator.generate_text_overlay(
+                image, conditions_text, **kwargs
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate weather conditions overlay: {e}")
+            return image
+
+    def generate_combined_weather_overlay(
+        self,
+        image: Image.Image,
+        timestamp: datetime,
+        camera_id: int,
+        unit: str = "F",
+        separator: str = " • ",
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate combined temperature and weather conditions overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            timestamp: Timestamp for weather data lookup
+            camera_id: Camera ID for location-specific weather
+            unit: Temperature unit ('F' or 'C')
+            separator: Separator between temperature and conditions
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with combined weather overlay
+        """
+        try:
+            if not self.weather_manager:
+                logger.warning("Weather manager not available for combined weather overlay")
+                return image
+
+            # Get weather data for timestamp
+            weather_data = self.weather_manager.get_weather_for_timestamp(
+                timestamp, camera_id
+            )
+            
+            if not weather_data:
+                logger.debug(f"No weather data available for {timestamp}")
+                return image
+
+            # Build combined text
+            parts = []
+            
+            # Add temperature if available
+            if weather_data.get('temperature'):
+                temp = weather_data['temperature']
+                if unit == 'C':
+                    temp_c = (temp - 32) * 5/9
+                    parts.append(f"{temp_c:.1f}°C")
+                else:
+                    parts.append(f"{temp:.1f}°F")
+            
+            # Add conditions if available
+            if weather_data.get('description'):
+                parts.append(weather_data['description'].title())
+            
+            if not parts:
+                logger.debug(f"No weather data to display for {timestamp}")
+                return image
+
+            combined_text = separator.join(parts)
+
+            return self.text_generator.generate_text_overlay(
+                image, combined_text, **kwargs
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate combined weather overlay: {e}")
+            return image
+
+    def generate_humidity_overlay(
+        self,
+        image: Image.Image,
+        timestamp: datetime,
+        camera_id: int,
+        **kwargs
+    ) -> Image.Image:
+        """
+        Generate humidity overlay.
+
+        Args:
+            image: PIL Image to add overlay to
+            timestamp: Timestamp for weather data lookup
+            camera_id: Camera ID for location-specific weather
+            **kwargs: Additional text overlay parameters
+
+        Returns:
+            Image with humidity overlay
+        """
+        try:
+            if not self.weather_manager:
+                logger.warning("Weather manager not available for humidity overlay")
+                return image
+
+            # Get weather data for timestamp
+            weather_data = self.weather_manager.get_weather_for_timestamp(
+                timestamp, camera_id
+            )
+            
+            if not weather_data or not weather_data.get('humidity'):
+                logger.debug(f"No humidity data available for {timestamp}")
+                return image
+
+            humidity_text = f"{weather_data['humidity']}% Humidity"
+
+            return self.text_generator.generate_text_overlay(
+                image, humidity_text, **kwargs
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate humidity overlay: {e}")
+            return image

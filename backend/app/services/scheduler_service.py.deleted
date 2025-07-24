@@ -1,0 +1,566 @@
+# backend/app/services/scheduler_service.py
+"""
+Scheduler Service - Async Interface for Scheduler Authority
+
+Provides async API layer over SchedulerWorker to enforce the scheduler-centric model.
+This service acts as the single point of authority for ALL timing decisions in the system.
+
+Core Philosophy: "Scheduler should say 'jump' and pipelines should say 'how high'"
+
+Architecture:
+- Wraps SchedulerWorker with async interface
+- Provides clean API for immediate scheduling operations
+- Maintains scheduler supremacy over all timing decisions
+- Supports both regular intervals and one-time immediate operations
+"""
+
+import asyncio
+from typing import Optional, Dict, Any, List
+from loguru import logger
+
+from ..database.core import AsyncDatabase, SyncDatabase
+from ..services.settings_service import AsyncSettingsService, SyncSettingsService
+from ..services.scheduling_service import AsyncSchedulingService, SyncSchedulingService
+from ..workers.scheduler_worker import SchedulerWorker
+
+
+class SchedulerService:
+    """
+    Async interface for scheduler authority operations.
+    
+    This service provides a clean async API over the SchedulerWorker while
+    maintaining the scheduler-centric philosophy where all timing decisions
+    must go through the scheduler authority.
+    
+    Key Responsibilities:
+    - Immediate capture scheduling (bypassing workers)
+    - Immediate video generation scheduling  
+    - Immediate overlay generation scheduling
+    - Immediate thumbnail generation scheduling
+    - Scheduler status monitoring and health checks
+    - Job lifecycle management
+    """
+
+    def __init__(
+        self,
+        scheduler_worker: SchedulerWorker,
+        async_db: Optional[AsyncDatabase] = None,
+        settings_service: Optional[AsyncSettingsService] = None,
+        scheduling_service: Optional[AsyncSchedulingService] = None
+    ):
+        """
+        Initialize SchedulerService with dependencies.
+        
+        Args:
+            scheduler_worker: The underlying SchedulerWorker instance
+            async_db: Optional async database for direct operations
+            settings_service: Optional async settings service
+            scheduling_service: Optional async scheduling service
+        """
+        self.scheduler_worker = scheduler_worker
+        self.async_db = async_db
+        self.settings_service = settings_service
+        self.scheduling_service = scheduling_service
+        
+        logger.info("🕐 SchedulerService initialized with scheduler authority")
+
+    async def schedule_immediate_capture(
+        self, 
+        camera_id: int, 
+        timelapse_id: int, 
+        priority: str = "normal"
+    ) -> Dict[str, Any]:
+        """
+        Schedule immediate capture through the scheduler authority.
+        
+        This is the primary entry point for all immediate capture requests.
+        Enforces scheduler-centric model where NO captures bypass scheduler validation.
+        
+        Args:
+            camera_id: Camera to capture from
+            timelapse_id: Timelapse context for capture
+            priority: Priority level (high, normal, low)
+            
+        Returns:
+            Dict containing success status and scheduling details
+        """
+        try:
+            logger.info(f"⚡ SchedulerService: Immediate capture request for camera {camera_id}, timelapse {timelapse_id}")
+            
+            # Delegate to scheduler worker in executor to handle sync operations
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.schedule_immediate_capture,
+                camera_id,
+                timelapse_id,
+                priority
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Immediate capture scheduled for camera {camera_id}, timelapse {timelapse_id}",
+                    "camera_id": camera_id,
+                    "timelapse_id": timelapse_id,
+                    "priority": priority,
+                    "scheduled_via": "scheduler_authority"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to schedule immediate capture",
+                    "camera_id": camera_id,
+                    "timelapse_id": timelapse_id,
+                    "priority": priority
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in SchedulerService immediate capture: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "camera_id": camera_id,
+                "timelapse_id": timelapse_id,
+                "priority": priority
+            }
+
+    async def schedule_immediate_video_generation(
+        self, 
+        timelapse_id: int, 
+        video_settings: Optional[Dict] = None,
+        priority: str = "normal"
+    ) -> Dict[str, Any]:
+        """
+        Schedule immediate video generation through the scheduler authority.
+        
+        Args:
+            timelapse_id: Timelapse to generate video for
+            video_settings: Optional video generation settings override
+            priority: Priority level (high, normal, low)
+            
+        Returns:
+            Dict containing success status and scheduling details
+        """
+        try:
+            logger.info(f"⚡ SchedulerService: Immediate video generation request for timelapse {timelapse_id}")
+            
+            # Delegate to scheduler worker in executor to handle sync operations
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.schedule_immediate_video_generation,
+                timelapse_id,
+                video_settings,
+                priority
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Immediate video generation scheduled for timelapse {timelapse_id}",
+                    "timelapse_id": timelapse_id,
+                    "priority": priority,
+                    "video_settings": video_settings,
+                    "scheduled_via": "scheduler_authority"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to schedule immediate video generation",
+                    "timelapse_id": timelapse_id,
+                    "priority": priority
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in SchedulerService immediate video generation: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timelapse_id": timelapse_id,
+                "priority": priority
+            }
+
+    async def schedule_immediate_overlay_generation(
+        self, 
+        image_id: int, 
+        priority: str = "normal"
+    ) -> Dict[str, Any]:
+        """
+        Schedule immediate overlay generation through the scheduler authority.
+        
+        Args:
+            image_id: Image to generate overlay for
+            priority: Priority level (high, normal, low)
+            
+        Returns:
+            Dict containing success status and scheduling details
+        """
+        try:
+            logger.info(f"⚡ SchedulerService: Immediate overlay generation request for image {image_id}")
+            
+            # Delegate to scheduler worker in executor to handle sync operations
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.schedule_immediate_overlay_generation,
+                image_id,
+                priority
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Immediate overlay generation scheduled for image {image_id}",
+                    "image_id": image_id,
+                    "priority": priority,
+                    "scheduled_via": "scheduler_authority"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to schedule immediate overlay generation",
+                    "image_id": image_id,
+                    "priority": priority
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in SchedulerService immediate overlay generation: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "image_id": image_id,
+                "priority": priority
+            }
+
+    async def schedule_immediate_thumbnail_generation(
+        self, 
+        image_id: int, 
+        priority: str = "normal"
+    ) -> Dict[str, Any]:
+        """
+        Schedule immediate thumbnail generation through the scheduler authority.
+        
+        Args:
+            image_id: Image to generate thumbnails for
+            priority: Priority level (high, normal, low)
+            
+        Returns:
+            Dict containing success status and scheduling details
+        """
+        try:
+            logger.info(f"⚡ SchedulerService: Immediate thumbnail generation request for image {image_id}")
+            
+            # Delegate to scheduler worker in executor to handle sync operations
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.schedule_immediate_thumbnail_generation,
+                image_id,
+                priority
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Immediate thumbnail generation scheduled for image {image_id}",
+                    "image_id": image_id,
+                    "priority": priority,
+                    "scheduled_via": "scheduler_authority"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to schedule immediate thumbnail generation",
+                    "image_id": image_id,
+                    "priority": priority
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in SchedulerService immediate thumbnail generation: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "image_id": image_id,
+                "priority": priority
+            }
+
+    async def get_scheduler_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive scheduler status and health information.
+        
+        Returns:
+            Dict containing scheduler status, job counts, and health metrics
+        """
+        try:
+            # Get all jobs status from scheduler worker
+            all_jobs_status = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.get_all_jobs_status
+            )
+            
+            # Get immediate jobs status
+            immediate_jobs_status = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.get_immediate_job_status
+            )
+            
+            # Combine status information
+            scheduler_status = {
+                "scheduler_authority": {
+                    "name": "SchedulerService",
+                    "worker_name": self.scheduler_worker.name,
+                    "scheduler_running": all_jobs_status.get("scheduler_running", False),
+                    "worker_running": self.scheduler_worker.running,
+                },
+                "job_summary": {
+                    "total_jobs": all_jobs_status.get("total_jobs", 0),
+                    "timelapse_jobs_count": all_jobs_status.get("timelapse_jobs_count", 0),
+                    "standard_jobs_count": all_jobs_status.get("standard_jobs_count", 0),
+                    "immediate_jobs_count": immediate_jobs_status.get("immediate_jobs_count", 0),
+                },
+                "immediate_operations": immediate_jobs_status.get("immediate_jobs", {}),
+                "timelapse_jobs": all_jobs_status.get("timelapse_jobs", {}),
+                "standard_jobs": all_jobs_status.get("standard_jobs", {}),
+                "health": {
+                    "status": "healthy" if all_jobs_status.get("scheduler_running", False) else "unhealthy",
+                    "authority_active": True,
+                    "dependencies": {
+                        "async_db": self.async_db is not None,
+                        "settings_service": self.settings_service is not None,
+                        "scheduling_service": self.scheduling_service is not None,
+                    }
+                }
+            }
+            
+            return scheduler_status
+            
+        except Exception as e:
+            logger.error(f"Error getting scheduler status: {e}")
+            return {
+                "scheduler_authority": {
+                    "name": "SchedulerService",
+                    "status": "error",
+                    "error": str(e)
+                },
+                "job_summary": {
+                    "total_jobs": 0,
+                    "timelapse_jobs_count": 0,
+                    "standard_jobs_count": 0,
+                    "immediate_jobs_count": 0,
+                },
+                "health": {
+                    "status": "unhealthy",
+                    "authority_active": False,
+                    "error": str(e)
+                }
+            }
+
+    async def add_timelapse_job(
+        self, 
+        timelapse_id: int, 
+        capture_interval_seconds: int
+    ) -> Dict[str, Any]:
+        """
+        Add a timelapse capture job through the scheduler authority.
+        
+        Args:
+            timelapse_id: Timelapse ID to schedule captures for
+            capture_interval_seconds: Interval between captures
+            
+        Returns:
+            Dict containing success status and job details
+        """
+        try:
+            logger.info(f"🕐 SchedulerService: Adding timelapse job for timelapse {timelapse_id}")
+            
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.add_timelapse_job,
+                timelapse_id,
+                capture_interval_seconds
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Timelapse job added for timelapse {timelapse_id}",
+                    "timelapse_id": timelapse_id,
+                    "capture_interval_seconds": capture_interval_seconds,
+                    "job_id": f"timelapse_{timelapse_id}_capture"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to add timelapse job",
+                    "timelapse_id": timelapse_id,
+                    "capture_interval_seconds": capture_interval_seconds
+                }
+                
+        except Exception as e:
+            logger.error(f"Error adding timelapse job: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timelapse_id": timelapse_id,
+                "capture_interval_seconds": capture_interval_seconds
+            }
+
+    async def remove_timelapse_job(self, timelapse_id: int) -> Dict[str, Any]:
+        """
+        Remove a timelapse capture job through the scheduler authority.
+        
+        Args:
+            timelapse_id: Timelapse ID to remove job for
+            
+        Returns:
+            Dict containing success status and removal details
+        """
+        try:
+            logger.info(f"🕐 SchedulerService: Removing timelapse job for timelapse {timelapse_id}")
+            
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.remove_timelapse_job,
+                timelapse_id
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Timelapse job removed for timelapse {timelapse_id}",
+                    "timelapse_id": timelapse_id,
+                    "job_id": f"timelapse_{timelapse_id}_capture"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to remove timelapse job or job not found",
+                    "timelapse_id": timelapse_id
+                }
+                
+        except Exception as e:
+            logger.error(f"Error removing timelapse job: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timelapse_id": timelapse_id
+            }
+
+    async def update_timelapse_job(
+        self, 
+        timelapse_id: int, 
+        capture_interval_seconds: int
+    ) -> Dict[str, Any]:
+        """
+        Update a timelapse capture job interval through the scheduler authority.
+        
+        Args:
+            timelapse_id: Timelapse ID to update job for
+            capture_interval_seconds: New interval between captures
+            
+        Returns:
+            Dict containing success status and update details
+        """
+        try:
+            logger.info(f"🕐 SchedulerService: Updating timelapse job for timelapse {timelapse_id}")
+            
+            success = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.scheduler_worker.update_timelapse_job,
+                timelapse_id,
+                capture_interval_seconds
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Timelapse job updated for timelapse {timelapse_id}",
+                    "timelapse_id": timelapse_id,
+                    "capture_interval_seconds": capture_interval_seconds,
+                    "job_id": f"timelapse_{timelapse_id}_capture"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to update timelapse job or job not found",
+                    "timelapse_id": timelapse_id,
+                    "capture_interval_seconds": capture_interval_seconds
+                }
+                
+        except Exception as e:
+            logger.error(f"Error updating timelapse job: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timelapse_id": timelapse_id,
+                "capture_interval_seconds": capture_interval_seconds
+            }
+
+    async def sync_running_timelapses(self) -> Dict[str, Any]:
+        """
+        Synchronize scheduler with currently running timelapses.
+        
+        Returns:
+            Dict containing sync results and statistics
+        """
+        try:
+            logger.info("🕐 SchedulerService: Synchronizing running timelapses")
+            
+            success = await self.scheduler_worker.sync_running_timelapses()
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": "Timelapse synchronization completed successfully"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Timelapse synchronization failed"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error synchronizing timelapses: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_scheduler_worker(self) -> SchedulerWorker:
+        """
+        Get the underlying SchedulerWorker instance.
+        
+        This should only be used for advanced operations or testing.
+        Most operations should go through the SchedulerService methods.
+        
+        Returns:
+            SchedulerWorker instance
+        """
+        return self.scheduler_worker
+
+
+def create_scheduler_service(
+    scheduler_worker: SchedulerWorker,
+    async_db: Optional[AsyncDatabase] = None,
+    settings_service: Optional[AsyncSettingsService] = None,
+    scheduling_service: Optional[AsyncSchedulingService] = None
+) -> SchedulerService:
+    """
+    Factory function to create a SchedulerService instance.
+    
+    Args:
+        scheduler_worker: Initialized SchedulerWorker instance
+        async_db: Optional async database connection
+        settings_service: Optional async settings service
+        scheduling_service: Optional async scheduling service
+        
+    Returns:
+        Configured SchedulerService instance
+    """
+    return SchedulerService(
+        scheduler_worker=scheduler_worker,
+        async_db=async_db,
+        settings_service=settings_service,
+        scheduling_service=scheduling_service
+    )
+
+
+# Convenience aliases for clean imports
+AsyncSchedulerService = SchedulerService

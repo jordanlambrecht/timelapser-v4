@@ -32,11 +32,12 @@ from ..database.settings_operations import SettingsOperations, SyncSettingsOpera
 from ..models.shared_models import (
     NextCaptureResult,
     CaptureValidationResult,
+    CaptureReadinessValidationResult,
     CaptureDueCheckResult,
     CaptureCountEstimate,
 )
-from ..utils.timezone_utils import create_time_delta
-from ..utils.timezone_utils import (
+from ..utils.time_utils import create_time_delta
+from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
 )
@@ -45,8 +46,9 @@ from ..constants import (
     MAX_CAPTURE_INTERVAL_SECONDS,
     DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS,
     EVENT_CAMERA_STATUS_UPDATED,
+    CAMERA_HEALTH_OFFLINE,
 )
-from .time_window_service import TimeWindowService
+from .time_window_service import TimeWindowService, SyncTimeWindowService
 
 if TYPE_CHECKING:
     pass
@@ -100,21 +102,27 @@ class SchedulingService:
                 try:
                     min_interval_seconds = int(min_interval)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid min_capture_interval_seconds '{min_interval}', using default {MIN_CAPTURE_INTERVAL_SECONDS}")
+                    logger.warning(
+                        f"Invalid min_capture_interval_seconds '{min_interval}', using default {MIN_CAPTURE_INTERVAL_SECONDS}"
+                    )
 
             max_interval_seconds = MAX_CAPTURE_INTERVAL_SECONDS
             if max_interval:
                 try:
                     max_interval_seconds = int(max_interval)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid max_capture_interval_seconds '{max_interval}', using default {MAX_CAPTURE_INTERVAL_SECONDS}")
+                    logger.warning(
+                        f"Invalid max_capture_interval_seconds '{max_interval}', using default {MAX_CAPTURE_INTERVAL_SECONDS}"
+                    )
 
             grace_period_seconds = DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS
             if grace_period:
                 try:
                     grace_period_seconds = int(grace_period)
                 except (ValueError, TypeError):
-                    logger.warning(f"Invalid capture_grace_period_seconds '{grace_period}', using default {DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS}")
+                    logger.warning(
+                        f"Invalid capture_grace_period_seconds '{grace_period}', using default {DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS}"
+                    )
 
             return {
                 "min_interval_seconds": min_interval_seconds,
@@ -493,13 +501,13 @@ class SyncSchedulingService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase, time_window_service: TimeWindowService):
+    def __init__(self, db: SyncDatabase, time_window_service: SyncTimeWindowService):
         """
         Initialize SyncSchedulingService with sync database instance.
 
         Args:
             db: SyncDatabase instance
-            time_window_service: TimeWindowService for time window logic
+            time_window_service: SyncTimeWindowService for time window logic
         """
         self.db = db
         self.time_window_service = time_window_service
@@ -605,3 +613,133 @@ class SyncSchedulingService:
             seconds=interval_seconds - grace_period_seconds
         )
         return time_since_last >= required_interval
+
+    def calculate_next_capture_time(
+        self,
+        current_time: datetime,
+        interval_seconds: int,
+    ) -> datetime:
+        """
+        Calculate next capture time for sync operations.
+
+        Args:
+            current_time: Current datetime
+            interval_seconds: Capture interval in seconds
+
+        Returns:
+            Next capture datetime
+        """
+        return current_time + create_time_delta(seconds=interval_seconds)
+
+    def validate_capture_readiness(self, camera_id: int, timelapse_id: int) -> CaptureReadinessValidationResult:
+        """
+        Comprehensive validation for capture readiness - implements scheduler trust model.
+        
+        This method performs ALL validation checks so that workers can trust scheduler
+        decisions and skip redundant validation.
+        
+        Args:
+            camera_id: Camera identifier
+            timelapse_id: Timelapse identifier
+            
+        Returns:
+            CaptureValidationResult with validation status and details
+        """
+        try:
+            # Import here to avoid circular imports
+            from ..database.camera_operations import SyncCameraOperations
+            from ..database.timelapse_operations import SyncTimelapseOperations
+            
+            camera_ops = SyncCameraOperations(self.db)
+            timelapse_ops = SyncTimelapseOperations(self.db)
+            
+            # Step 1: Validate camera exists and is enabled
+            camera = camera_ops.get_camera_by_id(camera_id)
+            if not camera:
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Camera {camera_id} not found",
+                    error_type="camera_not_found"
+                )
+            
+            if camera.status != "active":
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Camera {camera_id} is disabled (status: {camera.status})",
+                    error_type="camera_disabled"
+                )
+            
+            # Step 2: Validate camera health status
+            if camera.health_status == CAMERA_HEALTH_OFFLINE:
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Camera {camera_id} is offline",
+                    error_type="camera_offline"
+                )
+            
+            # Step 3: Validate timelapse exists and is active
+            timelapse = timelapse_ops.get_timelapse_by_id(timelapse_id)
+            if not timelapse:
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Timelapse {timelapse_id} not found",
+                    error_type="timelapse_not_found"
+                )
+            
+            if timelapse.status not in ['running', 'active']:
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Timelapse {timelapse_id} is not active (status: {timelapse.status})",
+                    error_type="timelapse_not_active"
+                )
+            
+            # Step 4: Validate capture timing (is capture due?)
+            current_time = get_timezone_aware_timestamp_sync(self.db)
+            
+            # Get last capture time for this camera
+            last_capture_time = camera.last_capture_at
+            capture_interval = timelapse.capture_interval_seconds
+            
+            if last_capture_time and not self.is_capture_due(
+                last_capture_time=last_capture_time,
+                interval_seconds=capture_interval,
+                time_window_start=camera.time_window_start,
+                time_window_end=camera.time_window_end,
+                current_time=current_time
+            ):
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Capture not due yet for camera {camera_id}",
+                    error_type="capture_not_due"
+                )
+            
+            # Step 5: Validate time window constraints
+            if not self.time_window_service.is_within_time_window(
+                current_time=current_time,
+                window_start=camera.time_window_start,
+                window_end=camera.time_window_end
+            ):
+                return CaptureReadinessValidationResult(
+                    valid=False,
+                    error=f"Current time outside camera {camera_id} time window",
+                    error_type="outside_time_window"
+                )
+            
+            # All validation passed
+            return CaptureReadinessValidationResult(
+                valid=True,
+                camera=camera,
+                timelapse=timelapse,
+                next_capture_time=self.calculate_next_capture_time(
+                    current_time=current_time,
+                    interval_seconds=capture_interval
+                )
+            )
+            
+        except Exception as e:
+            logger.error(f"Error validating capture readiness for camera {camera_id}: {e}")
+            return CaptureReadinessValidationResult(
+                valid=False,
+                error=f"Validation error: {str(e)}",
+                error_type="validation_error"
+            )

@@ -5,6 +5,20 @@
 
 echo "🧹 Cleaning __pycache__ directories from timelapser-v4 codebase..."
 
+echo "🧹 Cleaning .pytest_cache directories..."
+pytest_cache_count=0
+
+# Find and remove .pytest_cache directories, excluding venv directories
+while IFS= read -r -d '' pytest_cache_dir; do
+  if [[ "$pytest_cache_dir" == *"/venv/"* ]]; then
+    echo "⏭️  Skipping (in venv): $pytest_cache_dir"
+    continue
+  fi
+  echo "🗑️  Removing: $pytest_cache_dir"
+  rm -rf "$pytest_cache_dir"
+  ((pytest_cache_count++))
+done < <(find "$SCRIPT_DIR" -type d -name ".pytest_cache" -print0)
+
 # Get the script directory (project root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -60,6 +74,7 @@ echo ""
 echo "✅ Cleanup complete!"
 echo "📊 Summary:"
 echo "   - __pycache__ directories removed: $removed_count"
+echo "   - .pytest_cache directories removed: $pytest_cache_count"
 echo "   - .pyc files removed: $pyc_count"
 echo "   - .pyo files removed: $pyo_count"
 echo "   - Virtual environment directories were preserved"
