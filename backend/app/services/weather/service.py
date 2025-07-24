@@ -21,15 +21,22 @@ Version: 4.0
 License: Private
 """
 
+import traceback
 import requests
 import inspect
 import json
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Dict, Any, Optional, Tuple
 from loguru import logger
+from zoneinfo import ZoneInfo
+
+from backend.app.database import sync_db
+from backend.app.database.sse_events_operations import SyncSSEEventsOperations
+from backend.app.enums import SSEPriority
+
 
 # Import centralized time utilities (AI-CONTEXT compliant)
-from app.utils.timezone_utils import (
+from ...utils.time_utils import (
     create_timezone_aware_datetime,
     utc_now,
     get_timezone_from_settings,
@@ -48,6 +55,7 @@ from ...models.weather_model import (
 
 # Import weather constants
 from ...constants import (
+    EVENT_WEATHER_UPDATED,
     OPENWEATHER_API_BASE_URL,
     OPENWEATHER_API_TIMEOUT,
     OPENWEATHER_API_UNITS,
@@ -203,7 +211,6 @@ class OpenWeatherService:
             SunTimeWindow: Calculated time window
         """
         # Convert timestamps to timezone-aware datetime
-        from zoneinfo import ZoneInfo
 
         try:
             tz = ZoneInfo(timezone_str)
@@ -254,7 +261,6 @@ class OpenWeatherService:
         """
         # Get current time in configured timezone if not provided
         if check_time is None:
-            from zoneinfo import ZoneInfo
 
             try:
                 # Use centralized timezone utility (AI-CONTEXT compliant)
@@ -583,7 +589,6 @@ class WeatherManager:
             # Get today's date in the configured timezone
             timezone_str = get_timezone_from_settings(settings_dict)
             try:
-                from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(timezone_str)
                 today = datetime.now(tz).date().isoformat()
@@ -732,3 +737,212 @@ class WeatherManager:
         except Exception as e:
             logger.error(f"Failed to get settings from database: {e}")
             return {}
+
+    async def get_weather_data_for_settings(
+        self, settings_dict: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Get weather data formatted for settings response.
+
+        Args:
+            settings_dict: Current settings dictionary to enhance
+
+        Returns:
+            Enhanced settings dictionary with weather data
+        """
+        # Get latest weather data from weather table
+        weather_data = self.weather_ops.get_latest_weather()
+
+        if weather_data:
+            # Convert weather timestamp to configured timezone for display
+            weather_date_fetched = weather_data.get("weather_date_fetched")
+            if weather_date_fetched:
+
+                # Get configured timezone
+                timezone_str = get_timezone_from_settings(settings_dict)
+
+                # Convert UTC timestamp to configured timezone
+                try:
+                    if isinstance(weather_date_fetched, str):
+                        # Parse string to datetime if needed
+
+                        weather_date_fetched = datetime.fromisoformat(
+                            weather_date_fetched.replace("Z", "+00:00")
+                        )
+
+                    # Convert to configured timezone
+                    tz = ZoneInfo(timezone_str)
+                    local_time = weather_date_fetched.astimezone(tz)
+                    settings_dict["weather_date_fetched"] = local_time.isoformat()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to convert weather timestamp to timezone {timezone_str}: {e}"
+                    )
+                    # Fallback to original timestamp with safe conversion
+                    settings_dict["weather_date_fetched"] = str(weather_date_fetched)
+            else:
+                settings_dict["weather_date_fetched"] = ""
+
+            # Add other weather data to settings dict for backward compatibility
+            settings_dict["current_temp"] = (
+                str(weather_data.get("current_temp", ""))
+                if weather_data.get("current_temp") is not None
+                else ""
+            )
+            settings_dict["current_weather_icon"] = weather_data.get(
+                "current_weather_icon", ""
+            )
+            settings_dict["current_weather_description"] = weather_data.get(
+                "current_weather_description", ""
+            )
+            sunrise_ts = weather_data.get("sunrise_timestamp")
+            settings_dict["sunrise_timestamp"] = (
+                sunrise_ts.isoformat()
+                if sunrise_ts and hasattr(sunrise_ts, "isoformat")
+                else str(sunrise_ts) if sunrise_ts else ""
+            )
+
+            sunset_ts = weather_data.get("sunset_timestamp")
+            settings_dict["sunset_timestamp"] = (
+                sunset_ts.isoformat()
+                if sunset_ts and hasattr(sunset_ts, "isoformat")
+                else str(sunset_ts) if sunset_ts else ""
+            )
+
+        return settings_dict
+
+    async def manual_weather_refresh(self) -> WeatherRefreshResult:
+        """
+        Perform manual weather data refresh with comprehensive error handling.
+
+        Returns:
+            WeatherRefreshResult with success status and data
+        """
+        # Get weather settings
+        settings_dict = await self.get_weather_settings()
+
+        # Check if weather is enabled
+        weather_enabled = (
+            settings_dict.get("weather_enabled", "false").lower() == "true"
+        )
+        if not weather_enabled:
+            return WeatherRefreshResult(
+                success=False,
+                message="Weather integration is disabled",
+                weather_data=None,
+                error_code=None,
+            )
+
+        # Check required settings
+        latitude = settings_dict.get("latitude")
+        longitude = settings_dict.get("longitude")
+
+        # Get API key securely through settings service
+        api_key = None
+        if self.settings_service:
+            api_key = await self.settings_service.get_openweather_api_key()
+
+        if not all([latitude, longitude, api_key]):
+            return WeatherRefreshResult(
+                success=False,
+                message="Missing required weather settings (latitude, longitude, or API key)",
+                error_code=None,
+                weather_data=None,
+            )
+
+        # Convert to float with error handling
+        try:
+            if latitude is None or longitude is None:
+                raise ValueError("Latitude or longitude is None")
+            lat_float = float(latitude)
+            lon_float = float(longitude)
+        except (ValueError, TypeError) as e:
+            return WeatherRefreshResult(
+                success=False,
+                message=f"Invalid latitude or longitude values: {e}",
+                weather_data=None,
+                error_code=None,
+            )
+
+        try:
+            masked_api_key = (
+                f"***{api_key[-4:]}" if api_key and len(api_key) > 4 else "***"
+            )
+            logger.info(
+                f"Attempting manual weather refresh with API key: {masked_api_key}"
+            )
+            logger.info(f"Latitude: {latitude}, Longitude: {longitude}")
+
+            # Create OpenWeather service directly for testing
+            ow_service = OpenWeatherService(api_key or "", lat_float, lon_float)
+
+            # Test API connection
+            logger.info("Testing OpenWeather API connection...")
+            weather_data = ow_service.fetch_current_weather()
+            logger.info(f"Direct API call result: {weather_data is not None}")
+
+            if weather_data:
+                # Try to save to database using weather manager
+                logger.info("Attempting to save weather data...")
+                cache_success = await self.update_weather_cache(weather_data)
+                logger.info(f"Cache update success: {cache_success}")
+
+                # Create SSE event for manual weather refresh
+                await self._create_weather_update_sse_event(weather_data, "api")
+
+                return WeatherRefreshResult(
+                    success=True,
+                    error_code=None,
+                    weather_data=weather_data,
+                    message="Weather data refreshed successfully",
+                )
+            else:
+                return WeatherRefreshResult(
+                    success=False,
+                    message="Failed to refresh weather data",
+                    weather_data=None,
+                    error_code=None,
+                )
+
+        except Exception as e:
+
+            logger.error(f"Weather refresh error: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return WeatherRefreshResult(
+                success=False,
+                message=f"Weather refresh failed: {str(e)}",
+                weather_data=None,
+                error_code=None,
+            )
+
+    async def _create_weather_update_sse_event(
+        self, weather_data: OpenWeatherApiData, source: str = "worker"
+    ):
+        """
+        Create SSE event for weather updates.
+
+        Args:
+            weather_data: Weather data to broadcast
+            source: Source of the update (worker, api, etc.)
+        """
+        try:
+
+            sse_ops = SyncSSEEventsOperations(sync_db)
+            event_id = sse_ops.create_event(
+                EVENT_WEATHER_UPDATED,
+                {
+                    "temperature": weather_data.temperature,
+                    "icon": weather_data.icon,
+                    "description": weather_data.description,
+                    "date_fetched": (
+                        weather_data.date_fetched.isoformat()
+                        if hasattr(weather_data.date_fetched, "isoformat")
+                        else str(weather_data.date_fetched)
+                    ),
+                },
+                SSEPriority.NORMAL,
+                source,  # Source is passed parameter
+            )
+            logger.info(f"Created weather update SSE event with ID: {event_id}")
+        except Exception as e:
+            logger.error(f"Failed to create weather update SSE event: {e}")
