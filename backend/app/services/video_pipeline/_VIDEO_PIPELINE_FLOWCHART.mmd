@@ -1,0 +1,132 @@
+---
+config:
+  theme: 'forest'
+  themeVariables:
+    background: '#665a5a'
+    primaryTextColor: '#000'
+
+---
+
+flowchart TD
+    %% Entry Points
+    IMGCOMPLETE[Image Capture Complete] --> AUTO[Check Video Automation]
+    SCHEDULER[Scheduled Automation<br/>Every 5 minutes] --> VW[Video Automation Service]
+    
+    %% Video Automation Decision Trees
+    AUTO --> MODE{Automation Mode}
+    
+    %% Immediate Mode
+    MODE -->|immediate| IMM[Trigger Immediate Video]
+    IMM --> VQHIGH[Queue Job HIGH Priority]
+    
+    %% Milestone Mode
+    MODE -->|milestone| MILE{Milestone Reached?}
+    MILE -->|Yes| MILETRIG[Trigger Milestone Video]
+    MILE -->|No| DONE[No Video Generated]
+    MILETRIG --> VQMED[Queue Job MEDIUM Priority]
+    
+    %% Manual/Scheduled Modes
+    MODE -->|manual| DONE
+    MODE -->|scheduled| DONE
+    
+    %% Scheduled Video Automation (Separate Process)
+    VW --> VWCHECK[Check All Timelapses]
+    VWCHECK --> SCHEDTRIG{Scheduled Videos Due?}
+    SCHEDTRIG -->|Yes| SCHEDQ[Queue Jobs LOW Priority]
+    SCHEDTRIG -->|No| VWDONE[Automation Complete]
+    
+    %% Video Generation Job Queue Processing
+    VQHIGH --> VGQ[Video Generation Queue]
+    VQMED --> VGQ
+    SCHEDQ --> VGQ
+    VGQ --> VGW[Video Worker]
+    
+    %% Video Generation Pipeline
+    VGW --> NEXTJOB[Get Next Job by Priority]
+    NEXTJOB --> STARTJOB[Mark Job Started]
+    STARTJOB --> FPSCALC{Calculate FPS}
+    
+    %% FPS Calculation Decision Tree
+    FPSCALC --> GENMODE{Generation Mode}
+    
+    %% Standard FPS Mode Branch
+    GENMODE -->|standard| TIMELIMITS{Time Limits?}
+    TIMELIMITS -->|No| USESTD[Use Standard FPS]
+    TIMELIMITS -->|Yes| STDCALC[Calculate Within Bounds]
+    
+    %% Target Duration Mode Branch
+    GENMODE -->|target| TARGETCALC[Calculate Target FPS]
+    TARGETCALC --> FPSBOUNDS[Apply FPS Boundaries]
+    
+    %% FPS Calculation Results
+    USESTD --> FPSRESULT[FPS Ready]
+    STDCALC --> FPSRESULT
+    FPSBOUNDS --> FPSRESULT
+    
+    %% Video Generation with Overlay Logic
+    FPSRESULT --> OVLCHECK{Overlays Enabled?}
+    
+    %% No Overlays Video Path
+    OVLCHECK -->|No| SIMPLEVM[Simple Video]
+    SIMPLEVM --> SIMPLEFF[FFmpeg Basic Video]
+    
+    %% Overlays Enabled - Preflight Check
+    OVLCHECK -->|Yes| PREFLIGHT[Check Overlays Exist]
+    
+    %% Missing Overlay Handling
+    PREFLIGHT -->|Missing| REGEN[Regenerate Overlays]
+    REGEN --> REGENSUC{Regen Success?}
+    REGENSUC -->|Success| COMPLEXVM[Complex Video]
+    REGENSUC -->|Failure| FALLBACKCREATE[Create Fallbacks]
+    FALLBACKCREATE --> COMPLEXVM
+    
+    %% Normal Path (all overlays present)
+    PREFLIGHT -->|Present| COMPLEXVM
+    
+    %% Complex FFmpeg with Overlays
+    COMPLEXVM --> COMPLEXFF[FFmpeg With Overlays]
+    
+    %% FFmpeg Results
+    SIMPLEFF --> SIMPLESUC{FFmpeg Success?}
+    COMPLEXFF --> COMPLEXSUC{FFmpeg Success?}
+    
+    SIMPLESUC -->|Success| VIDEODONE[Video Complete]
+    COMPLEXSUC -->|Success| VIDEODONE
+    
+    %% Final Fallback Path
+    SIMPLESUC -->|Failure| VIDEOERROR[Video Failed]
+    COMPLEXSUC -->|Failure| FALLBACKNOOVL[Fallback No Overlays]
+    FALLBACKNOOVL --> SIMPLEFF
+    
+    %% Job Completion and Loop
+    VIDEODONE --> JOBCOMPLETE[Mark Complete and Broadcast]
+    VIDEOERROR --> JOBERROR[Mark Failed and Broadcast]
+    JOBCOMPLETE --> NEXTJOB
+    JOBERROR --> NEXTJOB
+    
+    %% SSE Event Broadcasting
+    IMM --> SSE2[SSE Job Queued]
+    MILETRIG --> SSE3[SSE Milestone Queued]
+    VIDEODONE --> SSE4[SSE Video Complete]
+    VIDEOERROR --> SSE5[SSE Video Failed]
+    
+    %% Styling
+    classDef scheduler fill:#e3f2fd
+    classDef worker fill:#f1f8e9
+    classDef video fill:#e8f5e8
+    classDef queue fill:#fff3e0
+    classDef fallback fill:#ffebee
+    classDef sse fill:#f9fbe7
+    classDef fps fill:#e8f5e8
+    classDef done fill:#e8f5e8
+    classDef error fill:#ffebee
+    
+    class SCHEDULER,VW,VWCHECK,SCHEDTRIG,VWDONE scheduler
+    class VGW,NEXTJOB,STARTJOB,JOBCOMPLETE,JOBERROR worker
+    class AUTO,MODE,OVLCHECK,SIMPLEVM,COMPLEXVM,SIMPLEFF,COMPLEXFF,VIDEODONE,SIMPLESUC,COMPLEXSUC,PREFLIGHT video
+    class VQHIGH,VQMED,VGQ,SCHEDQ,IMGCOMPLETE queue
+    class REGEN,REGENSUC,FALLBACKCREATE,FALLBACKNOOVL fallback
+    class SSE2,SSE3,SSE4,SSE5 sse
+    class FPSCALC,GENMODE,TIMELIMITS,USESTD,STDCALC,TARGETCALC,FPSBOUNDS,FPSRESULT fps
+    class DONE,IMM,MILETRIG,MILE done
+    class VIDEOERROR,JOBERROR error

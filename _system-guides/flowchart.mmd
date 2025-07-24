@@ -1,0 +1,270 @@
+flowchart TD
+    %% Scheduler Layer with SchedulingService Integration
+    SCHED[APScheduler] --> SCHED1[Camera A Job: Every 30min]
+    SCHED --> SCHED2[Camera B Job: Every 2hr]
+    SCHED --> SCHED3[Video Automation: Every 5min]
+    SCHED --> SCHED4[Weather Refresh: Every 1hr]
+    SCHED --> SCHED5[Health Check: Every 5min]
+    SCHED --> SCHED6[Cleanup: Every 6hr]
+    SCHED --> SCHED7[SSE Cleanup: Daily]
+    
+    %% SchedulingService Central Coordinator (NEW)
+    SCHED1 --> SS1[SchedulingService.is_capture_due<br/>timelapse_id=1]
+    SCHED2 --> SS2[SchedulingService.is_capture_due<br/>timelapse_id=2]
+    SCHED5 --> HS[HealthWorker.check_camera_health]
+    
+    %% Worker Orchestration
+    SS1 -->|Due| CW1[CaptureWorker.capture_single_timelapse<br/>timelapse_id=1]
+    SS2 -->|Due| CW2[CaptureWorker.capture_single_timelapse<br/>timelapse_id=2]
+    SS1 -->|Not Due| SKIPDUE1[Skip - Not Due Yet]
+    SS2 -->|Not Due| SKIPDUE2[Skip - Not Due Yet]
+    SCHED3 --> VW[VideoAutomationService.process_automation_triggers]
+    SCHED4 --> WW[WeatherWorker.refresh_weather_data]
+    SCHED6 --> CLW[CleanupWorker.cleanup_old_data]
+    SCHED7 --> SSEW[SSEWorker.cleanup_old_events]
+    
+    %% Health Monitoring Flow (SEPARATED WORKER)
+    HS --> HCHECK[Check All Active Cameras<br/>Independent of Capture]
+    HCHECK --> HTEST[Test RTSP Connectivity<br/>via RTSPService]
+    HTEST --> HUPDATE[Update Camera Health Status<br/>via CameraService]
+    HUPDATE --> HMETRICS[Aggregate Health Metrics]
+    HMETRICS --> HSSE[Broadcast SSE: camera_health_updated]
+    
+    %% Pre-Capture Validation Pipeline (SCHEDULER TRUST MODEL)
+    %% Note: CaptureWorker trusts scheduler validation - no redundant checks
+    CW1 --> RTSPSERV[RTSPService<br/>Direct to Capture]
+    CW2 --> RTSPSERV
+    
+    %% Note: Validation logic moved to SchedulingService
+    %% Auto-stop, status checks, time windows handled at scheduler level
+    
+    %% Improved Service Layer (NEW)
+    RTSPSERV --> TXN[TransactionManager.capture_transaction<br/>Atomic Operations]
+    
+    %% Transaction-Safe Capture Pipeline (NEW)
+    TXN --> RTSPCAPTURE[RTSP Frame Capture<br/>with Retry Logic]
+    RTSPCAPTURE --> TXNSAVE[Transaction: Save Frame]
+    TXNSAVE --> TXNDB[Transaction: Create DB Record]
+    TXNDB --> TXNCOMMIT{Transaction<br/>Success?}
+    
+    %% Transaction Outcomes
+    TXNCOMMIT -->|Success| MERGE[Commit: Image Saved to frames/]
+    TXNCOMMIT -->|Failure| TXNROLLBACK[Rollback: Clean Up Files & DB]
+    TXNROLLBACK --> CAPTUREFAIL[Capture Failed<br/>Log Error]
+    
+    %% Corruption Detection Pipeline
+    MERGE --> FASTDETECT[Fast Corruption Detection<br/>Always Enabled - 1-5ms]
+    FASTDETECT --> FASTSCORE[Calculate Fast Score<br/>File size, pixels, uniformity]
+    FASTSCORE --> HEAVYCHECK{Heavy Detection<br/>Enabled for Camera?}
+    
+    %% Heavy Detection Path
+    HEAVYCHECK -->|Yes| HEAVYDETECT[Heavy Corruption Detection<br/>Computer Vision - 20-100ms]
+    HEAVYDETECT --> HEAVYSCORE[Calculate Heavy Score<br/>Blur, noise, edges, patterns]
+    HEAVYSCORE --> COMBINESCORE[Weighted Score Combination<br/>30% Fast + 70% Heavy]
+    
+    %% Fast Only Path
+    HEAVYCHECK -->|No| USEFASTSCORE[Use Fast Score Only]
+    USEFASTSCORE --> SCORETHRESH{Score Above Global<br/>Threshold 70?}
+    COMBINESCORE --> SCORETHRESH
+    
+    %% Score Evaluation and Retry Logic
+    SCORETHRESH -->|No - First Attempt| RETRY[Corruption Detected<br/>Attempt Retry Capture]
+    RETRY --> RTSPSERV
+    SCORETHRESH -->|No - Second Attempt| RETRYFAIL[Log Double Corruption Failure<br/>Update Degraded Stats]
+    SCORETHRESH -->|Yes| CORRUPTSUCCESS[Image Quality Acceptable<br/>Log Success Stats]
+    
+    %% Degraded Mode Monitoring
+    RETRYFAIL --> DEGRADEDCHECK{Check Degraded Mode<br/>Triggers}
+    DEGRADEDCHECK -->|10+ Consecutive OR 5+ in 30min OR 50+ percent in 20 captures| DEGRADEDMODE[Enter Degraded Mode<br/>Continue with Warnings]
+    DEGRADEDCHECK -->|Below Thresholds| CONTINUECAPTURE[Continue Normal Operation]
+    DEGRADEDMODE --> CONTINUECAPTURE
+    
+    %% Corruption Logging and Broadcasting
+    CORRUPTSUCCESS --> LOGCORRUPT[Log Corruption Detection<br/>to corruption_logs table]
+    RETRYFAIL --> LOGCORRUPT
+    LOGCORRUPT --> SSECORRUPT[Broadcast SSE: corruption_detected<br/>with score and details]
+    SSECORRUPT --> UPDATECAMSTATS[Update Camera Stats<br/>lifetime_glitch_count, consecutive_failures]
+    UPDATECAMSTATS --> CONTINUECAPTURE
+    
+    %% Continue to Overlay Generation
+    CONTINUECAPTURE --> CHK{Overlays Enabled<br/>for this Timelapse?}
+    
+    %% Skip Overlay Path
+    CHK -->|No| SKIPOVERLAY[Update DB: overlay_status = 'disabled']
+    
+    %% Generate Overlay Path
+    CHK -->|Yes| OVL{Generate Overlay PNG<br/>for this Timelapse}
+    
+    %% Overlay Generation Success Path
+    OVL -->|Success| SAVE[Save Overlay to overlays/]
+    SAVE --> DBUPDATE[Update Database: overlay_status = 'generated']
+    
+    %% Overlay Generation Failure Path
+    OVL -->|Failure| FALL[Create Empty Transparent PNG]
+    FALL --> FALLSAVE[Save Fallback Overlay to overlays/]
+    FALLSAVE --> FALLDB[Update Database: overlay_status = 'fallback']
+    
+    %% File Structure Examples
+    MERGE --> FILEEX1[frames/timelapse-X_20250422_143022.jpg]
+    SAVE --> FILEEX2[overlays/timelapse-X_20250422_143022_overlay.png]
+    FALLSAVE --> FILEEX3[overlays/timelapse-X_20250422_143022_overlay.png<br/>empty transparent]
+    
+    %% Thumbnail Background Jobs
+    MERGE --> THM[Queue Thumbnail Job<br/>ThumbnailWorker]
+    THM --> THMQ[Thumbnail Job Queue]
+    THMQ --> THMW[ThumbnailWorker<br/>Background Processing]
+    
+    %% Video Automation Triggers
+    DBUPDATE --> AUTO[Check Video Automation Mode<br/>for this Timelapse]
+    FALLDB --> AUTO
+    SKIPOVERLAY --> AUTO
+    
+    %% Video Automation Decision Trees
+    AUTO --> MODE{Automation Mode<br/>for this Timelapse}
+    
+    %% Immediate Mode
+    MODE -->|immediate| IMM[Trigger Immediate<br/>Video Generation]
+    IMM --> VQHIGH[Add Job to Video Queue<br/>Priority: HIGH]
+    
+    %% Milestone Mode
+    MODE -->|milestone| MILE{Image Count<br/>Milestone Reached?}
+    MILE -->|Yes| MILETRIG[Trigger Milestone<br/>Video Generation]
+    MILE -->|No| DONE[Capture Complete]
+    MILETRIG --> VQMED[Add Job to Video Queue<br/>Priority: MEDIUM]
+    
+    %% Manual/Scheduled Modes
+    MODE -->|manual| DONE
+    MODE -->|scheduled| DONE
+    
+    %% Scheduled Video Automation (Separate Process)
+    VW --> VWCHECK[Check All Timelapses<br/>for Scheduled Triggers]
+    VWCHECK --> SCHEDTRIG{Any Scheduled<br/>Videos Due?}
+    SCHEDTRIG -->|Yes| SCHEDQ[Add Scheduled Jobs<br/>to Video Queue<br/>Priority: LOW]
+    SCHEDTRIG -->|No| VWDONE[Video Automation Complete]
+    
+    %% Video Generation Job Queue Processing
+    VQHIGH --> VGQ[Video Generation Job Queue]
+    VQMED --> VGQ
+    SCHEDQ --> VGQ
+    VGQ --> VGW[VideoWorker.process_queue]
+    
+    %% Video Generation Pipeline
+    VGW --> NEXTJOB[Get Next Job by Priority<br/>HIGH > MEDIUM > LOW]
+    NEXTJOB --> STARTJOB[Mark Job as Started]
+    STARTJOB --> FPSCALC{Calculate FPS Settings<br/>for this Video}
+    
+    %% FPS Calculation Decision Tree
+    FPSCALC --> GENMODE{Video Generation Mode}
+    
+    %% Standard FPS Mode Branch
+    GENMODE -->|standard| TIMELIMITS{Time Limits Enabled?}
+    TIMELIMITS -->|No| USESTD[Use Standard FPS<br/>fps = standard_fps]
+    TIMELIMITS -->|Yes| STDCALC[Calculate FPS within Time Bounds<br/>Check duration vs min/max limits]
+    
+    %% Target Duration Mode Branch
+    GENMODE -->|target| TARGETCALC[Calculate Target FPS<br/>required_fps = image_count / target_seconds]
+    TARGETCALC --> FPSBOUNDS[Apply FPS Boundaries<br/>Clamp to fps_bounds_min/max]
+    
+    %% FPS Calculation Results
+    USESTD --> FPSRESULT[Final FPS Calculated<br/>Ready for Video Generation]
+    STDCALC --> FPSRESULT
+    FPSBOUNDS --> FPSRESULT
+    
+    %% Continue to Overlay Check
+    FPSRESULT --> OVLCHECK[Check: Overlays Enabled<br/>for this Timelapse?]
+    
+    %% No Overlays Video Path (Skip all overlay logic)
+    OVLCHECK -->|No| SIMPLEVM[Simple Video Generation]
+    SIMPLEVM --> SIMPLEFF["ffmpeg -pattern_type glob<br/>-i 'frames/timelapse-*_*.jpg'<br/>-r {calculated_fps} output.mp4"]
+    
+    %% Overlays Enabled - Do Preflight Check
+    OVLCHECK -->|Yes| PREFLIGHT[Pre-flight Check:<br/>All Overlays Exist?]
+    
+    %% Missing Overlay Handling (only if overlays enabled)
+    PREFLIGHT -->|Missing Found| REGEN[Regenerate Missing Overlays]
+    REGEN --> REGENSUC{Regeneration Success?}
+    REGENSUC -->|Success| COMPLEXVM[Complex Video Generation]
+    REGENSUC -->|Failure| FALLBACKCREATE[Create Empty Fallbacks]
+    FALLBACKCREATE --> COMPLEXVM
+    
+    %% Normal Path (overlays enabled and all present)
+    PREFLIGHT -->|All Present| COMPLEXVM
+    
+    %% Complex FFmpeg with Overlays
+    COMPLEXVM --> COMPLEXFF["ffmpeg -pattern_type glob<br/>-i 'frames/timelapse-*_*.jpg'<br/>-i 'overlays/timelapse-*_*_overlay.png'<br/>-filter_complex '[0][1]overlay'<br/>-r {calculated_fps} output.mp4"]
+    
+    %% FFmpeg Results
+    SIMPLEFF --> SIMPLESUC{FFmpeg Success?}
+    COMPLEXFF --> COMPLEXSUC{FFmpeg Success?}
+    
+    SIMPLESUC -->|Success| VIDEODONE[Video Complete]
+    COMPLEXSUC -->|Success| VIDEODONE
+    
+    %% Final Fallback Path
+    SIMPLESUC -->|Failure| VIDEOERROR[Video Generation Failed]
+    COMPLEXSUC -->|Failure| FALLBACKNOOVL[Fallback: Video without Overlays]
+    FALLBACKNOOVL --> SIMPLEFF
+    
+    %% Job Completion
+    VIDEODONE --> JOBCOMPLETE[Mark Job Complete<br/>Broadcast SSE Event]
+    JOBCOMPLETE --> NEXTJOB
+    
+    %% SSE Event Broadcasting
+    DBUPDATE --> SSE1[Broadcast: image_captured<br/>with Camera & Timelapse Info]
+    IMM --> SSE2[Broadcast: video_job_queued<br/>immediate trigger]
+    MILETRIG --> SSE3[Broadcast: video_job_queued<br/>milestone trigger]
+    VIDEODONE --> SSE4[Broadcast: video_completed]
+    SSECORRUPT --> SSE5[Broadcast: corruption_detected<br/>with score, details, camera health]
+    CAPTUREFAIL --> SSE6[Broadcast: capture_failed<br/>with error details]
+    HSSE --> SSE7[Broadcast: camera_health_updated<br/>with connectivity status]
+    
+    %% Legend
+    subgraph LEGEND [" 🔍 LEGEND "]
+        L1[Scheduler/Timer Operations]:::scheduler
+        L1 --- L2[Worker Processes]:::worker
+        L2 --- L3[Service Layer]:::service
+        L3 --- L4[Image Capture Operations]:::capture
+        L4 --- L5[Overlay Generation]:::overlay
+        L5 --- L6[Video Processing]:::video
+        L6 --- L7[Job Queues]:::queue
+        L7 --- L8[Corruption Detection]:::corruption
+        L8 --- L9[Validation Checks]:::validation
+        L9 --- L10[Skip Operations]:::skip
+        L10 --- L11[FPS Calculations]:::fps
+        L11 --- L12[Error/Fallback Handling]:::fallback
+        L12 --- L13[SSE Event Broadcasting]:::sse
+        L13 --- L14[Transaction Safety]:::transaction
+        L14 --- L15[Health Monitoring]:::health
+    end
+    
+    %% Styling
+    classDef scheduler fill:#e3f2fd
+    classDef worker fill:#f1f8e9
+    classDef service fill:#fff9c4
+    classDef capture fill:#e1f5fe
+    classDef overlay fill:#f3e5f5
+    classDef video fill:#e8f5e8
+    classDef queue fill:#fff3e0
+    classDef fallback fill:#ffebee
+    classDef sse fill:#f9fbe7
+    classDef validation fill:#f3e5f5
+    classDef skip fill:#fafafa
+    classDef fps fill:#e8f5e8
+    classDef corruption fill:#fce4ec
+    classDef transaction fill:#e8eaf6
+    classDef health fill:#e0f2f1
+    
+    class SCHED,SCHED1,SCHED2,SCHED3,SCHED4,SCHED5,SCHED6,SCHED7 scheduler
+    class CW1,CW2,HS,VW,WW,THMW,VGW,CLW,SSEW worker
+    class SS1,SS2,RTSPSERV service
+    class RTSPCAPTURE,TXNSAVE,TXNDB,MERGE,FILEEX1 capture
+    class CHK,OVL,SAVE,DBUPDATE,FALL,FALLSAVE,FALLDB,FILEEX2,FILEEX3,SKIPOVERLAY overlay
+    class AUTO,MODE,PREFLIGHT,OVLCHECK,SIMPLEVM,COMPLEXVM,SIMPLEFF,COMPLEXFF,VIDEODONE,SIMPLESUC,COMPLEXSUC video
+    class VQHIGH,VQMED,VGQ,THMQ,THM,NEXTJOB,STARTJOB,JOBCOMPLETE queue
+    class SKIP,REGEN,REGENSUC,FALLBACKCREATE,FALLBACKNOOVL,VIDEOERROR,CAPTUREFAIL fallback
+    class SSE1,SSE2,SSE3,SSE4,SSE5,SSE6,SSE7 sse
+    class SKIPDUE1,SKIPDUE2 skip
+    class FPSCALC,GENMODE,TIMELIMITS,USESTD,STDCALC,TARGETCALC,FPSBOUNDS,FPSRESULT fps
+    class FASTDETECT,FASTSCORE,HEAVYCHECK,HEAVYDETECT,HEAVYSCORE,COMBINESCORE,USEFASTSCORE,SCORETHRESH,RETRY,RETRYFAIL,CORRUPTSUCCESS,DEGRADEDCHECK,DEGRADEDMODE,CONTINUECAPTURE,LOGCORRUPT,SSECORRUPT,UPDATECAMSTATS corruption
+    class TXN,TXNCOMMIT,TXNROLLBACK transaction
+    class HCHECK,HTEST,HUPDATE,HMETRICS,HSSE health

@@ -1,0 +1,304 @@
+# backend/app/services/video_pipeline/_VIDEO_PIPELINE_FLOWCHART.txt
+
+VIDEO PIPELINE FLOWCHART - ASCII VERSION
+========================================
+
+ENTRY POINTS
+------------
+┌─────────────────────────┐    ┌─────────────────────────┐
+│   Image Capture         │    │   Scheduled Automation  │
+│   Complete              │    │   (Every 5 minutes)     │
+└───────────┬─────────────┘    └───────────┬─────────────┘
+            │                              │
+            ▼                              ▼
+┌─────────────────────────┐    ┌─────────────────────────┐
+│   Check Video           │    │   Video Automation      │
+│   Automation            │    │   Service               │
+└───────────┬─────────────┘    └───────────┬─────────────┘
+            │                              │
+            ▼                              ▼
+    ┌───────────────┐              ┌───────────────┐
+    │ Automation    │              │ Check All     │
+    │ Mode?         │              │ Timelapses    │
+    └───────┬───────┘              └───────┬───────┘
+            │                              │
+    ┌───────┼───────┐                      ▼
+    │       │       │              ┌───────────────┐
+    ▼       ▼       ▼              │ Scheduled     │
+immediate milestone manual         │ Videos Due?   │
+    │       │    scheduled         └───────┬───────┘
+    │       │       │                      │
+    │       │       └──────────────┐    ┌──┴──┐
+    │       │                      │    │Yes  │No
+    │       │                      ▼    ▼     ▼
+    │       │              ┌─────────────┐ ┌─────────────┐
+    │       │              │ No Video    │ │ Queue Jobs  │
+    │       │              │ Generated   │ │ LOW Priority│
+    │       │              └─────────────┘ └─────────────┘
+    │       │                              │
+    │       ▼                              │
+    │   ┌───────────────┐                  │
+    │   │ Milestone     │                  │
+    │   │ Reached?      │                  │
+    │   └───────┬───────┘                  │
+    │           │                          │
+    │       ┌───┴───┐                      │
+    │       │Yes    │No                    │
+    │       ▼       ▼                      │
+    │   ┌─────────┐ ┌─────────────┐        │
+    │   │Trigger  │ │ No Video    │        │
+    │   │Milestone│ │ Generated   │        │
+    │   │Video    │ └─────────────┘        │
+    │   └────┬────┘                        │
+    │        │                             │
+    │        ▼                             │
+    │   ┌─────────────┐                    │
+    │   │ Queue Job   │                    │
+    │   │ MEDIUM      │                    │
+    │   │ Priority    │                    │
+    │   └────┬────────┘                    │
+    │        │                             │
+    ▼        │                             │
+┌─────────────┐                            │
+│ Trigger     │                            │
+│ Immediate   │                            │
+│ Video       │                            │
+└─────┬───────┘                            │
+      │                                    │
+      ▼                                    │
+┌─────────────┐                            │
+│ Queue Job   │                            │
+│ HIGH        │                            │
+│ Priority    │                            │
+└─────┬───────┘                            │
+      │                                    │
+      └────────┬───────────────────────────┘
+               │
+               ▼
+    ┌─────────────────────────┐
+    │   Video Generation      │
+    │   Queue                 │
+    └───────────┬─────────────┘
+                │
+                ▼
+    ┌─────────────────────────┐
+    │   Video Worker          │
+    └───────────┬─────────────┘
+                │
+                ▼
+    ┌─────────────────────────┐
+    │   Get Next Job by       │
+    │   Priority              │
+    └───────────┬─────────────┘
+                │
+                ▼
+    ┌─────────────────────────┐
+    │   Mark Job Started      │
+    └───────────┬─────────────┘
+                │
+                ▼
+        ┌───────────────┐
+        │ Calculate     │
+        │ FPS           │
+        └───────┬───────┘
+                │
+        ┌───────┼───────┐
+        │       │       │
+        ▼       ▼       ▼
+   standard  target  [other]
+        │       │
+        ▼       ▼
+┌───────────┐ ┌─────────────┐
+│Time       │ │Calculate    │
+│Limits?    │ │Target FPS   │
+└─────┬─────┘ └─────┬───────┘
+      │             │
+   ┌──┴──┐          ▼
+   │Yes  │No  ┌─────────────┐
+   ▼     ▼    │Apply FPS    │
+┌─────────┐   │Boundaries   │
+│Calculate│   └─────┬───────┘
+│Within   │         │
+│Bounds   │         │
+└────┬────┘         │
+     │              │
+     ▼              │
+┌─────────┐         │
+│Use      │         │
+│Standard │         │
+│FPS      │         │
+└────┬────┘         │
+     │              │
+     └──────┬───────┘
+            │
+            ▼
+    ┌───────────────┐
+    │ FPS Ready     │
+    └───────┬───────┘
+            │
+            ▼
+    ┌───────────────┐
+    │ Overlays      │
+    │ Enabled?      │
+    └───────┬───────┘
+            │
+        ┌───┴───┐
+        │Yes    │No
+        ▼       ▼
+┌───────────┐ ┌─────────────┐
+│Check      │ │Simple Video │
+│Overlays   │ └─────┬───────┘
+│Exist      │       │
+└─────┬─────┘       ▼
+      │     ┌─────────────┐
+  ┌───┴───┐ │FFmpeg Basic │
+  │Missing│ │Video        │
+  │Present│ │             │
+  ▼       ▼ │ffmpeg       │
+┌───────┐ ┌─│-pattern_type│
+│Regen  │ │ │glob         │
+│Over-  │ │ │-i 'frames/  │
+│lays   │ │ │timelapse-*_.│
+└───┬───┘ │ │*.jpg'       │
+    │     │ │-r {fps}     │
+    ▼     │ │output.mp4   │
+┌───────┐ │ └─────┬───────┘
+│Regen  │ │       │
+│Success│ │       │
+└───┬───┘ │       │
+    │     │       │
+┌───┴───┐ │       │
+│Success│ │       │
+│Failure│ │       │
+▼       ▼ │       │
+┌─────────┐       │
+│Create   │       │
+│Fallbacks│       │
+└────┬────┘       │
+     │            │
+     └────────────┼───────────┘
+                  │
+                  ▼
+              ┌───────┐
+              │Complex│
+              │Video  │
+              │       │
+              │ffmpeg │
+              │-pattern│
+              │_type  │
+              │glob   │
+              │-i     │
+              │'frames│
+              │/time- │
+              │lapse-*│
+              │_*.jpg'│
+              │-i     │
+              │'over- │
+              │lays/  │
+              │time-  │
+              │lapse-*│
+              │_*_over│
+              │lay.png│
+              │-filter│
+              │_complex│
+              │'[0][1]│
+              │overlay│
+              │-r {fps│
+              │output.│
+              │mp4    │
+              └───┬───┘
+                  │
+                  ▼
+          ┌───────────────┐
+          │ FFmpeg        │
+          │ Success?      │
+          └───────┬───────┘
+              │
+          ┌───┴───┐
+          │Success│Failure
+          ▼       ▼
+  ┌─────────────┐ ┌─────────────┐
+  │Video        │ │Video Failed │
+  │Complete     │ │             │
+  └─────┬───────┘ └─────┬───────┘
+        │               │
+        ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│Mark Complete│ │Mark Failed  │
+│and Broadcast│ │and Broadcast│
+└─────┬───────┘ └─────┬───────┘
+      │               │
+      └───────┬───────┘
+              │
+              ▼
+    ┌─────────────────┐
+    │ Loop Back to    │
+    │ Get Next Job    │
+    └─────────────────┘
+
+SSE EVENT BROADCASTING
+----------------------
+Trigger Events → SSE Notifications:
+• Immediate Video     → SSE Job Queued
+• Milestone Video     → SSE Milestone Queued  
+• Video Complete      → SSE Video Complete
+• Video Failed        → SSE Video Failed
+
+PRIORITY LEVELS
+---------------
+HIGH:    Immediate video generation
+MEDIUM:  Milestone-triggered videos
+LOW:     Scheduled automation videos
+
+FPS CALCULATION MODES
+--------------------
+Standard Mode:
+  - Uses configured standard FPS
+  - Optionally applies time limits
+  
+Target Mode:
+  - Calculates FPS for target duration
+  - Applies min/max FPS boundaries
+
+FALLBACK STRATEGY
+-----------------
+1. Try video with overlays
+2. If overlay missing → regenerate
+3. If regeneration fails → create empty fallbacks
+4. If FFmpeg fails → retry without overlays
+5. If still fails → mark as failed
+
+WORKER LOOP
+-----------
+The video worker continuously:
+1. Gets next job by priority (HIGH > MEDIUM > LOW)
+2. Processes video generation
+3. Broadcasts completion status
+4. Returns to step 1
+
+FFMPEG COMMANDS
+---------------
+Simple Video Generation (No Overlays):
+┌─────────────────────────────────────────────────────────┐
+│ ffmpeg -pattern_type glob                               │
+│        -i 'frames/timelapse-*_*.jpg'                    │
+│        -r {calculated_fps}                              │
+│        output.mp4                                       │
+└─────────────────────────────────────────────────────────┘
+
+Complex Video Generation (With Overlays):
+┌─────────────────────────────────────────────────────────┐
+│ ffmpeg -pattern_type glob                               │
+│        -i 'frames/timelapse-*_*.jpg'                    │
+│        -i 'overlays/timelapse-*_*_overlay.png'          │
+│        -filter_complex '[0][1]overlay'                  │
+│        -r {calculated_fps}                              │
+│        output.mp4                                       │
+└─────────────────────────────────────────────────────────┘
+
+Command Parameters:
+• -pattern_type glob    : Use glob pattern for input files
+• -i                   : Input file pattern
+• -r {calculated_fps}  : Frame rate (calculated by FPS logic)
+• -filter_complex      : Apply overlay filter to combine layers
+• [0][1]overlay        : Overlay input 1 onto input 0
