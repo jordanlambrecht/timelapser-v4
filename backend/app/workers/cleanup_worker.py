@@ -9,15 +9,19 @@ Integrates with user settings for configurable retention policies.
 
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional
-from loguru import logger
+from typing import Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..database.core import AsyncDatabase
 
 from .base_worker import BaseWorker
 from ..database import SyncDatabase
 from ..services.settings_service import SyncSettingsService
 from ..services.log_service import SyncLogService
-from ..services.corruption_service import SyncCorruptionService
-from ..services.video_service import SyncVideoService
+
+# from ..services.corruption_service import SyncCorruptionService  # Replaced by corruption_pipeline
+from ..database.corruption_operations import SyncCorruptionOperations
+from ..services.video_pipeline import create_video_pipeline
 from ..services.timelapse_service import SyncTimelapseService
 from ..database.image_operations import SyncImageOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
@@ -29,6 +33,7 @@ from ..constants import (
     DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
     DEFAULT_STATISTICS_RETENTION_DAYS,
 )
+from ..utils.temp_file_manager import cleanup_temporary_files
 
 
 class CleanupWorker(BaseWorker):
@@ -48,7 +53,7 @@ class CleanupWorker(BaseWorker):
     def __init__(
         self,
         sync_db: SyncDatabase,
-        async_db,  # AsyncDatabase (avoid circular import)
+        async_db: "AsyncDatabase",
         settings_service: SyncSettingsService,
         cleanup_interval_hours: int = 6,  # Run every 6 hours by default
     ):
@@ -69,8 +74,9 @@ class CleanupWorker(BaseWorker):
 
         # Initialize service dependencies
         self.log_service: Optional[SyncLogService] = None
-        self.corruption_service: Optional[SyncCorruptionService] = None
-        self.video_service: Optional[SyncVideoService] = None
+        # self.corruption_service: Optional[SyncCorruptionService] = None  # Replaced by corruption_pipeline
+        self.corruption_ops: Optional[SyncCorruptionOperations] = None
+        self.video_pipeline = None
         self.timelapse_service: Optional[SyncTimelapseService] = None
         self.image_ops: Optional[SyncImageOperations] = None
         self.statistics_ops: Optional[SyncStatisticsOperations] = None
@@ -84,27 +90,28 @@ class CleanupWorker(BaseWorker):
         try:
             # Initialize service layer dependencies
             self.log_service = SyncLogService(self.sync_db)
-            self.corruption_service = SyncCorruptionService(self.sync_db)
-            self.video_service = SyncVideoService(self.sync_db)
+            # self.corruption_service = SyncCorruptionService(self.sync_db)  # Replaced by corruption_pipeline
+            self.corruption_ops = SyncCorruptionOperations(self.sync_db)
+            self.video_pipeline = create_video_pipeline(self.sync_db)
             self.timelapse_service = SyncTimelapseService(self.sync_db)
 
             # Initialize database operations
             self.image_ops = SyncImageOperations(self.sync_db)
             self.statistics_ops = SyncStatisticsOperations(self.sync_db)
 
-            logger.info("🧹 Cleanup worker initialized successfully")
+            self.log_info("🧹 Cleanup worker initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize cleanup worker: {e}")
+            self.log_error(f"Failed to initialize cleanup worker: {e}")
             raise
 
     async def cleanup(self) -> None:
         """Cleanup worker resources."""
-        logger.info("🧹 Cleanup worker stopped")
+        self.log_info("🧹 Cleanup worker stopped")
 
     async def run(self) -> None:
         """Main worker loop - runs cleanup operations on schedule."""
-        logger.info(
+        self.log_info(
             f"🧹 Cleanup worker started (interval: {self.cleanup_interval_hours}h)"
         )
 
@@ -119,17 +126,17 @@ class CleanupWorker(BaseWorker):
                 )  # Convert hours to seconds
 
             except asyncio.CancelledError:
-                logger.info("🧹 Cleanup worker cancelled")
+                self.log_info("🧹 Cleanup worker cancelled")
                 break
             except Exception as e:
-                logger.error(f"🧹 Error in cleanup worker cycle: {e}")
+                self.log_error(f"🧹 Error in cleanup worker cycle: {e}")
                 # Wait a bit before retrying to avoid rapid error loops
                 await asyncio.sleep(300)  # 5 minutes
 
     async def _run_cleanup_cycle(self) -> None:
         """Run a complete cleanup cycle for all data types."""
         start_time = datetime.now()
-        logger.info("🧹 Starting cleanup cycle...")
+        self.log_info("🧹 Starting cleanup cycle...")
 
         # Get retention settings from user configuration
         retention_settings = await self._get_retention_settings()
@@ -189,6 +196,10 @@ class CleanupWorker(BaseWorker):
             rate_limiter_cleaned = await self._cleanup_rate_limiter_data()
             cleanup_results["rate_limiter"] = rate_limiter_cleaned
 
+            # 9. Clean up temporary files (preview images, test captures)
+            temp_files_cleaned = await self._cleanup_temporary_files()
+            cleanup_results["temp_files"] = temp_files_cleaned
+
             # Update stats
             self.last_cleanup_time = start_time
             self.cleanup_stats = {
@@ -202,7 +213,7 @@ class CleanupWorker(BaseWorker):
             total_cleaned = sum(cleanup_results.values())
             duration = (datetime.now() - start_time).total_seconds()
 
-            logger.info(
+            self.log_info(
                 f"🧹 Cleanup cycle completed in {duration:.1f}s - "
                 f"Total items cleaned: {total_cleaned} "
                 f"(logs: {cleanup_results.get('logs', 0)}, "
@@ -219,7 +230,7 @@ class CleanupWorker(BaseWorker):
             # Frontend will need to poll for cleanup status or use async endpoints
 
         except Exception as e:
-            logger.error(f"🧹 Error during cleanup cycle: {e}")
+            self.log_error(f"🧹 Error during cleanup cycle: {e}")
             raise
 
     async def _get_retention_settings(self) -> Dict[str, int]:
@@ -234,7 +245,7 @@ class CleanupWorker(BaseWorker):
                 try:
                     return int(value)
                 except (ValueError, TypeError):
-                    logger.warning(
+                    self.log_warning(
                         f"Invalid {key} setting '{value}', using default: {default}"
                     )
                     return default
@@ -261,7 +272,7 @@ class CleanupWorker(BaseWorker):
                 ),
             }
         except Exception as e:
-            logger.warning(f"Failed to get retention settings, using defaults: {e}")
+            self.log_warning(f"Failed to get retention settings, using defaults: {e}")
             return {
                 "log_retention_days": DEFAULT_LOG_RETENTION_DAYS,
                 "image_retention_days": DEFAULT_IMAGE_RETENTION_DAYS,
@@ -279,7 +290,7 @@ class CleanupWorker(BaseWorker):
                 return self.log_service.cleanup_old_logs(days_to_keep)
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup logs: {e}")
+            self.log_error(f"Failed to cleanup logs: {e}")
             return 0
 
     async def _cleanup_images(self, days_to_keep: int) -> int:
@@ -289,17 +300,17 @@ class CleanupWorker(BaseWorker):
                 return self.image_ops.cleanup_old_images(days_to_keep)
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup images: {e}")
+            self.log_error(f"Failed to cleanup images: {e}")
             return 0
 
     async def _cleanup_video_jobs(self, days_to_keep: int) -> int:
         """Clean up old video generation jobs."""
         try:
-            if self.video_service:
-                return self.video_service.cleanup_old_video_jobs(days_to_keep)
+            if self.video_pipeline:
+                return self.video_pipeline.job_service.cleanup_old_jobs(days_to_keep)
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup video jobs: {e}")
+            self.log_error(f"Failed to cleanup video jobs: {e}")
             return 0
 
     async def _cleanup_timelapses(self, retention_days: int) -> int:
@@ -311,17 +322,17 @@ class CleanupWorker(BaseWorker):
                 )
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup timelapses: {e}")
+            self.log_error(f"Failed to cleanup timelapses: {e}")
             return 0
 
     async def _cleanup_corruption_logs(self, days_to_keep: int) -> int:
         """Clean up old corruption detection logs."""
         try:
-            if self.corruption_service:
-                return self.corruption_service.cleanup_old_corruption_logs(days_to_keep)
+            if self.corruption_ops:
+                return self.corruption_ops.cleanup_old_corruption_logs(days_to_keep)
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup corruption logs: {e}")
+            self.log_error(f"Failed to cleanup corruption logs: {e}")
             return 0
 
     def _cleanup_sse_events(self, max_age_hours: int) -> int:
@@ -331,7 +342,7 @@ class CleanupWorker(BaseWorker):
             sse_ops = SyncSSEEventsOperations(self.sync_db)
             return sse_ops.cleanup_old_events(max_age_hours)
         except Exception as e:
-            logger.error(f"Failed to cleanup SSE events: {e}")
+            self.log_error(f"Failed to cleanup SSE events: {e}")
             return 0
 
     async def _cleanup_statistics(self, days_to_keep: int) -> int:
@@ -341,7 +352,7 @@ class CleanupWorker(BaseWorker):
                 return self.statistics_ops.cleanup_old_statistics(days_to_keep)
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup statistics: {e}")
+            self.log_error(f"Failed to cleanup statistics: {e}")
             return 0
 
     async def _cleanup_rate_limiter_data(self) -> int:
@@ -351,18 +362,72 @@ class CleanupWorker(BaseWorker):
             # For now, just return 0 as rate limiter cleanup happens automatically
             return 0
         except Exception as e:
-            logger.error(f"Failed to cleanup rate limiter data: {e}")
+            self.log_error(f"Failed to cleanup rate limiter data: {e}")
             return 0
 
+    async def _cleanup_temporary_files(self) -> int:
+        """Clean up old temporary files (preview images, test captures)."""
+        try:
+            # Clean up temporary files older than 2 hours
+            cleaned_count = cleanup_temporary_files(max_age_hours=2)
+
+            if cleaned_count > 0:
+                self.log_info(f"🧹 Cleaned up {cleaned_count} temporary files")
+            else:
+                self.log_debug("🧹 No temporary files to clean up")
+
+            return cleaned_count
+        except Exception as e:
+            self.log_error(f"Error cleaning up temporary files: {e}")
+            return 0
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current cleanup worker status (STANDARDIZED METHOD NAME)."""
+        # Get base status from BaseWorker
+        base_status = super().get_status()
+
+        # Add cleanup-specific status information
+        base_status.update(
+            {
+                "worker_type": "CleanupWorker",
+                "last_cleanup_time": (
+                    self.last_cleanup_time.isoformat()
+                    if self.last_cleanup_time
+                    else None
+                ),
+                "cleanup_interval_hours": self.cleanup_interval_hours,
+                "cleanup_stats": self.cleanup_stats,
+                "total_items_cleaned": self.cleanup_stats.get("total_items_cleaned", 0),
+                "last_duration_seconds": self.cleanup_stats.get("duration_seconds", 0),
+                # Service health status
+                "log_service_status": "healthy" if self.log_service else "unavailable",
+                "corruption_ops_status": (
+                    "healthy" if self.corruption_ops else "unavailable"
+                ),
+                "video_pipeline_status": (
+                    "healthy" if self.video_pipeline else "unavailable"
+                ),
+                "timelapse_service_status": (
+                    "healthy" if self.timelapse_service else "unavailable"
+                ),
+                "image_ops_status": "healthy" if self.image_ops else "unavailable",
+                "statistics_ops_status": (
+                    "healthy" if self.statistics_ops else "unavailable"
+                ),
+            }
+        )
+
+        return base_status
+
     def get_cleanup_stats(self) -> Dict[str, Any]:
-        """Get current cleanup statistics."""
+        """Get current cleanup statistics (DEPRECATED - use get_status())."""
+        # Keep for backward compatibility, but delegate to get_status()
+        status = self.get_status()
         return {
-            "last_cleanup_time": (
-                self.last_cleanup_time.isoformat() if self.last_cleanup_time else None
-            ),
-            "cleanup_interval_hours": self.cleanup_interval_hours,
-            "running": self.running,
-            **self.cleanup_stats,
+            "last_cleanup_time": status["last_cleanup_time"],
+            "cleanup_interval_hours": status["cleanup_interval_hours"],
+            "running": status["running"],
+            **status["cleanup_stats"],
         }
 
     async def trigger_immediate_cleanup(
@@ -377,7 +442,7 @@ class CleanupWorker(BaseWorker):
         Returns:
             Cleanup results
         """
-        logger.info("🧹 Triggering immediate cleanup cycle...")
+        self.log_info("🧹 Triggering immediate cleanup cycle...")
 
         if cleanup_types is None:
             # Run full cleanup cycle
