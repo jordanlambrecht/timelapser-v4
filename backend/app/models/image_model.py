@@ -11,7 +11,7 @@ class ImageBase(BaseModel):
     )
     file_path: str = Field(..., description="Path to the image file")
     day_number: int = Field(
-        ..., ge=1, description="Day number in the timelapse sequence"
+        ..., ge=0, description="Day number in the timelapse sequence"
     )
     file_size: Optional[int] = Field(None, ge=0, description="File size in bytes")
 
@@ -24,30 +24,56 @@ class ImageBase(BaseModel):
         None, description="Detailed corruption analysis results"
     )
 
+    # Weather data fields for historical accuracy in overlays
+    weather_temperature: Optional[float] = Field(
+        None, description="Temperature in Celsius at time of capture"
+    )
+    weather_conditions: Optional[str] = Field(
+        None, max_length=255, description="Weather description at time of capture"
+    )
+    weather_icon: Optional[str] = Field(
+        None, max_length=50, description="OpenWeather icon code"
+    )
+    weather_fetched_at: Optional[datetime] = Field(
+        None, description="When weather data was recorded for this image"
+    )
+
+    # Overlay tracking fields (added in overlay system)
+    overlay_path: Optional[str] = Field(
+        None, description="Path to generated overlay image"
+    )
+    has_valid_overlay: bool = Field(
+        default=False, description="Whether image has a valid overlay"
+    )
+    overlay_updated_at: Optional[datetime] = Field(
+        None, description="When overlay was last generated"
+    )
+
 
 class ImageCreate(ImageBase):
     """Model for creating a new image record"""
+    
+    captured_at: datetime = Field(..., description="When the image was captured")
+    corruption_detected: bool = Field(default=False, description="Whether corruption was detected during capture")
+    thumbnail_path: Optional[str] = Field(None, description="Path to the thumbnail image file")
 
 
 class Image(ImageBase):
-    """Full image model with all database fields"""
+    """Full image model with all database and computed fields"""
 
     id: int
     captured_at: datetime
     created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ImageWithDetails(Image):
-    """Image model with additional details"""
-
+    
+    # Optional computed/joined fields
     camera_name: Optional[str] = None
     timelapse_status: Optional[str] = None
     thumbnail_path: Optional[str] = None
     small_path: Optional[str] = None
     thumbnail_size: Optional[int] = None
     small_size: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # class ThumbnailRegenerationResponse(BaseModel):

@@ -3,14 +3,22 @@
 Shared model components to eliminate duplication across models.
 """
 
-from typing import Optional, Dict, Any, Literal, List
+from typing import Optional, Dict, Any, Literal, List, TYPE_CHECKING
 from enum import Enum
 from datetime import datetime, date
 from pydantic import BaseModel, Field, ConfigDict
-from ..constants import (
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_TYPE_SINGLE,
+
+if TYPE_CHECKING:
+    from .image_model import Image
+    
+from ..enums import (
+    VideoAutomationMode, 
+    VideoGenerationMode, 
+    VideoQuality,
+    ThumbnailJobPriority,
+    ThumbnailJobStatus,
+    ThumbnailJobType,
+    JobPriority
 )
 
 
@@ -35,6 +43,26 @@ class BulkDownloadResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PaginatedImagesResponse(BaseModel):
+    """Response model for paginated images endpoints"""
+
+    images: List["Image"] = Field(
+        ..., description="List of images for the current page"
+    )
+    total: int = Field(..., description="Total number of images matching the filters")
+    page: int = Field(..., description="Current page number (1-based)")
+    page_size: int = Field(..., description="Number of items per page")
+    total_pages: int = Field(..., description="Total number of pages")
+    has_next: bool = Field(
+        ..., description="Whether there are more pages after this one"
+    )
+    has_previous: bool = Field(
+        ..., description="Whether there are pages before this one"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ThumbnailRegenerationResponse(BaseModel):
     """Response model for thumbnail regeneration endpoint"""
 
@@ -48,16 +76,6 @@ class ThumbnailRegenerationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class VideoGenerationMode(str, Enum):
-    STANDARD = "standard"
-    TARGET = "target"
-
-
-class VideoAutomationMode(str, Enum):
-    MANUAL = "manual"
-    PER_CAPTURE = "per_capture"
-    SCHEDULED = "scheduled"
-    MILESTONE = "milestone"
 
 
 class ImageCapturedEvent(BaseModel):
@@ -217,7 +235,9 @@ class VideoGenerationJob(BaseModel):
     id: int
     timelapse_id: int
     trigger_type: str
-    priority: str = Field(default="medium", description="Job priority (low, medium, high)")
+    priority: str = Field(
+        default=JobPriority.MEDIUM, description="Job priority (low, medium, high)"
+    )
     status: str = "pending"
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -340,10 +360,10 @@ class ThumbnailRegenerationStatus(BaseModel):
     """Status of thumbnail regeneration process"""
 
     active: bool = False
-    progress: int = 0  # Percentage 0-100 
+    progress: int = 0  # Percentage 0-100
     total: int = 0  # Frontend expects "total"
     completed: int = 0  # Frontend expects "completed"
-    errors: int = 0  # Frontend expects "errors" 
+    errors: int = 0  # Frontend expects "errors"
     current_image_id: Optional[int] = None
     current_image: Optional[str] = None  # Frontend expects "current_image"
     estimated_time_remaining_seconds: Optional[int] = None
@@ -443,7 +463,9 @@ class CameraLatestImageUrls(BaseModel):
     full: str = Field(..., description="URL for full resolution image")
     small: str = Field(..., description="URL for small/medium image (800x600)")
     thumbnail: str = Field(..., description="URL for thumbnail image (200x150)")
-    download: str = Field(..., description="URL for downloading image with proper filename")
+    download: str = Field(
+        ..., description="URL for downloading image with proper filename"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -454,8 +476,12 @@ class CameraLatestImageMetadata(BaseModel):
     camera_id: int = Field(..., description="ID of the camera")
     has_thumbnail: bool = Field(..., description="Whether thumbnail variant exists")
     has_small: bool = Field(..., description="Whether small variant exists")
-    thumbnail_size: Optional[int] = Field(None, description="Thumbnail file size in bytes")
-    small_size: Optional[int] = Field(None, description="Small variant file size in bytes")
+    thumbnail_size: Optional[int] = Field(
+        None, description="Thumbnail file size in bytes"
+    )
+    small_size: Optional[int] = Field(
+        None, description="Small variant file size in bytes"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -486,7 +512,7 @@ class CameraLatestImageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# Additional models for ImageCaptureService
+# Additional models for RTSPService (consolidated RTSP operations)
 class RTSPCaptureResult(BaseModel):
     """Result of RTSP image capture operation"""
 
@@ -534,36 +560,75 @@ class BulkCaptureResult(BaseModel):
 # SCHEDULING MODELS
 # ====================================================================
 
+
 class NextCaptureResult(BaseModel):
     """Result of next capture time calculation"""
-    
+
     camera_id: int
     next_capture_time: datetime
     last_capture_time: Optional[datetime] = None
     interval_seconds: int
     time_window_start: Optional[str] = None  # HH:MM:SS format
-    time_window_end: Optional[str] = None    # HH:MM:SS format
+    time_window_end: Optional[str] = None  # HH:MM:SS format
     is_due: bool
     time_until_next_seconds: Optional[int] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class CaptureValidationResult(BaseModel):
     """Result of capture interval validation"""
-    
+
     original_interval_seconds: int
     validated_interval_seconds: int
     is_valid: bool
     validation_error: Optional[str] = None
     adjusted: bool = False
-    
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class CaptureReadinessValidationResult(BaseModel):
+    """Result of comprehensive capture readiness validation for scheduler trust model"""
+
+    valid: bool
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+    camera: Optional[Any] = None  # Camera model instance
+    timelapse: Optional[Any] = None  # Timelapse model instance
+    next_capture_time: Optional[datetime] = None
+    # Direct fields for backward compatibility with tests
+    camera_id: Optional[int] = None
+    timelapse_id: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    def __init__(self, **data):
+        """Initialize with backward compatibility for camera_id/timelapse_id."""
+        # If camera_id/timelapse_id are provided but camera/timelapse objects aren't,
+        # create simple objects with id attributes
+        if data.get("camera_id") is not None and data.get("camera") is None:
+            # Create a simple object with id attribute
+            camera_id = data["camera_id"]
+            data["camera"] = type("Camera", (), {"id": camera_id})()
+
+        if data.get("timelapse_id") is not None and data.get("timelapse") is None:
+            # Create a simple object with id attribute
+            timelapse_id = data["timelapse_id"]
+            data["timelapse"] = type("Timelapse", (), {"id": timelapse_id})()
+
+        super().__init__(**data)
+
+        # Set direct fields from objects if they exist
+        if self.camera and hasattr(self.camera, "id"):
+            self.camera_id = self.camera.id
+        if self.timelapse and hasattr(self.timelapse, "id"):
+            self.timelapse_id = self.timelapse.id
 
 
 class CaptureDueCheckResult(BaseModel):
     """Result of capture due check"""
-    
+
     camera_id: int
     is_due: bool
     last_capture_time: Optional[datetime] = None
@@ -572,13 +637,13 @@ class CaptureDueCheckResult(BaseModel):
     grace_period_seconds: int
     time_since_last_seconds: Optional[int] = None
     reason: Optional[str] = None  # Why capture is/isn't due
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class CaptureCountEstimate(BaseModel):
     """Estimate of capture count for a time period"""
-    
+
     start_time: datetime
     end_time: datetime
     interval_seconds: int
@@ -588,7 +653,7 @@ class CaptureCountEstimate(BaseModel):
     time_window_end: Optional[str] = None
     window_restricted: bool = False
     captures_per_day: Optional[float] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -596,73 +661,110 @@ class CaptureCountEstimate(BaseModel):
 # TIME WINDOW MODELS
 # ====================================================================
 
+
 class TimeWindowStatus(BaseModel):
     """Time window operational status model"""
-    
+
     is_active: bool = Field(..., description="Whether camera should be capturing now")
     has_window: bool = Field(..., description="Whether time window is configured")
-    next_start: Optional[datetime] = Field(default=None, description="When window will next start")
-    next_end: Optional[datetime] = Field(default=None, description="When window will next end")
-    window_duration: Optional[int] = Field(default=None, description="Daily window duration in seconds")
+    next_start: Optional[datetime] = Field(
+        default=None, description="When window will next start"
+    )
+    next_end: Optional[datetime] = Field(
+        default=None, description="When window will next end"
+    )
+    window_duration: Optional[int] = Field(
+        default=None, description="Daily window duration in seconds"
+    )
     current_time: datetime = Field(..., description="Current timestamp")
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class TimeWindowValidationResult(BaseModel):
     """Time window validation result model"""
-    
-    is_valid: bool = Field(..., description="Whether the time window configuration is valid")
-    start_time: Optional[str] = Field(default=None, description="Validated start time (HH:MM:SS)")
-    end_time: Optional[str] = Field(default=None, description="Validated end time (HH:MM:SS)")
-    error_message: Optional[str] = Field(default=None, description="Validation error message if invalid")
-    is_overnight: bool = Field(default=False, description="Whether this is an overnight window")
-    duration_seconds: Optional[int] = Field(default=None, description="Window duration in seconds")
-    
+
+    is_valid: bool = Field(
+        ..., description="Whether the time window configuration is valid"
+    )
+    start_time: Optional[str] = Field(
+        default=None, description="Validated start time (HH:MM:SS)"
+    )
+    end_time: Optional[str] = Field(
+        default=None, description="Validated end time (HH:MM:SS)"
+    )
+    error_message: Optional[str] = Field(
+        default=None, description="Validation error message if invalid"
+    )
+    is_overnight: bool = Field(
+        default=False, description="Whether this is an overnight window"
+    )
+    duration_seconds: Optional[int] = Field(
+        default=None, description="Window duration in seconds"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class TimeWindowCalculationRequest(BaseModel):
     """Request model for time window calculations"""
-    
+
     current_time: datetime = Field(..., description="Current datetime for calculations")
-    window_start: Optional[str] = Field(default=None, description="Window start time (HH:MM:SS)")
-    window_end: Optional[str] = Field(default=None, description="Window end time (HH:MM:SS)")
-    
+    window_start: Optional[str] = Field(
+        default=None, description="Window start time (HH:MM:SS)"
+    )
+    window_end: Optional[str] = Field(
+        default=None, description="Window end time (HH:MM:SS)"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class CaptureCountEstimateRequest(BaseModel):
     """Request model for capture count estimation"""
-    
+
     start_time: datetime = Field(..., description="Period start time")
     end_time: datetime = Field(..., description="Period end time")
     interval_seconds: int = Field(..., ge=1, description="Capture interval in seconds")
-    time_window_start: Optional[str] = Field(default=None, description="Daily window start (HH:MM:SS)")
-    time_window_end: Optional[str] = Field(default=None, description="Daily window end (HH:MM:SS)")
-    
+    time_window_start: Optional[str] = Field(
+        default=None, description="Daily window start (HH:MM:SS)"
+    )
+    time_window_end: Optional[str] = Field(
+        default=None, description="Daily window end (HH:MM:SS)"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ActiveTimePeriodRequest(BaseModel):
     """Request model for active time calculation"""
-    
+
     start_date: date = Field(..., description="Period start date")
     end_date: date = Field(..., description="Period end date")
-    window_start: Optional[str] = Field(default=None, description="Daily window start (HH:MM:SS)")
-    window_end: Optional[str] = Field(default=None, description="Daily window end (HH:MM:SS)")
-    
+    window_start: Optional[str] = Field(
+        default=None, description="Daily window start (HH:MM:SS)"
+    )
+    window_end: Optional[str] = Field(
+        default=None, description="Daily window end (HH:MM:SS)"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ActiveTimePeriodResult(BaseModel):
     """Result model for active time calculation"""
-    
+
     total_days: int = Field(..., description="Total days in period")
-    active_duration_seconds: int = Field(..., description="Total active time in seconds")
-    daily_window_seconds: Optional[int] = Field(default=None, description="Daily window duration in seconds")
-    has_time_restrictions: bool = Field(..., description="Whether time window restrictions apply")
-    
+    active_duration_seconds: int = Field(
+        ..., description="Total active time in seconds"
+    )
+    daily_window_seconds: Optional[int] = Field(
+        default=None, description="Daily window duration in seconds"
+    )
+    has_time_restrictions: bool = Field(
+        ..., description="Whether time window restrictions apply"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -670,9 +772,10 @@ class ActiveTimePeriodResult(BaseModel):
 # THUMBNAIL VERIFICATION MODELS
 # ====================================================================
 
+
 class ThumbnailVerificationResult(BaseModel):
     """Result of thumbnail file verification for a single image"""
-    
+
     image_id: int
     camera_id: int
     timelapse_id: Optional[int] = None
@@ -685,13 +788,13 @@ class ThumbnailVerificationResult(BaseModel):
     missing_files: List[str] = Field(default_factory=list)
     error: Optional[str] = None
     verified_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ThumbnailVerificationSummary(BaseModel):
     """Summary of bulk thumbnail verification results"""
-    
+
     total_images_checked: int = 0
     images_with_thumbnails: int = 0
     images_with_small: int = 0
@@ -705,27 +808,27 @@ class ThumbnailVerificationSummary(BaseModel):
     verification_started_at: datetime
     verification_completed_at: Optional[datetime] = None
     processing_time_seconds: Optional[float] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ThumbnailRepairRequest(BaseModel):
     """Request model for thumbnail repair operations"""
-    
+
     image_ids: Optional[List[int]] = None  # Specific images to repair
     camera_ids: Optional[List[int]] = None  # All images from specific cameras
     timelapse_ids: Optional[List[int]] = None  # All images from specific timelapses
     repair_missing_thumbnails: bool = True
     repair_missing_small: bool = True
-    priority: str = Field(default="medium", description="Job priority for repair jobs")
+    priority: str = Field(default=JobPriority.MEDIUM, description="Job priority for repair jobs")
     force_regenerate: bool = False  # Regenerate even if files exist
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ThumbnailRepairResult(BaseModel):
     """Result of thumbnail repair operations"""
-    
+
     success: bool
     repair_jobs_queued: int = 0
     images_processed: int = 0
@@ -733,7 +836,7 @@ class ThumbnailRepairResult(BaseModel):
     repair_started_at: datetime
     estimated_completion_time: Optional[datetime] = None
     message: Optional[str] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -741,29 +844,48 @@ class ThumbnailRepairResult(BaseModel):
 # ORPHANED FILE REPAIR MODELS
 # ====================================================================
 
+
 class OrphanedFileResult(BaseModel):
     """Result of orphaned file analysis for a single file"""
-    
+
     file_path: str = Field(..., description="Full path to the orphaned file")
     file_type: str = Field(..., description="Type of file: thumbnail or small")
     file_size_bytes: int = Field(..., description="Size of the file in bytes")
-    camera_id: Optional[int] = Field(None, description="Camera ID extracted from directory structure")
-    timelapse_id: Optional[int] = Field(None, description="Timelapse ID extracted from directory structure")
-    potential_image_id: Optional[int] = Field(None, description="Best guess image ID match")
-    structure_type: str = Field(..., description="File structure type: legacy or timelapse")
-    match_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence in the match (0.0-1.0)")
-    timestamp_extracted: Optional[datetime] = Field(None, description="Timestamp extracted from filename if possible")
-    can_repair: bool = Field(default=False, description="Whether this file can be automatically repaired")
-    repair_reason: Optional[str] = Field(None, description="Reason why file can/cannot be repaired")
+    camera_id: Optional[int] = Field(
+        None, description="Camera ID extracted from directory structure"
+    )
+    timelapse_id: Optional[int] = Field(
+        None, description="Timelapse ID extracted from directory structure"
+    )
+    potential_image_id: Optional[int] = Field(
+        None, description="Best guess image ID match"
+    )
+    structure_type: str = Field(
+        ..., description="File structure type: legacy or timelapse"
+    )
+    match_confidence: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Confidence in the match (0.0-1.0)"
+    )
+    timestamp_extracted: Optional[datetime] = Field(
+        None, description="Timestamp extracted from filename if possible"
+    )
+    can_repair: bool = Field(
+        default=False, description="Whether this file can be automatically repaired"
+    )
+    repair_reason: Optional[str] = Field(
+        None, description="Reason why file can/cannot be repaired"
+    )
     error: Optional[str] = Field(None, description="Any error in processing this file")
-    analyzed_at: datetime = Field(default_factory=datetime.utcnow, description="When this file was analyzed")
-    
+    analyzed_at: datetime = Field(
+        default_factory=datetime.utcnow, description="When this file was analyzed"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrphanedFileScanSummary(BaseModel):
     """Summary of orphaned file filesystem scan results"""
-    
+
     total_files_scanned: int = 0
     orphaned_files_found: int = 0
     matched_files: int = 0
@@ -777,28 +899,49 @@ class OrphanedFileScanSummary(BaseModel):
     processing_time_seconds: Optional[float] = None
     directories_scanned: int = 0
     scan_errors: int = 0
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrphanFileRepairRequest(BaseModel):
     """Request model for orphaned file repair operations"""
-    
-    file_paths: Optional[List[str]] = Field(None, description="Specific orphaned files to repair")
-    camera_ids: Optional[List[int]] = Field(None, description="Repair orphaned files for specific cameras")
-    timelapse_ids: Optional[List[int]] = Field(None, description="Repair orphaned files for specific timelapses")
-    structure_type: Optional[str] = Field(None, description="Only repair files from specific structure: legacy or timelapse")
-    min_confidence: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum match confidence for automatic repair")
-    repair_action: str = Field(default="update_database", description="Repair action: update_database or queue_regeneration")
-    force_repair: bool = Field(default=False, description="Force repair even for low confidence matches")
-    delete_unmatched: bool = Field(default=False, description="Delete orphaned files that cannot be matched")
-    
+
+    file_paths: Optional[List[str]] = Field(
+        None, description="Specific orphaned files to repair"
+    )
+    camera_ids: Optional[List[int]] = Field(
+        None, description="Repair orphaned files for specific cameras"
+    )
+    timelapse_ids: Optional[List[int]] = Field(
+        None, description="Repair orphaned files for specific timelapses"
+    )
+    structure_type: Optional[str] = Field(
+        None,
+        description="Only repair files from specific structure: legacy or timelapse",
+    )
+    min_confidence: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum match confidence for automatic repair",
+    )
+    repair_action: str = Field(
+        default="update_database",
+        description="Repair action: update_database or queue_regeneration",
+    )
+    force_repair: bool = Field(
+        default=False, description="Force repair even for low confidence matches"
+    )
+    delete_unmatched: bool = Field(
+        default=False, description="Delete orphaned files that cannot be matched"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrphanFileRepairResult(BaseModel):
     """Result of orphaned file repair operations"""
-    
+
     success: bool
     files_processed: int = 0
     files_repaired: int = 0
@@ -812,7 +955,7 @@ class OrphanFileRepairResult(BaseModel):
     processing_time_seconds: Optional[float] = None
     storage_recovered_mb: float = 0.0
     message: Optional[str] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -820,20 +963,28 @@ class OrphanFileRepairResult(BaseModel):
 # THUMBNAIL JOB MODELS
 # ====================================================================
 
+
 class ThumbnailGenerationJobCreate(BaseModel):
     """Model for creating thumbnail generation jobs"""
-    
+
     image_id: int = Field(..., description="ID of the image to generate thumbnails for")
-    priority: str = Field(default=THUMBNAIL_JOB_PRIORITY_MEDIUM, description="Job priority: high, medium, low")
-    status: str = Field(default=THUMBNAIL_JOB_STATUS_PENDING, description="Initial job status")
-    job_type: str = Field(default=THUMBNAIL_JOB_TYPE_SINGLE, description="Job type: single, bulk")
-    
+    priority: str = Field(
+        default=ThumbnailJobPriority.MEDIUM,
+        description="Job priority: high, medium, low",
+    )
+    status: str = Field(
+        default=ThumbnailJobStatus.PENDING, description="Initial job status"
+    )
+    job_type: str = Field(
+        default=ThumbnailJobType.SINGLE, description="Job type: single, bulk"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ThumbnailGenerationJob(BaseModel):
     """Complete thumbnail generation job model"""
-    
+
     id: int
     image_id: int
     priority: str
@@ -845,13 +996,13 @@ class ThumbnailGenerationJob(BaseModel):
     error_message: Optional[str] = None
     processing_time_ms: Optional[int] = None
     retry_count: int = 0
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class ThumbnailJobStatistics(BaseModel):
     """Statistics for thumbnail job queue monitoring"""
-    
+
     total_jobs_24h: int = 0
     pending_jobs: int = 0
     processing_jobs: int = 0
@@ -860,26 +1011,38 @@ class ThumbnailJobStatistics(BaseModel):
     cancelled_jobs_24h: int = 0
     avg_processing_time_ms: int = 0
     last_updated: datetime = Field(default_factory=datetime.utcnow)
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class BulkThumbnailRequest(BaseModel):
     """Request model for bulk thumbnail generation"""
-    
-    image_ids: List[int] = Field(..., description="List of image IDs to generate thumbnails for")
-    priority: str = Field(default=THUMBNAIL_JOB_PRIORITY_MEDIUM, description="Job priority for all images")
-    
+
+    image_ids: List[int] = Field(
+        ..., description="List of image IDs to generate thumbnails for"
+    )
+    priority: str = Field(
+        default=ThumbnailJobPriority.MEDIUM, description="Job priority for all images"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class BulkThumbnailResponse(BaseModel):
     """Response model for bulk thumbnail generation"""
-    
+
     total_requested: int = Field(..., description="Total number of images requested")
-    jobs_created: int = Field(default=0, description="Number of jobs successfully created")
-    jobs_failed: int = Field(default=0, description="Number of jobs that failed to create")
-    created_job_ids: List[int] = Field(default_factory=list, description="IDs of successfully created jobs")
-    failed_image_ids: List[int] = Field(default_factory=list, description="IDs of images that failed to queue")
-    
+    jobs_created: int = Field(
+        default=0, description="Number of jobs successfully created"
+    )
+    jobs_failed: int = Field(
+        default=0, description="Number of jobs that failed to create"
+    )
+    created_job_ids: List[int] = Field(
+        default_factory=list, description="IDs of successfully created jobs"
+    )
+    failed_image_ids: List[int] = Field(
+        default_factory=list, description="IDs of images that failed to queue"
+    )
+
     model_config = ConfigDict(from_attributes=True)

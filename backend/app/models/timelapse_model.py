@@ -15,8 +15,8 @@ from .shared_models import (
 
 class TimelapseBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
-    status: Literal["running", "paused", "completed", "archived"] = Field(
-        default="completed", description="Timelapse status"
+    status: Literal["created", "running", "paused", "completed", "failed"] = Field(
+        default="created", description="Timelapse status"
     )
 
 
@@ -25,6 +25,14 @@ class TimelapseCreateData(BaseModel):
 
     name: Optional[str] = Field(None, description="Custom name for the timelapse")
     auto_stop_at: Optional[datetime] = Field(None, description="Automatic stop time")
+
+    # Capture scheduling
+    capture_interval_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=86400,
+        description="Capture interval in seconds (30 sec to 24 hours)",
+    )
 
     # Time window configuration
     time_window_type: Literal["none", "time", "sunrise_sunset"] = Field(
@@ -67,6 +75,14 @@ class TimelapseCreate(TimelapseBase):
 
     name: Optional[str] = Field(None, description="Custom name for the timelapse")
     auto_stop_at: Optional[datetime] = Field(None, description="Automatic stop time")
+
+    # Capture scheduling
+    capture_interval_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=86400,
+        description="Capture interval in seconds (30 sec to 24 hours)",
+    )
 
     # Time window configuration
     time_window_type: Literal["none", "time", "sunrise_sunset"] = Field(
@@ -117,7 +133,15 @@ class TimelapseCreate(TimelapseBase):
 class TimelapseUpdate(BaseModel):
     """Model for updating a timelapse"""
 
-    status: Optional[Literal["running", "paused", "completed", "archived"]] = None
+    status: Optional[Literal["created", "running", "paused", "completed", "failed"]] = None
+    starred: Optional[bool] = Field(
+        default=None, description="Whether the timelapse is starred"
+    )
+
+    # Capture scheduling
+    capture_interval_seconds: Optional[int] = Field(
+        default=None, ge=30, le=86400, description="Capture interval in seconds"
+    )
 
     # Time window configuration
     time_window_type: Optional[Literal["none", "time", "sunrise_sunset"]] = None
@@ -150,6 +174,11 @@ class Timelapse(TimelapseBase):
     name: Optional[str] = None
     start_date: Optional[date] = None
     auto_stop_at: Optional[datetime] = None
+
+    # Capture scheduling
+    capture_interval_seconds: int = Field(
+        default=300, description="Capture interval in seconds"
+    )
 
     # Time window configuration
     time_window_type: str = "none"
