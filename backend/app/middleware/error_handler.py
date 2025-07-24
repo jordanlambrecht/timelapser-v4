@@ -10,7 +10,7 @@ import traceback
 import uuid
 
 from datetime import datetime, timezone
-from ..utils.timezone_utils import get_timezone_aware_timestamp_from_settings, utc_now
+from ..utils.time_utils import get_timezone_aware_timestamp_from_settings, utc_now
 
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
