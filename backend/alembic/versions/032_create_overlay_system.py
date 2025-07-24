@@ -39,7 +39,6 @@ def upgrade() -> None:
             sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
             sa.PrimaryKeyConstraint('id'),
             sa.UniqueConstraint('name'),
-            postgresql_with={'fillfactor': 90},
             comment='System-wide overlay presets for timelapse configuration'
         )
         print("✅ overlay_presets table created")
@@ -62,7 +61,6 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(['preset_id'], ['overlay_presets.id'], ondelete='SET NULL'),
             sa.PrimaryKeyConstraint('id'),
             sa.UniqueConstraint('timelapse_id', name='uq_timelapse_overlays_timelapse_id'),
-            postgresql_with={'fillfactor': 90},
             comment='Overlay configurations for individual timelapses'
         )
         print("✅ timelapse_overlays table created")
@@ -84,7 +82,6 @@ def upgrade() -> None:
             sa.CheckConstraint('file_size > 0 AND file_size <= 104857600', name='ck_overlay_assets_file_size'),
             sa.CheckConstraint("mime_type IN ('image/png', 'image/jpeg', 'image/webp')", name='ck_overlay_assets_mime_type'),
             sa.PrimaryKeyConstraint('id'),
-            postgresql_with={'fillfactor': 90},
             comment='Uploaded watermark and logo assets for overlays'
         )
         print("✅ overlay_assets table created")
@@ -116,7 +113,6 @@ def upgrade() -> None:
             ),
             sa.ForeignKeyConstraint(['image_id'], ['images.id'], ondelete='CASCADE'),
             sa.PrimaryKeyConstraint('id'),
-            postgresql_with={'fillfactor': 85},
             comment='Job queue for overlay generation processing'
         )
         print("✅ overlay_generation_jobs table created")

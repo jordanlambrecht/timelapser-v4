@@ -10,16 +10,13 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# Import constants for default values
+# Import enums for default values
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "app"))
-from app.constants import (
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_TYPE_SINGLE,
-)
+from app.enums import JobPriority, JobStatus
+from app.constants import THUMBNAIL_JOB_TYPE_SINGLE
 
 # revision identifiers, used by Alembic.
 revision = "022_thumbnail_jobs"
@@ -40,13 +37,13 @@ def upgrade():
             "priority",
             sa.String(20),
             nullable=False,
-            default=THUMBNAIL_JOB_PRIORITY_MEDIUM,
+            default=JobPriority.MEDIUM,
         ),
         sa.Column(
             "status",
             sa.String(20),
             nullable=False,
-            default=THUMBNAIL_JOB_STATUS_PENDING,
+            default=JobStatus.PENDING,
         ),
         sa.Column(
             "job_type", sa.String(20), nullable=False, default=THUMBNAIL_JOB_TYPE_SINGLE
