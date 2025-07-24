@@ -19,33 +19,25 @@ from ..utils.router_helpers import (
     paginate_query_params,
 )
 from ..utils.response_helpers import ResponseFormatter
-from ..utils.timezone_utils import (
+from ..utils.pagination_helpers import create_pagination_metadata
+from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     parse_iso_timestamp_safe,
 )
-from ..constants import LOG_LEVELS, DEFAULT_LOG_PAGE_SIZE, MAX_LOG_PAGE_SIZE
+from ..constants import (
+    LOG_LEVELS,
+    DEFAULT_LOG_PAGE_SIZE,
+    LOG_LEVELS_LIST,
+    MAX_LOG_PAGE_SIZE,
+)
 
-# TODO: CACHING STRATEGY - MIXED APPROACH
+# NOTE: CACHING STRATEGY - MIXED APPROACH
 # Log endpoints use mixed caching strategy:
 # - Log statistics/summary: ETag + short cache (2-5 min) - aggregated data changes slowly
 # - Log sources: ETag + longer cache (15-30 min) - mostly static configuration data
 # - Log search/filtering: Minimal cache (30 seconds max) - dynamic queries with parameters
 # - Historical logs: Short cache + ETag - immutable once written but accessed frequently
 router = APIRouter(tags=["logs"])
-
-
-def create_pagination_metadata(
-    page: int, limit: int, total_pages: int, total_count: int
-) -> dict:
-    """Create standardized pagination metadata to reduce code duplication"""
-    return {
-        "page": page,
-        "limit": limit,
-        "total_pages": total_pages,
-        "total_items": total_count,
-        "has_next": page < total_pages,
-        "has_previous": page > 1,
-    }
 
 
 @router.get("/logs/stats")
@@ -96,7 +88,7 @@ async def get_log_stats(
 async def get_logs(
     log_service: LogServiceDep,
     level: Optional[str] = Query(
-        None, description=f"Filter by log level ({', '.join(LOG_LEVELS)})"
+        None, description=f"Filter by log level ({', '.join(LOG_LEVELS_LIST)})"
     ),
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
     source: Optional[str] = Query(
@@ -138,10 +130,10 @@ async def get_logs(
             )
 
     # Validate log level if provided
-    if level and level.upper() not in LOG_LEVELS:
+    if level and level.upper() not in LOG_LEVELS_LIST:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid log level. Must be one of: {', '.join(LOG_LEVELS)}",
+            detail=f"Invalid log level. Must be one of: {', '.join(LOG_LEVELS_LIST)}",
         )
 
     result = await log_service.get_logs(
@@ -214,10 +206,10 @@ async def search_logs(
     limit, offset = paginate_query_params(page, limit, max_per_page=MAX_LOG_PAGE_SIZE)
 
     # Validate log level if provided
-    if level and level.upper() not in LOG_LEVELS:
+    if level and level.upper() not in LOG_LEVELS_LIST:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid log level. Must be one of: {', '.join(LOG_LEVELS)}",
+            detail=f"Invalid log level. Must be one of: {', '.join(LOG_LEVELS_LIST)}",
         )
 
     # Use get_logs with search query - the search functionality is built into get_logs
@@ -300,7 +292,7 @@ async def get_camera_logs(
     )
 
 
-# Note: Export, individual log retrieval, and individual log deletion endpoints
+# NOTE: Export, individual log retrieval, and individual log deletion endpoints
 # are not implemented yet as the corresponding service methods don't exist.
 # These can be added when the LogService is extended with:
 # - export_logs() method for data export functionality

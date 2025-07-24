@@ -12,7 +12,7 @@ import asyncio
 from typing import AsyncGenerator
 from datetime import datetime
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
@@ -108,6 +108,11 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                                 logger.warning(
                                     f"Cache invalidation failed for {event['type']}: {cache_error}"
                                 )
+
+                            # Log events for debugging
+                            logger.info(
+                                f"🔄 Sending {event['type']} SSE event: {event_data}"
+                            )
 
                             # Yield SSE-formatted data
                             yield f"data: {json.dumps(event_data)}\n\n"

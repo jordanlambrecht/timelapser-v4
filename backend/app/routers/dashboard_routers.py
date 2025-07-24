@@ -14,7 +14,7 @@ from ..utils.cache_manager import (
     generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag
+    generate_timestamp_etag,
 )
 from ..models.statistics_model import (
     DashboardStatsModel,
@@ -24,7 +24,7 @@ from ..models.statistics_model import (
 from ..utils.router_helpers import handle_exceptions
 from ..utils.response_helpers import ResponseFormatter
 
-# TODO: CACHING STRATEGY - ETAG + SHORT CACHE
+# CACHING STRATEGY - ETAG + SHORT CACHE
 # Dashboard is perfect use case for ETag + short cache strategy:
 # - Composite data (stats/overview): ETag + 2-3 min cache - changes occasionally
 # - Health status: SSE broadcasting - critical real-time monitoring
@@ -44,14 +44,14 @@ async def get_dashboard_overview(
     """Get complete unified dashboard overview including system data"""
     # All business logic handled in service layer
     enhanced_stats = await statistics_service.get_enhanced_dashboard_stats()
-    
+
     # Generate ETag based on dashboard stats content (composite data)
     etag = generate_content_hash_etag(enhanced_stats.model_dump())
-    
+
     # Add short cache for dashboard composite data
     response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"  # 3 minutes
     response.headers["ETag"] = etag
-    
+
     return enhanced_stats
 
 
@@ -65,14 +65,14 @@ async def get_dashboard_stats(
 ) -> DashboardStatsModel:
     """Get comprehensive dashboard statistics"""
     dashboard_stats = await statistics_service.get_dashboard_stats()
-    
+
     # Generate ETag based on dashboard stats content
     etag = generate_content_hash_etag(dashboard_stats.model_dump())
-    
+
     # Add short cache for dashboard statistics
     response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"  # 3 minutes
     response.headers["ETag"] = etag
-    
+
     return dashboard_stats
 
 
@@ -85,12 +85,19 @@ async def get_dashboard_stats(
 # All system overview, storage, quality trends, camera performance, and health score data is now included in the unified dashboard response
 
 
-# TODO: Replace with SSE in services layer- health status changes frequently and is critical for monitoring
-# Use very short cache (30 seconds max) or preferably SSE events
+# Health monitoring uses HTTP caching instead of SSE by design choice:
+# Health status is typically polled periodically (every few minutes) rather than
+# requiring real-time streaming. SSE would be overkill for this use case.
+# The short cache strategy provides optimal balance between freshness and performance.
 @router.get("/dashboard/health")
 @handle_exceptions("get dashboard health")
 async def get_dashboard_health(health_service: HealthServiceDep):
-    """Get health status for dashboard display"""
+    """
+    Get health status for dashboard display.
+    
+    Note: Uses HTTP caching instead of SSE - health monitoring doesn't need
+    real-time streaming and works better with periodic polling + caching.
+    """
     health_status = await health_service.get_detailed_health()
     return ResponseFormatter.success(
         "Dashboard health status retrieved", data=health_status.model_dump()

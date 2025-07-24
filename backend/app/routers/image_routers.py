@@ -13,31 +13,27 @@ Interactions: Uses ImageService for business logic, serves files directly from
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Query, HTTPException, status, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..dependencies import ImageServiceDep
 
-from ..models.image_model import ImageWithDetails
-from ..models.shared_models import ThumbnailRegenerationResponse
-
-from ..models.shared_models import ImageStatisticsResponse, BulkDownloadResponse
+from ..models.image_model import Image
+from ..models.shared_models import BulkDownloadResponse
 from ..utils.router_helpers import handle_exceptions
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.file_helpers import create_file_response
 from ..utils.cache_manager import (
-    generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag,
 )
 from ..constants import IMAGE_SIZE_VARIANTS, CACHE_CONTROL_PUBLIC
 
-# TODO: CACHING STRATEGY - LONG CACHE FOR IMMUTABLE CONTENT
-# Images are perfect example of immutable content that benefits from aggressive caching:
-# - Image files: Long cache (1 year) + ETag - never change after creation
-# - Image metadata: ETag + moderate cache (5-10 min) - rarely changes
-# - Dynamic operations (bulk downloads, deletion): No cache + SSE broadcasting
-# Individual endpoint TODOs are well-defined throughout this file.
+# NOTE: CACHING STRATEGY - IMPLEMENTED THROUGHOUT THIS FILE
+# Images are immutable content with aggressive caching implemented:
+# - Image files: Long cache (1 year) + ETag - implemented in serve endpoints
+# - Image metadata: ETag + moderate cache (5-10 min) - implemented in metadata endpoints  
+# - Dynamic operations (bulk downloads, deletion): No cache + SSE broadcasting - implemented
+# This caching strategy is fully implemented across all endpoints below.
 router = APIRouter(tags=["images"])
 
 
@@ -55,6 +51,22 @@ class BulkDownloadRequest(BaseModel):
     zip_filename: Optional[str] = Field(
         None, description="Custom filename for ZIP file"
     )
+
+
+class BatchImageRequest(BaseModel):
+    """Request model for batch image loading"""
+    
+    image_ids: List[int] = Field(
+        ..., min_length=1, max_length=1000, description="List of image IDs to load"
+    )
+    
+    @field_validator('image_ids')
+    @classmethod
+    def validate_image_ids(cls, v):
+        """Validate that all image IDs are positive integers"""
+        if not all(id > 0 for id in v):
+            raise ValueError("All image IDs must be positive integers")
+        return v
 
 
 # ====================================================================
@@ -105,7 +117,7 @@ async def get_image_count(
 
 # IMPLEMENTED: ETag + long cache (image metadata never changes after creation)
 # ETag = f'"{image.id}-{image.updated_at.timestamp()}"'
-@router.get("/images/{image_id}", response_model=ImageWithDetails)
+@router.get("/images/{image_id}", response_model=Image)
 @handle_exceptions("get image")
 async def get_image(response: Response, image_id: int, image_service: ImageServiceDep):
     """
@@ -127,7 +139,12 @@ async def get_image(response: Response, image_id: int, image_service: ImageServi
     response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"  # 1 hour
     response.headers["ETag"] = etag
 
-    return image
+    return ResponseFormatter.success(
+        message="Image retrieved successfully",
+        data=image.model_dump(),
+        entity_type="image",
+        entity_id=image_id,
+    )
 
 
 # ====================================================================
@@ -192,7 +209,6 @@ async def serve_image(
 # ====================================================================
 
 
-# TODO:  no HTTP caching needed for DELETE operations
 @router.delete("/images/{image_id}")
 @handle_exceptions("delete image")
 async def delete_image(image_id: int, image_service: ImageServiceDep):
@@ -236,19 +252,18 @@ async def delete_image(image_id: int, image_service: ImageServiceDep):
 # ====================================================================
 
 
-@router.get("/images/batch")
+@router.post("/images/batch")
 @handle_exceptions("batch load images")
 async def get_images_batch(
+    request: BatchImageRequest,
     image_service: ImageServiceDep,
-    ids: str = Query(..., description="Comma-separated image IDs: '1,2,3,4'"),
     size: str = Query("thumbnail", description="thumbnail|small|original"),
 ):
     """Batch load multiple images/thumbnails in single request"""
-    image_ids = [int(id.strip()) for id in ids.split(",") if id.strip()]
-    images = await image_service.get_images_batch(image_ids, size)
+    images = await image_service.get_images_batch(request.image_ids, size)
 
     # Convert Pydantic models to dicts for ResponseFormatter compatibility
-    # TODO: conversion should not be needed
+    # NOTE: Required because ResponseFormatter expects Dict/List, not Pydantic models
     images_data = [image.model_dump() for image in images]
 
     # SSE broadcasting handled by service layer (proper architecture)
@@ -258,14 +273,12 @@ async def get_images_batch(
         data={
             "images": images_data,
             "size": size,
-            "requested_count": len(image_ids),
+            "requested_count": len(request.image_ids),
             "loaded_count": len(images),
         },
     )
 
 
-# TODO: No caching needed - bulk downloads are dynamic operations
-# Good SSE broadcasting for operation tracking
 @router.post("/images/bulk/download", response_model=BulkDownloadResponse)
 @handle_exceptions("bulk download images")
 async def bulk_download_images(
@@ -295,12 +308,19 @@ async def bulk_download_images(
 
     # SSE broadcasting handled by service layer (proper architecture)
 
-    return BulkDownloadResponse(
+    bulk_response = BulkDownloadResponse(
         requested_images=bulk_result["requested_images"],
         included_images=bulk_result["included_images"],
         filename=bulk_result["filename"],
         total_size=bulk_result.get("total_size"),
         zip_data=bulk_result.get("zip_data"),
+    )
+    
+    return ResponseFormatter.success(
+        message="Bulk download prepared successfully",
+        data=bulk_response.model_dump(),
+        entity_type="bulk_download",
+        operation="create",
     )
 
 
@@ -310,7 +330,7 @@ async def bulk_download_images(
 
 
 # Removed quality-assessment endpoint per decision: "DEPRECATE BACKEND - Include quality data in main image endpoint"
-# Quality assessment data is now included in the main /images/{image_id} GET endpoint via ImageWithDetails model
+# Quality assessment data is now included in the main /images/{image_id} GET endpoint via Image model
 
 
 # IMPLEMENTED: long cache + ETag for immutable image files

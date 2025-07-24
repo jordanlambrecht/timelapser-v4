@@ -15,7 +15,7 @@ Follows architectural patterns:
 - ResponseFormatter for consistent responses
 """
 
-from fastapi import APIRouter, status, HTTPException
+from fastapi import APIRouter
 from typing import Dict, Any
 
 from app.dependencies import HealthServiceDep
@@ -26,9 +26,9 @@ from app.models.health_model import (
     FilesystemHealth,
     SystemMetrics,
     ApplicationMetrics,
-    HealthStatus
 )
 from app.utils.router_helpers import handle_exceptions, ResponseFormatter
+from app.utils.validation_helpers import create_health_response, create_kubernetes_readiness_response
 from app.constants import APPLICATION_NAME, APPLICATION_VERSION
 
 # TODO: CACHING STRATEGY - MINIMAL/NO CACHE
@@ -50,25 +50,13 @@ async def health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     """
     basic_health = await health_service.get_basic_health()
     
-    # Convert to dict for ResponseFormatter
-    health_data = basic_health.model_dump()
-    
-    # Return error status code if unhealthy
-    if basic_health.status == HealthStatus.UNHEALTHY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service unhealthy"
-        )
-    elif basic_health.status == HealthStatus.DEGRADED:
-        return ResponseFormatter.success(
-            data=health_data,
-            message="Service degraded - some components need attention"
-        )
-    
-    return ResponseFormatter.success(
-        data=health_data,
-        message="Service healthy"
+    # Delegate status logic to validation helpers
+    response, _ = create_health_response(
+        basic_health,
+        success_message="Service healthy",
+        degraded_message="Service degraded - some components need attention"
     )
+    return response
 
 
 @router.get("/health/detailed", response_model=Dict[str, Any])
@@ -81,26 +69,13 @@ async def detailed_health_check(health_service: HealthServiceDep) -> Dict[str, A
     """
     detailed_health = await health_service.get_detailed_health()
     
-    # Convert to dict for ResponseFormatter
-    health_data = detailed_health.model_dump()
-    
-    # Return error status code if unhealthy
-    if detailed_health.status == HealthStatus.UNHEALTHY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="System health check failed"
-        )
-    elif detailed_health.status == HealthStatus.DEGRADED:
-        # Return 200 but with warning message for degraded status
-        return ResponseFormatter.success(
-            data=health_data,
-            message="System health degraded - some components need attention"
-        )
-    
-    return ResponseFormatter.success(
-        data=health_data,
-        message="System health check completed successfully"
+    # Delegate status logic to validation helpers
+    response, _ = create_health_response(
+        detailed_health,
+        success_message="System health check completed successfully",
+        degraded_message="System health degraded - some components need attention"
     )
+    return response
 
 
 @router.get("/health/database", response_model=Dict[str, Any])
@@ -108,23 +83,14 @@ async def detailed_health_check(health_service: HealthServiceDep) -> Dict[str, A
 async def database_health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     """Get detailed database health information."""
     db_health = await health_service.get_database_health()
-    health_data = db_health.model_dump()
     
-    if db_health.status == HealthStatus.UNHEALTHY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database health check failed"
-        )
-    elif db_health.status == HealthStatus.DEGRADED:
-        return ResponseFormatter.success(
-            data=health_data,
-            message="Database health degraded - performance issues detected"
-        )
-    
-    return ResponseFormatter.success(
-        data=health_data,
-        message="Database health check completed"
+    # Delegate status logic to validation helpers
+    response, _ = create_health_response(
+        db_health,
+        success_message="Database health check completed",
+        degraded_message="Database health degraded - performance issues detected"
     )
+    return response
 
 
 @router.get("/health/filesystem", response_model=Dict[str, Any])
@@ -132,23 +98,14 @@ async def database_health_check(health_service: HealthServiceDep) -> Dict[str, A
 async def filesystem_health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     """Get detailed filesystem health information."""
     fs_health = await health_service.get_filesystem_health()
-    health_data = fs_health.model_dump()
     
-    if fs_health.status == HealthStatus.UNHEALTHY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Filesystem health check failed"
-        )
-    elif fs_health.status == HealthStatus.DEGRADED:
-        return ResponseFormatter.success(
-            data=health_data,
-            message="Filesystem health degraded - storage issues detected"
-        )
-    
-    return ResponseFormatter.success(
-        data=health_data,
-        message="Filesystem health check completed"
+    # Delegate status logic to validation helpers
+    response, _ = create_health_response(
+        fs_health,
+        success_message="Filesystem health check completed",
+        degraded_message="Filesystem health degraded - storage issues detected"
     )
+    return response
 
 
 @router.get("/health/system", response_model=Dict[str, Any])
@@ -188,19 +145,8 @@ async def readiness_probe(health_service: HealthServiceDep) -> Dict[str, Any]:
     """
     basic_health = await health_service.get_basic_health()
     
-    if basic_health.status == HealthStatus.UNHEALTHY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service not ready"
-        )
-    elif basic_health.status == HealthStatus.DEGRADED:
-        return {
-            "status": "ready_degraded", 
-            "timestamp": basic_health.timestamp.isoformat(),
-            "message": "Service ready but degraded"
-        }
-    
-    return {"status": "ready", "timestamp": basic_health.timestamp.isoformat()}
+    # Delegate status logic to validation helpers
+    return create_kubernetes_readiness_response(basic_health)
 
 
 @router.get("/health/liveness", response_model=Dict[str, Any])
