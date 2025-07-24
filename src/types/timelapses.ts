@@ -1,7 +1,7 @@
 export interface Timelapse {
   id: number
   camera_id: number
-  status: "running" | "stopped" | "paused" | "completed" | "archived"
+  status: "running" | "paused" | "completed"
   name?: string
   start_date?: string
   auto_stop_at?: string

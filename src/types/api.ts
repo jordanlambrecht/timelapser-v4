@@ -70,6 +70,9 @@ export interface CameraWithLastImage {
 export interface CameraCreate {
   name: string
   rtsp_url: string
+  rotation?: 0 | 90 | 180 | 270
+  crop_rotation_enabled?: boolean
+  crop_rotation_settings?: any // Will be CropRotationSettings but keep as any for API flexibility
   use_time_window?: boolean
   time_window_start?: string | null
   time_window_end?: string | null
@@ -78,6 +81,9 @@ export interface CameraCreate {
 export interface CameraUpdate {
   name?: string
   rtsp_url?: string
+  rotation?: 0 | 90 | 180 | 270
+  crop_rotation_enabled?: boolean
+  crop_rotation_settings?: any // Will be CropRotationSettings but keep as any for API flexibility
   use_time_window?: boolean
   time_window_start?: string | null
   time_window_end?: string | null

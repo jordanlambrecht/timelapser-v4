@@ -7,6 +7,42 @@ import {
 import { Timelapse } from "./timelapses"
 import { Video } from "./videos"
 
+// Crop and rotation types
+export interface CropSettings {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface AspectRatioSettings {
+  enabled: boolean
+  ratio?: string // e.g., "16:9", "4:3", "1:1"
+  mode: "crop" | "letterbox"
+}
+
+export interface SourceResolution {
+  width: number
+  height: number
+  last_detected_at: string
+}
+
+export interface CropRotationSettings {
+  rotation: 0 | 90 | 180 | 270
+  crop?: CropSettings
+  aspect_ratio?: AspectRatioSettings
+  processing_order: ("crop" | "rotate" | "aspect_ratio")[]
+  preview_enabled: boolean
+}
+
+export interface CropRotationUpdate {
+  rotation?: 0 | 90 | 180 | 270
+  crop?: CropSettings
+  aspect_ratio?: AspectRatioSettings
+  processing_order?: ("crop" | "rotate" | "aspect_ratio")[]
+  preview_enabled?: boolean
+}
+
 export interface Camera {
   id: number
   name: string
@@ -24,6 +60,14 @@ export interface Camera {
   time_window_start?: string
   time_window_end?: string
   use_time_window: boolean
+
+  // Image capture settings
+  rotation: 0 | 90 | 180 | 270
+
+  // Crop and rotation settings (new unified system)
+  crop_rotation_enabled: boolean
+  crop_rotation_settings?: CropRotationSettings
+  source_resolution?: SourceResolution
 
   // Video generation settings (FPS/duration)
   video_generation_mode: "standard" | "target"
