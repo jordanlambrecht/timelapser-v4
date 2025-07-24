@@ -105,7 +105,7 @@ class TimelapseOperations:
             List of TimelapseWithDetails model instances
         """
         base_query = """
-        SELECT 
+        SELECT
             t.*,
             c.name as camera_name,
             COUNT(i.id) as image_count,
@@ -150,7 +150,7 @@ class TimelapseOperations:
             TimelapseWithDetails model instance, or None if not found
         """
         query = """
-        SELECT 
+        SELECT
             t.*,
             c.name as camera_name,
             COUNT(i.id) as image_count,
@@ -197,15 +197,15 @@ class TimelapseOperations:
         # Create the timelapse record
         query = """
         INSERT INTO timelapses (
-            camera_id, name, status, auto_stop_at,
-            time_window_type, time_window_start, time_window_end, 
+            camera_id, name, status, auto_stop_at, capture_interval_seconds,
+            time_window_type, time_window_start, time_window_end,
             sunrise_offset_minutes, sunset_offset_minutes, use_custom_time_window,
             video_generation_mode, standard_fps, enable_time_limits,
             min_time_seconds, max_time_seconds, target_time_seconds,
             fps_bounds_min, fps_bounds_max, video_automation_mode,
             generation_schedule, milestone_config
         ) VALUES (
-            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s,
+            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
             %(time_window_type)s, %(time_window_start)s, %(time_window_end)s,
             %(sunrise_offset_minutes)s, %(sunset_offset_minutes)s, %(use_custom_time_window)s,
             %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,
@@ -342,7 +342,7 @@ class TimelapseOperations:
             TimelapseStatistics model instance or None if timelapse not found
         """
         query = """
-        SELECT 
+        SELECT
             COUNT(i.id) as total_images,
             COUNT(v.id) as total_videos,
             MIN(i.captured_at) as first_capture_at,
@@ -406,10 +406,10 @@ class TimelapseOperations:
             Completed Timelapse model instance
         """
         query = """
-        UPDATE timelapses 
-        SET status = 'completed', 
+        UPDATE timelapses
+        SET status = 'completed',
             updated_at = NOW()
-        WHERE id = %s 
+        WHERE id = %s
         RETURNING *
         """
 
@@ -447,8 +447,8 @@ class TimelapseOperations:
             Number of timelapses deleted
         """
         query = """
-        DELETE FROM timelapses 
-        WHERE status = 'completed' 
+        DELETE FROM timelapses
+        WHERE status = 'completed'
         AND updated_at < NOW() - INTERVAL '%s days'
         """
 
@@ -495,7 +495,7 @@ class TimelapseOperations:
                 return True  # Nothing to update
 
             query = f"""
-                UPDATE timelapses 
+                UPDATE timelapses
                 SET {', '.join(set_clauses)}
                 WHERE id = %s
             """
@@ -525,15 +525,15 @@ class TimelapseOperations:
         """
         try:
             query = """
-                UPDATE timelapses 
-                SET 
+                UPDATE timelapses
+                SET
                     thumbnail_count = COALESCE(thumb_stats.thumbnail_count, 0),
                     small_count = COALESCE(thumb_stats.small_count, 0)
                 FROM (
-                    SELECT 
+                    SELECT
                         COUNT(CASE WHEN thumbnail_path IS NOT NULL AND thumbnail_path != '' THEN 1 END) as thumbnail_count,
                         COUNT(CASE WHEN small_path IS NOT NULL AND small_path != '' THEN 1 END) as small_count
-                    FROM images 
+                    FROM images
                     WHERE timelapse_id = %s
                 ) as thumb_stats
                 WHERE timelapses.id = %s
@@ -617,7 +617,7 @@ class SyncTimelapseOperations:
             True if update was successful
         """
         query = """
-        UPDATE timelapses 
+        UPDATE timelapses
         SET status = %s, updated_at = NOW()
         WHERE id = %s
         """
@@ -639,7 +639,7 @@ class SyncTimelapseOperations:
             True if increment was successful
         """
         query = """
-        UPDATE timelapses 
+        UPDATE timelapses
         SET glitch_count = glitch_count + 1,
             updated_at = NOW()
         WHERE id = %s
@@ -662,7 +662,7 @@ class SyncTimelapseOperations:
             True if update was successful
         """
         query = """
-        UPDATE timelapses 
+        UPDATE timelapses
         SET last_activity_at = NOW(),
             updated_at = NOW()
         WHERE id = %s
@@ -810,15 +810,15 @@ class SyncTimelapseOperations:
 
         query = """
         INSERT INTO timelapses (
-            camera_id, name, status, auto_stop_at,
-            time_window_type, time_window_start, time_window_end, 
+            camera_id, name, status, auto_stop_at, capture_interval_seconds,
+            time_window_type, time_window_start, time_window_end,
             sunrise_offset_minutes, sunset_offset_minutes, use_custom_time_window,
             video_generation_mode, standard_fps, enable_time_limits,
             min_time_seconds, max_time_seconds, target_time_seconds,
             fps_bounds_min, fps_bounds_max, video_automation_mode,
             generation_schedule, milestone_config
         ) VALUES (
-            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s,
+            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
             %(time_window_type)s, %(time_window_start)s, %(time_window_end)s,
             %(sunrise_offset_minutes)s, %(sunset_offset_minutes)s, %(use_custom_time_window)s,
             %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,
@@ -881,7 +881,7 @@ class SyncTimelapseOperations:
                 return True  # Nothing to update
 
             query = f"""
-                UPDATE timelapses 
+                UPDATE timelapses
                 SET {', '.join(set_clauses)}
                 WHERE id = %s
             """
@@ -897,4 +897,79 @@ class SyncTimelapseOperations:
             )
             return False
 
-    # ====================================================================
+    def get_running_and_paused_timelapses(self) -> List[Dict[str, Any]]:
+        """
+        Get all timelapses with status 'running' or 'paused'.
+
+        This is a pure data access method for the scheduler worker.
+
+        Returns:
+            List of dictionaries containing timelapse data
+        """
+        try:
+            query = """
+            SELECT id, name, camera_id, status, capture_interval_seconds
+            FROM timelapses 
+            WHERE status IN ('running', 'paused')
+            ORDER BY id
+            """
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return [dict(row) for row in results]
+
+        except Exception as e:
+            logger.error(f"Error getting running and paused timelapses: {e}")
+            return []
+
+    def get_active_timelapses_with_milestone_automation(self) -> List[Timelapse]:
+        """
+        Get all active timelapses that have milestone automation enabled.
+        
+        Returns:
+            List of Timelapse objects with milestone automation enabled
+        """
+        try:
+            query = """
+            SELECT * FROM timelapses 
+            WHERE status IN ('running', 'paused')
+            AND video_automation_mode = 'milestone'
+            AND milestone_config IS NOT NULL
+            ORDER BY id
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return [self._row_to_timelapse(dict(row)) for row in results]
+        except Exception as e:
+            logger.error(f"Error getting active timelapses with milestone automation: {e}")
+            return []
+
+    def get_active_timelapses_with_scheduled_automation(self) -> List[Timelapse]:
+        """
+        Get all active timelapses that have scheduled automation enabled.
+        
+        Returns:
+            List of Timelapse objects with scheduled automation enabled
+        """
+        try:
+            query = """
+            SELECT * FROM timelapses 
+            WHERE status IN ('running', 'paused')
+            AND video_automation_mode = 'scheduled'
+            AND generation_schedule IS NOT NULL
+            ORDER BY id
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return [self._row_to_timelapse(dict(row)) for row in results]
+        except Exception as e:
+            logger.error(f"Error getting active timelapses with scheduled automation: {e}")
+            return []
+
+    # ===================================================================

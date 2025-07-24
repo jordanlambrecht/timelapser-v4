@@ -12,6 +12,7 @@ This module handles all statistics-related database operations including:
 from typing import List, Dict, Optional, Any
 
 from loguru import logger
+import psycopg
 from app.models.statistics_model import (
     CameraStatsModel,
     TimelapseStatsModel,
@@ -159,7 +160,7 @@ class StatisticsOperations:
                         automation=automation_model,
                         recent_activity=recent_activity_model,
                     )
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get dashboard stats: {e}")
             return DashboardStatsModel(
                 camera=CameraStatsModel(
@@ -413,7 +414,7 @@ class StatisticsOperations:
                             "activity_health": activity_health,
                         },
                     )
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get system health score: {e}")
             return SystemHealthScoreModel(
                 overall_health_score=0.0,
@@ -531,7 +532,7 @@ class SyncStatisticsOperations:
                             data["successful_captures"] / data["total_attempts"]
                         ) * 100
                     return 100.0  # Assume 100% if no data
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(
                 f"Failed to get capture success rate for camera {camera_id}: {e}"
             )

@@ -10,9 +10,11 @@ This module handles all corruption-related database operations including:
 """
 
 from typing import List, Optional, Dict, Any
-from ..models.corruption_model import CorruptionLogsPage
 
 from loguru import logger
+import psycopg
+
+from ..models.corruption_model import CorruptionLogsPage
 
 from .core import AsyncDatabase, SyncDatabase
 from ..constants import (
@@ -76,7 +78,7 @@ class CorruptionOperations:
         """Convert database row to CorruptionLogEntry model."""
         # Filter fields that belong to CorruptionLogEntry model
         log_fields = {
-            k: v for k, v in row.items() if k in CorruptionLogEntry.model_fields
+            k: v for k, v in row.items() if k in CorruptionLogEntry.model_fields.keys()
         }
         return CorruptionLogEntry(**log_fields)
 
@@ -84,7 +86,7 @@ class CorruptionOperations:
         """Convert database row to CorruptionStats model."""
         # Filter fields that belong to CorruptionStats model
         stats_fields = {
-            k: v for k, v in row.items() if k in CorruptionStats.model_fields
+            k: v for k, v in row.items() if k in CorruptionStats.model_fields.keys()
         }
         return CorruptionStats(**stats_fields)
 
@@ -94,7 +96,7 @@ class CorruptionOperations:
         """Convert database row to CameraWithCorruption model."""
         # Filter fields that belong to CameraWithCorruption model
         camera_fields = {
-            k: v for k, v in row.items() if k in CameraWithCorruption.model_fields
+            k: v for k, v in row.items() if k in CameraWithCorruption.model_fields.keys()
         }
         return CameraWithCorruption(**camera_fields)
 
@@ -215,8 +217,10 @@ class CorruptionOperations:
             MIN(cl.corruption_score) as min_corruption_score,
             MAX(cl.corruption_score) as max_corruption_score,
             AVG(cl.processing_time_ms) as avg_processing_time_ms,
-            COUNT(CASE WHEN cl.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as low_quality_count,
-            COUNT(CASE WHEN cl.created_at > NOW() - INTERVAL '24 hours' THEN 1 END) as detections_last_24h,
+            COUNT(CASE WHEN cl.corruption_score < 
+                {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as low_quality_count,
+            COUNT(CASE WHEN cl.created_at > NOW() - INTERVAL '24 hours' THEN 1 END) 
+                as detections_last_24h,
             MAX(cl.created_at) as most_recent_detection
         FROM corruption_logs cl
         {where_clause}
@@ -244,8 +248,9 @@ class CorruptionOperations:
                         ),
                         most_recent_detection=row["most_recent_detection"],
                     )
-                else:
-                    return CorruptionAnalysisStats(
+
+                # Return default stats if no results
+                return CorruptionAnalysisStats(
                         total_detections=0,
                         images_saved=0,
                         images_discarded=0,
@@ -463,7 +468,8 @@ class CorruptionOperations:
                     SELECT 
                         COUNT(i.id) as total_images,
                         AVG(i.corruption_score) as avg_score,
-                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(CASE WHEN i.corruption_score < 
+                            {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
                         COUNT(CASE WHEN i.is_flagged = true THEN 1 END) as manual_flags
                     FROM images i
                     WHERE i.timelapse_id = %s
@@ -482,7 +488,8 @@ class CorruptionOperations:
                     SELECT 
                         COUNT(i.id) as total_images,
                         AVG(i.corruption_score) as avg_score,
-                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(CASE WHEN i.corruption_score < 
+                            {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
                         COUNT(cl.id) as corruption_detections
                     FROM images i
                     LEFT JOIN corruption_logs cl ON i.id = cl.image_id
@@ -502,7 +509,8 @@ class CorruptionOperations:
                     SELECT 
                         COUNT(i.id) as total_images,
                         AVG(i.corruption_score) as avg_score,
-                        COUNT(CASE WHEN i.corruption_score < {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
+                        COUNT(CASE WHEN i.corruption_score < 
+                            {DEFAULT_CORRUPTION_DISCARD_THRESHOLD} THEN 1 END) as flagged_images,
                         COUNT(cl.id) as corruption_detections,
                         COUNT(DISTINCT i.camera_id) as cameras_with_images
                     FROM images i
@@ -572,7 +580,7 @@ class SyncCorruptionOperations:
         """Convert database row to CorruptionLogEntry model."""
         # Filter fields that belong to CorruptionLogEntry model
         log_fields = {
-            k: v for k, v in row.items() if k in CorruptionLogEntry.model_fields
+            k: v for k, v in row.items() if k in CorruptionLogEntry.model_fields.keys()
         }
         return CorruptionLogEntry(**log_fields)
 
@@ -635,7 +643,7 @@ class SyncCorruptionOperations:
 
                     return log_entry
 
-                raise Exception("Failed to log corruption detection")
+                raise psycopg.DatabaseError("Failed to log corruption detection")
 
     def get_camera_corruption_failure_stats(self, camera_id: int) -> Dict[str, Any]:
         """
@@ -891,14 +899,14 @@ class SyncCorruptionOperations:
                 }
 
     def update_camera_corruption_stats(
-        self, camera_id: int, corruption_score: int, is_valid: bool
+        self, camera_id: int, _corruption_score: int, is_valid: bool
     ) -> bool:
         """
         Update camera corruption statistics after evaluation.
 
         Args:
             camera_id: ID of the camera
-            corruption_score: Corruption score from evaluation
+            _corruption_score: Corruption score from evaluation (unused)
             is_valid: Whether the image was considered valid
 
         Returns:
@@ -935,7 +943,7 @@ class SyncCorruptionOperations:
                         affected = cur.rowcount
                         return affected and affected > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(
                 f"Failed to update camera corruption stats for camera {camera_id}: {e}"
             )

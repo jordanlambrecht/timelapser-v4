@@ -12,21 +12,13 @@ Responsibilities:
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from loguru import logger
+import psycopg
 
 from .core import AsyncDatabase, SyncDatabase
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJobCreate
-from ..constants import (
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_STATUS_PROCESSING,
-    THUMBNAIL_JOB_STATUS_COMPLETED,
-    THUMBNAIL_JOB_STATUS_FAILED,
-    THUMBNAIL_JOB_STATUS_CANCELLED,
-    THUMBNAIL_JOB_PRIORITY_HIGH,
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
-    THUMBNAIL_JOB_PRIORITY_LOW,
-)
+from ..enums import JobStatus
 
-from ..utils.timezone_utils import utc_now
+from ..utils.time_utils import utc_now
 
 
 class ThumbnailJobOperations:
@@ -58,8 +50,8 @@ class ThumbnailJobOperations:
                 INSERT INTO thumbnail_generation_jobs 
                 (image_id, priority, status, job_type, created_at, retry_count)
                 VALUES ($1, $2, $3, $4, NOW(), 0)
-                RETURNING id, image_id, priority, status, job_type, created_at, 
-                         started_at, completed_at, error_message, processing_time_ms, retry_count
+                RETURNING id, image_id, priority, status, job_type, created_at,
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
             """
 
             async with self.db.get_connection() as conn:
@@ -82,7 +74,7 @@ class ThumbnailJobOperations:
                 return ThumbnailGenerationJob(**dict(result))
             return None
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error creating thumbnail job: {e}")
             return None
 
@@ -102,15 +94,15 @@ class ThumbnailJobOperations:
             # Priority order: high, medium, low
             query = """
                 SELECT id, image_id, priority, status, job_type, created_at,
-                       started_at, completed_at, error_message, processing_time_ms, retry_count
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
                 FROM thumbnail_generation_jobs
                 WHERE status = %s
-                ORDER BY 
-                    CASE priority 
-                        WHEN 'high' THEN 1 
-                        WHEN 'medium' THEN 2 
-                        WHEN 'low' THEN 3 
-                        ELSE 4 
+                ORDER BY
+                    CASE priority
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 3
+                        ELSE 4
                     END,
                     created_at ASC
                 LIMIT %s
@@ -118,11 +110,11 @@ class ThumbnailJobOperations:
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (THUMBNAIL_JOB_STATUS_PENDING, batch_size))
+                    await cur.execute(query, (JobStatus.PENDING, batch_size))
                     results = await cur.fetchall()
                     return [ThumbnailGenerationJob(**dict(row)) for row in results]
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting pending jobs: {e}")
             return []
 
@@ -148,14 +140,14 @@ class ThumbnailJobOperations:
                     await cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PENDING,
+                            JobStatus.PENDING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as started: {e}")
             return False
 
@@ -184,15 +176,15 @@ class ThumbnailJobOperations:
                     await cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_COMPLETED,
+                            JobStatus.COMPLETED,
                             processing_time_ms,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as completed: {e}")
             return False
 
@@ -222,16 +214,16 @@ class ThumbnailJobOperations:
                     await cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_FAILED,
+                            JobStatus.FAILED,
                             error_message,
                             retry_count,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as failed: {e}")
             return False
 
@@ -254,7 +246,7 @@ class ThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = %s, retry_count = %s, error_message = NULL,
-                    created_at = NOW() + INTERVAL %s MINUTE
+                    created_at = NOW() + %s * INTERVAL '1 minute'
                 WHERE id = %s AND status = %s
             """
 
@@ -263,16 +255,16 @@ class ThumbnailJobOperations:
                     await cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_PENDING,
+                            JobStatus.PENDING,
                             retry_count,
                             delay_minutes,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_FAILED,
+                            JobStatus.FAILED,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error scheduling retry for job {job_id}: {e}")
             return False
 
@@ -300,14 +292,14 @@ class ThumbnailJobOperations:
                         .replace("$2", "%s")
                         .replace("$3", "%s"),
                         (
-                            THUMBNAIL_JOB_STATUS_CANCELLED,
+                            JobStatus.CANCELLED,
                             image_id,
-                            THUMBNAIL_JOB_STATUS_PENDING,
+                            JobStatus.PENDING,
                         ),
                     )
                     return cur.rowcount
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling jobs for image {image_id}: {e}")
             return 0
 
@@ -326,7 +318,7 @@ class ThumbnailJobOperations:
 
             query = """
                 DELETE FROM thumbnail_generation_jobs
-                WHERE status IN (%s, %s, %s) 
+                WHERE status IN (%s, %s, %s)
                 AND completed_at < %s
             """
 
@@ -335,17 +327,63 @@ class ThumbnailJobOperations:
                     await cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_COMPLETED,
-                            THUMBNAIL_JOB_STATUS_FAILED,
-                            THUMBNAIL_JOB_STATUS_CANCELLED,
+                            JobStatus.COMPLETED,
+                            JobStatus.FAILED,
+                            JobStatus.CANCELLED,
                             cutoff_time,
                         ),
                     )
                     return cur.rowcount
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cleaning up completed jobs: {e}")
             return 0
+
+    async def get_active_job_counts(self) -> Dict[str, int]:
+        """
+        Get counts of active jobs (pending/processing) without time constraints.
+
+        Returns:
+            Dictionary with pending_jobs and processing_jobs counts
+        """
+        try:
+            query = """
+                SELECT
+                    status,
+                    COUNT(*) as count
+                FROM thumbnail_generation_jobs
+                WHERE status IN (%s, %s)
+                GROUP BY status
+            """
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        query,
+                        (JobStatus.PENDING, JobStatus.PROCESSING),
+                    )
+                    results = await cur.fetchall()
+
+            counts = {
+                "pending_jobs": 0,
+                "processing_jobs": 0,
+            }
+
+            for row in results:
+                status = row["status"]
+                count = row["count"]
+
+                if status == JobStatus.PENDING:
+                    counts["pending_jobs"] = count
+                elif status == JobStatus.PROCESSING:
+                    counts["processing_jobs"] = count
+
+            return counts
+
+        except (psycopg.Error, KeyError, ValueError) as e:
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
+            logger.error(f"Error getting active job counts: {error_msg}")
+            return {"pending_jobs": 0, "processing_jobs": 0}
 
     async def get_job_statistics(self) -> Dict[str, Any]:
         """
@@ -356,7 +394,7 @@ class ThumbnailJobOperations:
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     status,
                     COUNT(*) as count,
                     AVG(processing_time_ms) as avg_processing_time_ms
@@ -385,24 +423,24 @@ class ThumbnailJobOperations:
                 count = row["count"]
                 stats["total_jobs_24h"] += count
 
-                if status == THUMBNAIL_JOB_STATUS_PENDING:
+                if status == JobStatus.PENDING:
                     stats["pending_jobs"] = count
-                elif status == THUMBNAIL_JOB_STATUS_PROCESSING:
+                elif status == JobStatus.PROCESSING:
                     stats["processing_jobs"] = count
-                elif status == THUMBNAIL_JOB_STATUS_COMPLETED:
+                elif status == JobStatus.COMPLETED:
                     stats["completed_jobs_24h"] = count
                     if row["avg_processing_time_ms"]:
                         stats["avg_processing_time_ms"] = int(
                             row["avg_processing_time_ms"]
                         )
-                elif status == THUMBNAIL_JOB_STATUS_FAILED:
+                elif status == JobStatus.FAILED:
                     stats["failed_jobs_24h"] = count
-                elif status == THUMBNAIL_JOB_STATUS_CANCELLED:
+                elif status == JobStatus.CANCELLED:
                     stats["cancelled_jobs_24h"] = count
 
             return stats
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
             logger.error(f"Error getting job statistics: {error_msg}")
             return {}
@@ -420,7 +458,7 @@ class ThumbnailJobOperations:
         try:
             query = """
                 SELECT id, image_id, priority, status, job_type, created_at,
-                       started_at, completed_at, error_message, processing_time_ms, retry_count
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
                 FROM thumbnail_generation_jobs
                 WHERE id = $1
             """
@@ -434,7 +472,7 @@ class ThumbnailJobOperations:
                 return ThumbnailGenerationJob(**dict(result))
             return None
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting job {job_id}: {e}")
             return None
 
@@ -450,8 +488,8 @@ class ThumbnailJobOperations:
         """
         try:
             query = """
-                UPDATE thumbnail_generation_jobs 
-                SET status = 'cancelled', 
+                UPDATE thumbnail_generation_jobs
+                SET status = 'cancelled',
                     completed_at = NOW(),
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
@@ -462,7 +500,7 @@ class ThumbnailJobOperations:
                     await cur.execute(query, (status,))
                     return cur.rowcount or 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling jobs with status {status}: {e}")
             return 0
 
@@ -476,8 +514,8 @@ class ThumbnailJobOperations:
         """
         try:
             query = """
-                UPDATE thumbnail_generation_jobs 
-                SET status = 'cancelled', 
+                UPDATE thumbnail_generation_jobs
+                SET status = 'cancelled',
                     completed_at = NOW(),
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
@@ -488,7 +526,7 @@ class ThumbnailJobOperations:
                     await cur.execute(query)
                     return cur.rowcount or 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling active jobs: {e}")
             return 0
 
@@ -534,11 +572,11 @@ class SyncThumbnailJobOperations:
         """Synchronous version of create_job."""
         try:
             query = """
-                INSERT INTO thumbnail_generation_jobs 
+                INSERT INTO thumbnail_generation_jobs
                 (image_id, priority, status, job_type, created_at, retry_count)
                 VALUES (%s, %s, %s, %s, NOW(), 0)
-                RETURNING id, image_id, priority, status, job_type, created_at, 
-                         started_at, completed_at, error_message, processing_time_ms, retry_count
+                RETURNING id, image_id, priority, status, job_type, created_at,
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
             """
 
             with self.db.get_connection() as conn:
@@ -558,7 +596,7 @@ class SyncThumbnailJobOperations:
                 return ThumbnailGenerationJob(**result)
             return None
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error creating thumbnail job (sync): {e}")
             return None
 
@@ -567,15 +605,15 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 SELECT id, image_id, priority, status, job_type, created_at,
-                       started_at, completed_at, error_message, processing_time_ms, retry_count
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
                 FROM thumbnail_generation_jobs
                 WHERE status = %s
-                ORDER BY 
-                    CASE priority 
-                        WHEN 'high' THEN 1 
-                        WHEN 'medium' THEN 2 
-                        WHEN 'low' THEN 3 
-                        ELSE 4 
+                ORDER BY
+                    CASE priority
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 3
+                        ELSE 4
                     END,
                     created_at ASC
                 LIMIT %s
@@ -583,11 +621,11 @@ class SyncThumbnailJobOperations:
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (THUMBNAIL_JOB_STATUS_PENDING, batch_size))
+                    cur.execute(query, (JobStatus.PENDING, batch_size))
                     results = cur.fetchall()
                     return [ThumbnailGenerationJob(**row) for row in results]
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting pending jobs (sync): {e}")
             return []
 
@@ -607,15 +645,15 @@ class SyncThumbnailJobOperations:
                     cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_COMPLETED,
+                            JobStatus.COMPLETED,
                             processing_time_ms,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as completed (sync): {e}")
             return False
 
@@ -633,14 +671,14 @@ class SyncThumbnailJobOperations:
                     cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PENDING,
+                            JobStatus.PENDING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as started (sync): {e}")
             return False
 
@@ -660,16 +698,16 @@ class SyncThumbnailJobOperations:
                     cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_FAILED,
+                            JobStatus.FAILED,
                             error_message,
                             retry_count,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_PROCESSING,
+                            JobStatus.PROCESSING,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as failed (sync): {e}")
             return False
 
@@ -702,16 +740,16 @@ class SyncThumbnailJobOperations:
                     cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_PENDING,
+                            JobStatus.PENDING,
                             retry_count,
                             retry_time,
                             job_id,
-                            THUMBNAIL_JOB_STATUS_FAILED,
+                            JobStatus.FAILED,
                         ),
                     )
                     return cur.rowcount > 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error scheduling retry for job {job_id}: {e}")
             return False
 
@@ -728,8 +766,8 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 DELETE FROM thumbnail_generation_jobs
-                WHERE status IN (%s, %s) 
-                AND completed_at < NOW() - INTERVAL %s HOUR
+                WHERE status IN (%s, %s)
+                AND completed_at < NOW() - %s * INTERVAL '1 hour'
             """
 
             with self.db.get_connection() as conn:
@@ -737,14 +775,14 @@ class SyncThumbnailJobOperations:
                     cur.execute(
                         query,
                         (
-                            THUMBNAIL_JOB_STATUS_COMPLETED,
-                            THUMBNAIL_JOB_STATUS_FAILED,
+                            JobStatus.COMPLETED,
+                            JobStatus.FAILED,
                             hours_old,
                         ),
                     )
                     return cur.rowcount
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cleaning up completed jobs: {e}")
             return 0
 
@@ -760,8 +798,8 @@ class SyncThumbnailJobOperations:
         """
         try:
             query = """
-                UPDATE thumbnail_generation_jobs 
-                SET status = 'cancelled', 
+                UPDATE thumbnail_generation_jobs
+                SET status = 'cancelled',
                     completed_at = NOW(),
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
@@ -772,7 +810,7 @@ class SyncThumbnailJobOperations:
                     cur.execute(query, (status,))
                     return cur.rowcount or 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling jobs with status {status}: {e}")
             return 0
 
@@ -786,8 +824,8 @@ class SyncThumbnailJobOperations:
         """
         try:
             query = """
-                UPDATE thumbnail_generation_jobs 
-                SET status = 'cancelled', 
+                UPDATE thumbnail_generation_jobs
+                SET status = 'cancelled',
                     completed_at = NOW(),
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
@@ -798,7 +836,7 @@ class SyncThumbnailJobOperations:
                     cur.execute(query)
                     return cur.rowcount or 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling active jobs: {e}")
             return 0
 
@@ -815,7 +853,7 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 SELECT id, camera_id, status, error_message, retry_count,
-                       created_at, started_at, completed_at, processing_time_ms
+                        created_at, started_at, completed_at, processing_time_ms
                 FROM thumbnail_generation_jobs
                 WHERE id = %s
             """
@@ -829,7 +867,7 @@ class SyncThumbnailJobOperations:
                         return ThumbnailGenerationJob(**dict(row))
                     return None
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting job by ID {job_id}: {e}")
             return None
 
@@ -842,10 +880,12 @@ class SyncThumbnailJobOperations:
         """
         try:
             query = """
-                SELECT 
+                SELECT
                     status,
                     COUNT(*) as count,
-                    MAX(created_at) as latest_created
+                    MAX(created_at) as latest_created,
+                    MIN(CASE WHEN status = 'pending' THEN created_at ELSE NULL END) as oldest_pending,
+                    AVG(CASE WHEN status = 'completed' THEN processing_time_ms ELSE NULL END) as avg_processing_time
                 FROM thumbnail_generation_jobs
                 WHERE created_at > NOW() - INTERVAL '24 hours'
                 GROUP BY status
@@ -858,38 +898,112 @@ class SyncThumbnailJobOperations:
 
             # Initialize stats with defaults
             stats = {
-                "pending_jobs": 0,
-                "processing_jobs": 0,
-                "completed_jobs_24h": 0,
-                "failed_jobs_24h": 0,
-                "total_active": 0,
+                "pending_count": 0,
+                "processing_count": 0,
+                "completed_today": 0,
+                "failed_today": 0,
+                "avg_processing_time": 0,
+                "oldest_pending_age": 0,
             }
+
+            oldest_pending_timestamp = None
 
             # Process results
             for row in results:
-                status = row[0]
-                count = row[1]
+                status = row["status"]
+                count = row["count"]
 
-                if status == THUMBNAIL_JOB_STATUS_PENDING:
-                    stats["pending_jobs"] = count
-                elif status == THUMBNAIL_JOB_STATUS_PROCESSING:
-                    stats["processing_jobs"] = count
-                elif status == THUMBNAIL_JOB_STATUS_COMPLETED:
-                    stats["completed_jobs_24h"] = count
-                elif status == THUMBNAIL_JOB_STATUS_FAILED:
-                    stats["failed_jobs_24h"] = count
+                if status == "pending":
+                    stats["pending_count"] = count
+                    if row["oldest_pending"] and (
+                        oldest_pending_timestamp is None
+                        or row["oldest_pending"] < oldest_pending_timestamp
+                    ):
+                        oldest_pending_timestamp = row["oldest_pending"]
+                elif status == "processing":
+                    stats["processing_count"] = count
+                elif status == "completed":
+                    stats["completed_today"] = count
+                    if row["avg_processing_time"]:
+                        stats["avg_processing_time"] = (
+                            row["avg_processing_time"] / 1000 / 60
+                        )  # ms to minutes
+                elif status == "failed":
+                    stats["failed_today"] = count
 
-            stats["total_active"] = stats["pending_jobs"] + stats["processing_jobs"]
+            if oldest_pending_timestamp:
+                stats["oldest_pending_age"] = (
+                    utc_now() - oldest_pending_timestamp
+                ).total_seconds() / 60  # minutes
 
             return stats
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
             logger.error(f"Error getting job statistics: {error_msg}")
             return {
-                "pending_jobs": 0,
-                "processing_jobs": 0,
-                "completed_jobs_24h": 0,
-                "failed_jobs_24h": 0,
-                "total_active": 0,
+                "pending_count": 0,
+                "processing_count": 0,
+                "completed_today": 0,
+                "failed_today": 0,
+                "avg_processing_time": 0,
+                "oldest_pending_age": 0,
             }
+
+    def cancel_jobs_by_camera(self, camera_id: int) -> int:
+        """Cancel pending thumbnail jobs associated with a specific camera."""
+        try:
+            query = """
+                UPDATE thumbnail_generation_jobs j
+                SET status = 'cancelled', completed_at = NOW()
+                FROM images i
+                WHERE j.image_id = i.id AND i.camera_id = %s AND j.status = 'pending'
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (camera_id,))
+                    return cur.rowcount or 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            logger.error(f"Error cancelling thumbnail jobs for camera {camera_id}: {e}")
+            return 0
+
+    def cancel_jobs_by_timelapse(self, timelapse_id: int) -> int:
+        """Cancel pending thumbnail jobs associated with a specific timelapse."""
+        try:
+            query = """
+                UPDATE thumbnail_generation_jobs j
+                SET status = 'cancelled', completed_at = NOW()
+                FROM images i
+                WHERE j.image_id = i.id AND i.timelapse_id = %s AND j.status = 'pending'
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    return cur.rowcount or 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            logger.error(
+                f"Error cancelling thumbnail jobs for timelapse {timelapse_id}: {e}"
+            )
+            return 0
+
+    def promote_old_jobs(self, age_threshold_minutes: int) -> int:
+        """Promote old pending jobs to a higher priority."""
+        try:
+            query = """
+                UPDATE thumbnail_generation_jobs
+                SET priority = CASE 
+                                 WHEN priority = 'low' THEN 'medium'
+                                 WHEN priority = 'medium' THEN 'high'
+                                 ELSE 'high'
+                               END
+                WHERE status = 'pending'
+                AND created_at < NOW() - INTERVAL '%s minutes'
+                AND priority != 'high'
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (age_threshold_minutes,))
+                    return cur.rowcount or 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            logger.error(f"Error promoting old thumbnail jobs: {e}")
+            return 0

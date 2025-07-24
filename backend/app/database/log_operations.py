@@ -11,6 +11,7 @@ This module handles all log-related database operations including:
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from loguru import logger
+import psycopg
 
 # Import database core for composition
 from .core import AsyncDatabase, SyncDatabase
@@ -23,7 +24,6 @@ from ..models.log_summary_model import (
 from ..constants import (
     DEFAULT_LOG_RETENTION_DAYS,
     DEFAULT_CORRUPTION_HISTORY_HOURS,
-    DEFAULT_DASHBOARD_QUALITY_TREND_DAYS,
 )
 
 
@@ -41,7 +41,7 @@ def _row_to_log_shared(row: Dict[str, Any]) -> Log:
         Log model instance
     """
     # Filter fields that belong to Log model
-    log_fields = {k: v for k, v in row.items() if k in Log.model_fields}
+    log_fields = {k: v for k, v in row.items() if k in Log.model_fields.keys()}
     return Log(**log_fields)
 
 
@@ -324,7 +324,7 @@ class LogOperations:
 
                     return log_entry
 
-                raise Exception("Failed to write log entry")
+                raise psycopg.DatabaseError("Failed to write log entry")
 
 
 class SyncLogOperations:
@@ -344,7 +344,7 @@ class SyncLogOperations:
         message: str,
         source: str = "system",
         camera_id: Optional[int] = None,
-        **kwargs,  # Accept additional args for compatibility
+        **_kwargs,  # Accept additional args for compatibility (unused)
     ) -> Log:
         """Alias for write_log_entry for compatibility."""
         return self.write_log_entry(
@@ -402,7 +402,7 @@ class SyncLogOperations:
 
                     return log_entry
 
-                raise Exception("Failed to write log entry")
+                raise psycopg.DatabaseError("Failed to write log entry")
 
     def get_camera_logs(
         self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS

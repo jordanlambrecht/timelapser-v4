@@ -10,8 +10,10 @@ import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from loguru import logger
+import psycopg
 
 from .core import AsyncDatabase, SyncDatabase
+from ..enums import SSEPriority
 
 
 class SSEEventsOperations:
@@ -35,7 +37,7 @@ class SSEEventsOperations:
         self,
         event_type: str,
         event_data: Dict[str, Any],
-        priority: str = "normal",
+        priority: str = SSEPriority.NORMAL,
         source: str = "system",
     ) -> int:
         """
@@ -76,9 +78,9 @@ class SSEEventsOperations:
                         )
                         return event_id
                     else:
-                        raise Exception("Failed to create SSE event")
+                        raise psycopg.DatabaseError("Failed to create SSE event")
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create SSE event {event_type}: {e}")
             raise
 
@@ -103,7 +105,7 @@ class SSEEventsOperations:
                 SELECT id, event_type, event_data, created_at, priority, source
                 FROM sse_events
                 WHERE processed_at IS NULL
-                  AND created_at > %s
+                    AND created_at > %s
                 ORDER BY priority DESC, created_at ASC
                 LIMIT %s
             """
@@ -135,7 +137,7 @@ class SSEEventsOperations:
                         logger.debug(f"Retrieved {len(events)} pending SSE events")
                     return events
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get pending SSE events: {e}")
             raise
 
@@ -169,7 +171,7 @@ class SSEEventsOperations:
                     logger.debug(f"Marked {updated_count} SSE events as processed")
                     return updated_count
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to mark SSE events as processed: {e}")
             raise
 
@@ -202,7 +204,7 @@ class SSEEventsOperations:
                     logger.info(f"Cleaned up {deleted_count} old SSE events")
                     return deleted_count
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to cleanup old SSE events: {e}")
             raise
 
@@ -250,7 +252,7 @@ class SSEEventsOperations:
                             "unique_event_types": 0,
                         }
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get SSE event stats: {e}")
             raise
 
@@ -276,7 +278,7 @@ class SyncSSEEventsOperations:
         self,
         event_type: str,
         event_data: Dict[str, Any],
-        priority: str = "normal",
+        priority: str = SSEPriority.NORMAL,
         source: str = "worker",
     ) -> int:
         """
@@ -315,9 +317,9 @@ class SyncSSEEventsOperations:
                         )
                         return event_id
                     else:
-                        raise Exception("Failed to create SSE event")
+                        raise psycopg.DatabaseError("Failed to create SSE event")
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create SSE event {event_type}: {e}")
             raise
 
@@ -350,7 +352,7 @@ class SyncSSEEventsOperations:
         return self.create_event(
             event_type="image_captured",
             event_data=event_data,
-            priority="normal",
+            priority=SSEPriority.NORMAL,
             source="worker",
         )
 
@@ -382,7 +384,7 @@ class SyncSSEEventsOperations:
         return self.create_event(
             event_type="camera_status_changed",
             event_data=event_data,
-            priority="high",
+            priority=SSEPriority.HIGH,
             source="worker",
         )
 
@@ -412,7 +414,7 @@ class SyncSSEEventsOperations:
         return self.create_event(
             event_type="timelapse_status_changed",
             event_data=event_data,
-            priority="high",
+            priority=SSEPriority.HIGH,
             source="worker",
         )
 
@@ -445,6 +447,6 @@ class SyncSSEEventsOperations:
 
                     return affected or 0
 
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to cleanup old SSE events: {e}")
             return 0

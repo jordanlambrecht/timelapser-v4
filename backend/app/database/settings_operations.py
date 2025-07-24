@@ -12,6 +12,8 @@ from typing import List, Optional, Dict, Any, Tuple
 from loguru import logger
 
 # Import database core for composition
+import psycopg
+
 from .core import AsyncDatabase, SyncDatabase
 from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
@@ -20,7 +22,6 @@ from ..constants import (
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
     DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
     DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
-    DEFAULT_CAPTURE_INTERVAL_SECONDS,
     MAX_SETTING_KEY_LENGTH,
     MAX_SETTING_VALUE_LENGTH,
 )
@@ -93,7 +94,7 @@ class SettingsOperations:
     def _row_to_setting(self, row: Dict[str, Any]) -> Setting:
         """Convert database row to Setting model."""
         # Filter fields that belong to Setting model
-        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields}
+        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields.keys()}
         return Setting(**setting_fields)
 
     async def get_all_settings(self) -> Dict[str, Any]:
@@ -111,7 +112,7 @@ class SettingsOperations:
                     await cur.execute("SELECT key, value FROM settings ORDER BY key")
                     results = await cur.fetchall()
                     return {row["key"]: row["value"] for row in results}
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get all settings: {e}")
             raise
 
@@ -128,7 +129,7 @@ class SettingsOperations:
                     await cur.execute("SELECT * FROM settings ORDER BY key")
                     results = await cur.fetchall()
                     return [self._row_to_setting(row) for row in results]
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get all setting records: {e}")
             raise
 
@@ -152,7 +153,7 @@ class SettingsOperations:
                     )
                     results = await cur.fetchall()
                     return results[0]["value"] if results else None
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get setting {key}: {e}")
             raise
 
@@ -172,7 +173,7 @@ class SettingsOperations:
                     await cur.execute("SELECT * FROM settings WHERE key = %s", (key,))
                     results = await cur.fetchall()
                     return self._row_to_setting(results[0]) if results else None
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get setting record {key}: {e}")
             raise
 
@@ -207,7 +208,7 @@ class SettingsOperations:
                     )
 
                     return True
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
 
@@ -237,7 +238,7 @@ class SettingsOperations:
                         await cur.execute(query, (key, value))
 
                     return True
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to set multiple settings: {e}")
             raise
 
@@ -260,7 +261,7 @@ class SettingsOperations:
                     if affected and affected > 0:
                         return True
                     return False
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to delete setting {key}: {e}")
             raise
 
@@ -285,7 +286,7 @@ class SettingsOperations:
                     settings_dict = {row["key"]: row["value"] for row in results}
 
                     return _process_corruption_settings_shared(settings_dict)
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get corruption settings: {e}")
             raise
 
@@ -302,7 +303,7 @@ class SettingsOperations:
                     await cur.execute("SELECT * FROM settings ORDER BY key")
                     results = await cur.fetchall()
                     return [self._row_to_setting(row) for row in results]
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get settings list: {e}")
             raise
 
@@ -358,7 +359,7 @@ class SyncSettingsOperations:
     def _row_to_setting(self, row: Dict[str, Any]) -> Setting:
         """Convert database row to Setting model."""
         # Filter fields that belong to Setting model
-        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields}
+        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields.keys()}
         return Setting(**setting_fields)
 
     def get_all_settings(self) -> Dict[str, Any]:
@@ -374,7 +375,7 @@ class SyncSettingsOperations:
                     cur.execute("SELECT key, value FROM settings ORDER BY key")
                     results = cur.fetchall()
                     return {row["key"]: row["value"] for row in results}
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get all settings: {e}")
             raise
 
@@ -395,25 +396,9 @@ class SyncSettingsOperations:
                     cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
                     results = cur.fetchall()
                     return results[0]["value"] if results else default
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get setting {key}: {e}")
             raise
-
-    def get_capture_interval_setting(self) -> int:
-        """
-        Get the capture interval setting as an integer.
-
-        Returns:
-            Capture interval in seconds (default: from constants)
-        """
-        value = self.get_setting(
-            "capture_interval", str(DEFAULT_CAPTURE_INTERVAL_SECONDS)
-        )
-        try:
-            # value is guaranteed to be a string due to the default
-            return int(value) if value is not None else DEFAULT_CAPTURE_INTERVAL_SECONDS
-        except (ValueError, TypeError):
-            return DEFAULT_CAPTURE_INTERVAL_SECONDS
 
     def get_corruption_settings(self) -> CorruptionSettings:
         """
@@ -436,7 +421,7 @@ class SyncSettingsOperations:
                     settings_dict = {row["key"]: row["value"] for row in results}
 
                     return _process_corruption_settings_shared(settings_dict)
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to get corruption settings: {e}")
             raise
 
@@ -471,7 +456,7 @@ class SyncSettingsOperations:
                     )
 
                     return True
-        except Exception as e:
+        except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
 

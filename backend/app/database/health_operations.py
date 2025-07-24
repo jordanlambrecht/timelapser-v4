@@ -12,6 +12,7 @@ This module handles health-specific database operations including:
 from typing import Dict, Any, Optional, Tuple
 import time
 from loguru import logger
+import psycopg
 
 from app.models.health_model import ApplicationMetrics
 from .core import AsyncDatabase, SyncDatabase
@@ -42,7 +43,7 @@ class HealthOperations:
                     await cur.fetchone()
             latency_ms = (time.time() - start_time) * 1000
             return True, latency_ms, None
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, OSError) as e:
             logger.error(f"Database connectivity test failed: {e}")
             return False, None, str(e)
 
@@ -57,13 +58,12 @@ class HealthOperations:
             # Try to get pool stats if the method exists
             if hasattr(self.db, "get_pool_stats"):
                 return await self.db.get_pool_stats()
-            else:
-                # Fallback basic stats
-                return {
-                    "status": "healthy",
-                    "note": "Basic pool monitoring - detailed stats not available",
-                }
-        except Exception as e:
+            # Fallback basic stats
+            return {
+                "status": "healthy",
+                "note": "Basic pool monitoring - detailed stats not available",
+            }
+        except (psycopg.Error, AttributeError, ConnectionError) as e:
             logger.error(f"Failed to get connection pool stats: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -103,7 +103,8 @@ class HealthOperations:
                         f"""
                         SELECT COUNT(*) as images_last_24h
                         FROM images 
-                        WHERE captured_at > NOW() - INTERVAL '{DEFAULT_CORRUPTION_HISTORY_HOURS} hours'
+                        WHERE captured_at > NOW() - INTERVAL 
+                            '{DEFAULT_CORRUPTION_HISTORY_HOURS} hours'
                     """
                     )
                     activity_stats = await cur.fetchone()
@@ -128,7 +129,7 @@ class HealthOperations:
                         processing_video_jobs=video_stats["processing_jobs"],
                     )
 
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, KeyError) as e:
             logger.error(f"Failed to get application metrics: {e}")
             # Return safe defaults in case of error
             return ApplicationMetrics(
@@ -200,7 +201,8 @@ class HealthOperations:
                         else None
                     ),
                     (
-                        f"Found {checks['cameras_without_active_timelapse']} active cameras without timelapse"
+                        f"Found {checks['cameras_without_active_timelapse']} "
+                        f"active cameras without timelapse"
                         if checks["cameras_without_active_timelapse"] > 0
                         else None
                     ),
@@ -212,7 +214,7 @@ class HealthOperations:
                 ],
             }
 
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, KeyError) as e:
             logger.error(f"Database integrity check failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -239,7 +241,7 @@ class SyncHealthOperations:
                     cur.fetchone()
             latency_ms = (time.time() - start_time) * 1000
             return True, latency_ms, None
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, OSError) as e:
             logger.error(f"Sync database connectivity test failed: {e}")
             return False, None, str(e)
 
@@ -256,6 +258,6 @@ class SyncHealthOperations:
                 "status": "healthy",
                 "note": "Sync pool monitoring - detailed stats not available",
             }
-        except Exception as e:
+        except (psycopg.Error, AttributeError, ConnectionError) as e:
             logger.error(f"Failed to get sync connection pool stats: {e}")
             return {"status": "error", "error": str(e)}

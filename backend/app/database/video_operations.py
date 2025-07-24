@@ -1,12 +1,14 @@
 # backend/app/database/video_operations.py
 """
-Video database operations module - Composition-based architecture.
+Video database operations module - Simplified composition-based architecture.
 
 This module handles all video-related database operations using dependency injection
 instead of mixin inheritance, providing type-safe Pydantic model interfaces.
+
+Note: Complex automation features have been removed - automation is now handled by video pipeline.
 """
-# TODO: Not using timeezone aware timestamps yet.
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 from loguru import logger
 from pydantic import ValidationError
 
@@ -17,7 +19,6 @@ from ..models.shared_models import (
     VideoGenerationJobWithDetails,
     VideoStatistics,
 )
-from ..constants import DEFAULT_OVERLAY_SETTINGS
 
 
 class VideoOperations:
@@ -91,13 +92,22 @@ class VideoOperations:
             raise
 
     async def get_videos(
-        self, timelapse_id: Optional[int] = None
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[VideoWithDetails]:
         """
-        Retrieve videos with optional timelapse filtering.
+        Retrieve videos with optional filtering.
 
         Args:
             timelapse_id: Optional timelapse ID to filter by
+            camera_id: Optional camera ID to filter by
+            status: Optional status to filter by
+            limit: Maximum number of videos to return
+            offset: Number of videos to skip for pagination
 
         Returns:
             List of VideoWithDetails model instances
@@ -105,31 +115,53 @@ class VideoOperations:
         Usage:
             videos = await video_ops.get_videos()
             timelapse_videos = await video_ops.get_videos(timelapse_id=1)
+            camera_videos = await video_ops.get_videos(camera_id=1, limit=50)
         """
-        base_query = """
-        SELECT
-            v.*,
-            t.name as timelapse_name,
-            c.name as camera_name
-        FROM videos v
-        JOIN timelapses t ON v.timelapse_id = t.id
-        JOIN cameras c ON t.camera_id = c.id
-        """
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Build dynamic query based on filters
+                    conditions = []
+                    params = []
 
-        if timelapse_id:
-            query = base_query + " WHERE v.timelapse_id = %s ORDER BY v.created_at DESC"
-            async with self.db.get_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(query, (timelapse_id,))
+                    if timelapse_id is not None:
+                        conditions.append("v.timelapse_id = %s")
+                        params.append(timelapse_id)
+
+                    if camera_id is not None:
+                        conditions.append("v.camera_id = %s")
+                        params.append(camera_id)
+
+                    if status is not None:
+                        conditions.append("v.status = %s")
+                        params.append(status)
+
+                    where_clause = (
+                        "WHERE " + " AND ".join(conditions) if conditions else ""
+                    )
+
+                    query = f"""
+                        SELECT
+                            v.*,
+                            t.name as timelapse_name,
+                            c.name as camera_name
+                        FROM videos v
+                        LEFT JOIN timelapses t ON v.timelapse_id = t.id
+                        LEFT JOIN cameras c ON v.camera_id = c.id
+                        {where_clause}
+                        ORDER BY v.created_at DESC
+                        LIMIT %s OFFSET %s
+                    """
+                    params.extend([limit, offset])
+
+                    await cur.execute(query, params)
                     results = await cur.fetchall()
-                    return [self._row_to_video_with_details(row) for row in results]
-        else:
-            query = base_query + " ORDER BY v.created_at DESC"
-            async with self.db.get_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(query)
-                    results = await cur.fetchall()
-                    return [self._row_to_video_with_details(row) for row in results]
+                    return [
+                        self._row_to_video_with_details(dict(row)) for row in results
+                    ]
+        except Exception as e:
+            logger.error(f"Error getting videos: {e}")
+            return []
 
     async def get_video_by_id(self, video_id: int) -> Optional[VideoWithDetails]:
         """
@@ -411,44 +443,61 @@ class VideoOperations:
                 raise Exception(f"Failed to update video generation job {job_id}")
 
     async def get_video_statistics(
-        self, timelapse_id: Optional[int] = None
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> VideoStatistics:
         """
-        Get video statistics for a timelapse or overall.
+        Get video statistics with optional filtering.
 
         Args:
             timelapse_id: Optional timelapse ID to filter by
+            camera_id: Optional camera ID to filter by
+            start_date: Optional start date filter
+            end_date: Optional end date filter
 
         Returns:
             VideoStatistics model instance
         """
-        if timelapse_id:
-            query = """
-            SELECT 
-                COUNT(*) as total_videos,
-                SUM(file_size) as total_size_bytes,
-                AVG(duration_seconds) as avg_duration_seconds,
-                AVG(fps) as avg_fps,
-                MAX(created_at) as latest_video_at
-            FROM videos 
-            WHERE timelapse_id = %s
-            """
-            params = (timelapse_id,)
-        else:
-            query = """
-            SELECT 
-                COUNT(*) as total_videos,
-                SUM(file_size) as total_size_bytes,
-                AVG(duration_seconds) as avg_duration_seconds,
-                AVG(fps) as avg_fps,
-                MAX(created_at) as latest_video_at
-            FROM videos
-            """
-            params = ()
+        try:
+            # Build dynamic query based on filters
+            conditions = []
+            params = []
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
+            if timelapse_id is not None:
+                conditions.append("timelapse_id = %s")
+                params.append(timelapse_id)
+
+            if camera_id is not None:
+                conditions.append("camera_id = %s")
+                params.append(camera_id)
+
+            if start_date is not None:
+                conditions.append("created_at >= %s")
+                params.append(start_date)
+
+            if end_date is not None:
+                conditions.append("created_at <= %s")
+                params.append(end_date)
+
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+            query = f"""
+                SELECT 
+                    COUNT(*) as total_videos,
+                    SUM(file_size) as total_size_bytes,
+                    AVG(duration_seconds) as avg_duration_seconds,
+                    AVG(calculated_fps) as avg_fps,
+                    MAX(created_at) as latest_video_at
+                FROM videos
+                {where_clause}
+            """
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
                 results = await cur.fetchall()
                 if results:
                     try:
@@ -457,6 +506,38 @@ class VideoOperations:
                         logger.error(f"Error creating VideoStatistics model: {e}")
                         return VideoStatistics()  # Return empty stats
                 return VideoStatistics()  # Return empty stats
+        except Exception as e:
+            logger.error(f"Error getting video statistics: {e}")
+            return VideoStatistics()  # Return empty stats
+
+    async def search_videos(self, search_term: str, limit: int = 50) -> List[Video]:
+        """
+        Search videos by name.
+
+        Args:
+            search_term: Term to search for in video names
+            limit: Maximum number of results to return
+
+        Returns:
+            List of videos matching the search term
+        """
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    query = """
+                        SELECT v.*, c.name as camera_name
+                        FROM videos v
+                        LEFT JOIN cameras c ON v.camera_id = c.id
+                        WHERE v.name ILIKE %s
+                        ORDER BY v.created_at DESC
+                        LIMIT %s
+                    """
+                    await cur.execute(query, (f"%{search_term}%", limit))
+                    rows = await cur.fetchall()
+                    return [self._row_to_video(dict(row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Error searching videos: {e}")
+            return []
 
 
 class SyncVideoOperations:
@@ -554,6 +635,91 @@ class SyncVideoOperations:
                 cur.execute(query, (job_id,))
                 return cur.rowcount > 0
 
+    def get_videos(
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Video]:
+        """
+        Get videos with optional filtering (sync version).
+
+        Args:
+            timelapse_id: Optional filter by timelapse ID
+            camera_id: Optional filter by camera ID
+            status: Optional filter by video status
+            limit: Maximum number of videos to return
+            offset: Number of videos to skip for pagination
+
+        Returns:
+            List of video records matching criteria
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Build dynamic query based on filters
+                    conditions = []
+                    params = []
+
+                    if timelapse_id is not None:
+                        conditions.append("v.timelapse_id = %s")
+                        params.append(timelapse_id)
+
+                    if camera_id is not None:
+                        conditions.append("v.camera_id = %s")
+                        params.append(camera_id)
+
+                    if status is not None:
+                        conditions.append("v.status = %s")
+                        params.append(status)
+
+                    where_clause = (
+                        "WHERE " + " AND ".join(conditions) if conditions else ""
+                    )
+
+                    query = f"""
+                        SELECT v.*
+                        FROM videos v
+                        {where_clause}
+                        ORDER BY v.created_at DESC
+                        LIMIT %s OFFSET %s
+                    """
+                    params.extend([limit, offset])
+
+                    cur.execute(query, params)
+                    rows = cur.fetchall()
+                    return [self._row_to_video(dict(row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting videos (sync): {e}")
+            return []
+
+    def get_video_by_id(self, video_id: int) -> Optional[Video]:
+        """
+        Get video by ID (sync version).
+
+        Args:
+            video_id: Video ID to retrieve
+
+        Returns:
+            Video record or None if not found
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    query = """
+                        SELECT v.*
+                        FROM videos v
+                        WHERE v.id = %s
+                    """
+                    cur.execute(query, (video_id,))
+                    row = cur.fetchone()
+                    return self._row_to_video(dict(row)) if row else None
+        except Exception as e:
+            logger.error(f"Error getting video by ID (sync): {e}")
+            return None
+
     def create_video_record(self, video_data: Dict[str, Any]) -> Video:
         """
         Create a new video record.
@@ -588,6 +754,26 @@ class SyncVideoOperations:
                     video = self._row_to_video(video_row)
                     return video
                 raise Exception("Failed to create video record")
+
+    def delete_video(self, video_id: int) -> bool:
+        """
+        Delete a video record (sync version).
+
+        Args:
+            video_id: Video ID to delete
+
+        Returns:
+            True if deleted successfully
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    query = "DELETE FROM videos WHERE id = %s"
+                    cur.execute(query, (video_id,))
+                    return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting video (sync): {e}")
+            return False
 
     def _row_to_video(self, row: Dict[str, Any]) -> Video:
         """Convert database row to Video model."""
@@ -746,39 +932,6 @@ class SyncVideoOperations:
             logger.error(f"Failed to complete video generation job {job_id}: {e}")
             return False
 
-    def get_queue_status(self) -> Dict[str, int]:
-        """
-        Get current queue status with job counts by status.
-
-        Returns:
-            Dictionary with job counts
-
-        Usage:
-            status = video_ops.get_queue_status()
-            # Returns: {"pending": 5, "processing": 2, "completed": 10, "failed": 1}
-        """
-        query = """
-        SELECT status, COUNT(*) as count
-        FROM video_generation_jobs
-        GROUP BY status
-        """
-
-        try:
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query)
-                    results = cur.fetchall()
-
-                    status_counts = {}
-                    for row in results:
-                        row_dict = dict(row)
-                        status_counts[row_dict["status"]] = row_dict["count"]
-
-                    return status_counts
-        except Exception as e:
-            logger.error(f"Failed to get queue status: {e}")
-            return {}
-
     def get_video_generation_jobs_by_status(
         self, status: Optional[str] = None, limit: int = 50
     ) -> List[VideoGenerationJobWithDetails]:
@@ -826,263 +979,27 @@ class SyncVideoOperations:
             logger.error(f"Failed to get video generation jobs by status: {e}")
             return []
 
-    def get_timelapse_automation_settings(self, timelapse_id: int) -> Dict[str, Any]:
-        """
-        Get effective automation settings for a timelapse.
+    # Removed over-engineered automation settings - automation is now handled by video pipeline
 
-        Follows inheritance pattern: timelapse settings override camera defaults.
+    # Removed unused per-capture throttling - throttling is now handled by video pipeline
 
-        Args:
-            timelapse_id: ID of the timelapse
+    # Removed unused milestone automation - milestone logic is now handled by video pipeline
 
-        Returns:
-            Dictionary with automation settings
-        """
-        try:
-            query = """
-                SELECT
-                    t.video_automation_mode as t_mode,
-                    t.generation_schedule as t_schedule,
-                    t.milestone_config as t_milestone,
-                    c.video_automation_mode as c_mode,
-                    c.generation_schedule as c_schedule,
-                    c.milestone_config as c_milestone
-                FROM timelapses t
-                JOIN cameras c ON t.camera_id = c.id
-                WHERE t.id = %s
-            """
+    # Removed unused milestone checking - milestone logic is now handled by video pipeline
 
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query, (timelapse_id,))
-                    row = cur.fetchone()
+    # Removed unused scheduled automation - scheduling is now handled by video pipeline
 
-                    if not row:
-                        return {"video_automation_mode": "manual"}
-
-                    # Apply inheritance pattern
-                    row_dict = dict(row)
-                    return {
-                        "video_automation_mode": row_dict["t_mode"]
-                        or row_dict["c_mode"]
-                        or "manual",
-                        "generation_schedule": row_dict["t_schedule"]
-                        or row_dict["c_schedule"],
-                        "milestone_config": row_dict["t_milestone"]
-                        or row_dict["c_milestone"],
-                    }
-
-        except Exception as e:
-            logger.error(
-                f"Failed to get automation settings for timelapse {timelapse_id}: {e}"
-            )
-            return {"video_automation_mode": "manual"}
-
-    def check_per_capture_throttle(self, camera_id: int, throttle_minutes: int) -> bool:
-        """
-        Check if per-capture generation should be throttled for a camera.
-
-        Args:
-            camera_id: ID of the camera
-            throttle_minutes: Throttle window in minutes
-
-        Returns:
-            True if should throttle (recent job exists), False otherwise
-        """
-        try:
-            query = """
-                SELECT COUNT(*) as count
-                FROM video_generation_jobs j
-                JOIN timelapses t ON j.timelapse_id = t.id
-                WHERE t.camera_id = %s
-                AND j.trigger_type = 'per_capture'
-                AND j.created_at > NOW() - INTERVAL '%s minutes'
-            """
-
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query, (camera_id, throttle_minutes))
-                    result = cur.fetchone()
-
-                    if result:
-                        count = dict(result)["count"]
-                        return count > 0
-                    return False
-
-        except Exception as e:
-            logger.error(
-                f"Failed to check per-capture throttle for camera {camera_id}: {e}"
-            )
-            return True  # Err on the side of caution
-
-    def get_milestone_automation_timelapses(self) -> List[Dict[str, Any]]:
-        """
-        Get all running timelapses with milestone automation enabled.
-
-        Returns:
-            List of dicts with timelapse_id, image_count, and milestone_config
-        """
-        try:
-            query = """
-                SELECT
-                    t.id,
-                    COUNT(i.id) as image_count,
-                    COALESCE(t.milestone_config, c.milestone_config) as milestone_config
-                FROM timelapses t
-                JOIN cameras c ON t.camera_id = c.id
-                LEFT JOIN images i ON t.id = i.timelapse_id
-                WHERE t.status = 'running'
-                AND (
-                    (t.video_automation_mode = 'milestone') OR
-                    (t.video_automation_mode IS NULL AND c.video_automation_mode = 'milestone')
-                )
-                GROUP BY t.id, t.milestone_config, c.milestone_config
-            """
-
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query)
-                    results = cur.fetchall()
-
-                    return [dict(row) for row in results]
-
-        except Exception as e:
-            logger.error(f"Failed to get milestone automation timelapses: {e}")
-            return []
-
-    def check_milestone_already_generated(
-        self, timelapse_id: int, threshold: int
-    ) -> bool:
-        """
-        Check if a milestone video was already generated for a specific threshold.
-
-        Args:
-            timelapse_id: ID of the timelapse
-            threshold: The milestone threshold
-
-        Returns:
-            True if already generated, False otherwise
-        """
-        try:
-            query = """
-                SELECT id FROM video_generation_jobs
-                WHERE timelapse_id = %s
-                AND trigger_type = 'milestone'
-                AND settings::json->>'threshold' = %s
-                LIMIT 1
-            """
-
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query, (timelapse_id, str(threshold)))
-                    return cur.fetchone() is not None
-
-        except Exception as e:
-            logger.error(
-                f"Failed to check milestone generation for timelapse {timelapse_id}: {e}"
-            )
-            return True  # Err on the side of caution
-
-    def get_scheduled_automation_timelapses(self) -> List[Dict[str, Any]]:
-        """
-        Get all running timelapses with scheduled automation enabled.
-
-        Returns:
-            List of dicts with timelapse_id and schedule config
-        """
-        try:
-            query = """
-                SELECT
-                    t.id,
-                    COALESCE(t.generation_schedule, c.generation_schedule) as schedule
-                FROM timelapses t
-                JOIN cameras c ON t.camera_id = c.id
-                WHERE t.status = 'running'
-                AND (
-                    (t.video_automation_mode = 'scheduled') OR
-                    (t.video_automation_mode IS NULL AND c.video_automation_mode = 'scheduled')
-                )
-                AND (t.generation_schedule IS NOT NULL OR c.generation_schedule IS NOT NULL)
-            """
-
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query)
-                    results = cur.fetchall()
-
-                    return [dict(row) for row in results]
-
-        except Exception as e:
-            logger.error(f"Failed to get scheduled automation timelapses: {e}")
-            return []
-
-    def check_scheduled_already_generated(
-        self, timelapse_id: int, schedule_type: str
-    ) -> bool:
-        """
-        Check if a scheduled video was already generated for the current period.
-
-        Args:
-            timelapse_id: ID of the timelapse
-            schedule_type: 'daily' or 'weekly'
-
-        Returns:
-            True if already generated, False otherwise
-        """
-        try:
-            if schedule_type == "daily":
-                query = """
-                    SELECT id FROM video_generation_jobs
-                    WHERE timelapse_id = %s
-                    AND trigger_type = 'scheduled'
-                    AND created_at >= CURRENT_DATE
-                    LIMIT 1
-                """
-            elif schedule_type == "weekly":
-                query = """
-                    SELECT id FROM video_generation_jobs
-                    WHERE timelapse_id = %s
-                    AND trigger_type = 'scheduled'
-                    AND created_at >= date_trunc('week', CURRENT_DATE)
-                    LIMIT 1
-                """
-            else:
-                return False
-
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query, (timelapse_id,))
-                    return cur.fetchone() is not None
-
-        except Exception as e:
-            logger.error(
-                f"Failed to check scheduled generation for timelapse {timelapse_id}: {e}"
-            )
-            return True  # Err on the side of caution
+    # Removed unused scheduled generation checking - scheduling is now handled by video pipeline
 
     def get_active_job_count(self) -> int:
-        """
-        Get count of currently processing jobs.
-
-        Returns:
-            Number of jobs with 'processing' status
-        """
+        """Get count of currently processing jobs."""
         try:
-            query = """
-                SELECT COUNT(*) as count
-                FROM video_generation_jobs
-                WHERE status = 'processing'
-            """
-
+            query = "SELECT COUNT(*) as count FROM video_generation_jobs WHERE status = 'processing'"
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     result = cur.fetchone()
-
-                    if result:
-                        return dict(result)["count"]
-                    return 0
-
+                    return dict(result)["count"] if result else 0
         except Exception as e:
             logger.error(f"Failed to get active job count: {e}")
             return 0
@@ -1092,8 +1009,7 @@ class SyncVideoOperations:
     ) -> Dict[str, Any]:
         """
         Get effective video generation settings for a timelapse.
-
-        Follows inheritance pattern: job_settings > timelapse settings > camera defaults > system defaults.
+        Simplified version - complex inheritance now handled by video pipeline.
 
         Args:
             timelapse_id: ID of the timelapse
@@ -1103,27 +1019,12 @@ class SyncVideoOperations:
             Dictionary with effective video generation settings
         """
         try:
-
+            # Simplified query - basic settings only
             query = """
                 SELECT
-                    t.video_generation_mode as t_mode,
-                    t.standard_fps as t_fps,
-                    t.enable_time_limits as t_time_limits,
-                    t.min_time_seconds as t_min_time,
-                    t.max_time_seconds as t_max_time,
-                    t.target_time_seconds as t_target_time,
-                    t.fps_bounds_min as t_fps_min,
-                    t.fps_bounds_max as t_fps_max,
-                    c.video_generation_mode as c_mode,
-                    c.standard_fps as c_fps,
-                    c.enable_time_limits as c_time_limits,
-                    c.min_time_seconds as c_min_time,
-                    c.max_time_seconds as c_max_time,
-                    c.target_time_seconds as c_target_time,
-                    c.fps_bounds_min as c_fps_min,
-                    c.fps_bounds_max as c_fps_max
+                    t.standard_fps as fps,
+                    COALESCE(t.video_generation_mode, 'standard') as video_generation_mode
                 FROM timelapses t
-                JOIN cameras c ON t.camera_id = c.id
                 WHERE t.id = %s
             """
 
@@ -1141,53 +1042,14 @@ class SyncVideoOperations:
                     row_dict = dict(row)
                     job_settings = job_settings or {}
 
-                    # Apply inheritance: job_settings > timelapse > camera > defaults
+                    # Simple settings with job override
                     settings = {
+                        "fps": job_settings.get("fps") or row_dict["fps"] or 24.0,
                         "video_generation_mode": job_settings.get(
                             "video_generation_mode"
                         )
-                        or row_dict["t_mode"]
-                        or row_dict["c_mode"]
-                        or "standard",
-                        "fps": job_settings.get("fps")
-                        or row_dict["t_fps"]
-                        or row_dict["c_fps"]
-                        or 24.0,
-                        "enable_time_limits": (
-                            job_settings.get("enable_time_limits")
-                            if "enable_time_limits" in job_settings
-                            else (
-                                row_dict["t_time_limits"]
-                                if row_dict["t_time_limits"] is not None
-                                else row_dict["c_time_limits"]
-                            )
-                            or False
-                        ),
-                        "min_time_seconds": job_settings.get("min_time_seconds")
-                        or row_dict["t_min_time"]
-                        or row_dict["c_min_time"]
-                        or 5,
-                        "max_time_seconds": job_settings.get("max_time_seconds")
-                        or row_dict["t_max_time"]
-                        or row_dict["c_max_time"]
-                        or 300,
-                        "target_time_seconds": job_settings.get("target_time_seconds")
-                        or row_dict["t_target_time"]
-                        or row_dict["c_target_time"]
-                        or 60,
-                        "fps_bounds_min": job_settings.get("fps_bounds_min")
-                        or row_dict["t_fps_min"]
-                        or row_dict["c_fps_min"]
-                        or 1,
-                        "fps_bounds_max": job_settings.get("fps_bounds_max")
-                        or row_dict["t_fps_max"]
-                        or row_dict["c_fps_max"]
-                        or 60,
+                        or row_dict["video_generation_mode"],
                         "quality": job_settings.get("quality", "medium"),
-                        "overlay_settings": job_settings.get(
-                            "overlay_settings",
-                            DEFAULT_OVERLAY_SETTINGS,
-                        ),
                     }
 
                     return settings
@@ -1200,50 +1062,240 @@ class SyncVideoOperations:
 
     def _get_default_video_settings(self) -> Dict[str, Any]:
         """Get default video generation settings."""
-
         return {
             "video_generation_mode": "standard",
             "fps": 24.0,
-            "enable_time_limits": False,
-            "min_time_seconds": 5,
-            "max_time_seconds": 300,
-            "target_time_seconds": 60,
-            "fps_bounds_min": 1,
-            "fps_bounds_max": 60,
             "quality": "medium",
-            "overlay_settings": DEFAULT_OVERLAY_SETTINGS,
         }
 
-    def get_automation_mode_stats(self) -> Dict[str, int]:
-        """
-        Get distribution of automation modes for running timelapses.
+    # Removed unused automation mode statistics - automation is now handled by video pipeline
 
-        Returns:
-            Dictionary with mode counts
-        """
+    def cancel_pending_jobs_by_timelapse(self, timelapse_id: int) -> int:
+        """Cancel pending video jobs for a specific timelapse."""
         try:
             query = """
-                SELECT
-                    COALESCE(t.video_automation_mode, c.video_automation_mode, 'manual') as mode,
-                    COUNT(*) as count
-                FROM timelapses t
-                JOIN cameras c ON t.camera_id = c.id
-                WHERE t.status = 'running'
-                GROUP BY COALESCE(t.video_automation_mode, c.video_automation_mode, 'manual')
+                UPDATE video_generation_jobs
+                SET status = 'cancelled', completed_at = NOW()
+                WHERE timelapse_id = %s AND status = 'pending'
             """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    return cur.rowcount or 0
+        except Exception as e:
+            logger.error(
+                f"Error cancelling video jobs for timelapse {timelapse_id}: {e}"
+            )
+            return 0
 
+    def cancel_pending_jobs_by_camera(self, camera_id: int) -> int:
+        """Cancel pending video jobs for a specific camera."""
+        try:
+            query = """
+                UPDATE video_generation_jobs j
+                SET status = 'cancelled', completed_at = NOW()
+                FROM timelapses t
+                WHERE j.timelapse_id = t.id AND t.camera_id = %s AND j.status = 'pending'
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (camera_id,))
+                    return cur.rowcount or 0
+        except Exception as e:
+            logger.error(f"Error cancelling video jobs for camera {camera_id}: {e}")
+            return 0
+
+    def cancel_pending_jobs(self) -> int:
+        """Cancel all pending video jobs."""
+        try:
+            query = "UPDATE video_generation_jobs SET status = 'cancelled', completed_at = NOW() WHERE status = 'pending'"
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    return cur.rowcount or 0
+        except Exception as e:
+            logger.error(f"Error cancelling all pending video jobs: {e}")
+            return 0
+
+    def get_video_job_statistics(self) -> Dict[str, Any]:
+        """Get basic statistics for the video job queue."""
+        try:
+            query = """
+                SELECT status, COUNT(*) as count
+                FROM video_generation_jobs
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+                GROUP BY status
+            """
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     results = cur.fetchall()
 
-                    mode_stats = {}
-                    for row in results:
-                        row_dict = dict(row)
-                        mode_stats[row_dict["mode"]] = row_dict["count"]
+            stats = {
+                "pending_count": 0,
+                "processing_count": 0,
+                "completed_today": 0,
+                "failed_today": 0,
+            }
+            for row in results:
+                status = row["status"]
+                count = row["count"]
+                if status == "pending":
+                    stats["pending_count"] = count
+                elif status == "processing":
+                    stats["processing_count"] = count
+                elif status == "completed":
+                    stats["completed_today"] = count
+                elif status == "failed":
+                    stats["failed_today"] = count
 
-                    return mode_stats
-
+            return stats
         except Exception as e:
-            logger.error(f"Failed to get automation mode stats: {e}")
+            logger.error(f"Error getting video job statistics: {e}")
             return {}
+
+    # Removed unused priority promotion - job prioritization is now handled by video pipeline
+
+    def get_video_job_queue_status(self) -> Dict[str, int]:
+        """
+        Get video job queue status counts by status.
+
+        Returns:
+            Dictionary with job counts by status
+        """
+        try:
+            query = """
+            SELECT status, COUNT(*) as count
+            FROM video_generation_jobs
+            GROUP BY status
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return {row["status"]: row["count"] for row in results}
+        except Exception as e:
+            logger.error(f"Error getting video job queue status: {e}")
+            return {}
+
+    def get_video_generation_job_by_id(
+        self, job_id: int
+    ) -> Optional[VideoGenerationJobWithDetails]:
+        """
+        Get a video generation job by ID.
+
+        Args:
+            job_id: ID of the job to retrieve
+
+        Returns:
+            VideoGenerationJobWithDetails if found, None otherwise
+        """
+        try:
+            query = """
+            SELECT
+                vgj.*,
+                t.name as timelapse_name,
+                c.name as camera_name,
+                c.id as camera_id
+            FROM video_generation_jobs vgj
+            JOIN timelapses t ON vgj.timelapse_id = t.id
+            JOIN cameras c ON t.camera_id = c.id
+            WHERE vgj.id = %s
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (job_id,))
+                    row = cur.fetchone()
+                    if row:
+                        return self._row_to_video_generation_job_with_details(row)
+                    return None
+        except Exception as e:
+            logger.error(f"Error getting video generation job by ID {job_id}: {e}")
+            return None
+
+    def update_video_generation_job_status(self, job_id: int, status: str) -> bool:
+        """
+        Update the status of a video generation job.
+
+        Args:
+            job_id: ID of the job to update
+            status: New status for the job
+
+        Returns:
+            True if update was successful, False otherwise
+        """
+        try:
+            query = """
+            UPDATE video_generation_jobs
+            SET status = %s, updated_at = NOW()
+            WHERE id = %s
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (status, job_id))
+                    return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating video generation job status: {e}")
+            return False
+
+    def get_last_scheduled_video(self, timelapse_id: int) -> Optional[Video]:
+        """
+        Get the most recent video for a timelapse that was triggered by scheduled automation.
+
+        Args:
+            timelapse_id: ID of the timelapse
+
+        Returns:
+            Most recent scheduled video or None if not found
+        """
+        try:
+            query = """
+            SELECT * FROM videos 
+            WHERE timelapse_id = %s 
+            AND trigger_type = 'scheduled'
+            ORDER BY created_at DESC 
+            LIMIT 1
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    row = cur.fetchone()
+                    if row:
+                        return self._row_to_video(dict(row))
+                    return None
+        except Exception as e:
+            logger.error(
+                f"Error getting last scheduled video for timelapse {timelapse_id}: {e}"
+            )
+            return None
+
+    def get_last_milestone_video(self, timelapse_id: int) -> Optional[Video]:
+        """
+        Get the most recent video for a timelapse that was triggered by milestone automation.
+
+        Args:
+            timelapse_id: ID of the timelapse
+
+        Returns:
+            Most recent milestone video or None if not found
+        """
+        try:
+            query = """
+            SELECT * FROM videos 
+            WHERE timelapse_id = %s 
+            AND trigger_type = 'milestone'
+            ORDER BY created_at DESC 
+            LIMIT 1
+            """
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    row = cur.fetchone()
+                    if row:
+                        return self._row_to_video(dict(row))
+                    return None
+        except Exception as e:
+            logger.error(
+                f"Error getting last milestone video for timelapse {timelapse_id}: {e}"
+            )
+            return None

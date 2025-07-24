@@ -18,7 +18,7 @@ from psycopg_pool import ConnectionPool, AsyncConnectionPool
 import psycopg
 
 from ..config import settings
-from ..utils.timezone_utils import utc_now
+from ..utils.time_utils import utc_now
 
 
 class AsyncDatabaseCore:
@@ -62,9 +62,10 @@ class AsyncDatabaseCore:
             await self._pool.open()
             self._pool_created_at = utc_now()
             logger.info(
-                f"Async database pool initialized (min: 2, max: {settings.db_pool_size}, overflow: {settings.db_max_overflow})"
+                f"Async database pool initialized (min: 2, max: "
+                f"{settings.db_pool_size}, overflow: {settings.db_max_overflow})"
             )
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, OSError) as e:
             logger.error(f"Failed to initialize async database pool: {e}")
             raise
 
@@ -97,7 +98,7 @@ class AsyncDatabaseCore:
                     data = await cur.fetchall()
         """
         if not self._pool:
-            raise Exception("Database pool not initialized. Call initialize() first.")
+            raise RuntimeError("Database pool not initialized. Call initialize() first.")
 
         self._connection_attempts += 1
         start_time = time.time()
@@ -106,7 +107,12 @@ class AsyncDatabaseCore:
             async with self._pool.connection() as conn:
                 async with conn.transaction():
                     yield conn
-        except (psycopg.Error, psycopg.OperationalError, psycopg.DatabaseError, Exception) as e:
+        except (
+            psycopg.Error,
+            psycopg.OperationalError,
+            psycopg.DatabaseError,
+            Exception,
+        ) as e:
             self._failed_connections += 1
             connection_time = time.time() - start_time
             error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
@@ -168,12 +174,12 @@ class AsyncDatabaseCore:
                             }
                         }
                     )
-            except Exception as e:
+            except (AttributeError, TypeError) as e:
                 stats["pool_stats_error"] = str(e)
 
             return stats
 
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, RuntimeError) as e:
             return {
                 "status": "error",
                 "error": str(e),
@@ -225,7 +231,7 @@ class AsyncDatabaseCore:
                 "error": f"Health check timed out after {timeout}s",
                 "response_time_ms": round((time.time() - start_time) * 1000, 2),
             }
-        except Exception as e:
+        except (psycopg.Error, ConnectionError, RuntimeError) as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
@@ -302,7 +308,7 @@ class SyncDatabaseCore:
                     data = cur.fetchall()
         """
         if not self._pool:
-            raise Exception("Database pool not initialized. Call initialize() first.")
+            raise RuntimeError("Database pool not initialized. Call initialize() first.")
 
         with self._pool.connection() as conn:
             with conn.transaction():
