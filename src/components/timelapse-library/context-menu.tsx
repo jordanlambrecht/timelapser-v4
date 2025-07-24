@@ -48,7 +48,7 @@ export function ContextMenu({
         {
           icon: Link,
           label: "Copy link",
-          action: "copy_link", 
+          action: "copy_link",
           disabled: true,
           tooltip: "Coming soon",
         },
@@ -120,12 +120,12 @@ export function ContextMenu({
   ]
 
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
+    <div className='fixed inset-0 z-50' onClick={onClose}>
       <div
-        className="absolute bg-white rounded-md shadow-lg border border-gray-200 py-2 min-w-[200px]"
+        className='absolute bg-white rounded-md shadow-lg border border-gray-200 py-2 min-w-[200px]'
         style={{
           // Position near where the user clicked
-          // For now, we'll center it - in a real implementation, 
+          // For now, we'll center it - in a real implementation,
           // you'd want to position it near the mouse/button
           top: "50%",
           left: "50%",
@@ -141,16 +141,18 @@ export function ContextMenu({
                 onClick={() => handleAction(item.action)}
                 disabled={item.disabled}
                 className={`w-full px-4 py-2 text-left text-sm flex items-center space-x-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed ${
-                  item.destructive ? "text-red-600 hover:bg-red-50" : "text-gray-700"
+                  item.destructive
+                    ? "text-red-600 hover:bg-red-50"
+                    : "text-gray-700"
                 }`}
                 title={item.tooltip}
               >
-                <item.icon className="h-4 w-4" />
+                <item.icon className='h-4 w-4' />
                 <span>{item.label}</span>
               </button>
             ))}
             {groupIndex < menuItems.length - 1 && (
-              <hr className="my-1 border-gray-100" />
+              <hr className='my-1 border-gray-100' />
             )}
           </div>
         ))}
