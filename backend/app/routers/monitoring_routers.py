@@ -123,7 +123,6 @@ async def get_latest_image_performance(response: Response) -> Dict[str, Any]:
             "/api/cameras/{id}/latest-image/thumbnail (300s TTL)",
             "/api/cameras/{id}/latest-image/small (300s TTL)",
             "/api/cameras/{id}/latest-image/full (60s TTL)",
-            "/api/cameras/{id}/images/latest (30s TTL)",
         ],
         "recommendations": {
             "frontend_polling": "Reduce polling frequency to match cache TTL (30s minimum)",
