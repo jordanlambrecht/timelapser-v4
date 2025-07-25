@@ -42,9 +42,8 @@ from ..dependencies import (
     SchedulerServiceDep,
 )
 from ..models import Camera, CameraCreate, CameraUpdate
-from ..models.camera_model import (
-    CameraDetailsResponse,
-)
+
+# Removed: CameraDetailsResponse import - no longer needed after endpoint removal
 from ..models.shared_models import (
     CameraHealthStatus,
     CameraConnectivityTestResult,
@@ -120,28 +119,33 @@ async def execute_timelapse_action(
         )
 
         # Execute the timelapse action using camera service
-        logger.info(f"Executing timelapse action '{action_request.action}' for camera {camera_id}")
-        
+        logger.info(
+            f"Executing timelapse action '{action_request.action}' for camera {camera_id}"
+        )
+
         # Delegate to camera service for actual timelapse control
         result = await camera_service.execute_timelapse_action(
-            camera_id=camera_id,
-            request=action_request
+            camera_id=camera_id, request=action_request
         )
-        
+
         return TimelapseActionResponse(
             success=result.get("success", False),
-            message=result.get("message", f"Timelapse {action_request.action} executed"),
+            message=result.get(
+                "message", f"Timelapse {action_request.action} executed"
+            ),
             action=action_request.action,
             camera_id=camera_id,
             timelapse_id=result.get("timelapse_id"),
             timelapse_status=result.get("timelapse_status"),
-            data=result.get("data", {})
+            data=result.get("data", {}),
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to execute timelapse action '{action_request.action}': {e}")
+        logger.error(
+            f"Failed to execute timelapse action '{action_request.action}': {e}"
+        )
         return TimelapseActionResponse(
             success=False,
             message=f"Failed to execute {action_request.action} action: {str(e)}",
@@ -150,117 +154,8 @@ async def execute_timelapse_action(
         )
 
 
-# ✅ IMPLEMENTED: ETag + 3 minute cache for composite camera details data
-# ETag based on camera.updated_at + timelapse.updated_at + latest_image.captured_at
-@router.get("/cameras/{camera_id}/details", response_model=CameraDetailsResponse)
-@handle_exceptions("get camera details")
-async def get_camera_details(
-    response: Response,
-    camera_service: CameraServiceDep,
-    timelapse_service: TimelapseServiceDep,
-    video_service: VideoServiceDep,
-    image_service: ImageServiceDep,
-    log_service: LogServiceDep,
-    camera_id: int = FastAPIPath(..., description="Camera ID", ge=1),
-):
-    """
-    CAMERA DETAILS - Single endpoint for camera detail page
-
-    Replaces 6 separate API calls with one comprehensive response containing:
-    - Camera with latest image
-    - Active timelapse (if any)
-    - All timelapses for this camera
-    - Recent images (last 10)
-    - Videos for this camera
-    - Recent activity/logs (last 10)
-    - Comprehensive statistics
-    """
-    logger.info(f"Starting camera details for camera {camera_id}")
-
-    # Get camera data with comprehensive statistics
-    try:
-        camera_with_stats = await camera_service.get_camera_by_id(camera_id)
-        if not camera_with_stats:
-            raise HTTPException(status_code=404, detail=CAMERA_NOT_FOUND)
-        logger.info(f"Camera data retrieved: {camera_with_stats.id}")
-    except Exception as e:
-        logger.error(f"Failed to get camera by ID: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get camera: {str(e)}")
-
-    # Get additional data using proper service methods that return models
-    # Use individual try-catch instead of asyncio.gather to isolate failures
-    timelapses_data = []
-    videos_data = []
-    recent_images_data = []
-    logs_data = []
-
-    # Try each operation individually with error handling
-    try:
-        timelapses_data = await timelapse_service.get_timelapses_for_camera(camera_id)
-    except Exception as e:
-        logger.error(f"Failed to get timelapses for camera {camera_id}: {e}")
-        timelapses_data = []
-
-    try:
-        if camera_with_stats.timelapse_id:
-            videos_data = await video_service.get_videos(
-                timelapse_id=camera_with_stats.timelapse_id
-            )
-        else:
-            videos_data = await video_service.get_videos()
-    except Exception as e:
-        logger.error(f"Failed to get videos for camera {camera_id}: {e}")
-        videos_data = []
-
-    try:
-        recent_images_data = await image_service.get_images_for_camera(
-            camera_id, limit=10
-        )
-    except Exception as e:
-        logger.error(f"Failed to get recent images for camera {camera_id}: {e}")
-        recent_images_data = []
-
-    try:
-        logs_data = await log_service.get_logs_for_camera(camera_id, limit=10)
-    except Exception as e:
-        logger.error(f"Failed to get logs for camera {camera_id}: {e}")
-        logs_data = []
-
-    # Handle stats properly - Camera already includes stats
-    # No need to extract separately as Camera includes all data unified
-
-    response_data = CameraDetailsResponse(
-        camera=camera_with_stats,  # Camera includes all needed data
-        timelapses=timelapses_data,  # Already proper models from service
-        videos=videos_data,  # Already proper models from service
-        recent_images=recent_images_data,  # Already proper models from service
-        recent_activity=logs_data,  # Already proper models from service
-    )
-
-    # Generate composite ETag based on camera updated_at + latest image + timelapse updates
-    etag_components = [str(camera_with_stats.updated_at.timestamp())]
-    if camera_with_stats.last_image:
-        etag_components.append(
-            str(camera_with_stats.last_image.captured_at.timestamp())
-        )
-    if timelapses_data:
-        latest_timelapse_update = max(
-            (t.updated_at for t in timelapses_data),
-            default=camera_with_stats.updated_at,
-        )
-        etag_components.append(str(latest_timelapse_update.timestamp()))
-
-    # Use content hash ETag since we have composite data
-
-    etag = generate_content_hash_etag(
-        {"camera_id": camera_id, "components": etag_components}
-    )
-
-    # Add cache headers for composite data that changes occasionally
-    response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"  # 3 minutes
-    response.headers["ETag"] = etag
-
-    return response_data
+# ✅ REMOVED: Deprecated camera details endpoint - replaced by separate lightweight endpoints
+# Frontend now uses /cameras/{id} + lazy loading for /timelapses + /videos
 
 
 # ✅ UNIFIED: All cameras now return Camera (comprehensive data)
@@ -465,8 +360,10 @@ async def trigger_manual_capture(
     """Trigger manual image capture for a camera"""
 
     # Validate camera exists and get camera data
-    camera = await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
-    
+    camera = await validate_entity_exists(
+        camera_service.get_camera_by_id, camera_id, "camera"
+    )
+
     # Get active timelapse for the camera
     if not camera.timelapse_id:
         raise HTTPException(
@@ -480,8 +377,10 @@ async def trigger_manual_capture(
     try:
         # 🎯 MOCK CAPTURE: Return successful mock response for demonstration
         # TODO: Replace with actual capture workflow when worker infrastructure is available
-        logger.info(f"Mock capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}")
-        
+        logger.info(
+            f"Mock capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}"
+        )
+
         # Simulate successful capture
         capture_success = True
         capture_time_ms = 150  # Mock capture time
@@ -496,20 +395,20 @@ async def trigger_manual_capture(
                 rtsp_url=camera.rtsp_url,
                 response_time_ms=capture_time_ms,
                 connection_status="mock_capture_executed",
-                test_timestamp=capture_timestamp
+                test_timestamp=capture_timestamp,
             ),
             health_monitoring=CameraHealthMonitoringResult(
                 success=True,
                 camera_id=camera_id,
-                monitoring_timestamp=capture_timestamp
+                monitoring_timestamp=capture_timestamp,
             ),
             capture_scheduling=CameraCaptureScheduleResult(
                 success=capture_success,
                 camera_id=camera_id,
                 message="Mock capture executed successfully",
-                scheduled_at=capture_timestamp
+                scheduled_at=capture_timestamp,
             ),
-            overall_success=capture_success
+            overall_success=capture_success,
         )
 
     except HTTPException:
@@ -521,7 +420,7 @@ async def trigger_manual_capture(
         )
 
 
-# ✅ IMPLEMENTED: 30-second cache for latest image metadata with proper ETag
+#  DEPRECATED: Removed /cameras/{camera_id}/images/latest endpoint
 # Consider SSE updates when new images are captured instead
 @router.get("/cameras/{camera_id}/images/latest")
 @handle_exceptions("get camera latest image")
@@ -798,4 +697,3 @@ async def download_camera_latest_image(
         filename=filename,
         media_type=serving_data.get("media_type", "image/jpeg"),
     )
-

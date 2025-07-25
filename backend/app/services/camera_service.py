@@ -41,7 +41,6 @@ from ..models.camera_model import (
     Camera,
     CameraCreate,
     CameraUpdate,
-    CameraDetailsResponse,
     CropRotationSettings,
     CropRotationUpdate,
     SourceResolution,
@@ -765,13 +764,16 @@ class CameraService:
             action="start",
         )
 
-        # Reset capture timing fields for new timelapse
-        logger.info(f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts fresh")
+        # Reset capture timing fields for new timelapse and schedule immediate first capture
+        logger.info(f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts fresh with immediate capture")
         try:
+            # Get current time and timezone for immediate capture
+            current_time = await get_timezone_aware_timestamp_async(self.settings_service)
+            
             update_result = await self.camera_ops.update_camera(
                 camera_id, {
                     "last_capture_at": None,
-                    "next_capture_at": None
+                    "next_capture_at": current_time  # Set to now for immediate capture
                 }
             )
             logger.info(f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}")
@@ -792,23 +794,10 @@ class CameraService:
             priority=SSEPriority.HIGH,
         )
 
-        # Trigger immediate capture for the new timelapse using capture-now functionality
-        logger.info(f"📸 Triggering immediate capture for new timelapse {timelapse.id}")
-        try:
-            # Use the existing capture-now logic from the trigger_manual_capture method
-            capture_timestamp = await get_timezone_aware_timestamp_async(self.settings_service)
-            
-            # Create mock capture result for immediate execution
-            # Note: In a full implementation, this would trigger actual RTSP capture
-            # For now, we're documenting the intent and structure
-            logger.info(f"✅ Immediate capture triggered for timelapse {timelapse.id} at {capture_timestamp}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to trigger immediate capture for timelapse {timelapse.id}: {e}")
-            # Don't fail the timelapse creation if immediate capture fails
+        # Note: First capture will happen on the normal scheduled interval
 
         logger.info(
-            f"Successfully started timelapse {timelapse.id} for camera {camera_id} with immediate capture"
+            f"Successfully started timelapse {timelapse.id} for camera {camera_id}"
         )
 
         return {
@@ -816,6 +805,7 @@ class CameraService:
             "timelapse_id": timelapse.id,
             "message": "Timelapse started successfully",
         }
+
 
     async def _handle_pause_action(
         self, camera_id: int, camera: Camera

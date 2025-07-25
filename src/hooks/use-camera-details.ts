@@ -26,33 +26,53 @@ export interface UseCameraDetailsResult {
   // State
   loading: boolean
   error: string | null
+  timelapsesLoading: boolean
+  timelapsesError: string | null
+  videosLoading: boolean
+  videosError: string | null
 
   // Actions
   refetch: () => Promise<void>
+  loadTimelapses: () => Promise<void>
+  loadVideos: () => Promise<void>
 }
 
 export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
-  const [data, setData] = useState<CameraDetailsResponse | null>(null)
+  const [camera, setCamera] = useState<CameraWithLastImage | null>(null)
+  const [timelapses, setTimelapses] = useState<TimelapseWithDetails[]>([])
+  const [videos, setVideos] = useState<VideoWithDetails[]>([])
+  const [recentImages, setRecentImages] = useState<ImageForCamera[]>([])
+  const [recentActivity, setRecentActivity] = useState<LogForCamera[]>([])
+
+  // Main camera loading state
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Lazy loading states for timelapses
+  const [timelapsesLoading, setTimelapsesLoading] = useState(false)
+  const [timelapsesError, setTimelapsesError] = useState<string | null>(null)
+  const [timelapsesLoaded, setTimelapsesLoaded] = useState(false)
+
+  // Lazy loading states for videos
+  const [videosLoading, setVideosLoading] = useState(false)
+  const [videosError, setVideosError] = useState<string | null>(null)
+  const [videosLoaded, setVideosLoaded] = useState(false)
 
   const fetchCameraDetails = async () => {
     try {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/cameras/${cameraId}/details`)
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Only fetch camera data (lightweight) - no related data
+      const cameraResponse = await fetch(`/api/cameras/${cameraId}`)
+      if (!cameraResponse.ok) {
+        if (cameraResponse.status === 404) {
           throw new Error("Camera not found")
         }
-        throw new Error(`Failed to fetch camera details: ${response.status}`)
+        throw new Error(`Failed to fetch camera: ${cameraResponse.status}`)
       }
-
-      const result: CameraDetailsResponse = await response.json()
-
-      setData(result)
+      const cameraData = await cameraResponse.json()
+      setCamera(cameraData)
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to fetch camera details"
@@ -65,6 +85,54 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     }
   }
 
+  const loadTimelapses = async () => {
+    if (timelapsesLoaded || timelapsesLoading) return
+
+    try {
+      setTimelapsesLoading(true)
+      setTimelapsesError(null)
+
+      const response = await fetch(`/api/timelapses?camera_id=${cameraId}`)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch timelapses: ${response.status}`)
+      }
+
+      const data = await response.json()
+      setTimelapses(data)
+      setTimelapsesLoaded(true)
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load timelapses"
+      setTimelapsesError(errorMessage)
+    } finally {
+      setTimelapsesLoading(false)
+    }
+  }
+
+  const loadVideos = async () => {
+    if (videosLoaded || videosLoading) return
+
+    try {
+      setVideosLoading(true)
+      setVideosError(null)
+
+      const response = await fetch(`/api/videos?camera_id=${cameraId}`)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch videos: ${response.status}`)
+      }
+
+      const data = await response.json()
+      setVideos(data)
+      setVideosLoaded(true)
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load videos"
+      setVideosError(errorMessage)
+    } finally {
+      setVideosLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (cameraId) {
       fetchCameraDetails()
@@ -72,25 +140,31 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
   }, [cameraId])
 
   // Derive active timelapse from the timelapses array
-  const activeTimelapse = data?.timelapses?.find(
-    (t) => t.status === "running" || t.status === "paused"
-  ) || null
+  const activeTimelapse =
+    timelapses.find((t) => t.status === "running" || t.status === "paused") ||
+    null
 
   return {
     // Data
-    camera: data?.camera || null,
+    camera,
     activeTimelapse,
-    timelapses: data?.timelapses || [],
-    videos: data?.videos || [],
-    recentImages: data?.recent_images || [],
-    recentActivity: data?.recent_activity || [],
-    stats: data?.stats || null,
+    timelapses,
+    videos,
+    recentImages,
+    recentActivity,
+    stats: null, // TODO: Implement camera stats endpoint
 
     // State
     loading,
     error,
+    timelapsesLoading,
+    timelapsesError,
+    videosLoading,
+    videosError,
 
     // Actions
     refetch: fetchCameraDetails,
+    loadTimelapses,
+    loadVideos,
   }
 }

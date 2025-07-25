@@ -117,7 +117,7 @@ async def get_image_count(
 
 # IMPLEMENTED: ETag + long cache (image metadata never changes after creation)
 # ETag = f'"{image.id}-{image.updated_at.timestamp()}"'
-@router.get("/images/{image_id}", response_model=Image)
+@router.get("/images/{image_id}")
 @handle_exceptions("get image")
 async def get_image(response: Response, image_id: int, image_service: ImageServiceDep):
     """

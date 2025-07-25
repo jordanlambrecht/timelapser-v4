@@ -283,14 +283,13 @@ export const useOptimisticCamera = (
    */
   const refreshCamera = useCallback(async (): Promise<void> => {
     try {
-      const response = await makeApiRequest(`/api/cameras/${cameraId}/details`);
+      const response = await makeApiRequest(`/api/cameras/${cameraId}`);
       const data = await response.json();
       
-      if (data.success) {
-        setCamera(data.data);
-        optimisticStateRef.current = null; // Clear optimistic state
-        onStatusChange?.(data.data);
-      }
+      // Basic camera endpoint returns the camera object directly, not wrapped in success/data
+      setCamera(data);
+      optimisticStateRef.current = null; // Clear optimistic state
+      onStatusChange?.(data);
     } catch (error) {
       console.error('Failed to refresh camera data:', error);
     }

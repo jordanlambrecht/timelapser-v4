@@ -29,21 +29,17 @@ import { EnhancedCameraModal } from "@/components/enhanced-camera-modal"
 import { EditTimelapseModal } from "@/components/edit-timelapse-modal"
 import { CameraDetailsImage } from "@/components/camera-image-unified"
 import { LazyTimelapsesSection } from "@/components/lazy-timelapses-section"
-import { useLatestImageDetails } from "@/hooks/use-latest-image"
 import { downloadLatestImage } from "@/lib/latest-image-api"
 import { AnimatedGradientButton } from "@/components/ui/animated-gradient-button"
 // import { AnimatedCountdownBorder } from "@/components/animated-countdown-border"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
+
 import {
   ArrowLeft,
   Camera,

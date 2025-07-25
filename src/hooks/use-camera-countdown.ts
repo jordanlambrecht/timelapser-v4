@@ -12,10 +12,27 @@ import {
   getSmartRefreshInterval,
   parseCaptureInterval,
   isNowState,
+  calculateNextCapture,
   type CaptureTimestamp,
   type TimeWindow,
 } from "@/lib/time-utils"
 import { useTimezoneSettings } from "@/contexts/settings-context"
+
+/**
+ * Helper function to calculate next capture time for a timelapse
+ */
+function calculateNextCaptureFromTimelapse(
+  lastCaptureAt: string | null,
+  intervalSeconds: number,
+  timezone?: string
+): string | null {
+  if (!lastCaptureAt) return null
+
+  const nextCaptureDate = calculateNextCapture(lastCaptureAt, intervalSeconds)
+  if (!nextCaptureDate) return null
+
+  return nextCaptureDate.toISOString()
+}
 
 interface CameraCountdownProps {
   camera: {
@@ -73,9 +90,20 @@ export function useCameraCountdown({
           }
         : undefined
 
+    // Use timelapse timing when timelapse is running (even if last_capture_at is null for new timelapses)
+    const useTimelapseData = timelapse?.status === "running"
+
     return {
-      lastCapture: camera.last_capture_at || timelapse?.last_capture_at,
-      nextCapture: camera.next_capture_at,
+      lastCapture: useTimelapseData
+        ? timelapse.last_capture_at
+        : camera.last_capture_at || timelapse?.last_capture_at,
+      nextCapture: useTimelapseData
+        ? calculateNextCaptureFromTimelapse(
+            timelapse.last_capture_at ?? null,
+            interval,
+            timezone
+          )
+        : camera.next_capture_at,
       captureInterval: interval,
       timeWindow,
       timezone,
@@ -87,6 +115,7 @@ export function useCameraCountdown({
     camera.time_window_end,
     camera.use_time_window,
     timelapse?.last_capture_at,
+    timelapse?.status,
     captureInterval,
     timezone,
   ])

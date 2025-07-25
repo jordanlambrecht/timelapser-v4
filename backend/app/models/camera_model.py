@@ -307,6 +307,12 @@ class Camera(CameraBase):
     avg_capture_interval_minutes: Optional[float] = None
     days_since_first_capture: Optional[int] = None
 
+    # Additional database fields missing from model (causing validation errors)
+    enabled: Optional[bool] = Field(default=True, description="Whether camera is enabled")
+    is_connected: Optional[bool] = Field(default=None, description="Camera connection status") 
+    last_error: Optional[str] = Field(default=None, description="Last error encountered")
+    last_error_message: Optional[str] = Field(default=None, description="Last error message details")
+
     @property
     def has_preview_image(self) -> bool:
         """Check if camera has a preview image available"""
