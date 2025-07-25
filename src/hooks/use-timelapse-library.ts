@@ -127,7 +127,7 @@ export function useTimelapseLibrary(
 
   useEffect(() => {
     fetchLibraryData()
-  }, [fetchLibraryData])
+  }, [options.sortBy, options.sortOrder, options.starredOnly, options.includeActive])
 
   return {
     timelapses,
