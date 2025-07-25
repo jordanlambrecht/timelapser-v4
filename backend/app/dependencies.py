@@ -9,6 +9,10 @@ All services receive database instances via dependency injection using FastAPI's
 from typing import Annotated
 from fastapi import Depends
 
+from backend.app.services.video_pipeline.video_workflow_service import (
+    VideoWorkflowService,
+)
+
 from .database import async_db, sync_db
 from .database.core import AsyncDatabase, SyncDatabase
 from .services.camera_service import CameraService
@@ -149,7 +153,7 @@ async def get_settings_service() -> SettingsService:
 async def get_weather_manager():
     """Get WeatherManager with database and settings service dependency injection"""
     from .database.weather_operations import SyncWeatherOperations
-    
+
     settings_service = SettingsService(async_db)
     weather_operations = SyncWeatherOperations(sync_db)
     return WeatherManager(weather_operations, settings_service)
@@ -334,7 +338,6 @@ OverlayJobServiceDep = Annotated[
 ]
 
 # Video Pipeline Dependencies (New Architecture)
-from .services.video_pipeline.video_workflow_service import VideoWorkflowService
 VideoPipelineDep = Annotated[VideoWorkflowService, Depends(get_video_pipeline)]
 AsyncVideoPipelineDep = Annotated[object, Depends(get_async_video_pipeline)]
 VideoJobServiceDep = Annotated[object, Depends(get_video_job_service)]

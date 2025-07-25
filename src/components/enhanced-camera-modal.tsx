@@ -21,20 +21,12 @@ import {
   CheckCircle,
   Circle,
   Video,
-  RotateCw,
   Crop,
-  Move,
-  Square,
 } from "lucide-react"
 import { toast } from "@/lib/toast"
-import { VideoAutomationSettings } from "@/components/video-automation-settings"
-import {
-  VideoAutomationMode,
-  CameraAutomationSettings,
-} from "@/types/video-automation"
+
 import { CameraCropModal } from "@/components/camera-crop-modal"
 import type { CropRotationSettings } from "@/types/cameras"
-import { Slider } from "@/components/ui/slider"
 
 interface EnhancedCameraModalProps {
   isOpen: boolean
@@ -54,20 +46,8 @@ export function EnhancedCameraModal({
   const [formData, setFormData] = useState({
     name: "",
     rtsp_url: "",
-    use_time_window: false,
-    time_window_start: "06:00",
-    time_window_end: "18:00",
     corruption_detection_heavy: false,
   })
-
-  const [automationSettings, setAutomationSettings] =
-    useState<CameraAutomationSettings>({
-      video_automation_mode: VideoAutomationMode.MANUAL,
-      enabled: false,
-      schedule_config: undefined,
-      milestone_config: undefined,
-      continuous_config: undefined,
-    })
 
   const [cropRotationSettings, setCropRotationSettings] =
     useState<CropRotationSettings>({
@@ -86,20 +66,7 @@ export function EnhancedCameraModal({
       setFormData({
         name: camera?.name || "",
         rtsp_url: camera?.rtsp_url || "",
-        use_time_window: camera?.use_time_window || false,
-        time_window_start: camera?.time_window_start || "06:00",
-        time_window_end: camera?.time_window_end || "18:00",
         corruption_detection_heavy: camera?.corruption_detection_heavy || false,
-      })
-
-      // Set automation settings from camera data
-      setAutomationSettings({
-        video_automation_mode:
-          camera?.video_automation_mode || VideoAutomationMode.MANUAL,
-        enabled: camera?.automation_enabled || false,
-        schedule_config: camera?.schedule_config,
-        milestone_config: camera?.milestone_config,
-        continuous_config: camera?.continuous_config,
       })
 
       // Set crop/rotation settings from camera data
@@ -152,10 +119,9 @@ export function EnhancedCameraModal({
     e.preventDefault()
     setSaving(true)
     try {
-      // Combine basic settings with automation settings and crop/rotation settings
+      // Combine basic settings with crop/rotation settings
       const combinedData = {
         ...formData,
-        ...automationSettings,
         rotation: cropRotationSettings.rotation,
         crop_rotation: {
           crop: cropRotationSettings.crop,
@@ -189,7 +155,7 @@ export function EnhancedCameraModal({
 
         <form onSubmit={handleSubmit} className='mt-6 space-y-6'>
           <Tabs defaultValue='basic' className='w-full'>
-            <TabsList className='grid w-full grid-cols-3 bg-black/30 border border-purple-muted/30'>
+            <TabsList className='grid w-full grid-cols-2 bg-black/30 border border-purple-muted/30'>
               <TabsTrigger
                 value='basic'
                 className='data-[state=active]:bg-purple/20'
@@ -203,13 +169,6 @@ export function EnhancedCameraModal({
               >
                 <Crop className='w-4 h-4 mr-2' />
                 Crop & Rotation
-              </TabsTrigger>
-              <TabsTrigger
-                value='automation'
-                className='data-[state=active]:bg-purple/20'
-              >
-                <Video className='w-4 h-4 mr-2' />
-                Video Automation
               </TabsTrigger>
             </TabsList>
 
@@ -261,91 +220,6 @@ export function EnhancedCameraModal({
                 <p className='mt-2 text-xs text-grey-light/60'>
                   Secure RTSP streams (rtsps://) are supported
                 </p>
-              </div>
-
-              {/* Time Window Section */}
-              <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
-                <div className='flex items-center justify-between'>
-                  <div className='space-y-2'>
-                    <Label className='flex items-center space-x-2 font-medium text-white'>
-                      <Clock className='w-4 h-4 text-yellow/70' />
-                      <span>Time Window</span>
-                    </Label>
-                    <p className='text-sm text-grey-light/60'>
-                      Capture only during specific hours (e.g., daylight only)
-                    </p>
-                  </div>
-                  <Switch
-                    checked={formData.use_time_window}
-                    onCheckedChange={(checked) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        use_time_window: checked,
-                      }))
-                    }
-                    className='data-[state=checked]:bg-success data-[state=unchecked]:bg-purple-muted/50'
-                  />
-                </div>
-
-                {formData.use_time_window && (
-                  <div className='grid grid-cols-2 gap-4 mt-4'>
-                    <div className='space-y-2'>
-                      <Label
-                        htmlFor='time_start'
-                        className='text-sm text-grey-light/70'
-                      >
-                        Start Time
-                      </Label>
-                      <Input
-                        id='time_start'
-                        type='time'
-                        value={formData.time_window_start}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            time_window_start: e.target.value,
-                          }))
-                        }
-                        className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
-                      />
-                    </div>
-                    <div className='space-y-2'>
-                      <Label
-                        htmlFor='time_end'
-                        className='text-sm text-grey-light/70'
-                      >
-                        End Time
-                      </Label>
-                      <Input
-                        id='time_end'
-                        type='time'
-                        value={formData.time_window_end}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            time_window_end: e.target.value,
-                          }))
-                        }
-                        className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {formData.use_time_window && (
-                  <div className='p-3 mt-4 border bg-success/10 border-success/20 rounded-xl'>
-                    <p className='text-sm text-success/80'>
-                      ✓ Camera will capture from{" "}
-                      <span className='font-mono'>
-                        {formData.time_window_start}
-                      </span>{" "}
-                      to{" "}
-                      <span className='font-mono'>
-                        {formData.time_window_end}
-                      </span>
-                    </p>
-                  </div>
-                )}
               </div>
 
               {/* Image Quality Detection Section */}
@@ -445,17 +319,6 @@ export function EnhancedCameraModal({
                   cameraName={formData.name || "Camera"}
                   initialSettings={cropRotationSettings}
                   inlineMode={true}
-                />
-              </div>
-            </TabsContent>
-
-            <TabsContent value='automation' className='space-y-6 mt-6'>
-              <div className='p-6 space-y-4 border bg-black/20 rounded-2xl border-purple-muted/20'>
-                <VideoAutomationSettings
-                  cameraId={camera?.id}
-                  initialSettings={automationSettings}
-                  onSettingsChange={setAutomationSettings}
-                  showTitle={false}
                 />
               </div>
             </TabsContent>
