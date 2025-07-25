@@ -19,7 +19,7 @@ import {
   stopTimelapse,
   startTimelapse,
 } from "@/lib/camera-actions"
-import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
+// import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
 import { TimelapseDetailsModal } from "@/components/timelapse-details-modal"
 import {
   TimelapseCreationModal,
@@ -28,6 +28,7 @@ import {
 import { EnhancedCameraModal } from "@/components/enhanced-camera-modal"
 import { EditTimelapseModal } from "@/components/edit-timelapse-modal"
 import { CameraDetailsImage } from "@/components/camera-image-unified"
+import { LazyTimelapsesSection } from "@/components/lazy-timelapses-section"
 import { useLatestImageDetails } from "@/hooks/use-latest-image"
 import { downloadLatestImage } from "@/lib/latest-image-api"
 import { AnimatedGradientButton } from "@/components/ui/animated-gradient-button"
@@ -72,18 +73,21 @@ export default function CameraDetailsPage() {
   const router = useRouter()
   const cameraId = parseInt(params.id as string)
 
-  // 🎯 REFACTORED: Single hook replaces 6 separate API calls
+  // 🎯 REFACTORED: Single hook with lazy loading for timelapses/videos
   const {
     camera,
     activeTimelapse,
     timelapses,
     videos,
-    recentImages,
     recentActivity,
     stats,
     loading,
     error,
+    timelapsesLoading,
+    timelapsesError,
     refetch,
+    loadTimelapses,
+    loadVideos,
   } = useCameraDetails(cameraId)
 
   // Get timezone from settings
@@ -100,7 +104,7 @@ export default function CameraDetailsPage() {
   const [editTimelapseModalOpen, setEditTimelapseModalOpen] = useState(false)
   const [newTimelapseDialogOpen, setNewTimelapseDialogOpen] = useState(false)
   const [confirmStopOpen, setConfirmStopOpen] = useState(false)
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  // const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [cameraSettingsModalOpen, setCameraSettingsModalOpen] = useState(false)
 
   // Computed values from clean data
@@ -566,7 +570,7 @@ export default function CameraDetailsPage() {
                   >
                     <Cog className='w-4 h-4' />
                   </Button>
-                  <Button
+                  {/* <Button
                     onClick={() => setSettingsModalOpen(true)}
                     size='sm'
                     variant='outline'
@@ -574,7 +578,7 @@ export default function CameraDetailsPage() {
                     title='Timelapse Settings'
                   >
                     <Settings className='w-4 h-4' />
-                  </Button>
+                  </Button> */}
                 </div>
               </div>
             </div>
@@ -980,191 +984,209 @@ export default function CameraDetailsPage() {
                     Timelapses
                   </h2>
                   <div className='flex items-center gap-2 text-sm text-primary'>
-                    <span>{timelapses.length} total</span>
-                    {completedTimelapses.length > 0 && (
-                      <span>• {completedTimelapses.length} completed</span>
+                    {timelapsesLoading ? (
+                      <span>Loading timelapses...</span>
+                    ) : (
+                      <>
+                        <span>{timelapses.length} total</span>
+                        {completedTimelapses.length > 0 && (
+                          <span>• {completedTimelapses.length} completed</span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
 
-                {timelapses.length > 0 ? (
-                  <div className='overflow-hidden rounded-lg'>
-                    <div className='overflow-x-auto'>
-                      <table className='w-full'>
-                        <thead>
-                          <tr className='border-b border-gray-700'>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Name
-                            </th>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Status
-                            </th>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Images
-                            </th>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Started
-                            </th>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Last Capture
-                            </th>
-                            <th className='text-left py-3 px-4 font-medium text-primary'>
-                              Actions
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {timelapses.map((timelapse) => (
-                            <tr
-                              key={timelapse.id}
-                              className='border-b border-gray-800 hover:bg-gray-800/50 transition-colors cursor-pointer'
-                              onClick={() => {
-                                const numericId = parseInt(
-                                  timelapse.id?.toString()
-                                )
-                                if (isNaN(numericId)) {
-                                  toast.error("Invalid timelapse ID")
-                                  return
-                                }
-
-                                setSelectedTimelapse({
-                                  ...timelapse,
-                                  id: numericId,
-                                })
-                                setTimelapseModalOpen(true)
-                              }}
-                            >
-                              <td className='py-4 px-4'>
-                                <div className='text-white font-medium'>
-                                  {timelapse.name ||
-                                    `Timelapse #${timelapse.id}`}
-                                </div>
-                              </td>
-                              <td className='py-4 px-4'>
-                                <span
-                                  className={cn(
-                                    "px-2 py-1 rounded-full text-xs font-medium",
-                                    timelapse.status === "running" &&
-                                      "bg-green-100 text-green-800",
-                                    timelapse.status === "paused" &&
-                                      "bg-yellow-100 text-yellow-800",
-                                    timelapse.status === "completed" &&
-                                      "bg-blue-100 text-blue-800",
-                                    timelapse.status === "archived" &&
-                                      "bg-gray-100 text-gray-800"
-                                  )}
-                                >
-                                  {timelapse.status}
-                                  {timelapse.status === "running" && (
-                                    <span className='ml-1 inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse' />
-                                  )}
-                                </span>
-                              </td>
-                              <td className='py-4 px-4 text-white'>
-                                {timelapse.image_count.toLocaleString()}
-                              </td>
-                              <td className='py-4 px-4 text-primary'>
-                                {new Date(
-                                  timelapse.start_date
-                                ).toLocaleDateString("en-US", {
-                                  timeZone: timezone,
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
-                              </td>
-                              <td className='py-4 px-4 text-primary'>
-                                {timelapse.last_capture_at
-                                  ? formatRelativeTime(
-                                      timelapse.last_capture_at,
-                                      { timezone }
+                <LazyTimelapsesSection
+                  timelapses={timelapses}
+                  loading={timelapsesLoading}
+                  error={timelapsesError}
+                  onLoad={loadTimelapses}
+                >
+                  {(loadedTimelapses) =>
+                    loadedTimelapses.length > 0 ? (
+                      <div className='overflow-hidden rounded-lg'>
+                        <div className='overflow-x-auto'>
+                          <table className='w-full'>
+                            <thead>
+                              <tr className='border-b border-gray-700'>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Name
+                                </th>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Status
+                                </th>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Images
+                                </th>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Started
+                                </th>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Last Capture
+                                </th>
+                                <th className='text-left py-3 px-4 font-medium text-primary'>
+                                  Actions
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {loadedTimelapses.map((timelapse) => (
+                                <tr
+                                  key={timelapse.id}
+                                  className='border-b border-gray-800 hover:bg-gray-800/50 transition-colors cursor-pointer'
+                                  onClick={() => {
+                                    const numericId = parseInt(
+                                      timelapse.id?.toString()
                                     )
-                                  : "Never"}
-                              </td>
-                              <td className='py-4 px-4'>
-                                <div className='flex items-center gap-2'>
-                                  {/* Edit button for running/paused timelapses */}
-                                  {(timelapse.status === "running" || timelapse.status === "paused") && (
-                                    <Button
-                                      size='sm'
-                                      variant='outline'
-                                      className='text-cyan border-cyan hover:bg-cyan hover:text-black'
-                                      onClick={(e) => {
-                                        e.stopPropagation()
+                                    if (isNaN(numericId)) {
+                                      toast.error("Invalid timelapse ID")
+                                      return
+                                    }
 
-                                        const numericId = parseInt(
-                                          timelapse.id?.toString()
-                                        )
-                                        if (isNaN(numericId)) {
-                                          toast.error("Invalid timelapse ID")
-                                          return
-                                        }
-
-                                        setSelectedTimelapse({
-                                          ...timelapse,
-                                          id: numericId,
-                                        })
-                                        setEditTimelapseModalOpen(true)
-                                      }}
-                                      title="Edit timelapse settings"
+                                    setSelectedTimelapse({
+                                      ...timelapse,
+                                      id: numericId,
+                                    })
+                                    setTimelapseModalOpen(true)
+                                  }}
+                                >
+                                  <td className='py-4 px-4'>
+                                    <div className='text-white font-medium'>
+                                      {timelapse.name ||
+                                        `Timelapse #${timelapse.id}`}
+                                    </div>
+                                  </td>
+                                  <td className='py-4 px-4'>
+                                    <span
+                                      className={cn(
+                                        "px-2 py-1 rounded-full text-xs font-medium",
+                                        timelapse.status === "running" &&
+                                          "bg-green-100 text-green-800",
+                                        timelapse.status === "paused" &&
+                                          "bg-yellow-100 text-yellow-800",
+                                        timelapse.status === "completed" &&
+                                          "bg-blue-100 text-blue-800",
+                                        timelapse.status === "archived" &&
+                                          "bg-gray-100 text-gray-800"
+                                      )}
                                     >
-                                      <Edit className='w-4 h-4' />
-                                    </Button>
-                                  )}
-                                  
-                                  {/* View details button */}
-                                  <Button
-                                    size='sm'
-                                    variant='outline'
-                                    className='text-accent border-accent hover:bg-accent hover:text-black'
-                                    onClick={(e) => {
-                                      e.stopPropagation()
+                                      {timelapse.status}
+                                      {timelapse.status === "running" && (
+                                        <span className='ml-1 inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse' />
+                                      )}
+                                    </span>
+                                  </td>
+                                  <td className='py-4 px-4 text-white'>
+                                    {timelapse.image_count.toLocaleString()}
+                                  </td>
+                                  <td className='py-4 px-4 text-primary'>
+                                    {new Date(
+                                      timelapse.start_date
+                                    ).toLocaleDateString("en-US", {
+                                      timeZone: timezone,
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })}
+                                  </td>
+                                  <td className='py-4 px-4 text-primary'>
+                                    {timelapse.last_capture_at
+                                      ? formatRelativeTime(
+                                          timelapse.last_capture_at,
+                                          { timezone }
+                                        )
+                                      : "Never"}
+                                  </td>
+                                  <td className='py-4 px-4'>
+                                    <div className='flex items-center gap-2'>
+                                      {/* Edit button for running/paused timelapses */}
+                                      {(timelapse.status === "running" ||
+                                        timelapse.status === "paused") && (
+                                        <Button
+                                          size='sm'
+                                          variant='outline'
+                                          className='text-cyan border-cyan hover:bg-cyan hover:text-black'
+                                          onClick={(e) => {
+                                            e.stopPropagation()
 
-                                      const numericId = parseInt(
-                                        timelapse.id?.toString()
-                                      )
-                                      if (isNaN(numericId)) {
-                                        toast.error("Invalid timelapse ID")
-                                        return
-                                      }
+                                            const numericId = parseInt(
+                                              timelapse.id?.toString()
+                                            )
+                                            if (isNaN(numericId)) {
+                                              toast.error(
+                                                "Invalid timelapse ID"
+                                              )
+                                              return
+                                            }
 
-                                      setSelectedTimelapse({
-                                        ...timelapse,
-                                        id: numericId,
-                                      })
-                                      setTimelapseModalOpen(true)
-                                    }}
-                                    title="View timelapse details"
-                                  >
-                                    <Eye className='w-4 h-4' />
-                                  </Button>
-                                  <ChevronRight className='w-4 h-4 text-gray-500' />
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <div className='text-center py-12'>
-                    <Film className='w-16 h-16 mx-auto text-gray-400 mb-4' />
-                    <p className='text-lg font-medium text-gray-400'>
-                      No timelapses yet
-                    </p>
-                    <p className='text-sm text-gray-500 mt-2'>
-                      Start your first timelapse to begin capturing memories
-                    </p>
-                    <Button
-                      onClick={() => setNewTimelapseDialogOpen(true)}
-                      className='mt-4 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black'
-                    >
-                      <Play className='w-4 h-4 mr-2' />
-                      Start New Timelapse
-                    </Button>
-                  </div>
-                )}
+                                            setSelectedTimelapse({
+                                              ...timelapse,
+                                              id: numericId,
+                                            })
+                                            setEditTimelapseModalOpen(true)
+                                          }}
+                                          title='Edit timelapse settings'
+                                        >
+                                          <Edit className='w-4 h-4' />
+                                        </Button>
+                                      )}
+
+                                      {/* View details button */}
+                                      <Button
+                                        size='sm'
+                                        variant='outline'
+                                        className='text-accent border-accent hover:bg-accent hover:text-black'
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+
+                                          const numericId = parseInt(
+                                            timelapse.id?.toString()
+                                          )
+                                          if (isNaN(numericId)) {
+                                            toast.error("Invalid timelapse ID")
+                                            return
+                                          }
+
+                                          setSelectedTimelapse({
+                                            ...timelapse,
+                                            id: numericId,
+                                          })
+                                          setTimelapseModalOpen(true)
+                                        }}
+                                        title='View timelapse details'
+                                      >
+                                        <Eye className='w-4 h-4' />
+                                      </Button>
+                                      <ChevronRight className='w-4 h-4 text-gray-500' />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className='text-center py-12'>
+                        <Film className='w-16 h-16 mx-auto text-gray-400 mb-4' />
+                        <p className='text-lg font-medium text-gray-400'>
+                          No timelapses yet
+                        </p>
+                        <p className='text-sm text-gray-500 mt-2'>
+                          Start your first timelapse to begin capturing memories
+                        </p>
+                        <Button
+                          onClick={() => setNewTimelapseDialogOpen(true)}
+                          className='mt-4 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan text-black'
+                        >
+                          <Play className='w-4 h-4 mr-2' />
+                          Start New Timelapse
+                        </Button>
+                      </div>
+                    )
+                  }
+                </LazyTimelapsesSection>
               </div>
             </div>
 
@@ -1694,13 +1716,16 @@ export default function CameraDetailsPage() {
           cameraName={camera.name}
           onSave={async (updates) => {
             try {
-              const response = await fetch(`/api/timelapses/${selectedTimelapse.id}`, {
-                method: "PUT",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(updates),
-              })
+              const response = await fetch(
+                `/api/timelapses/${selectedTimelapse.id}`,
+                {
+                  method: "PUT",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(updates),
+                }
+              )
 
               if (!response.ok) {
                 throw new Error("Failed to update timelapse")
@@ -1716,7 +1741,7 @@ export default function CameraDetailsPage() {
         />
       )}
 
-      {/* Settings Modal */}
+      {/* Settings Modal
       <TimelapseSettingsModal
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
@@ -1726,7 +1751,7 @@ export default function CameraDetailsPage() {
           // Refetch data for settings updates
           refetch()
         }}
-      />
+      /> */}
 
       {/* Camera Settings Modal */}
       <EnhancedCameraModal
