@@ -18,10 +18,8 @@ from ..models.log_summary_model import (
     LogSummaryModel,
     ErrorCountBySourceModel,
 )
-from ..utils.timezone_utils import (
+from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
-    get_timezone_aware_timestamp_sync,
-    get_timezone_aware_timestamp_string_async,
 )
 from ..constants import (
     LOG_LEVELS,

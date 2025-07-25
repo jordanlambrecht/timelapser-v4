@@ -54,19 +54,39 @@ if [ ! -d "backend/venv" ]; then
     cd ..
 fi
 
+# Track cleanup calls to handle multiple Ctrl+C
+CLEANUP_CALLED=0
+
 # Function to handle cleanup
 cleanup() {
-    echo "🛑 Shutting down services..."
+    if [ $CLEANUP_CALLED -eq 1 ]; then
+        echo "🔥 Force killing all services immediately..."
+        if [ ! -z "$FASTAPI_PID" ]; then
+            kill -9 $FASTAPI_PID 2>/dev/null || true
+        fi
+        if [ ! -z "$WORKER_PID" ]; then
+            kill -9 $WORKER_PID 2>/dev/null || true
+        fi
+        if [ ! -z "$NEXTJS_PID" ]; then
+            kill -9 $NEXTJS_PID 2>/dev/null || true
+        fi
+        echo "💀 All services force-killed"
+        exit 1
+    fi
+    
+    CLEANUP_CALLED=1
+    echo "🛑 Shutting down services... (Press Ctrl+C again to force kill)"
+    
     if [ ! -z "$FASTAPI_PID" ]; then
-        kill $FASTAPI_PID 2>/dev/null || true
+        kill -9 $FASTAPI_PID 2>/dev/null || true
         echo "🔧 FastAPI stopped"
     fi
     if [ ! -z "$WORKER_PID" ]; then
-        kill $WORKER_PID 2>/dev/null || true
+        kill -9 $WORKER_PID 2>/dev/null || true
         echo "⚙️ Worker stopped"
     fi
     if [ ! -z "$NEXTJS_PID" ]; then
-        kill $NEXTJS_PID 2>/dev/null || true
+        kill -9 $NEXTJS_PID 2>/dev/null || true
         echo "🖥️ Next.js stopped"
     fi
     echo "✅ All services stopped"

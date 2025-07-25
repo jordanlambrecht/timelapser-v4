@@ -295,41 +295,111 @@ export const useDashboard = (
     endpoint: string,
     options: RequestInit = {}
   ): Promise<Response> => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    // Only abort if there's an existing controller and it's not already aborted
+    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+      try {
+        abortControllerRef.current.abort();
+      } catch (error) {
+        // Ignore abort errors
+      }
     }
 
     abortControllerRef.current = new AbortController();
 
-    const response = await fetch(endpoint, {
-      ...options,
-      signal: abortControllerRef.current.signal,
-      headers: {
-        'Accept': 'application/json',
-        ...options.headers,
-      },
-    });
+    try {
+      const response = await fetch(endpoint, {
+        ...options,
+        signal: abortControllerRef.current.signal,
+        headers: {
+          'Accept': 'application/json',
+          ...options.headers,
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`Dashboard API request failed: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Dashboard API request failed: ${response.status} ${response.statusText}`);
+      }
+
+      return response;
+    } catch (error) {
+      // Silently ignore aborted requests
+      if (error instanceof Error && error.name === 'AbortError') {
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      throw error;
     }
-
-    return response;
   }, []);
 
   /**
-   * Fetch complete dashboard data in single request
+   * Fetch complete dashboard data using existing endpoints
    */
   const fetchDashboardData = useCallback(async (): Promise<DashboardData> => {
     try {
-      const response = await makeApiRequest('/api/dashboard/complete');
-      const result = await response.json();
+      // Use existing endpoints in parallel
+      const [dashboardRes, camerasRes, healthRes] = await Promise.all([
+        makeApiRequest('/api/dashboard'),
+        makeApiRequest('/api/cameras'),
+        makeApiRequest('/api/health/detailed')
+      ]);
 
-      if (!result.success) {
-        throw new Error(result.message || 'Failed to fetch dashboard data');
-      }
+      const [dashboardData, camerasData, healthData] = await Promise.all([
+        dashboardRes.json(),
+        camerasRes.json(),
+        healthRes.json()
+      ]);
 
-      return result.data;
+      // Transform data to match expected structure
+      const dashboardResult: DashboardData = {
+        cameras: Array.isArray(camerasData) ? camerasData : [],
+        system_stats: {
+          total_cameras: dashboardData.camera?.total_cameras || 0,
+          active_cameras: dashboardData.camera?.enabled_cameras || 0,
+          online_cameras: dashboardData.camera?.enabled_cameras || 0,
+          total_images: dashboardData.image?.total_images || 0,
+          total_videos: dashboardData.video?.total_videos || 0,
+          total_timelapses: dashboardData.timelapse?.total_timelapses || 0,
+          disk_usage: {
+            used_gb: 0,
+            total_gb: 0,
+            percentage: 0
+          },
+          capture_stats: {
+            last_24h: dashboardData.recent_activity?.captures_last_24h || 0,
+            last_week: 0,
+            success_rate: 0
+          },
+          video_generation: {
+            pending_jobs: dashboardData.automation?.pending_jobs || 0,
+            processing_jobs: dashboardData.automation?.processing_jobs || 0,
+            completed_today: 0
+          },
+          corruption_stats: {
+            total_detections: 0,
+            corruption_rate: 0,
+            cameras_in_degraded_mode: dashboardData.camera?.degraded_cameras || 0
+          }
+        },
+        recent_activity: [], // Empty for now since we don't have a dedicated endpoint
+        health: {
+          overall_status: healthData.overall_status || 'unknown',
+          database_status: healthData.database_status || 'unknown',
+          filesystem_status: healthData.filesystem_status || 'unknown',
+          worker_status: healthData.worker_status || 'unknown',
+          sse_status: healthData.sse_status || 'unknown',
+          issues: healthData.issues || [],
+          uptime_seconds: healthData.uptime_seconds || 0,
+          last_health_check: healthData.last_health_check || new Date().toISOString()
+        },
+        generated_at: new Date().toISOString(),
+        cache_info: {
+          cameras_cached: false,
+          stats_cached: false,
+          activity_cached: false,
+          cache_expires_at: new Date(Date.now() + 30000).toISOString()
+        }
+      };
+
+      return dashboardResult;
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
       throw error;
@@ -341,9 +411,9 @@ export const useDashboard = (
    */
   const fetchSectionData = useCallback(async (section: keyof DashboardData): Promise<any> => {
     const endpoints = {
-      cameras: '/api/cameras?include_latest_image=true',
-      system_stats: '/api/dashboard/stats',
-      recent_activity: '/api/dashboard/recent-activity?limit=20',
+      cameras: '/api/cameras',
+      system_stats: '/api/dashboard',
+      recent_activity: '/api/dashboard', // Use dashboard endpoint for now
       health: '/api/health/detailed',
     };
 
@@ -355,11 +425,18 @@ export const useDashboard = (
     const response = await makeApiRequest(endpoint);
     const result = await response.json();
 
-    if (!result.success) {
-      throw new Error(result.message || `Failed to fetch ${section} data`);
+    // Handle different response formats
+    if (section === 'cameras') {
+      return Array.isArray(result) ? result : [];
+    } else if (section === 'system_stats') {
+      return result; // Dashboard endpoint returns stats directly
+    } else if (section === 'recent_activity') {
+      return []; // Empty for now
+    } else if (section === 'health') {
+      return result; // Health endpoint returns data directly
     }
 
-    return result.data;
+    return result;
   }, [makeApiRequest]);
 
   /**
@@ -391,6 +468,11 @@ export const useDashboard = (
         health: false,
       });
     } catch (err) {
+      // Don't show error for cancelled requests
+      if (err instanceof Error && err.message === 'Request was cancelled') {
+        return;
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       setError(errorMessage);
       onError?.(errorMessage);
@@ -422,6 +504,11 @@ export const useDashboard = (
 
       setLastUpdated(new Date().toISOString());
     } catch (err) {
+      // Don't show error for cancelled requests
+      if (err instanceof Error && err.message === 'Request was cancelled') {
+        return;
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       setError(errorMessage);
       onError?.(errorMessage);
@@ -438,20 +525,21 @@ export const useDashboard = (
     const timestamp = Date.now();
     
     try {
-      const response = await makeApiRequest(`/api/dashboard/complete?_t=${timestamp}&force=true`);
-      const result = await response.json();
-
-      if (result.success) {
-        setDashboardData(result.data);
-        setLastUpdated(new Date().toISOString());
-        onDataUpdate?.(result.data);
-      }
+      const data = await fetchDashboardData();
+      setDashboardData(data);
+      setLastUpdated(new Date().toISOString());
+      onDataUpdate?.(data);
     } catch (err) {
+      // Don't show error for cancelled requests
+      if (err instanceof Error && err.message === 'Request was cancelled') {
+        return;
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Failed to force refresh';
       setError(errorMessage);
       onError?.(errorMessage);
     }
-  }, [makeApiRequest, onDataUpdate, onError]);
+  }, [fetchDashboardData, onDataUpdate, onError]);
 
   /**
    * Get camera data by ID

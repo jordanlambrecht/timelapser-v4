@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client"
 
-import { useState, useEffect, useMemo, memo, useCallback } from "react"
+import { useState, useEffect, useMemo, memo, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Plus,
@@ -25,9 +25,19 @@ import {
   StopAllTimelapsesConfirmationDialog,
 } from "@/components/ui/confirmation-dialog"
 import { toast } from "@/lib/toast"
+import {
+  pauseTimelapse,
+  resumeTimelapse,
+  stopTimelapse,
+  startTimelapse,
+} from "@/lib/camera-actions"
 import { useDashboardSSE } from "@/hooks/use-camera-sse"
 import { useSSE, useSSESubscription } from "@/contexts/sse-context"
 import { useSettings } from "@/contexts/settings-context"
+import {
+  TimelapseCreationModal,
+  type TimelapseForm,
+} from "@/components/timelapse-creation"
 import {
   CorruptionHealthSummary,
   CorruptionAlert,
@@ -37,6 +47,7 @@ import {
   useCorruptionActions,
 } from "@/hooks/use-corruption-stats"
 import type { Camera, Timelapse, Video } from "@/types"
+import { cn } from "@/lib/utils"
 
 export default function Dashboard() {
   const [cameras, setCameras] = useState<Camera[]>([])
@@ -61,21 +72,19 @@ export default function Dashboard() {
     string | null
   >(null)
 
+  // New timelapse creation modal state
+  const [newTimelapseModalOpen, setNewTimelapseModalOpen] = useState(false)
+
   // Phase 3: Corruption detection integration
   const { systemStats: corruptionStats, loading: corruptionLoading } =
     useCorruptionStats()
   const { resetCameraDegradedMode } = useCorruptionActions()
 
-  // TODO: OPTIMIZATION - Replace multiple API calls with useDashboard composite hook
-  // This will reduce 4 API calls to 1 and improve dashboard load time by 75%
-  // Implementation:
-  // const { dashboardData, loading, error, refreshDashboard } = useDashboard();
-  // Then use: dashboardData.cameras, dashboardData.stats, etc.
-  // Remove fetchData() and use SSE integration from the hook
+  // Optimized data fetching - using unified dashboard endpoint for stats
   const fetchData = async () => {
     try {
       // Fetch dashboard statistics and entity data in parallel
-      const [statsRes, camerasRes, timelapsesRes, videosRes] =
+      const [dashboardRes, camerasRes, timelapsesRes, videosRes] =
         await Promise.all([
           fetch("/api/dashboard"),
           fetch("/api/cameras"),
@@ -83,12 +92,12 @@ export default function Dashboard() {
           fetch("/api/videos"),
         ])
 
-      // Handle statistics
-      if (statsRes.ok) {
-        const statsData = await statsRes.json()
-        setDashboardStats(statsData)
+      // Handle dashboard statistics
+      if (dashboardRes.ok) {
+        const dashboardData = await dashboardRes.json()
+        setDashboardStats(dashboardData)
       } else {
-        console.error("Failed to fetch dashboard stats:", statsRes.status)
+        console.error("Failed to fetch dashboard stats:", dashboardRes.status)
       }
 
       // Handle entity data
@@ -135,6 +144,7 @@ export default function Dashboard() {
     (event) =>
       [
         "camera_updated",
+        "camera_deleted",
         "timelapse_status_changed",
         "image_captured",
         "image_corruption_detected",
@@ -158,7 +168,15 @@ export default function Dashboard() {
           break
 
         case "timelapse_status_changed":
+          console.log(
+            "[Dashboard SSE] Received timelapse_status_changed event:",
+            event.data
+          )
           setTimelapses((prev) => {
+            console.log(
+              "[Dashboard SSE] Current timelapses before update:",
+              prev
+            )
             const updated = prev.map((timelapse) =>
               timelapse.camera_id === event.data.camera_id
                 ? {
@@ -191,6 +209,10 @@ export default function Dashboard() {
               ]
             }
 
+            console.log(
+              "[Dashboard SSE] Updated timelapses after processing:",
+              updated
+            )
             return updated
           })
           break
@@ -269,6 +291,24 @@ export default function Dashboard() {
               `Failed to reset camera ${event.data.cameraId}: ${event.data.error}`
             )
           }
+          break
+
+        case "camera_deleted":
+          // Remove the deleted camera from the state
+          setCameras((prev) =>
+            prev.filter((camera) => camera.id !== event.data.camera_id)
+          )
+          // Also remove any timelapses associated with this camera
+          setTimelapses((prev) =>
+            prev.filter(
+              (timelapse) => timelapse.camera_id !== event.data.camera_id
+            )
+          )
+          console.log(
+            "[Dashboard SSE] Camera deleted:",
+            event.data.camera_id,
+            event.data.camera_name
+          )
           break
 
         case "corruption_stats_updated":
@@ -360,38 +400,26 @@ export default function Dashboard() {
       })
 
       if (currentStatus === "running" && timelapse) {
-        // Stop the timelapse using camera-centric endpoint
+        // Stop the timelapse using new unified endpoint
         console.log("Attempting to stop timelapse for camera:", cameraId)
-        const response = await fetch(
-          `/api/cameras/${cameraId}/stop-timelapse`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+        const result = await stopTimelapse(cameraId)
 
-        if (response.ok && camera) {
+        if (result.success && camera) {
           console.log("Timelapse completed successfully")
           toast.timelapseStopped(camera.name, async () => {
-            // Undo action - restart a new timelapse using camera-centric endpoint
+            // Undo action - restart a new timelapse using new unified endpoint
             try {
-              const restartResponse = await fetch(
-                `/api/cameras/${cameraId}/start-timelapse`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    name: timelapse.name || `${camera.name} Timelapse`,
-                  }),
-                }
-              )
+              const restartResult = await startTimelapse(cameraId, {
+                name: timelapse.name || `${camera.name} Timelapse`,
+              })
 
-              if (restartResponse.ok) {
+              if (restartResult.success) {
                 toast.timelapseStarted(camera.name)
-                // SSE event will handle state update automatically - no manual refresh needed
-                // fetchData() // ❌ REMOVED: SSE events handle this
+                // SSE event will handle state update automatically
               } else {
-                throw new Error("Failed to restart timelapse")
+                throw new Error(
+                  restartResult.message || "Failed to restart timelapse"
+                )
               }
             } catch (error) {
               console.error("Failed to restart timelapse:", error)
@@ -401,14 +429,8 @@ export default function Dashboard() {
             }
           })
         } else {
-          console.error(
-            "Failed to complete timelapse:",
-            response.status,
-            response.statusText
-          )
-          const errorText = await response.text()
-          console.error("Response:", errorText)
-          throw new Error(`Failed to stop timelapse: ${response.status}`)
+          console.error("Failed to complete timelapse:", result.message)
+          throw new Error(result.message || "Failed to stop timelapse")
         }
       } else {
         console.warn("Stop condition not met:", {
@@ -452,12 +474,9 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`/api/cameras/${cameraId}/pause-timelapse`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      })
+      const result = await pauseTimelapse(cameraId)
 
-      if (response.ok && camera) {
+      if (result.success && camera) {
         toast.timelapsePaused(camera.name)
 
         // If SSE is not connected or hasn't received events recently, refresh data
@@ -465,6 +484,8 @@ export default function Dashboard() {
           // SSE not reliable, refreshing data manually
           setTimeout(() => fetchData(), 1000) // Refresh after 1 second
         }
+      } else {
+        throw new Error(result.message || "Failed to pause timelapse")
       }
     } catch (error) {
       console.error("Error pausing timelapse:", error)
@@ -484,15 +505,9 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(
-        `/api/cameras/${cameraId}/resume-timelapse`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      )
+      const result = await resumeTimelapse(cameraId)
 
-      if (response.ok && camera) {
+      if (result.success && camera) {
         toast.timelapseResumed(camera.name)
 
         // If SSE is not connected or hasn't received events recently, refresh data
@@ -500,6 +515,8 @@ export default function Dashboard() {
           // SSE not reliable, refreshing data manually
           setTimeout(() => fetchData(), 1000) // Refresh after 1 second
         }
+      } else {
+        throw new Error(result.message || "Failed to resume timelapse")
       }
     } catch (error) {
       console.error("Error resuming timelapse:", error)
@@ -509,13 +526,16 @@ export default function Dashboard() {
     }
   }
 
-  const handleDeleteCamera = async (cameraId: number) => {
-    const camera = cameras.find((c) => c.id === cameraId)
-    if (!camera) return
+  const handleDeleteCamera = useCallback(
+    async (cameraId: number) => {
+      const camera = cameras.find((c) => c.id === cameraId)
+      if (!camera) return
 
-    setCameraToDelete(camera)
-    setConfirmDeleteOpen(true)
-  }
+      setCameraToDelete(camera)
+      setConfirmDeleteOpen(true)
+    },
+    [cameras]
+  )
 
   const confirmDeleteCamera = async () => {
     if (!cameraToDelete) return
@@ -547,8 +567,7 @@ export default function Dashboard() {
               toast.success(`Camera "${cameraToDelete.name}" restored`, {
                 description: "Camera has been recreated successfully",
               })
-              // SSE event will handle state update automatically - no manual refresh needed
-              // fetchData() // ❌ REMOVED: SSE events handle this
+              // SSE event will handle state update automatically
             } else {
               throw new Error("Failed to restore camera")
             }
@@ -622,15 +641,9 @@ export default function Dashboard() {
           return
         }
 
-        const response = await fetch(
-          `/api/cameras/${camera.id}/resume-timelapse`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+        const result = await resumeTimelapse(camera.id)
 
-        if (response.ok) {
+        if (result.success) {
           successCount++
         } else {
           failCount++
@@ -697,15 +710,9 @@ export default function Dashboard() {
           return
         }
 
-        const response = await fetch(
-          `/api/cameras/${camera.id}/pause-timelapse`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+        const result = await pauseTimelapse(camera.id)
 
-        if (response.ok) {
+        if (result.success) {
           successCount++
         } else {
           failCount++
@@ -773,16 +780,10 @@ export default function Dashboard() {
           return
         }
 
-        // Stop the timelapse using camera-centric endpoint
-        const response = await fetch(
-          `/api/cameras/${camera.id}/stop-timelapse`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+        // Stop the timelapse using new unified endpoint
+        const result = await stopTimelapse(camera.id)
 
-        if (response.ok) {
+        if (result.success) {
           successCount++
           stoppedCameras.push(camera)
         } else {
@@ -808,15 +809,11 @@ export default function Dashboard() {
               ? `${failCount} failed to stop`
               : "All active recordings have been stopped",
           undoAction: async () => {
-            // Restart all stopped cameras with new timelapses using camera-centric endpoint
+            // Restart all stopped cameras with new timelapses using new unified endpoint
             const restartPromises = stoppedCameras.map(async (camera) => {
               try {
-                await fetch(`/api/cameras/${camera.id}/start-timelapse`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    name: `${camera.name} Timelapse`,
-                  }),
+                await startTimelapse(camera.id, {
+                  name: `${camera.name} Timelapse`,
                 })
               } catch (error) {
                 console.error(
@@ -881,9 +878,12 @@ export default function Dashboard() {
     [cameras]
   )
 
-  const handleDeleteCameraCallback = useCallback((cameraId: number) => {
-    handleDeleteCamera(cameraId)
-  }, [])
+  const handleDeleteCameraCallback = useCallback(
+    (cameraId: number) => {
+      handleDeleteCamera(cameraId)
+    },
+    [handleDeleteCamera]
+  )
 
   // Use dashboard statistics if available, otherwise calculate from local data
   const onlineCameras = cameras.filter(
@@ -906,36 +906,188 @@ export default function Dashboard() {
     try {
       await resetCameraDegradedMode(cameraId)
       // SSE events will handle camera status updates automatically
-      // fetchData() // ❌ REMOVED: SSE events handle this
     } catch (error) {
       console.error("Failed to reset camera degraded mode:", error)
     }
   }
 
-  // if (loading) {
-  //   return (
-  //     <div className='flex items-center justify-center min-h-[60vh]'>
-  //       <div className='space-y-6 text-center'>
-  //         <div className='relative'>
-  //           <div className='w-16 h-16 mx-auto border-4 rounded-full border-pink/20 border-t-pink animate-spin' />
-  //           <div
-  //             className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-b-cyan animate-spin'
-  //             style={{
-  //               animationDirection: "reverse",
-  //               animationDuration: "1.5s",
-  //             }}
-  //           />
-  //         </div>
-  //         <div>
-  //           <p className='font-medium text-white'>Loading dashboard...</p>
-  //           <p className='mt-1 text-sm text-grey-light/60'>
-  //             Fetching camera data
-  //           </p>
-  //         </div>
-  //       </div>
-  //     </div>
-  //   )
-  // }
+  // Handle timelapse creation
+  const handleTimelapseSubmit = async (
+    form: TimelapseForm,
+    cameraId?: number
+  ) => {
+    try {
+      console.log("Creating timelapse with form:", form)
+
+      // Use provided cameraId or find the first active camera
+      let targetCamera
+      if (cameraId) {
+        targetCamera = cameras.find((camera) => camera.id === cameraId)
+        if (!targetCamera) {
+          toast.error(`Camera with ID ${cameraId} not found`)
+          return
+        }
+      } else {
+        targetCamera = cameras.find((camera) => camera.status === "active")
+        if (!targetCamera) {
+          toast.error("No active camera found. Please activate a camera first.")
+          return
+        }
+      }
+
+      // Convert TimelapseForm to backend API format
+      const timelapseData = {
+        name:
+          form.name ||
+          `Timelapse ${new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace("T", " ")}`,
+        capture_interval_seconds: form.captureInterval,
+
+        // Time window settings
+        time_window_type: form.runWindowEnabled
+          ? form.runWindowType === "sunrise-sunset"
+            ? "sunrise_sunset"
+            : "time"
+          : "none",
+        time_window_start:
+          form.runWindowEnabled && form.runWindowType === "between"
+            ? form.timeWindowStart
+            : null,
+        time_window_end:
+          form.runWindowEnabled && form.runWindowType === "between"
+            ? form.timeWindowEnd
+            : null,
+        sunrise_offset_minutes:
+          form.runWindowEnabled && form.runWindowType === "sunrise-sunset"
+            ? form.sunriseOffsetMinutes
+            : null,
+        sunset_offset_minutes:
+          form.runWindowEnabled && form.runWindowType === "sunrise-sunset"
+            ? form.sunsetOffsetMinutes
+            : null,
+        use_custom_time_window: form.runWindowEnabled,
+
+        // Stop time settings
+        auto_stop_at:
+          form.stopTimeEnabled && form.stopType === "datetime"
+            ? form.stopDateTime
+            : null,
+
+        // Video generation settings
+        video_generation_mode: form.videoGenerationMode,
+        standard_fps: form.videoStandardFps,
+        enable_time_limits: form.videoEnableTimeLimits,
+        min_time_seconds: form.videoEnableTimeLimits
+          ? form.videoMinDuration * 60
+          : null,
+        max_time_seconds: form.videoEnableTimeLimits
+          ? form.videoMaxDuration * 60
+          : null,
+        target_time_seconds:
+          form.videoGenerationMode === "target"
+            ? form.videoTargetDuration * 60
+            : null,
+        fps_bounds_min: form.videoFpsMin,
+        fps_bounds_max: form.videoFpsMax,
+
+        // Video automation settings
+        video_automation_mode: form.videoManualOnly
+          ? "manual"
+          : form.videoPerCapture
+          ? "per_capture"
+          : form.videoScheduled
+          ? "scheduled"
+          : form.videoMilestone
+          ? "milestone"
+          : "manual",
+
+        // Generation schedule (for scheduled automation)
+        generation_schedule: form.videoScheduled
+          ? {
+              type: form.videoScheduleType,
+              time: form.videoScheduleTime,
+              enabled: true,
+              timezone: "UTC", // TODO: Get from settings
+            }
+          : null,
+
+        // Milestone config (for milestone automation)
+        milestone_config: form.videoMilestone
+          ? {
+              thresholds: [form.videoMilestoneInterval],
+              enabled: true,
+              reset_on_completion: !form.videoMilestoneOverwrite,
+            }
+          : null,
+      }
+
+      // Call the camera timelapse action API to create and start the timelapse
+      const response = await fetch(
+        `/api/cameras/${targetCamera.id}/timelapse-action`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "create",
+            timelapse_data: timelapseData,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(
+          errorData.detail ||
+            `HTTP ${response.status}: Failed to create timelapse`
+        )
+      }
+
+      const newTimelapse = await response.json()
+
+      // Refresh the data to show the new timelapse
+      await fetchData()
+
+      toast.success(
+        `Timelapse "${
+          newTimelapse.name || newTimelapse.id
+        }" created successfully!`
+      )
+    } catch (error) {
+      console.error("Failed to create timelapse:", error)
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create timelapse"
+      )
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className='flex items-center justify-center min-h-[60vh]'>
+        <div className='space-y-6 text-center'>
+          <div className='relative'>
+            <div className='w-16 h-16 mx-auto border-4 rounded-full border-pink/20 border-t-pink animate-spin' />
+            <div
+              className='absolute inset-0 w-16 h-16 mx-auto border-4 rounded-full border-cyan/20 border-b-cyan animate-spin'
+              style={{
+                animationDirection: "reverse",
+                animationDuration: "1.5s",
+              }}
+            />
+          </div>
+          <div>
+            <p className='font-medium text-white'>Loading dashboard...</p>
+            <p className='mt-1 text-sm text-grey-light/60'>
+              Fetching camera data
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className='relative space-y-12'>
@@ -975,6 +1127,18 @@ export default function Dashboard() {
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* New Timelapse Button */}
+      <div className='flex justify-center mb-8'>
+        <Button
+          onClick={() => setNewTimelapseModalOpen(true)}
+          size='lg'
+          className='bg-gradient-to-r from-purple to-cyan hover:from-purple/80 hover:to-cyan/80 text-white font-medium'
+        >
+          <Plus className='w-5 h-5 mr-2' />
+          Create New Timelapse
+        </Button>
       </div>
 
       {/* Stats Grid with Creative Layout */}
@@ -1230,12 +1394,8 @@ export default function Dashboard() {
                 camera={camera}
                 timelapse={timelapse}
                 videos={cameraVideos}
-                onToggleTimelapse={handleToggleTimelapse}
-                onPauseTimelapse={handlePauseTimelapse}
-                onResumeTimelapse={handleResumeTimelapse}
                 onEditCamera={handleEditCamera}
                 onDeleteCamera={handleDeleteCameraCallback}
-                onGenerateVideo={handleGenerateVideo}
               />
             ))}
           </div>
@@ -1282,6 +1442,13 @@ export default function Dashboard() {
           }).length
         }
         isLoading={bulkOperationLoading === "stop"}
+      />
+
+      {/* New Timelapse Creation Modal */}
+      <TimelapseCreationModal
+        isOpen={newTimelapseModalOpen}
+        onClose={() => setNewTimelapseModalOpen(false)}
+        onSubmit={handleTimelapseSubmit}
       />
     </div>
   )

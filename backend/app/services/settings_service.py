@@ -7,10 +7,13 @@ handling business logic and coordinating between database operations
 and external systems.
 """
 from pathlib import Path
+import time
 
 import zoneinfo
 from typing import List, Dict, Optional, Any
 from loguru import logger
+
+from ..enums import SSEPriority
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
@@ -19,16 +22,11 @@ from ..models.shared_models import CorruptionSettings
 from ..database.sse_events_operations import SSEEventsOperations
 from ..utils.hashing import mask_api_key
 from ..utils.conversion_utils import safe_int
-from .api_key_service import APIKeyService, SyncAPIKeyService
+from .weather.api_key_service import APIKeyService, SyncAPIKeyService
 from ..constants import (
     EVENT_SETTING_UPDATED,
     EVENT_SETTING_DELETED,
-    DEFAULT_CAPTURE_INTERVAL_SECONDS,
-    MIN_CAPTURE_INTERVAL_SECONDS,
-    MAX_CAPTURE_INTERVAL_SECONDS,
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
-    VIDEO_GENERATION_MODES,
-    VIDEO_AUTOMATION_MODES,
     TIMEZONE_ALIASES,
     DEFAULT_TIMEZONE,
 )
@@ -56,7 +54,11 @@ class SettingsService:
         self.db = db
         self.settings_ops = SettingsOperations(db)
         self.sse_ops = SSEEventsOperations(db)
-        self.api_key_service = APIKeyService(self.settings_ops)
+        self.api_key_service = APIKeyService(db)
+
+        # Settings caching (extracted from RTSPService)
+        self._settings_cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_timestamps: Dict[str, float] = {}
 
     async def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""
@@ -82,6 +84,77 @@ class SettingsService:
         """Get the actual OpenWeather API key for frontend display."""
         return await self.api_key_service.get_api_key_for_display()
 
+    async def get_cached_settings_group(
+        self,
+        group_name: str,
+        setting_keys: List[str],
+        cache_ttl_seconds: int = 30,
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Get a group of related settings with caching support.
+
+        Extracted from RTSPService to provide centralized settings caching.
+
+        Args:
+            group_name: Name for this settings group (for cache key)
+            setting_keys: List of setting keys to fetch
+            cache_ttl_seconds: Cache time-to-live in seconds (default 30)
+            force_refresh: Force refresh of cache
+
+        Returns:
+            Dictionary of setting_key -> value
+        """
+        # Check cache validity
+        current_time = time.time()
+        cache_key = f"{group_name}_{hash(tuple(setting_keys))}"
+
+        if (
+            not force_refresh
+            and cache_key in self._settings_cache
+            and cache_key in self._cache_timestamps
+            and (current_time - self._cache_timestamps[cache_key]) < cache_ttl_seconds
+        ):
+            return self._settings_cache[cache_key]
+
+        try:
+            # Fetch settings from database
+            settings = {}
+            for key in setting_keys:
+                value = await self.settings_ops.get_setting(key)
+                settings[key] = value
+
+            # Update cache
+            self._settings_cache[cache_key] = settings
+            self._cache_timestamps[cache_key] = current_time
+
+            return settings
+
+        except Exception as e:
+            logger.warning(f"Failed to get cached settings group '{group_name}': {e}")
+            # Return cached value if available, otherwise empty dict
+            return self._settings_cache.get(cache_key, {})
+
+    def clear_settings_cache(self, group_name: Optional[str] = None) -> None:
+        """
+        Clear settings cache, optionally for a specific group.
+
+        Args:
+            group_name: If provided, only clear cache entries containing this group name
+        """
+        if group_name is None:
+            # Clear all cache
+            self._settings_cache.clear()
+            self._cache_timestamps.clear()
+        else:
+            # Clear specific group cache entries
+            keys_to_remove = [
+                key for key in self._settings_cache.keys() if group_name in key
+            ]
+            for key in keys_to_remove:
+                self._settings_cache.pop(key, None)
+                self._cache_timestamps.pop(key, None)
+
     async def set_setting(self, key: str, value: str) -> bool:
         """Set a setting value with special handling for API keys."""
         try:
@@ -90,6 +163,9 @@ class SettingsService:
                 result = await self.api_key_service.store_api_key(value)
 
                 if result:
+                    # Clear settings cache since a setting was updated
+                    self.clear_settings_cache()
+
                     # Create SSE event (use masked value for security)
                     await self.sse_ops.create_event(
                         event_type=EVENT_SETTING_UPDATED,
@@ -98,7 +174,7 @@ class SettingsService:
                             "value": mask_api_key(value) if value.strip() else "",
                             "operation": "update",
                         },
-                        priority="normal",
+                        priority=SSEPriority.NORMAL,
                         source="api",
                     )
 
@@ -108,6 +184,9 @@ class SettingsService:
                 result = await self.settings_ops.set_setting(key, value)
 
                 if result:
+                    # Clear settings cache since a setting was updated
+                    self.clear_settings_cache()
+
                     # Create SSE event for setting changes
                     await self.sse_ops.create_event(
                         event_type=EVENT_SETTING_UPDATED,
@@ -116,7 +195,7 @@ class SettingsService:
                             "value": value,
                             "operation": "update",
                         },
-                        priority="normal",
+                        priority=SSEPriority.NORMAL,
                         source="api",
                     )
 
@@ -154,7 +233,7 @@ class SettingsService:
                         "updated_keys": processed_keys,
                         "count": len(processed_settings),
                     },
-                    priority="normal",
+                    priority=SSEPriority.NORMAL,
                     source="api",
                 )
 
@@ -177,7 +256,7 @@ class SettingsService:
                         "value": None,
                         "operation": "delete",
                     },
-                    priority="normal",
+                    priority=SSEPriority.NORMAL,
                     source="api",
                 )
 
@@ -224,11 +303,8 @@ class SettingsService:
         try:
             validation_rules = {
                 "timezone": self._validate_timezone,
-                "capture_interval": self._validate_capture_interval,
                 "corruption_discard_threshold": self._validate_corruption_threshold,
                 "data_directory": self._validate_data_directory,
-                "video_generation_mode": self._validate_video_generation_mode,
-                "video_automation_mode": self._validate_video_automation_mode,
             }
 
             # Apply specific validation if rule exists
@@ -257,258 +333,6 @@ class SettingsService:
             logger.error(f"Setting validation failed for {key}: {e}")
             return {"valid": False, "error": str(e)}
 
-    async def set_setting_with_validation(self, key: str, value: str) -> Dict[str, Any]:
-        """
-        Set a setting with validation and change propagation.
-
-        Args:
-            key: Setting key
-            value: Setting value
-
-        Returns:
-            Operation results including validation and propagation status
-        """
-        try:
-            # Validate the setting
-            validation_result = await self.validate_setting(key, value)
-            if not validation_result["valid"]:
-                return {
-                    "success": False,
-                    "error": f"Validation failed: {validation_result['error']}",
-                    "validation_result": validation_result,
-                }
-
-            # Use validated/formatted value
-            formatted_value = validation_result.get("formatted_value", value)
-
-            # Store the setting
-            success = await self.set_setting(key, formatted_value)
-            if not success:
-                return {"success": False, "error": "Failed to store setting"}
-
-            # Propagate changes
-            propagation_result = await self.propagate_setting_change(
-                key, formatted_value
-            )
-
-            # SSE broadcasting removed - now handled in router layer
-
-            logger.info(
-                f"Setting '{key}' updated successfully with validation and propagation"
-            )
-            return {
-                "success": True,
-                "value": formatted_value,
-                "validation_result": validation_result,
-                "propagation_result": propagation_result,
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to set setting {key} with validation: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def resolve_inheritance(
-        self, entity_type: str, entity_id: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Resolve settings inheritance (Global → Camera → Timelapse).
-
-        Args:
-            entity_type: Type of entity ('global', 'camera', 'timelapse')
-            entity_id: ID of the entity (required for camera/timelapse)
-
-        Returns:
-            Resolved settings with inheritance chain information
-        """
-        try:
-            resolved_settings = {}
-            inheritance_chain = []
-
-            # Start with global settings
-            global_settings = await self.get_all_settings()
-            resolved_settings.update(global_settings)
-            inheritance_chain.append(
-                {"level": "global", "settings_count": len(global_settings)}
-            )
-
-            # Apply camera-level overrides if applicable
-            if entity_type in ["camera", "timelapse"] and entity_id:
-                camera_id = (
-                    entity_id
-                    if entity_type == "camera"
-                    else await self._get_camera_id_for_timelapse(entity_id)
-                )
-                if camera_id:
-                    camera_settings = await self._get_camera_settings(camera_id)
-                    if camera_settings:
-                        resolved_settings.update(camera_settings)
-                        inheritance_chain.append(
-                            {
-                                "level": "camera",
-                                "camera_id": camera_id,
-                                "settings_count": len(camera_settings),
-                            }
-                        )
-
-            # Apply timelapse-level overrides if applicable
-            if entity_type == "timelapse" and entity_id:
-                timelapse_settings = await self._get_timelapse_settings(entity_id)
-                if timelapse_settings:
-                    resolved_settings.update(timelapse_settings)
-                    inheritance_chain.append(
-                        {
-                            "level": "timelapse",
-                            "timelapse_id": entity_id,
-                            "settings_count": len(timelapse_settings),
-                        }
-                    )
-
-            return {
-                "resolved_settings": resolved_settings,
-                "inheritance_chain": inheritance_chain,
-                "entity_type": entity_type,
-                "entity_id": entity_id,
-                "total_settings": len(resolved_settings),
-            }
-
-        except Exception as e:
-            logger.error(
-                f"Settings inheritance resolution failed for {entity_type}:{entity_id}: {e}"
-            )
-            return {"error": str(e)}
-
-    async def propagate_setting_change(self, key: str, value: str) -> Dict[str, Any]:
-        """
-        Propagate setting changes to dependent systems.
-
-        Args:
-            key: Setting key that changed
-            value: New setting value
-
-        Returns:
-            Propagation results for each dependent system
-        """
-        try:
-            propagation_results = {}
-
-            # Timezone changes affect time calculations
-            if key == "timezone":
-                propagation_results["timezone"] = await self._propagate_timezone_change(
-                    value
-                )
-
-            # Capture interval changes affect scheduling
-            if key == "capture_interval":
-                propagation_results["capture_scheduling"] = (
-                    await self._propagate_capture_interval_change(value)
-                )
-
-            # Corruption settings affect detection behavior
-            if key.startswith("corruption_"):
-                propagation_results["corruption_detection"] = (
-                    await self._propagate_corruption_setting_change(key, value)
-                )
-
-            # Video settings affect generation behavior
-            if key.startswith("video_"):
-                propagation_results["video_generation"] = (
-                    await self._propagate_video_setting_change(key, value)
-                )
-
-            # Data directory changes affect file operations
-            if key == "data_directory":
-                propagation_results["file_operations"] = (
-                    await self._propagate_data_directory_change(value)
-                )
-
-            return {
-                "success": True,
-                "propagated_systems": list(propagation_results.keys()),
-                "results": propagation_results,
-            }
-
-        except Exception as e:
-            logger.error(f"Setting propagation failed for {key}: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def manage_timezone_settings(self) -> Dict[str, Any]:
-        """
-        Coordinate timezone management across the system.
-
-        Returns:
-            Timezone management status and configuration
-        """
-        try:
-            # Get current timezone setting
-            current_timezone = await self.get_setting("timezone")
-            if not current_timezone:
-                current_timezone = "UTC"  # Default fallback
-
-            # Validate timezone is still valid
-            validation_result = self._validate_timezone(current_timezone)
-            if not validation_result["valid"]:
-                logger.warning(
-                    f"Current timezone '{current_timezone}' is invalid: {validation_result['error']}"
-                )
-                # Set to UTC as fallback
-                await self.set_setting("timezone", "UTC")
-                current_timezone = "UTC"
-
-            # Get timezone coordination status
-            coordination_status = await self._get_timezone_coordination_status(
-                current_timezone
-            )
-
-            return {
-                "current_timezone": current_timezone,
-                "validation_status": validation_result,
-                "coordination_status": coordination_status,
-                "system_time_info": {
-                    "utc_now": "datetime.utcnow().isoformat()",
-                    "local_now": f"Local time in {current_timezone}",
-                },
-            }
-
-        except Exception as e:
-            logger.error(f"Timezone management failed: {e}")
-            return {"error": str(e)}
-
-    async def coordinate_feature_flags(self) -> Dict[str, Any]:
-        """
-        Coordinate feature flag management across services.
-
-        Returns:
-            Feature flag coordination status
-        """
-        try:
-            # Get all feature flag settings
-            all_settings = await self.get_all_settings()
-            feature_flags = {
-                k: v for k, v in all_settings.items() if k.startswith("feature_")
-            }
-
-            # Analyze feature flag impact
-            flag_analysis = {}
-            for flag_key, flag_value in feature_flags.items():
-                flag_analysis[flag_key] = {
-                    "enabled": flag_value.lower() == "true",
-                    "impact_systems": self._get_feature_flag_impact_systems(flag_key),
-                    "dependencies": self._get_feature_flag_dependencies(flag_key),
-                }
-
-            return {
-                "feature_flags": feature_flags,
-                "flag_analysis": flag_analysis,
-                "total_flags": len(feature_flags),
-                "enabled_flags": len(
-                    [f for f in flag_analysis.values() if f["enabled"]]
-                ),
-            }
-
-        except Exception as e:
-            logger.error(f"Feature flag coordination failed: {e}")
-            return {"error": str(e)}
-
     def _validate_timezone(self, value: str) -> Dict[str, Any]:
         """Validate timezone setting."""
         try:
@@ -525,30 +349,6 @@ class SettingsService:
                 "error": f"Invalid timezone: {value}",
                 "suggested_value": DEFAULT_TIMEZONE,
             }
-
-    def _validate_capture_interval(self, value: str) -> Dict[str, Any]:
-        """Validate capture interval setting."""
-        interval = safe_int(value)
-        if interval is None:
-            return {
-                "valid": False,
-                "error": "Capture interval must be a valid integer",
-                "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
-            }
-
-        if interval < MIN_CAPTURE_INTERVAL_SECONDS:
-            return {
-                "valid": False,
-                "error": f"Capture interval must be at least {MIN_CAPTURE_INTERVAL_SECONDS} seconds",
-                "suggested_value": str(DEFAULT_CAPTURE_INTERVAL_SECONDS),
-            }
-        if interval > MAX_CAPTURE_INTERVAL_SECONDS:
-            return {
-                "valid": False,
-                "error": f"Capture interval cannot exceed {MAX_CAPTURE_INTERVAL_SECONDS} seconds",
-                "suggested_value": str(MAX_CAPTURE_INTERVAL_SECONDS),
-            }
-        return {"valid": True, "formatted_value": str(interval)}
 
     def _validate_corruption_threshold(self, value: str) -> Dict[str, Any]:
         """Validate corruption threshold setting."""
@@ -582,46 +382,12 @@ class SettingsService:
         except Exception as e:
             return {"valid": False, "error": f"Invalid data directory path: {e}"}
 
-    def _validate_video_generation_mode(self, value: str) -> Dict[str, Any]:
-        """Validate video generation mode setting."""
-        valid_modes = [
-            "standard",
-            "target",
-        ]  # From video-generation-settings-implementation.md
-        if value not in valid_modes:
-            return {
-                "valid": False,
-                "error": f"Video generation mode must be one of: {valid_modes}",
-                "suggested_value": "standard",
-            }
-        return {"valid": True, "formatted_value": value}
-
-    def _validate_video_automation_mode(self, value: str) -> Dict[str, Any]:
-        """Validate video automation mode setting."""
-        if value not in VIDEO_AUTOMATION_MODES:
-            return {
-                "valid": False,
-                "error": f"Video automation mode must be one of: {VIDEO_AUTOMATION_MODES}",
-                "suggested_value": "manual",
-            }
-        return {"valid": True, "formatted_value": value}
-
     async def _propagate_timezone_change(self, new_timezone: str) -> Dict[str, Any]:
         """Propagate timezone changes."""
         return {
             "propagated": True,
             "new_timezone": new_timezone,
             "message": "Timezone updated across system",
-        }
-
-    async def _propagate_capture_interval_change(
-        self, new_interval: str
-    ) -> Dict[str, Any]:
-        """Propagate capture interval changes."""
-        return {
-            "propagated": True,
-            "new_interval": new_interval,
-            "message": "Capture scheduling updated",
         }
 
     async def _propagate_corruption_setting_change(
@@ -635,17 +401,6 @@ class SettingsService:
             "message": "Corruption detection updated",
         }
 
-    async def _propagate_video_setting_change(
-        self, key: str, value: str
-    ) -> Dict[str, Any]:
-        """Propagate video setting changes."""
-        return {
-            "propagated": True,
-            "setting": key,
-            "value": value,
-            "message": "Video generation updated",
-        }
-
     async def _propagate_data_directory_change(
         self, new_directory: str
     ) -> Dict[str, Any]:
@@ -656,49 +411,6 @@ class SettingsService:
             "message": "File operations updated",
         }
 
-    async def _get_timezone_coordination_status(self, timezone: str) -> Dict[str, Any]:
-        """Get timezone coordination status."""
-        return {
-            "coordinated": True,
-            "timezone": timezone,
-            "systems_updated": ["database", "scheduling", "logging"],
-        }
-
-    def _get_feature_flag_impact_systems(self, flag_key: str) -> List[str]:
-        """Get systems impacted by a feature flag."""
-        impact_map = {
-            "feature_advanced_corruption": ["corruption_detection", "image_processing"],
-            "feature_auto_video_generation": ["video_generation", "automation"],
-            "feature_real_time_thumbnails": ["thumbnail_generation", "image_service"],
-        }
-        return impact_map.get(flag_key, ["unknown"])
-
-    def _get_feature_flag_dependencies(self, flag_key: str) -> List[str]:
-        """Get dependencies for a feature flag."""
-        dependency_map = {
-            "feature_advanced_corruption": ["corruption_detection_enabled"],
-            "feature_auto_video_generation": ["video_automation_mode"],
-            "feature_real_time_thumbnails": ["thumbnail_generation_enabled"],
-        }
-        return dependency_map.get(flag_key, [])
-
-    async def _get_camera_id_for_timelapse(self, timelapse_id: int) -> Optional[int]:
-        """Get camera ID for a timelapse."""
-        # This would typically query the timelapse operations
-        return None  # Placeholder
-
-    async def _get_camera_settings(self, camera_id: int) -> Optional[Dict[str, Any]]:
-        """Get camera-specific settings."""
-        # This would typically query camera-specific settings
-        return {}  # Placeholder
-
-    async def _get_timelapse_settings(
-        self, timelapse_id: int
-    ) -> Optional[Dict[str, Any]]:
-        """Get timelapse-specific settings."""
-        # This would typically query timelapse-specific settings
-        return {}  # Placeholder
-
 
 class SyncSettingsService:
     """Sync settings service for worker processes."""
@@ -707,7 +419,7 @@ class SyncSettingsService:
         """Initialize service with sync database instance."""
         self.db = db
         self.settings_ops = SyncSettingsOperations(db)
-        self.api_key_service = SyncAPIKeyService(self.settings_ops)
+        self.api_key_service = SyncAPIKeyService(db)
 
     def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""
@@ -723,14 +435,6 @@ class SyncSettingsService:
             return self.settings_ops.get_setting(key, default)
         except Exception as e:
             logger.error(f"Failed to get setting {key}: {e}")
-            raise
-
-    def get_capture_interval_setting(self) -> int:
-        """Get capture interval setting as integer."""
-        try:
-            return self.settings_ops.get_capture_interval_setting()
-        except Exception as e:
-            logger.error(f"Failed to get capture interval setting: {e}")
             raise
 
     def get_corruption_settings(self) -> CorruptionSettings:

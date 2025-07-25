@@ -6,31 +6,38 @@ Extracted common patterns and utilities for scheduler operations.
 """
 
 import time
-
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Union
+from zoneinfo import ZoneInfo
 from loguru import logger
 
-from ...utils.time_utils import get_timezone_from_settings
+from ...utils.time_utils import (
+    get_timezone_from_cache_sync,
+    get_timezone_aware_timestamp_sync
+)
 from ...services.settings_service import SyncSettingsService
 
 
 class SchedulerTimeUtils:
-    """Utility class for timezone and time-related scheduler operations."""
+    """
+    Utility class for timezone and time-related scheduler operations.
+    
+    Uses modern zoneinfo and aligns with codebase timezone-aware patterns.
+    """
 
     def __init__(self, settings_service: SyncSettingsService):
         """Initialize with settings service for timezone retrieval."""
         self.settings_service = settings_service
-        self._cached_timezone: Optional[pytz.BaseTzInfo] = None
+        self._cached_timezone: Optional[ZoneInfo] = None
         self._cache_timestamp = 0
         self._cache_ttl = 300  # 5 minutes
 
-    def get_timezone(self) -> pytz.BaseTzInfo:
+    def get_timezone(self) -> ZoneInfo:
         """
-        Get timezone with caching to avoid repeated settings calls.
+        Get timezone using codebase-standard timezone handling with caching.
 
         Returns:
-            pytz timezone object
+            ZoneInfo timezone object
         """
         current_time = time.time()
 
@@ -42,14 +49,14 @@ class SchedulerTimeUtils:
             return self._cached_timezone
 
         try:
-            settings_dict = self.settings_service.get_all_settings()
-            timezone_str = get_timezone_from_settings(settings_dict)
-            self._cached_timezone = pytz.timezone(timezone_str)
+            # Use codebase-standard timezone retrieval
+            timezone_str = get_timezone_from_cache_sync(self.settings_service)
+            self._cached_timezone = ZoneInfo(timezone_str)
             self._cache_timestamp = current_time
             logger.debug(f"Updated timezone cache: {timezone_str}")
         except Exception as e:
             logger.warning(f"Failed to get timezone from settings, using UTC: {e}")
-            self._cached_timezone = pytz.UTC
+            self._cached_timezone = ZoneInfo("UTC")
             self._cache_timestamp = current_time
 
         return self._cached_timezone
@@ -57,6 +64,8 @@ class SchedulerTimeUtils:
     def get_immediate_run_time(self, delay_seconds: int = 2) -> datetime:
         """
         Get timezone-aware datetime for immediate job scheduling.
+        
+        Uses codebase-standard timezone-aware timestamp generation.
 
         Args:
             delay_seconds: Seconds to delay execution (default: 2)
@@ -64,13 +73,17 @@ class SchedulerTimeUtils:
         Returns:
             Timezone-aware datetime for job scheduling
         """
-        tz = self.get_timezone()
-        return datetime.now(tz) + timedelta(seconds=delay_seconds)
+        current_time = get_timezone_aware_timestamp_sync(self.settings_service)
+        return current_time + timedelta(seconds=delay_seconds)
 
     def get_current_time(self) -> datetime:
-        """Get current timezone-aware datetime."""
-        tz = self.get_timezone()
-        return datetime.now(tz)
+        """
+        Get current timezone-aware datetime using codebase standards.
+        
+        Returns:
+            Current timezone-aware datetime from database settings
+        """
+        return get_timezone_aware_timestamp_sync(self.settings_service)
 
     def invalidate_cache(self) -> None:
         """Manually invalidate the timezone cache."""

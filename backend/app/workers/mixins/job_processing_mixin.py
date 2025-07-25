@@ -8,15 +8,14 @@ of duplicated code found across ThumbnailWorker and OverlayWorker.
 
 import asyncio
 import time
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Callable, Protocol, TypeVar, Generic
-from datetime import datetime, timedelta
+from abc import abstractmethod
+from typing import Dict, Any, List, Optional, Callable, TypeVar, Generic, Sequence
 
 from ..base_worker import BaseWorker
-from .retry_manager import RetryManager, JobWithRetry
+from .retry_manager import RetryManager
 from .sse_broadcaster import SSEBroadcaster
 from .job_batch_processor import JobBatchProcessor, ProcessableJob
-from ...enums import SSEPriority, SSEEventSource
+from ...enums import SSEEventSource
 from ...utils.time_utils import utc_now
 
 # Generic type variable for specific job types
@@ -111,7 +110,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
     # Abstract methods that must be implemented by concrete workers
 
     @abstractmethod
-    def get_pending_jobs(self, batch_size: int) -> List[JobType]:
+    def get_pending_jobs(self, batch_size: int) -> Sequence[JobType]:
         """
         Get pending jobs from the queue.
 
@@ -119,7 +118,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
             batch_size: Maximum number of jobs to retrieve
 
         Returns:
-            List of pending jobs to process
+            Sequence of pending jobs to process
         """
         pass
 
@@ -212,7 +211,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
             get_queue_stats=self.get_queue_statistics,
         )
 
-    def _process_single_job_with_lifecycle(self, job: ProcessableJob) -> bool:
+    def _process_single_job_with_lifecycle(self, job: JobType) -> bool:
         """
         Process a single job with full lifecycle management.
 
@@ -256,7 +255,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
             self.log_error(f"Exception processing job {job.id}", e)
             return self._handle_job_failure(job, str(e))
 
-    def _handle_job_failure(self, job: ProcessableJob, error_message: str) -> bool:
+    def _handle_job_failure(self, job: JobType, error_message: str) -> bool:
         """
         Handle job failure with retry logic and event broadcasting.
 
@@ -414,7 +413,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
         # Broadcast stats every 5 minutes during normal operation
         return utc_now().minute % 5 == 0
 
-    def _get_job_data_for_events(self, job: ProcessableJob) -> Dict[str, Any]:
+    def _get_job_data_for_events(self, job: JobType) -> Dict[str, Any]:
         """
         Extract relevant job data for SSE events.
 
@@ -445,7 +444,7 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
             "batch_size": self.job_batch_processor.current_batch_size,
             "max_retries": self.retry_manager.max_retries,
             "retry_delays": self.retry_manager.retry_delays,
-            "max_concurrent_jobs": self.job_batch_processor.max_concurrent_jobs,
+            "max_concurrent_jobs": self.job_batch_processor._max_concurrent_jobs,
         }
 
     def get_status(self) -> Dict[str, Any]:

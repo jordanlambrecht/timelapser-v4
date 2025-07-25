@@ -52,7 +52,7 @@ async def get_corruption_system_stats(
 ):
     """Get system-wide corruption detection statistics"""
     statistics_service = CorruptionStatisticsService(db)
-    stats = await statistics_service.get_system_corruption_statistics()
+    stats = await statistics_service.get_system_statistics()
 
     # Generate ETag based on stats content for cache validation
     etag = generate_content_hash_etag(stats)
@@ -77,17 +77,16 @@ async def get_camera_corruption_stats(
     camera_id: int,
     camera_service: CameraServiceDep,
     db: AsyncDatabaseDep,
-    days: Optional[int] = Query(7, description="Number of days to include in stats"),
 ):
     """Get corruption statistics for a specific camera"""
     # Validate camera exists
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
 
     statistics_service = CorruptionStatisticsService(db)
-    stats = await statistics_service.get_camera_corruption_statistics(camera_id, days)
+    stats = await statistics_service.get_camera_statistics(camera_id)
 
-    # Generate ETag based on camera ID, days parameter, and stats content
-    etag = generate_content_hash_etag(f"{camera_id}-{days}-{stats}")
+    # Generate ETag based on camera ID and stats content
+    etag = generate_content_hash_etag(f"{camera_id}-{stats}")
 
     # Add longer cache for camera corruption statistics
     response.headers["Cache-Control"] = (

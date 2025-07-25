@@ -68,6 +68,18 @@ TIMELAPSE_ACTION = TimelapseAction
 
 # ====================================================================
 # FILE TYPE CONSTANTS
+
+# Overlay asset file types
+ALLOWED_OVERLAY_ASSET_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+}
+
+# Overlay asset size limits
+MAX_OVERLAY_ASSET_SIZE = 10 * 1024 * 1024  # 10MB
 # ====================================================================
 
 # Allowed image file extensions
@@ -674,7 +686,7 @@ LOG_RETENTION_PERIOD = "30 days"
 
 # RTSP URL validation pattern
 # MOVED TO: utils/validation_constants.py to avoid circular imports
-# RTSP_URL_PATTERN = r"^rtsp://[^\s]+$"
+# RTSP_URL_PATTERN = r"^rtsps?://[^\s]+$"
 
 # Time window validation pattern
 # MOVED TO: utils/validation_constants.py to avoid circular imports
@@ -862,6 +874,9 @@ DEFAULT_IS_FLAGGED = False
 CAMERA_CONNECTION_SUCCESS = "Connection successful"
 CAMERA_CONNECTION_FAILED = "Connection failed"
 CAMERA_CAPTURE_FAILED = "Capture failed"
+CAMERA_DELETED_SUCCESS = "Camera deleted successfully"
+CAMERA_STATUS_UPDATED_SUCCESS = "Camera status updated successfully"
+NO_IMAGES_FOUND = "No images found"
 
 # =============================================================================
 # JOB PRIORITY CONSTANTS (REFERENCE ENUM VALUES)

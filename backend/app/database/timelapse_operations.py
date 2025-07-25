@@ -21,6 +21,7 @@ from ..models.timelapse_model import (
 )
 from ..models.shared_models import (
     TimelapseStatistics,
+    TimelapseLibraryStatistics,
     TimelapseForCleanup,
     TimelapseVideoSettings,
 )
@@ -369,6 +370,45 @@ class TimelapseOperations:
                         logger.error(f"Error creating TimelapseStatistics model: {e}")
                         return None
                 return None
+
+    async def get_library_statistics(self) -> TimelapseLibraryStatistics:
+        """
+        Get global statistics for the timelapse library.
+        
+        Returns comprehensive statistics across all timelapses including
+        total counts, activity metrics, storage usage, and date ranges.
+        """
+        query = """
+        SELECT
+            COUNT(t.id) as total_timelapses,
+            COUNT(CASE WHEN t.starred = true THEN 1 END) as starred_count,
+            COUNT(CASE WHEN t.status IN ('running', 'paused') THEN 1 END) as active_count,
+            COALESCE(SUM(t.image_count), 0) as total_images,
+            COALESCE(SUM(i.total_storage), 0) as total_storage_bytes,
+            MIN(t.created_at) as oldest_timelapse_date
+        FROM timelapses t
+        LEFT JOIN (
+            SELECT 
+                timelapse_id,
+                SUM(COALESCE(file_size, 0)) as total_storage
+            FROM images 
+            GROUP BY timelapse_id
+        ) i ON t.id = i.timelapse_id
+        """
+        
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query)
+                result = await cur.fetchone()
+                
+                if result:
+                    try:
+                        return TimelapseLibraryStatistics.model_validate(dict(result))
+                    except ValidationError as e:
+                        logger.error(f"Error creating TimelapseLibraryStatistics model: {e}")
+                        return TimelapseLibraryStatistics()
+                
+                return TimelapseLibraryStatistics()
 
     async def get_active_timelapse_for_camera(
         self, camera_id: int

@@ -16,13 +16,8 @@ from app.models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
 )
+from app.enums import JobStatus, JobPriority
 from app.constants import (
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_STATUS_PROCESSING,
-    THUMBNAIL_JOB_STATUS_COMPLETED,
-    THUMBNAIL_JOB_STATUS_FAILED,
-    THUMBNAIL_JOB_PRIORITY_HIGH,
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
     THUMBNAIL_JOB_TYPE_SINGLE,
 )
 
@@ -42,8 +37,8 @@ class TestThumbnailJobOperations:
         """Sample job creation data."""
         return ThumbnailGenerationJobCreate(
             image_id=1,
-            priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,
-            status=THUMBNAIL_JOB_STATUS_PENDING,
+            priority=JobPriority.MEDIUM,
+            status=JobStatus.PENDING,
             job_type=THUMBNAIL_JOB_TYPE_SINGLE,
         )
 
@@ -57,8 +52,8 @@ class TestThumbnailJobOperations:
             return_value={
                 "id": 1,
                 "image_id": 1,
-                "priority": THUMBNAIL_JOB_PRIORITY_MEDIUM,
-                "status": THUMBNAIL_JOB_STATUS_PENDING,
+                "priority": JobPriority.MEDIUM,
+                "status": JobStatus.PENDING,
                 "job_type": THUMBNAIL_JOB_TYPE_SINGLE,
                 "created_at": datetime.utcnow(),
                 "started_at": None,
@@ -77,8 +72,8 @@ class TestThumbnailJobOperations:
         assert isinstance(job, ThumbnailGenerationJob)
         assert job.id == 1
         assert job.image_id == 1
-        assert job.priority == THUMBNAIL_JOB_PRIORITY_MEDIUM
-        assert job.status == THUMBNAIL_JOB_STATUS_PENDING
+        assert job.priority == JobPriority.MEDIUM
+        assert job.status == JobStatus.PENDING
 
         # Verify database was called correctly
         mock_async_database.fetch_one.assert_called_once()
@@ -106,8 +101,8 @@ class TestThumbnailJobOperations:
                 {
                     "id": 1,
                     "image_id": 1,
-                    "priority": THUMBNAIL_JOB_PRIORITY_HIGH,
-                    "status": THUMBNAIL_JOB_STATUS_PENDING,
+                    "priority": JobPriority.HIGH,
+                    "status": JobStatus.PENDING,
                     "job_type": THUMBNAIL_JOB_TYPE_SINGLE,
                     "created_at": datetime.utcnow(),
                     "started_at": None,
@@ -119,8 +114,8 @@ class TestThumbnailJobOperations:
                 {
                     "id": 2,
                     "image_id": 2,
-                    "priority": THUMBNAIL_JOB_PRIORITY_MEDIUM,
-                    "status": THUMBNAIL_JOB_STATUS_PENDING,
+                    "priority": JobPriority.MEDIUM,
+                    "status": JobStatus.PENDING,
                     "job_type": THUMBNAIL_JOB_TYPE_SINGLE,
                     "created_at": datetime.utcnow(),
                     "started_at": None,
@@ -142,7 +137,7 @@ class TestThumbnailJobOperations:
         # Verify database query was called with correct parameters
         mock_async_database.fetch_all.assert_called_once()
         args = mock_async_database.fetch_all.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_PENDING in args
+        assert JobStatus.PENDING in args
         assert 5 in args
 
     @pytest.mark.asyncio
@@ -160,9 +155,9 @@ class TestThumbnailJobOperations:
         # Verify database was called with correct parameters
         mock_async_database.execute.assert_called_once()
         args = mock_async_database.execute.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_PROCESSING in args
+        assert JobStatus.PROCESSING in args
         assert 1 in args
-        assert THUMBNAIL_JOB_STATUS_PENDING in args
+        assert JobStatus.PENDING in args
 
     @pytest.mark.asyncio
     async def test_mark_job_completed(self, job_ops, mock_async_database):
@@ -179,10 +174,10 @@ class TestThumbnailJobOperations:
         # Verify database was called with correct parameters
         mock_async_database.execute.assert_called_once()
         args = mock_async_database.execute.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_COMPLETED in args
+        assert JobStatus.COMPLETED in args
         assert 1500 in args
         assert 1 in args
-        assert THUMBNAIL_JOB_STATUS_PROCESSING in args
+        assert JobStatus.PROCESSING in args
 
     @pytest.mark.asyncio
     async def test_mark_job_failed(self, job_ops, mock_async_database):
@@ -200,11 +195,11 @@ class TestThumbnailJobOperations:
         # Verify database was called with correct parameters
         mock_async_database.execute.assert_called_once()
         args = mock_async_database.execute.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_FAILED in args
+        assert JobStatus.FAILED in args
         assert error_message in args
         assert 1 in args  # retry_count
         assert 1 in args  # job_id
-        assert THUMBNAIL_JOB_STATUS_PROCESSING in args
+        assert JobStatus.PROCESSING in args
 
     @pytest.mark.asyncio
     async def test_schedule_retry(self, job_ops, mock_async_database):
@@ -221,10 +216,10 @@ class TestThumbnailJobOperations:
         # Verify database was called with correct parameters
         mock_async_database.execute.assert_called_once()
         args = mock_async_database.execute.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_PENDING in args
+        assert JobStatus.PENDING in args
         assert 2 in args  # retry_count
         assert 1 in args  # job_id
-        assert THUMBNAIL_JOB_STATUS_FAILED in args
+        assert JobStatus.FAILED in args
         assert "5 minutes" in args  # delay interval
 
     @pytest.mark.asyncio
@@ -246,7 +241,7 @@ class TestThumbnailJobOperations:
         args = mock_async_database.execute.call_args[0]
         assert "cancelled" in args
         assert 123 in args  # image_id
-        assert THUMBNAIL_JOB_STATUS_PENDING in args
+        assert JobStatus.PENDING in args
 
     @pytest.mark.asyncio
     async def test_cleanup_completed_jobs(self, job_ops, mock_async_database):
@@ -265,8 +260,8 @@ class TestThumbnailJobOperations:
         # Verify database was called with correct parameters
         mock_async_database.execute.assert_called_once()
         args = mock_async_database.execute.call_args[0]
-        assert THUMBNAIL_JOB_STATUS_COMPLETED in args
-        assert THUMBNAIL_JOB_STATUS_FAILED in args
+        assert JobStatus.COMPLETED in args
+        assert JobStatus.FAILED in args
         assert "cancelled" in args
 
     @pytest.mark.asyncio
@@ -276,17 +271,17 @@ class TestThumbnailJobOperations:
         mock_async_database.fetch_all = AsyncMock(
             return_value=[
                 {
-                    "status": THUMBNAIL_JOB_STATUS_PENDING,
+                    "status": JobStatus.PENDING,
                     "count": 5,
                     "avg_processing_time_ms": None,
                 },
                 {
-                    "status": THUMBNAIL_JOB_STATUS_COMPLETED,
+                    "status": JobStatus.COMPLETED,
                     "count": 10,
                     "avg_processing_time_ms": 1200.5,
                 },
                 {
-                    "status": THUMBNAIL_JOB_STATUS_FAILED,
+                    "status": JobStatus.FAILED,
                     "count": 2,
                     "avg_processing_time_ms": None,
                 },
@@ -312,8 +307,8 @@ class TestThumbnailJobOperations:
             return_value={
                 "id": 1,
                 "image_id": 123,
-                "priority": THUMBNAIL_JOB_PRIORITY_HIGH,
-                "status": THUMBNAIL_JOB_STATUS_COMPLETED,
+                "priority": JobPriority.HIGH,
+                "status": JobStatus.COMPLETED,
                 "job_type": THUMBNAIL_JOB_TYPE_SINGLE,
                 "created_at": datetime.utcnow(),
                 "started_at": datetime.utcnow(),
@@ -332,7 +327,7 @@ class TestThumbnailJobOperations:
         assert isinstance(job, ThumbnailGenerationJob)
         assert job.id == 1
         assert job.image_id == 123
-        assert job.status == THUMBNAIL_JOB_STATUS_COMPLETED
+        assert job.status == JobStatus.COMPLETED
         assert job.processing_time_ms == 850
 
     @pytest.mark.asyncio
@@ -358,8 +353,8 @@ class TestThumbnailJobOperations:
         # Test that exceptions are handled gracefully
         job_data = ThumbnailGenerationJobCreate(
             image_id=1,
-            priority=THUMBNAIL_JOB_PRIORITY_MEDIUM,
-            status=THUMBNAIL_JOB_STATUS_PENDING,
+            priority=JobPriority.MEDIUM,
+            status=JobStatus.PENDING,
             job_type=THUMBNAIL_JOB_TYPE_SINGLE,
         )
 

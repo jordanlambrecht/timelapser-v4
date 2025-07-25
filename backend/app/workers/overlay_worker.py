@@ -1,4 +1,4 @@
-# backend/app/workers/overlay_worker_refactored.py
+# backend/app/workers/overlay.py
 """
 Refactored Overlay Worker using shared job processing components.
 
@@ -18,8 +18,6 @@ Maintains all functionality while using shared infrastructure:
 import time
 from typing import List, Dict, Any, Optional
 
-from backend.app.workers.mixins.job_batch_processor import ProcessableJob
-
 from .mixins.job_processing_mixin import JobProcessingMixin
 from ..utils.time_utils import utc_now
 from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
@@ -29,7 +27,7 @@ from ..database.core import SyncDatabase
 from ..services.settings_service import SyncSettingsService
 from ..services.weather.service import WeatherManager
 from ..models.overlay_model import OverlayGenerationJob
-from ..enums import OverlayJobStatus, OverlayJobPriority, SSEPriority, SSEEventSource
+from ..enums import SSEEventSource
 from ..constants import (
     DEFAULT_OVERLAY_JOB_BATCH_SIZE,
     DEFAULT_OVERLAY_WORKER_INTERVAL,
@@ -76,7 +74,7 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
 
     def __init__(
         self,
-        sync_db: SyncDatabase,
+        db: SyncDatabase,
         settings_service: SyncSettingsService,
         weather_manager: Optional[WeatherManager] = None,
         worker_interval: int = DEFAULT_OVERLAY_WORKER_INTERVAL,
@@ -88,7 +86,7 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
         Initialize OverlayWorker with shared job processing infrastructure.
 
         Args:
-            sync_db: Synchronous database connection
+            db: Synchronous database connection
             settings_service: Settings service for configuration access
             weather_manager: Weather manager for weather data access
             worker_interval: Seconds between job processing cycles
@@ -97,7 +95,7 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
             cleanup_hours: Hours after which completed jobs are cleaned up
         """
         # Initialize SSE operations for shared components
-        sse_ops = SyncSSEEventsOperations(sync_db)
+        sse_ops = SyncSSEEventsOperations(db)
 
         # Initialize shared job processing infrastructure
         super().__init__(
@@ -117,10 +115,10 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
 
         # Overlay-specific services
         self.overlay_job_service = SyncOverlayJobService(
-            db=sync_db, settings_service=settings_service
+            db=db, settings_service=settings_service
         )
         self.overlay_service = OverlayService(
-            db=sync_db,
+            db=db,
             settings_service=settings_service,
             weather_manager=weather_manager,
         )
@@ -315,7 +313,7 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
 
     # Overlay-specific helper methods
 
-    def _get_job_data_for_events(self, job: ProcessableJob) -> Dict[str, Any]:
+    def _get_job_data_for_events(self, job: OverlayGenerationJob) -> Dict[str, Any]:
         """
         Extract overlay-specific job data for SSE events.
 
@@ -327,9 +325,9 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
         """
         return {
             "job_id": job.id,
-            "image_id": getattr(job, "image_id", None),
-            "priority": getattr(job, "priority", None),
-            "retry_count": getattr(job, "retry_count", None),
+            "image_id": job.image_id,
+            "priority": job.priority,
+            "retry_count": job.retry_count,
             "job_type": "overlay_generation",
         }
 

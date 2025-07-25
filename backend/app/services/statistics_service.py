@@ -4,7 +4,7 @@ Statistics service layer for system-wide metrics aggregation.
 This service handles ONLY system-wide statistics aggregation and coordination.
 Domain-specific statistics should be handled by their respective services:
 - Camera statistics → CameraService
-- Video statistics → VideoService
+- Video statistics → VideoPipeline (VideoWorkflowService)
 - Timelapse statistics → TimelapseService
 - Image statistics → ImageService
 - Corruption statistics → CorruptionService
@@ -28,7 +28,7 @@ from ..models.statistics_model import (
     EnhancedDashboardStatsModel,
     SystemOverviewModel,
 )
-from ..utils.timezone_utils import (
+from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
 )

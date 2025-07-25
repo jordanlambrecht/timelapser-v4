@@ -12,10 +12,29 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Camera, Clock, Wifi, Settings, Shield, CheckCircle, Circle, Video } from "lucide-react"
+import {
+  Camera,
+  Clock,
+  Wifi,
+  Settings,
+  Shield,
+  CheckCircle,
+  Circle,
+  Video,
+  RotateCw,
+  Crop,
+  Move,
+  Square,
+} from "lucide-react"
 import { toast } from "@/lib/toast"
 import { VideoAutomationSettings } from "@/components/video-automation-settings"
-import { VideoAutomationMode, CameraAutomationSettings } from "@/types/video-automation"
+import {
+  VideoAutomationMode,
+  CameraAutomationSettings,
+} from "@/types/video-automation"
+import { CameraCropModal } from "@/components/camera-crop-modal"
+import type { CropRotationSettings } from "@/types/cameras"
+import { Slider } from "@/components/ui/slider"
 
 interface EnhancedCameraModalProps {
   isOpen: boolean
@@ -40,17 +59,25 @@ export function EnhancedCameraModal({
     time_window_end: "18:00",
     corruption_detection_heavy: false,
   })
-  
-  const [automationSettings, setAutomationSettings] = useState<CameraAutomationSettings>({
-    video_automation_mode: VideoAutomationMode.MANUAL,
-    automation_schedule: undefined,
-    milestone_config: {
+
+  const [automationSettings, setAutomationSettings] =
+    useState<CameraAutomationSettings>({
+      video_automation_mode: VideoAutomationMode.MANUAL,
       enabled: false,
-      thresholds: [100, 500, 1000],
-      reset_on_complete: false
-    }
-  })
-  
+      schedule_config: undefined,
+      milestone_config: undefined,
+      continuous_config: undefined,
+    })
+
+  const [cropRotationSettings, setCropRotationSettings] =
+    useState<CropRotationSettings>({
+      rotation: 0,
+      crop: undefined,
+      aspect_ratio: undefined,
+      processing_order: ["crop", "rotate", "aspect_ratio"],
+      preview_enabled: true,
+    })
+
   const [saving, setSaving] = useState(false)
 
   // Update form data when camera prop changes or modal opens
@@ -64,32 +91,80 @@ export function EnhancedCameraModal({
         time_window_end: camera?.time_window_end || "18:00",
         corruption_detection_heavy: camera?.corruption_detection_heavy || false,
       })
-      
+
       // Set automation settings from camera data
       setAutomationSettings({
-        video_automation_mode: camera?.video_automation_mode || VideoAutomationMode.MANUAL,
-        automation_schedule: camera?.automation_schedule,
-        milestone_config: camera?.milestone_config || {
-          enabled: false,
-          thresholds: [100, 500, 1000],
-          reset_on_complete: false
-        }
+        video_automation_mode:
+          camera?.video_automation_mode || VideoAutomationMode.MANUAL,
+        enabled: camera?.automation_enabled || false,
+        schedule_config: camera?.schedule_config,
+        milestone_config: camera?.milestone_config,
+        continuous_config: camera?.continuous_config,
       })
-      
+
+      // Set crop/rotation settings from camera data
+      setCropRotationSettings({
+        rotation: camera?.rotation || 0,
+        crop: camera?.crop_rotation?.crop,
+        aspect_ratio: camera?.crop_rotation?.aspect_ratio,
+        processing_order: camera?.crop_rotation?.processing_order || [
+          "crop",
+          "rotate",
+          "aspect_ratio",
+        ],
+        preview_enabled: camera?.crop_rotation?.preview_enabled ?? true,
+      })
+
       setSaving(false) // Reset saving state when modal opens
     }
   }, [isOpen, camera])
+
+  const handleCropSettingsSave = async (settings: CropRotationSettings) => {
+    if (!camera?.id) {
+      toast.error("Camera ID not available")
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/cameras/${camera.id}/crop-settings`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(settings),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update crop settings")
+      }
+
+      // Update local state
+      setCropRotationSettings(settings)
+      toast.success("Crop and rotation settings saved successfully!")
+    } catch (error) {
+      console.error("Error saving crop settings:", error)
+      toast.error("Failed to save crop settings. Please try again.")
+      throw error
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     try {
-      // Combine basic settings with automation settings
+      // Combine basic settings with automation settings and crop/rotation settings
       const combinedData = {
         ...formData,
-        ...automationSettings
+        ...automationSettings,
+        rotation: cropRotationSettings.rotation,
+        crop_rotation: {
+          crop: cropRotationSettings.crop,
+          aspect_ratio: cropRotationSettings.aspect_ratio,
+          processing_order: cropRotationSettings.processing_order,
+          preview_enabled: cropRotationSettings.preview_enabled,
+        },
       }
-      
+
       await onSave(combinedData)
       toast.success("Camera settings saved successfully!")
     } catch (error) {
@@ -113,19 +188,32 @@ export function EnhancedCameraModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className='mt-6 space-y-6'>
-          <Tabs defaultValue="basic" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 bg-black/30 border border-purple-muted/30">
-              <TabsTrigger value="basic" className="data-[state=active]:bg-purple/20">
-                <Settings className="w-4 h-4 mr-2" />
+          <Tabs defaultValue='basic' className='w-full'>
+            <TabsList className='grid w-full grid-cols-3 bg-black/30 border border-purple-muted/30'>
+              <TabsTrigger
+                value='basic'
+                className='data-[state=active]:bg-purple/20'
+              >
+                <Settings className='w-4 h-4 mr-2' />
                 Basic Settings
               </TabsTrigger>
-              <TabsTrigger value="automation" className="data-[state=active]:bg-purple/20">
-                <Video className="w-4 h-4 mr-2" />
+              <TabsTrigger
+                value='crop'
+                className='data-[state=active]:bg-purple/20'
+              >
+                <Crop className='w-4 h-4 mr-2' />
+                Crop & Rotation
+              </TabsTrigger>
+              <TabsTrigger
+                value='automation'
+                className='data-[state=active]:bg-purple/20'
+              >
+                <Video className='w-4 h-4 mr-2' />
                 Video Automation
               </TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="basic" className="space-y-6 mt-6">
+
+            <TabsContent value='basic' className='space-y-6 mt-6'>
               {/* Camera Name */}
               <div className='space-y-3'>
                 <Label
@@ -161,7 +249,10 @@ export function EnhancedCameraModal({
                   id='rtsp_url'
                   value={formData.rtsp_url}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, rtsp_url: e.target.value }))
+                    setFormData((prev) => ({
+                      ...prev,
+                      rtsp_url: e.target.value,
+                    }))
                   }
                   placeholder='rtsp://192.168.1.100:554/stream'
                   className='h-12 font-mono text-sm text-white bg-black/30 border-purple-muted/30 placeholder:text-grey-light/40 focus:border-cyan/50 focus:ring-2 focus:ring-cyan/20 rounded-xl'
@@ -266,12 +357,15 @@ export function EnhancedCameraModal({
                       <span>Image Quality Detection</span>
                     </Label>
                     <p className='text-sm text-grey-light/60'>
-                      Automatically detect and handle corrupted images from this camera
+                      Automatically detect and handle corrupted images from this
+                      camera
                     </p>
                   </div>
                   <div className='flex items-center space-x-2'>
                     <span className='text-xs font-medium text-grey-light/60'>
-                      {formData.corruption_detection_heavy ? "Advanced" : "Basic"}
+                      {formData.corruption_detection_heavy
+                        ? "Advanced"
+                        : "Basic"}
                     </span>
                     <Switch
                       checked={formData.corruption_detection_heavy}
@@ -288,11 +382,15 @@ export function EnhancedCameraModal({
 
                 {/* Detection Methods Explanation */}
                 <div className='p-4 border bg-grey-dark/30 border-purple-muted/20 rounded-xl'>
-                  <div className='text-sm font-medium text-white mb-3'>Detection Methods:</div>
+                  <div className='text-sm font-medium text-white mb-3'>
+                    Detection Methods:
+                  </div>
                   <div className='space-y-2 text-xs'>
                     <div className='flex items-center space-x-2'>
                       <CheckCircle className='h-3 w-3 text-success' />
-                      <span className='text-grey-light/80'>Fast heuristics (file size, pixel statistics)</span>
+                      <span className='text-grey-light/80'>
+                        Fast heuristics (file size, pixel statistics)
+                      </span>
                     </div>
                     <div className='flex items-center space-x-2'>
                       {formData.corruption_detection_heavy ? (
@@ -300,7 +398,13 @@ export function EnhancedCameraModal({
                       ) : (
                         <Circle className='h-3 w-3 text-grey-light/40' />
                       )}
-                      <span className={formData.corruption_detection_heavy ? "text-grey-light/80" : "text-grey-light/40"}>
+                      <span
+                        className={
+                          formData.corruption_detection_heavy
+                            ? "text-grey-light/80"
+                            : "text-grey-light/40"
+                        }
+                      >
                         Computer vision (blur, noise, pattern analysis)
                       </span>
                     </div>
@@ -315,22 +419,38 @@ export function EnhancedCameraModal({
                   </div>
                   <div className='flex items-center space-x-2'>
                     <span className='text-xs font-medium text-white'>
-                      ~{formData.corruption_detection_heavy ? '55' : '5'}ms
+                      ~{formData.corruption_detection_heavy ? "55" : "5"}ms
                     </span>
-                    <div className={`px-2 py-1 rounded text-xs font-medium ${
-                      formData.corruption_detection_heavy 
-                        ? 'bg-yellow/20 text-yellow border border-yellow/30' 
-                        : 'bg-success/20 text-success border border-success/30'
-                    }`}>
-                      {formData.corruption_detection_heavy ? '+50ms' : '+2ms'}
+                    <div
+                      className={`px-2 py-1 rounded text-xs font-medium ${
+                        formData.corruption_detection_heavy
+                          ? "bg-yellow/20 text-yellow border border-yellow/30"
+                          : "bg-success/20 text-success border border-success/30"
+                      }`}
+                    >
+                      {formData.corruption_detection_heavy ? "+50ms" : "+2ms"}
                     </div>
                   </div>
                 </div>
               </div>
             </TabsContent>
-            
-            <TabsContent value="automation" className="space-y-6 mt-6">
-              <div className="p-6 space-y-4 border bg-black/20 rounded-2xl border-purple-muted/20">
+
+            <TabsContent value='crop' className='space-y-6 mt-6'>
+              <div className='p-6 space-y-4 border bg-black/20 rounded-2xl border-purple-muted/20'>
+                <CameraCropModal
+                  isOpen={true}
+                  onClose={() => {}}
+                  onSave={handleCropSettingsSave}
+                  cameraId={camera?.id || 0}
+                  cameraName={formData.name || "Camera"}
+                  initialSettings={cropRotationSettings}
+                  inlineMode={true}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value='automation' className='space-y-6 mt-6'>
+              <div className='p-6 space-y-4 border bg-black/20 rounded-2xl border-purple-muted/20'>
                 <VideoAutomationSettings
                   cameraId={camera?.id}
                   initialSettings={automationSettings}

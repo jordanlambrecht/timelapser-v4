@@ -13,8 +13,7 @@ Features:
 - Type hints for better development experience
 """
 
-from typing import Optional, Union, Any
-from loguru import logger
+from typing import Optional, Any
 
 
 def safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -153,3 +152,51 @@ def safe_str(
         return result
     except (ValueError, TypeError):
         return default
+
+
+def sanitize_error_message(error: Exception, context: str = "operation") -> str:
+    """
+    Sanitize error messages to prevent information leakage.
+
+    Args:
+        error: The original exception
+        context: Context description for generic error message
+
+    Returns:
+        Sanitized error message safe for external consumption
+    """
+    # List of sensitive patterns to avoid exposing
+    sensitive_patterns = [
+        "password",
+        "secret",
+        "key",
+        "token",
+        "auth",
+        "database",
+        "connection",
+        "host",
+        "port",
+        "file not found",
+        "no such file",
+        "permission denied",
+    ]
+
+    error_str = str(error).lower()
+
+    # Check if error contains sensitive information
+    for pattern in sensitive_patterns:
+        if pattern in error_str:
+            return f"Internal error during {context}"
+
+    # Return sanitized version of common errors
+    if "not found" in error_str:
+        return f"Resource not found during {context}"
+    elif "permission" in error_str or "access" in error_str:
+        return f"Access error during {context}"
+    elif "timeout" in error_str:
+        return f"Timeout during {context}"
+    elif "connection" in error_str:
+        return f"Service unavailable during {context}"
+    else:
+        # For other errors, return generic message
+        return f"Error during {context}"

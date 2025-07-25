@@ -217,6 +217,17 @@ class TimelapseStatistics(BaseModel):
     total_video_storage_bytes: Optional[int] = None
 
 
+class TimelapseLibraryStatistics(BaseModel):
+    """Global statistics for the timelapse library"""
+
+    total_timelapses: int = 0
+    starred_count: int = 0
+    active_count: int = 0
+    total_images: int = 0
+    total_storage_bytes: int = 0
+    oldest_timelapse_date: Optional[datetime] = None
+
+
 class CameraStatistics(BaseModel):
     """Extended camera statistics model"""
 
@@ -235,7 +246,7 @@ class VideoGenerationJob(BaseModel):
     id: int
     timelapse_id: int
     trigger_type: str
-    priority: str = Field(
+    priority: JobPriority = Field(
         default=JobPriority.MEDIUM, description="Job priority (low, medium, high)"
     )
     status: str = "pending"
@@ -820,7 +831,7 @@ class ThumbnailRepairRequest(BaseModel):
     timelapse_ids: Optional[List[int]] = None  # All images from specific timelapses
     repair_missing_thumbnails: bool = True
     repair_missing_small: bool = True
-    priority: str = Field(default=JobPriority.MEDIUM, description="Job priority for repair jobs")
+    priority: JobPriority = Field(default=JobPriority.MEDIUM, description="Job priority for repair jobs")
     force_regenerate: bool = False  # Regenerate even if files exist
 
     model_config = ConfigDict(from_attributes=True)
@@ -968,14 +979,14 @@ class ThumbnailGenerationJobCreate(BaseModel):
     """Model for creating thumbnail generation jobs"""
 
     image_id: int = Field(..., description="ID of the image to generate thumbnails for")
-    priority: str = Field(
+    priority: ThumbnailJobPriority = Field(
         default=ThumbnailJobPriority.MEDIUM,
         description="Job priority: high, medium, low",
     )
-    status: str = Field(
+    status: ThumbnailJobStatus = Field(
         default=ThumbnailJobStatus.PENDING, description="Initial job status"
     )
-    job_type: str = Field(
+    job_type: ThumbnailJobType = Field(
         default=ThumbnailJobType.SINGLE, description="Job type: single, bulk"
     )
 
@@ -987,9 +998,9 @@ class ThumbnailGenerationJob(BaseModel):
 
     id: int
     image_id: int
-    priority: str
-    status: str
-    job_type: str
+    priority: ThumbnailJobPriority
+    status: ThumbnailJobStatus
+    job_type: ThumbnailJobType
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -1021,7 +1032,7 @@ class BulkThumbnailRequest(BaseModel):
     image_ids: List[int] = Field(
         ..., description="List of image IDs to generate thumbnails for"
     )
-    priority: str = Field(
+    priority: ThumbnailJobPriority = Field(
         default=ThumbnailJobPriority.MEDIUM, description="Job priority for all images"
     )
 

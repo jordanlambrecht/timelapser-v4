@@ -141,10 +141,11 @@ export const TimelapseDetailsModal = memo(
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [showImageDeleteConfirm, setShowImageDeleteConfirm] = useState(false)
     const [showVideoRegenConfirm, setShowVideoRegenConfirm] = useState(false)
-    const [showThumbnailRegenConfirm, setShowThumbnailRegenConfirm] = useState(false)
+    const [showThumbnailRegenConfirm, setShowThumbnailRegenConfirm] =
+      useState(false)
     const [editingVideoSettings, setEditingVideoSettings] = useState(false)
     const [videoSettings, setVideoSettings] = useState<any>(null)
-    
+
     // Thumbnail states
     const [thumbnailStats, setThumbnailStats] = useState<{
       thumbnail_count: number
@@ -152,8 +153,12 @@ export const TimelapseDetailsModal = memo(
       total_images: number
     } | null>(null)
     // Use custom hook for thumbnail progress tracking
-    const { progress: thumbnailProgress, isActive: thumbnailJobActive, startTracking: startThumbnailTracking } = useThumbnailProgress({
-      timelapseId: typeof timelapseId === 'number' ? timelapseId : undefined,
+    const {
+      progress: thumbnailProgress,
+      isActive: thumbnailJobActive,
+      startTracking: startThumbnailTracking,
+    } = useThumbnailProgress({
+      timelapseId: typeof timelapseId === "number" ? timelapseId : undefined,
       onComplete: () => {
         // Refresh data when thumbnail regeneration completes
         fetchTimelapseData()
@@ -161,9 +166,9 @@ export const TimelapseDetailsModal = memo(
       },
       onError: (error: string) => {
         // Handle errors
-        console.error('Thumbnail regeneration error:', error)
+        console.error("Thumbnail regeneration error:", error)
         setActionLoading(null)
-      }
+      },
     })
 
     // Fetch timelapse details and videos
@@ -501,8 +506,10 @@ export const TimelapseDetailsModal = memo(
 
       try {
         setActionLoading("archive")
+        // "archived" status is no longer supported in the simplified status system
+        // Only allow toggling between "completed" and original status
         const newStatus =
-          timelapse.status === "archived" ? "completed" : "archived"
+          timelapse.status === "completed" ? "paused" : "completed"
 
         const response = await fetch(`/api/timelapses/${timelapseId}`, {
           method: "PATCH",
@@ -517,7 +524,7 @@ export const TimelapseDetailsModal = memo(
         )
         toast.success(
           `Timelapse ${
-            newStatus === "archived" ? "archived" : "unarchived"
+            newStatus === "completed" ? "completed" : "reopened"
           } successfully`
         )
       } catch (error) {
@@ -571,14 +578,17 @@ export const TimelapseDetailsModal = memo(
           }
         )
 
-        if (!response.ok) throw new Error("Failed to start thumbnail regeneration")
+        if (!response.ok)
+          throw new Error("Failed to start thumbnail regeneration")
 
         const result = await response.json()
-        
+
         // Start progress tracking using the custom hook
         startThumbnailTracking(result.jobs_created || 0)
-        
-        toast.success(`Thumbnail regeneration started for ${result.jobs_created} images`)
+
+        toast.success(
+          `Thumbnail regeneration started for ${result.jobs_created} images`
+        )
         setShowThumbnailRegenConfirm(false)
 
         // Note: Loading state will be cleared when all jobs complete via the custom hook's onComplete callback
@@ -828,9 +838,9 @@ export const TimelapseDetailsModal = memo(
                         {
                           icon: Archive,
                           label:
-                            timelapse.status === "archived"
-                              ? "Unarchive"
-                              : "Archive",
+                            timelapse.status === "completed"
+                              ? "Reopen"
+                              : "Complete",
                           onClick: handleArchive,
                           variant: "warning",
                           disabled: actionLoading === "archive",
@@ -931,7 +941,15 @@ export const TimelapseDetailsModal = memo(
                       <StatItem
                         icon={Layers}
                         label='Thumbnail Coverage'
-                        value={thumbnailStats ? `${Math.round((thumbnailStats.thumbnail_count / Math.max(thumbnailStats.total_images, 1)) * 100)}%` : "Loading..."}
+                        value={
+                          thumbnailStats
+                            ? `${Math.round(
+                                (thumbnailStats.thumbnail_count /
+                                  Math.max(thumbnailStats.total_images, 1)) *
+                                  100
+                              )}%`
+                            : "Loading..."
+                        }
                         accent='pink'
                       />
                       <StatItem
@@ -1456,13 +1474,17 @@ export const TimelapseDetailsModal = memo(
                 <span>Regenerate Thumbnails</span>
               </AlertDialogTitle>
               <AlertDialogDescription>
-                This will regenerate thumbnails for all images in this timelapse.
+                This will regenerate thumbnails for all images in this
+                timelapse.
                 {thumbnailStats && (
-                  <div className="mt-2 text-sm">
-                    <strong>Current Status:</strong> {thumbnailStats.thumbnail_count} of {thumbnailStats.total_images} images have thumbnails
+                  <div className='mt-2 text-sm'>
+                    <strong>Current Status:</strong>{" "}
+                    {thumbnailStats.thumbnail_count} of{" "}
+                    {thumbnailStats.total_images} images have thumbnails
                   </div>
                 )}
-                The process will run in the background and may take several minutes.
+                The process will run in the background and may take several
+                minutes.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

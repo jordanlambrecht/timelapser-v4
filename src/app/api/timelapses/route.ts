@@ -15,20 +15,29 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const { searchParams } = new URL(request.url)
+    const cameraId = searchParams.get("camera_id")
 
     // Determine if this is creating a new timelapse or updating existing one
-    const isNewTimelapse = !body.timelapse_id && body.status === "running"
+    const isNewTimelapse = !body.timelapse_id && cameraId
     const isStatusUpdate = body.timelapse_id && body.status
 
     let response: Response
     let fastApiEndpoint: string
 
     if (isNewTimelapse) {
-      // Creating a new timelapse entity - use entity-based endpoint
-      fastApiEndpoint = "/api/timelapses/new"
+      // Creating a new comprehensive timelapse - use full timelapse endpoint with camera_id
+      fastApiEndpoint = `/api/timelapses?camera_id=${cameraId}`
+
+      // Add camera_id to the body for backend validation
+      const timelapseData = {
+        ...body,
+        camera_id: parseInt(cameraId),
+      }
+
       response = await proxyToFastAPI(fastApiEndpoint, {
         method: "POST",
-        body,
+        body: timelapseData,
       })
     } else if (isStatusUpdate) {
       // Updating status of existing timelapse - use main timelapse endpoint

@@ -98,7 +98,7 @@ class Video(VideoBase):
     """Full video model with all database fields"""
 
     id: int
-    timelapse_id: int = Field(..., description="ID of the associated timelapse")
+    timelapse_id: Optional[int] = Field(None, description="ID of the associated timelapse")
     file_path: Optional[str] = None
     status: Literal["generating", "completed", "failed"] = "generating"
     image_count: Optional[int] = None

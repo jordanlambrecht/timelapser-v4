@@ -78,10 +78,14 @@ export function CameraImageUnified({
   }
 
   const fallbackChain = getFallbackChain()
-  const currentImageUrl = hasImage && !hasError && fallbackLevel < fallbackChain.length 
-    ? fallbackChain[fallbackLevel] 
-    : fallbackSrc
-  const showFallback = !hasImage || (hasError && fallbackLevel >= fallbackChain.length) || dataError
+  
+  // Always try to load from API first, regardless of hasImage status
+  // The component will handle 404s through the fallback chain
+  const shouldTryAPI = fallbackLevel < fallbackChain.length && !hasError
+  const currentImageUrl = shouldTryAPI ? fallbackChain[fallbackLevel] : fallbackSrc
+  const showFallback = hasError && fallbackLevel >= fallbackChain.length
+  
+
 
   const handleImageLoad = () => {
     setIsLoading(false)
@@ -108,8 +112,15 @@ export function CameraImageUnified({
     refetch()
   }
 
+  // Reset fallback level when cameraId changes
+  useEffect(() => {
+    setFallbackLevel(0)
+    setHasError(false)
+    setIsLoading(true)
+  }, [cameraId])
+
   return (
-    <div className={cn("relative overflow-hidden", className)}>
+    <div className={cn("relative overflow-hidden w-full h-full", className)}>
       {/* Main Image */}
       <Image
         src={currentImageUrl}
@@ -127,6 +138,7 @@ export function CameraImageUnified({
         priority={priority}
         onLoad={handleImageLoad}
         onError={handleImageError}
+        unoptimized={currentImageUrl.startsWith('/api/cameras/')}
         sizes={
           size === "thumbnail"
             ? "(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
@@ -196,7 +208,7 @@ export function CameraImageUnified({
       )}
 
       {/* No image indicator */}
-      {!hasImage && !isLoading && !dataLoading && (
+      {!hasImage && !isLoading && !dataLoading && showFallback && (
         <div className='absolute bottom-2 right-2'>
           <div className='px-2 py-1 text-xs text-white bg-black/60 rounded backdrop-blur-sm'>
             No captures yet

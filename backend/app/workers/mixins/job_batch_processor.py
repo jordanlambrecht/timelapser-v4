@@ -8,11 +8,12 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 
 import asyncio
 import time
-from typing import List, Dict, Any, Callable, Optional, Protocol, runtime_checkable
+from typing import List, Dict, Any, Callable, Optional, Protocol, runtime_checkable, Sequence, TypeVar, Generic
 from datetime import datetime, timedelta
 from loguru import logger
 
 from ...utils.time_utils import utc_now
+# Enum imports removed - using Any for priority field flexibility
 
 
 @runtime_checkable
@@ -20,11 +21,15 @@ class ProcessableJob(Protocol):
     """Protocol for jobs that can be processed in batches."""
 
     id: int
-    priority: str
+    priority: Any  # Allow any priority type - will be handled by specific workers
     retry_count: int
 
 
-class JobBatchProcessor:
+# Generic type variable for job types
+T = TypeVar('T', bound=ProcessableJob)
+
+
+class JobBatchProcessor(Generic[T]):
     """
     Manages batch processing of jobs with concurrency control and performance monitoring.
 
@@ -79,17 +84,24 @@ class JobBatchProcessor:
         self.processing_times: List[float] = []
         self.last_performance_check = utc_now()
 
-        # Concurrency control
-        self.concurrent_jobs_semaphore = asyncio.Semaphore(max_concurrent_jobs)
+        # Concurrency control - will be initialized when needed
+        self.concurrent_jobs_semaphore: Optional[asyncio.Semaphore] = None
+        self._max_concurrent_jobs = max_concurrent_jobs
 
         # Statistics
         self.batch_count = 0
         self.empty_batch_count = 0
 
+    def _ensure_semaphore(self) -> asyncio.Semaphore:
+        """Ensure semaphore is initialized for current event loop."""
+        if self.concurrent_jobs_semaphore is None:
+            self.concurrent_jobs_semaphore = asyncio.Semaphore(self._max_concurrent_jobs)
+        return self.concurrent_jobs_semaphore
+
     async def process_job_batch(
         self,
-        get_pending_jobs: Callable[[int], List[ProcessableJob]],
-        process_single_job: Callable[[ProcessableJob], bool],
+        get_pending_jobs: Callable[[int], Sequence[T]],
+        process_single_job: Callable[[T], bool],
         get_queue_stats: Optional[Callable[[], Dict[str, int]]] = None,
     ) -> int:
         """
@@ -126,7 +138,7 @@ class JobBatchProcessor:
             processed_count = 0
 
             # Process jobs concurrently with semaphore limit
-            if len(pending_jobs) <= self.max_concurrent_jobs:
+            if len(pending_jobs) <= self._max_concurrent_jobs:
                 # Small batch - process all concurrently
                 processed_count = await self._process_concurrent_batch(
                     pending_jobs, process_single_job
@@ -154,8 +166,8 @@ class JobBatchProcessor:
 
     async def _process_concurrent_batch(
         self,
-        jobs: List[ProcessableJob],
-        process_single_job: Callable[[ProcessableJob], bool],
+        jobs: Sequence[T],
+        process_single_job: Callable[[T], bool],
     ) -> int:
         """
         Process a small batch of jobs concurrently.
@@ -180,8 +192,8 @@ class JobBatchProcessor:
 
     async def _process_chunked_batch(
         self,
-        jobs: List[ProcessableJob],
-        process_single_job: Callable[[ProcessableJob], bool],
+        jobs: Sequence[T],
+        process_single_job: Callable[[T], bool],
     ) -> int:
         """
         Process a large batch of jobs in smaller concurrent chunks.
@@ -195,8 +207,8 @@ class JobBatchProcessor:
         """
         processed_count = 0
 
-        for i in range(0, len(jobs), self.max_concurrent_jobs):
-            chunk = jobs[i : i + self.max_concurrent_jobs]
+        for i in range(0, len(jobs), self._max_concurrent_jobs):
+            chunk = jobs[i : i + self._max_concurrent_jobs]
             tasks = []
 
             for job in chunk:
@@ -212,7 +224,7 @@ class JobBatchProcessor:
         return processed_count
 
     async def _process_job_with_semaphore(
-        self, job: ProcessableJob, process_single_job: Callable[[ProcessableJob], bool]
+        self, job: T, process_single_job: Callable[[T], bool]
     ) -> bool:
         """
         Process a single job with concurrency control via semaphore.
@@ -224,7 +236,7 @@ class JobBatchProcessor:
         Returns:
             True if job completed successfully, False otherwise
         """
-        async with self.concurrent_jobs_semaphore:
+        async with self._ensure_semaphore():
             try:
                 job_start_time = time.time()
                 success = await asyncio.get_event_loop().run_in_executor(
@@ -357,7 +369,7 @@ class JobBatchProcessor:
             "avg_job_time_ms": round(avg_job_time, 2),
             "batch_count": self.batch_count,
             "empty_batch_count": self.empty_batch_count,
-            "concurrency_limit": self.max_concurrent_jobs,
+            "concurrency_limit": self._max_concurrent_jobs,
             "performance_thresholds": {
                 "high_load_threshold": self.high_load_threshold,
                 "low_load_threshold": self.low_load_threshold,

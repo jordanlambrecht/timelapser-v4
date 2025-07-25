@@ -207,7 +207,7 @@ class ImmediateJobManager:
                     # Create settings service and overlay worker with correct constructor
                     settings_service = SyncSettingsService(self.db)
                     overlay_worker = OverlayWorker(
-                        sync_db=self.db, settings_service=settings_service
+                        db=self.db, settings_service=settings_service
                     )
                     await overlay_worker.initialize()
 

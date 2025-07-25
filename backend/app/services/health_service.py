@@ -5,6 +5,12 @@ Health monitoring service for comprehensive system health checks.
 Provides detailed health monitoring for all system components including
 database connections, file system, external dependencies, and performance metrics.
 
+Design Decision: This service intentionally does NOT integrate with SSE (Server-Sent Events).
+Health monitoring is better served by HTTP caching + periodic polling rather than real-time
+streaming. Health status typically changes slowly and is checked every few minutes, making
+SSE overhead unnecessary. The current HTTP approach with ETag caching provides optimal
+balance between freshness and performance.
+
 Follows architectural patterns:
 - Composition pattern with database operations
 - Timezone-aware using settings cache
@@ -32,8 +38,8 @@ from app.models.health_model import (
     SystemMetrics,
     ApplicationMetrics,
 )
-from app.utils.timezone_utils import get_timezone_aware_timestamp_async
-from app.utils import ffmpeg_utils
+from app.utils.time_utils import get_timezone_aware_timestamp_async
+from .video_pipeline import ffmpeg_utils
 from app.config import settings
 from app.constants import (
     APPLICATION_NAME,

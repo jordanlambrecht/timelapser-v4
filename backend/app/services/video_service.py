@@ -1,541 +1,619 @@
 # backend/app/services/video_service.py
-
 """
-Video Service - Composition-based architecture following AI-CONTEXT principles.
+Video Service - Pure video data management.
 
-This service handles video-related business logic using dependency injection
-for database operations, providing type-safe Pydantic model interfaces.
+This service handles all video-related CRUD operations and data management
+using dependency injection for database operations, providing type-safe
+Pydantic model interfaces.
 
-Responsibilities (per Target Architecture):
-- Video record management
-- FFmpeg coordination via utils
-- Generation job queue management
-- File lifecycle management
+Key Features:
+- Video record creation, retrieval, updating, and deletion
+- Video metadata management and statistics
+- File path validation and management
+- Timelapse-video relationship management
+- Search and filtering capabilities
+- Frontend data formatting
 
-Interactions:
-- Uses VideoOperations for database
-- Calls ffmpeg_utils for rendering
-- Coordinates with VideoAutomationService for automated generation
+Business Rules:
+- Videos are linked to timelapses and cameras
+- File paths are stored relative to data directory
+- Video metadata includes duration, file size, image count
+- Soft delete preservation for audit trails
+- Automatic timestamp management
+
+Separation of Concerns:
+- This service handles ONLY data operations
+- No workflow orchestration or pipeline logic
+- No video generation or FFmpeg operations
+- No job queue or scheduling decisions
 """
 
-from typing import List, Optional, Dict, Any, Tuple
-from pathlib import Path
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 from loguru import logger
+from pathlib import Path
+
+from ..enums import SSEPriority
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.video_operations import VideoOperations, SyncVideoOperations
-from ..database.timelapse_operations import SyncTimelapseOperations
-from ..database.camera_operations import SyncCameraOperations
-from ..database.image_operations import SyncImageOperations
-from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
-from ..models.video_model import Video, VideoWithDetails
-from ..models.shared_models import (
-    VideoGenerationJob,
-    VideoGenerationJobWithDetails,
-    VideoStatistics,
+from ..database.sse_events_operations import (
+    SSEEventsOperations,
+    SyncSSEEventsOperations,
 )
-from ..utils import ffmpeg_utils
+from ..models.video_model import Video, VideoCreate, VideoUpdate, VideoWithDetails
+from ..models.shared_models import VideoStatistics
+from ..utils.time_utils import (
+    get_timezone_aware_timestamp_async,
+    get_timezone_aware_timestamp_sync,
+)
 from ..utils.file_helpers import (
     validate_file_path,
-    ensure_directory_exists,
     get_relative_path,
     get_file_size,
 )
-from ..utils.timezone_utils import (
-    get_timezone_aware_timestamp_async,
-    get_timezone_aware_timestamp_sync,
-    get_timezone_aware_timestamp_string_async,
-)
-from ..database.sse_events_operations import SSEEventsOperations
-from ..config import settings
 from ..constants import (
-    VIDEO_QUALITIES,
-    DEFAULT_VIDEO_CLEANUP_DAYS,
-    DEFAULT_VIDEO_ARCHIVE_DIRECTORY,
-    DEFAULT_VIDEO_GENERATION_PRIORITY,
+    EVENT_VIDEO_CREATED,
+    EVENT_VIDEO_UPDATED,
+    EVENT_VIDEO_DELETED,
+    EVENT_VIDEO_STATS_CALCULATED,
 )
+from ..config import settings
 
 
 class VideoService:
     """
-    Video metadata and generation coordination business logic.
+    Video data management service using composition pattern.
 
     Responsibilities:
-    - Video record management
-    - FFmpeg coordination via utils
-    - Generation job queue management
-    - File lifecycle management
+    - Video record CRUD operations
+    - Video metadata and statistics management
+    - File path validation and management
+    - Timelapse-video relationship management
+    - Search and filtering capabilities
 
     Interactions:
-    - Uses VideoOperations for database
-    - Calls ffmpeg_utils for rendering
-    - Coordinates with VideoAutomationService for automated generation
+    - Uses VideoOperations for database access
+    - Uses SSEEventsOperations for event broadcasting
+    - Provides type-safe Pydantic model interfaces
     """
 
-    def __init__(self, db: AsyncDatabase, video_automation_service=None):
+    def __init__(self, db: AsyncDatabase):
         """
-        Initialize VideoService with async database instance and service dependencies.
+        Initialize VideoService with async database instance.
 
         Args:
             db: AsyncDatabase instance
-            video_automation_service: Optional VideoAutomationService for automation coordination
         """
         self.db = db
         self.video_ops = VideoOperations(db)
-        self.settings_ops = SettingsOperations(db)
         self.sse_ops = SSEEventsOperations(db)
-        self.video_automation_service = video_automation_service
 
     async def get_videos(
-        self, timelapse_id: Optional[int] = None
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[VideoWithDetails]:
         """
-        Retrieve videos with optional timelapse filtering.
+        Get videos with optional filtering.
 
         Args:
-            timelapse_id: Optional timelapse ID to filter by
+            timelapse_id: Optional filter by timelapse ID
+            camera_id: Optional filter by camera ID
+            status: Optional filter by video status
+            limit: Maximum number of videos to return
+            offset: Number of videos to skip for pagination
 
         Returns:
-            List of VideoWithDetails model instances
+            List of video records matching criteria
         """
-        return await self.video_ops.get_videos(timelapse_id)
+        try:
+            logger.debug(
+                f"Retrieving videos with filters: timelapse_id={timelapse_id}, camera_id={camera_id}, status={status}"
+            )
+
+            videos = await self.video_ops.get_videos(
+                timelapse_id=timelapse_id,
+                camera_id=camera_id,
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+
+            logger.debug(f"Retrieved {len(videos)} videos")
+            return videos
+
+        except Exception as e:
+            logger.error(f"Failed to get videos: {e}")
+            return []
 
     async def get_video_by_id(self, video_id: int) -> Optional[VideoWithDetails]:
         """
-        Retrieve a specific video by ID.
+        Get video by ID.
 
         Args:
-            video_id: ID of the video to retrieve
+            video_id: Video ID to retrieve
 
         Returns:
-            VideoWithDetails model instance, or None if not found
-        """
-        return await self.video_ops.get_video_by_id(video_id)
-
-    async def create_video_record(self, video_data: Dict[str, Any]) -> Video:
-        """
-        Create a new video record with timezone-aware timestamps.
-
-        Args:
-            video_data: Dictionary containing video metadata
-
-        Returns:
-            Created Video model instance
-        """
-        # Ensure timezone-aware creation timestamp
-        if "created_at" not in video_data:
-            video_data["created_at"] = await get_timezone_aware_timestamp_async(self.db)
-
-        video = await self.video_ops.create_video_record(video_data)
-
-        # Create SSE event for real-time updates
-        await self.sse_ops.create_event(
-            event_type="video_created",
-            event_data={
-                "video_id": video.id,
-                "camera_id": video_data.get("camera_id"),
-                "video_name": video_data.get("name"),
-                "status": video_data.get("status"),
-            },
-            priority="normal",
-            source="api",
-        )
-
-        return video
-
-    async def update_video(self, video_id: int, video_data: Dict[str, Any]) -> Video:
-        """
-        Update an existing video record with timezone-aware timestamps.
-
-        Args:
-            video_id: ID of the video to update
-            video_data: Dictionary containing updated video data
-
-        Returns:
-            Updated Video model instance
-        """
-        # Ensure timezone-aware update timestamp
-        video_data["updated_at"] = await get_timezone_aware_timestamp_async(self.db)
-
-        return await self.video_ops.update_video(video_id, video_data)
-
-    async def delete_video(self, video_id: int) -> bool:
-        """
-        Delete a video record and associated files.
-
-        Args:
-            video_id: ID of the video to delete
-
-        Returns:
-            True if video was deleted successfully
-        """
-        # Get video info before deletion for file cleanup and SSE event
-        video = await self.get_video_by_id(video_id)
-
-        # Extract file path before database deletion
-        file_path_to_cleanup = video.file_path if video else None
-
-        # Delete from database first
-        success = await self.video_ops.delete_video(video_id)
-
-        # Clean up file directly using file_helpers (no database lookup needed)
-        if success and file_path_to_cleanup:
-            try:
-                validated_path = validate_file_path(
-                    file_path_to_cleanup,
-                    base_directory=settings.data_directory,
-                    must_exist=False,
-                )
-                if validated_path.exists():
-                    validated_path.unlink()
-                    logger.info(f"Deleted video file: {validated_path}")
-            except Exception as e:
-                logger.warning(
-                    f"Database deletion succeeded but file cleanup failed for video {video_id}: {e}"
-                )
-
-        # Create SSE event for real-time updates
-        if success and video:
-            await self.sse_ops.create_event(
-                event_type="video_deleted",
-                event_data={
-                    "video_id": video_id,
-                    "video_name": video.name,
-                    "camera_id": video.camera_id,
-                },
-                priority="normal",
-                source="api",
-            )
-
-        return success
-
-    async def get_video_generation_jobs(
-        self, status: Optional[str] = None
-    ) -> List[VideoGenerationJobWithDetails]:
-        """
-        Get video generation jobs with optional status filtering.
-
-        Args:
-            status: Optional status to filter by ('pending', 'processing', 'completed', 'failed')
-
-        Returns:
-            List of VideoGenerationJobWithDetails model instances
-        """
-        return await self.video_ops.get_video_generation_jobs(status)
-
-    async def create_video_generation_job(
-        self, job_data: Dict[str, Any]
-    ) -> VideoGenerationJob:
-        """
-        Create a new video generation job with timezone-aware timestamps.
-
-        Args:
-            job_data: Dictionary containing job configuration
-
-        Returns:
-            Created VideoGenerationJob model instance
-        """
-        # Ensure timezone-aware creation timestamp
-        if "created_at" not in job_data:
-            job_data["created_at"] = await get_timezone_aware_timestamp_async(
-                self.settings_ops
-            )
-
-        # Calculate event timestamp for database operation
-        event_timestamp = await get_timezone_aware_timestamp_async(self.settings_ops)
-        job = await self.video_ops.create_video_generation_job(job_data)
-        return job
-
-    async def update_video_generation_job_status(
-        self,
-        job_id: int,
-        status: str,
-        error_message: Optional[str] = None,
-        video_path: Optional[str] = None,
-    ) -> VideoGenerationJob:
-        """
-        Update the status of a video generation job with timezone-aware timestamps.
-
-        Args:
-            job_id: ID of the job
-            status: New status ('pending', 'processing', 'completed', 'failed')
-            error_message: Optional error message if failed
-            video_path: Optional path to generated video if completed
-
-        Returns:
-            Updated VideoGenerationJob model instance
-        """
-        job = await self.video_ops.update_video_generation_job_status(
-            job_id, status, error_message, video_path
-        )
-        return job
-
-    async def get_video_statistics(
-        self, timelapse_id: Optional[int] = None
-    ) -> VideoStatistics:
-        """
-        Get video statistics for a timelapse or overall.
-
-        Args:
-            timelapse_id: Optional timelapse ID to filter by
-
-        Returns:
-            VideoStatistics model instance
-        """
-        return await self.video_ops.get_video_statistics(timelapse_id)
-
-    async def manage_file_lifecycle(self, video_id: int, action: str) -> Dict[str, Any]:
-        """
-        Manage video file lifecycle operations using file_helpers.
-
-        Args:
-            video_id: ID of the video
-            action: Lifecycle action ('cleanup', 'archive', 'restore', 'verify')
-
-        Returns:
-            Lifecycle management results
+            Video record or None if not found
         """
         try:
+            logger.debug(f"Retrieving video {video_id}")
+
+            video = await self.video_ops.get_video_by_id(video_id)
+            if video:
+                logger.debug(f"Found video {video_id}")
+            else:
+                logger.warning(f"Video {video_id} not found")
+
+            return video
+
+        except Exception as e:
+            logger.error(f"Failed to get video {video_id}: {e}")
+            return None
+
+    async def create_video_record(self, video_data: VideoCreate) -> Optional[Video]:
+        """
+        Create a new video record.
+
+        Args:
+            video_data: Video creation data
+
+        Returns:
+            Created video record or None if failed
+        """
+        try:
+            logger.debug(
+                f"Creating video record for timelapse {video_data.timelapse_id}"
+            )
+
+            # Ensure timezone-aware timestamp
+            current_time = await get_timezone_aware_timestamp_async(self.db)
+
+            # Validate file path if provided
+            if video_data.file_path:
+                try:
+                    # Convert to relative path if absolute
+                    if Path(video_data.file_path).is_absolute():
+                        video_data.file_path = get_relative_path(
+                            Path(video_data.file_path), settings.data_directory
+                        )
+
+                    # Validate the file exists
+                    full_path = Path(settings.data_directory) / video_data.file_path
+                    if not full_path.exists():
+                        logger.warning(f"Video file does not exist: {full_path}")
+
+                except Exception as e:
+                    logger.warning(f"File path validation failed: {e}")
+
+            # Prepare video record data
+            video_record_data = {
+                **video_data.model_dump(),
+                "created_at": current_time,
+                "updated_at": current_time,
+            }
+
+            # Create video record
+            video_record = await self.video_ops.create_video_record(video_record_data)
+
+            if video_record:
+                logger.info(
+                    f"✅ Created video record {video_record.id} for timelapse {video_data.timelapse_id}"
+                )
+
+                # Broadcast SSE event
+                await self._broadcast_video_event(
+                    event_type=EVENT_VIDEO_CREATED,
+                    video_id=video_record.id,
+                    event_data={
+                        "video_id": video_record.id,
+                        "timelapse_id": video_data.timelapse_id,
+                        "camera_id": video_data.camera_id,
+                        "name": video_data.name,
+                        "file_path": video_data.file_path,
+                        "status": video_data.status,
+                        "trigger_type": getattr(video_data, "trigger_type", "unknown"),
+                    },
+                )
+
+                return video_record
+            else:
+                logger.error(
+                    f"❌ Failed to create video record for timelapse {video_data.timelapse_id}"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error creating video record: {e}")
+            return None
+
+    async def update_video_record(
+        self, video_id: int, update_data: VideoUpdate
+    ) -> Optional[Video]:
+        """
+        Update an existing video record.
+
+        Args:
+            video_id: Video ID to update
+            update_data: Video update data
+
+        Returns:
+            Updated video record or None if failed
+        """
+        try:
+            logger.debug(f"Updating video record {video_id}")
+
+            # Check if video exists
+            existing_video = await self.get_video_by_id(video_id)
+            if not existing_video:
+                logger.error(f"Video {video_id} not found for update")
+                return None
+
+            # Prepare update data with timestamp
+            current_time = await get_timezone_aware_timestamp_async(self.db)
+            update_record_data = {
+                **update_data.model_dump(exclude_unset=True),
+                "updated_at": current_time,
+            }
+
+            # Update video record
+            updated_video = await self.video_ops.update_video(
+                video_id, update_record_data
+            )
+
+            if updated_video:
+                logger.info(f"✅ Updated video record {video_id}")
+
+                # Broadcast SSE event
+                await self._broadcast_video_event(
+                    event_type=EVENT_VIDEO_UPDATED,
+                    video_id=video_id,
+                    event_data={
+                        "video_id": video_id,
+                        "updated_fields": list(
+                            update_data.model_dump(exclude_unset=True).keys()
+                        ),
+                        "previous_status": existing_video.status,
+                        "new_status": getattr(
+                            update_data, "status", existing_video.status
+                        ),
+                    },
+                )
+
+                return updated_video
+            else:
+                logger.error(f"❌ Failed to update video record {video_id}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error updating video record {video_id}: {e}")
+            return None
+
+    async def delete_video(self, video_id: int, soft_delete: bool = True) -> bool:
+        """
+        Delete a video record.
+
+        Args:
+            video_id: Video ID to delete
+            soft_delete: Whether to soft delete (mark as deleted) or hard delete
+
+        Returns:
+            True if deleted successfully
+        """
+        try:
+            logger.debug(f"Deleting video {video_id} (soft_delete={soft_delete})")
+
+            # Get video info before deletion for event data
+            video_info = await self.get_video_by_id(video_id)
+            if not video_info:
+                logger.error(f"Video {video_id} not found for deletion")
+                return False
+
+            # Perform deletion
+            if soft_delete:
+                # Soft delete by updating status to failed (closest allowed status)
+                update_data = VideoUpdate(
+                    name=video_info.name,
+                    timelapse_id=video_info.timelapse_id,
+                    status="failed",
+                )
+                success = (
+                    await self.update_video_record(video_id, update_data) is not None
+                )
+            else:
+                # Hard delete from database
+                success = await self.video_ops.delete_video(video_id)
+
+            if success:
+                logger.info(
+                    f"✅ {'Soft' if soft_delete else 'Hard'} deleted video {video_id}"
+                )
+
+                # Broadcast SSE event
+                await self._broadcast_video_event(
+                    event_type=EVENT_VIDEO_DELETED,
+                    video_id=video_id,
+                    event_data={
+                        "video_id": video_id,
+                        "timelapse_id": video_info.timelapse_id,
+                        "camera_id": video_info.camera_id,
+                        "name": video_info.name,
+                        "soft_delete": soft_delete,
+                        "file_path": video_info.file_path,
+                    },
+                )
+
+                return True
+            else:
+                logger.error(f"❌ Failed to delete video {video_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error deleting video {video_id}: {e}")
+            return False
+
+    async def get_video_statistics(
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> VideoStatistics:
+        """
+        Get video statistics with optional filtering.
+
+        Args:
+            timelapse_id: Optional filter by timelapse ID
+            camera_id: Optional filter by camera ID
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            Video statistics response
+        """
+        try:
+            logger.debug(f"Calculating video statistics with filters")
+
+            # Get video statistics from database
+            stats = await self.video_ops.get_video_statistics(
+                timelapse_id=timelapse_id,
+                camera_id=camera_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            # Broadcast SSE event for statistics calculation
+            await self._broadcast_video_event(
+                event_type=EVENT_VIDEO_STATS_CALCULATED,
+                video_id=None,
+                event_data={
+                    "total_videos": stats.total_videos,
+                    "total_size_bytes": stats.total_size_bytes,
+                    "avg_duration_seconds": stats.avg_duration_seconds,
+                    "avg_fps": stats.avg_fps,
+                    "latest_video_at": (
+                        stats.latest_video_at.isoformat()
+                        if stats.latest_video_at
+                        else None
+                    ),
+                    "filters_applied": {
+                        "timelapse_id": timelapse_id,
+                        "camera_id": camera_id,
+                        "date_range": bool(start_date or end_date),
+                    },
+                },
+            )
+
+            logger.debug(f"Calculated video statistics: {stats.total_videos} videos")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to calculate video statistics: {e}")
+            return VideoStatistics(
+                total_videos=0,
+                total_size_bytes=0,
+                avg_duration_seconds=0,
+                avg_fps=0,
+                latest_video_at=None,
+            )
+
+    async def get_videos_by_timelapse(
+        self, timelapse_id: int
+    ) -> List[VideoWithDetails]:
+        """
+        Get all videos for a specific timelapse.
+
+        Args:
+            timelapse_id: Timelapse ID to get videos for
+
+        Returns:
+            List of video records for the timelapse
+        """
+        return await self.get_videos(timelapse_id=timelapse_id)
+
+    async def get_videos_by_camera(self, camera_id: int) -> List[VideoWithDetails]:
+        """
+        Get all videos for a specific camera.
+
+        Args:
+            camera_id: Camera ID to get videos for
+
+        Returns:
+            List of video records for the camera
+        """
+        return await self.get_videos(camera_id=camera_id)
+
+    async def search_videos(self, search_term: str, limit: int = 50) -> List[Video]:
+        """
+        Search videos by name or description.
+
+        Args:
+            search_term: Search term to match against video names
+            limit: Maximum number of results to return
+
+        Returns:
+            List of matching video records
+        """
+        try:
+            logger.debug(f"Searching videos for term: {search_term}")
+
+            videos = await self.video_ops.search_videos(search_term, limit)
+
+            logger.debug(f"Found {len(videos)} videos matching search term")
+            return videos
+
+        except Exception as e:
+            logger.error(f"Failed to search videos: {e}")
+            return []
+
+    async def validate_video_file(self, video_id: int) -> Dict[str, Any]:
+        """
+        Validate that a video file exists and get its metadata.
+
+        Args:
+            video_id: Video ID to validate
+
+        Returns:
+            Dictionary with validation results and file metadata
+        """
+        try:
+            logger.debug(f"Validating video file for video {video_id}")
+
             video = await self.get_video_by_id(video_id)
             if not video:
-                return {"success": False, "error": f"Video {video_id} not found"}
+                return {
+                    "valid": False,
+                    "error": "Video record not found",
+                }
 
             if not video.file_path:
                 return {
-                    "success": False,
-                    "error": f"Video file path is missing for video {video_id}",
+                    "valid": False,
+                    "error": "Video has no file path",
                 }
 
-            # Use file_helpers for secure path operations
-            file_path = validate_file_path(
-                video.file_path,
-                base_directory=settings.data_directory,
-                must_exist=(action != "cleanup"),
-            )
+            # Construct full file path
+            full_path = Path(settings.data_directory) / video.file_path
 
-            if action == "cleanup":
-                # Remove video file and update database record
-                if file_path.exists():
-                    file_path.unlink()
-                    await self.update_video(
-                        video_id,
-                        {
-                            "file_path": None,
-                            "deleted_at": await get_timezone_aware_timestamp_async(
-                                self.db
-                            ),
-                        },
-                    )
-                    return {
-                        "success": True,
-                        "action": "cleanup",
-                        "message": f"Video file removed: {file_path}",
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Video file not found: {file_path}",
-                    }
-
-            elif action == "verify":
-                # Verify video file exists and is accessible
-                if file_path.exists():
-                    file_size = get_file_size(file_path)
-                    return {
-                        "success": True,
-                        "action": "verify",
-                        "exists": True,
-                        "file_size": file_size,
-                        "file_path": str(file_path),
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "action": "verify",
-                        "exists": False,
-                        "error": f"Video file missing: {file_path}",
-                    }
-
-            elif action == "archive":
-                # Move to archive directory using file_helpers
-                archive_dir = ensure_directory_exists(
-                    str(Path(settings.data_directory) / DEFAULT_VIDEO_ARCHIVE_DIRECTORY)
-                )
-                archive_path = archive_dir / file_path.name
-
-                if file_path.exists():
-                    file_path.rename(archive_path)
-                    relative_archive_path = get_relative_path(
-                        archive_path, settings.data_directory
-                    )
-                    await self.update_video(
-                        video_id,
-                        {
-                            "file_path": relative_archive_path,
-                            "archived_at": await get_timezone_aware_timestamp_async(
-                                self.db
-                            ),
-                        },
-                    )
-                    return {
-                        "success": True,
-                        "action": "archive",
-                        "new_path": str(archive_path),
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Video file not found for archiving: {file_path}",
-                    }
-
-            else:
+            if not full_path.exists():
                 return {
-                    "success": False,
-                    "error": f"Unknown lifecycle action: {action}",
+                    "valid": False,
+                    "error": f"Video file does not exist: {full_path}",
+                    "file_path": str(full_path),
                 }
 
-        except Exception as e:
-            logger.error(f"File lifecycle management failed for video {video_id}: {e}")
-            return {"success": False, "error": str(e)}
+            # Get file metadata
+            file_size = get_file_size(str(full_path))
 
-    async def coordinate_with_automation(
-        self, timelapse_id: int, trigger_type: str
-    ) -> Dict[str, Any]:
-        """
-        Coordinate with VideoAutomationService for automated generation.
-
-        Args:
-            timelapse_id: ID of the timelapse
-            trigger_type: Type of automation trigger
-
-        Returns:
-            Automation coordination results
-        """
-        try:
-            if self.video_automation_service:
-                # Request automated video generation
-                automation_result = (
-                    await self.video_automation_service.queue_video_generation(
-                        timelapse_id=timelapse_id,
-                        trigger_type=trigger_type,
-                        priority=DEFAULT_VIDEO_GENERATION_PRIORITY,
-                    )
-                )
-
-                # Log coordination
-                logger.info(
-                    f"Coordinated with automation service for timelapse {timelapse_id}, trigger: {trigger_type}"
-                )
-                return automation_result
-            else:
-                logger.warning(
-                    f"VideoAutomationService not available for timelapse {timelapse_id}"
-                )
-                return {
-                    "success": False,
-                    "error": "VideoAutomationService not configured",
-                }
-
-        except Exception as e:
-            logger.error(
-                f"Automation coordination failed for timelapse {timelapse_id}: {e}"
-            )
-            return {"success": False, "error": str(e)}
-
-    async def generate_video_workflow(
-        self,
-        timelapse_id: int,
-        video_settings: Dict[str, Any],
-        trigger_type: str = "manual",
-    ) -> Dict[str, Any]:
-        """
-        Complete video generation workflow coordination.
-
-        Args:
-            timelapse_id: ID of the timelapse
-            video_settings: Video generation settings
-            trigger_type: Type of generation trigger
-
-        Returns:
-            Complete workflow results
-        """
-        try:
-            # Note: This method would need to be implemented when actual video generation
-            # functionality is added. For now, it serves as a placeholder for the
-            # complete workflow that would coordinate FFmpeg rendering.
-
-            logger.info(
-                f"Video generation workflow requested for timelapse {timelapse_id}"
-            )
-
-            # Placeholder for future implementation
             return {
-                "workflow": "pending_implementation",
-                "message": "Video generation workflow not yet implemented",
-                "timelapse_id": timelapse_id,
-                "trigger_type": trigger_type,
+                "valid": True,
+                "file_path": str(full_path),
+                "file_size_bytes": file_size,
+                "file_exists": True,
             }
 
         except Exception as e:
-            logger.error(
-                f"Video generation workflow failed for timelapse {timelapse_id}: {e}"
-            )
-            return {"workflow": "failed", "error": str(e)}
-
-    async def get_service_health(self) -> Dict[str, Any]:
-        """
-        Get video service health status for monitoring.
-
-        Returns:
-            Dictionary with service health metrics
-        """
-        try:
-            # Get basic statistics for health assessment
-            stats = await self.get_video_statistics()
-
-            # Get recent job status for health check
-            recent_jobs = await self.get_video_generation_jobs()
-
-            # Calculate health metrics
-            total_jobs = len(recent_jobs)
-            failed_jobs = len([job for job in recent_jobs if job.status == "failed"])
-            processing_jobs = len(
-                [job for job in recent_jobs if job.status == "processing"]
-            )
-
-            # Determine health status
-            if total_jobs == 0:
-                health_status = "unknown"
-            elif failed_jobs > total_jobs * 0.5:  # More than 50% failed
-                health_status = "unhealthy"
-            elif failed_jobs > total_jobs * 0.2:  # More than 20% failed
-                health_status = "degraded"
-            else:
-                health_status = "healthy"
-
-            health_data = {
-                "status": health_status,
-                "total_videos": stats.total_videos,
-                "total_jobs": total_jobs,
-                "failed_jobs": failed_jobs,
-                "processing_jobs": processing_jobs,
-                "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(
-                    self.settings_ops
-                ),
-            }
-
-            return health_data
-
-        except Exception as e:
-            logger.error(f"Video service health check failed: {e}")
+            logger.error(f"Failed to validate video file for video {video_id}: {e}")
             return {
-                "status": "unknown",
+                "valid": False,
                 "error": str(e),
-                "service": "video_service",
-                "timestamp": await get_timezone_aware_timestamp_async(
-                    self.settings_ops
-                ),
+            }
+
+    async def _broadcast_video_event(
+        self,
+        event_type: str,
+        video_id: Optional[int],
+        event_data: Dict[str, Any],
+        priority: str = SSEPriority.NORMAL,
+        source: str = "video_service",
+    ) -> None:
+        """
+        Broadcast SSE event for video operations.
+
+        Args:
+            event_type: Type of event
+            video_id: Video ID (if applicable)
+            event_data: Event payload data
+            priority: Event priority
+            source: Event source
+        """
+        try:
+            # Add timestamp to all events
+            event_data_with_timestamp = {
+                **event_data,
+                "timestamp": (
+                    await get_timezone_aware_timestamp_async(self.db)
+                ).isoformat(),
+            }
+
+            await self.sse_ops.create_event(
+                event_type=event_type,
+                event_data=event_data_with_timestamp,
+                priority=priority,
+                source=source,
+            )
+
+            logger.debug(f"Broadcasted SSE event: {event_type} for video {video_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to broadcast SSE event {event_type}: {e}")
+
+    async def get_queue_statistics_with_health(self, video_pipeline) -> dict:
+        """
+        Get comprehensive queue statistics with health assessment (async version).
+        
+        Args:
+            video_pipeline: Video pipeline service for accessing job data
+            
+        Returns:
+            Dictionary with queue statistics and health status
+        """
+        from ..constants import VIDEO_QUEUE_WARNING_THRESHOLD, VIDEO_QUEUE_ERROR_THRESHOLD
+        from ..utils.router_helpers import run_sync_service_method
+        
+        try:
+            # Get basic queue statistics from job service using async wrapper
+            queue_status = await run_sync_service_method(
+                video_pipeline.job_service.get_queue_status
+            )
+            
+            # Calculate derived statistics
+            total_jobs = sum(queue_status.values())
+            pending_jobs = queue_status.get("pending", 0)
+            processing_jobs = queue_status.get("processing", 0)
+            completed_jobs = queue_status.get("completed", 0)
+            failed_jobs = queue_status.get("failed", 0)
+            
+            # Determine queue health based on thresholds
+            if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
+                queue_health = "unhealthy"
+            elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
+                queue_health = "degraded"
+            else:
+                queue_health = "healthy"
+            
+            return {
+                "total_jobs": total_jobs,
+                "pending_jobs": pending_jobs,
+                "processing_jobs": processing_jobs,
+                "completed_jobs": completed_jobs,
+                "failed_jobs": failed_jobs,
+                "queue_health": queue_health
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get queue statistics (async): {e}")
+            return {
+                "total_jobs": 0,
+                "pending_jobs": 0,
+                "processing_jobs": 0,
+                "completed_jobs": 0,
+                "failed_jobs": 0,
+                "queue_health": "unhealthy"
             }
 
 
@@ -543,8 +621,8 @@ class SyncVideoService:
     """
     Sync video service for worker processes using composition pattern.
 
-    This service orchestrates video-related business logic using
-    dependency injection instead of mixin inheritance.
+    This service provides synchronous video data management for worker processes
+    that need to create or manage video records without async/await complexity.
     """
 
     def __init__(self, db: SyncDatabase):
@@ -556,227 +634,266 @@ class SyncVideoService:
         """
         self.db = db
         self.video_ops = SyncVideoOperations(db)
-        self.timelapse_ops = SyncTimelapseOperations(db)
-        self.camera_ops = SyncCameraOperations(db)
-        self.image_ops = SyncImageOperations(db)
-        self.settings_ops = SyncSettingsOperations(db)
+        self.sse_ops = SyncSSEEventsOperations(db)
 
-    def get_pending_video_generation_jobs(self) -> List[VideoGenerationJobWithDetails]:
-        """
-        Get pending video generation jobs for processing.
-
-        Returns:
-            List of VideoGenerationJobWithDetails model instances
-        """
-        return self.video_ops.get_pending_video_generation_jobs()
-
-    def claim_video_generation_job(self, job_id: int) -> bool:
-        """
-        Claim a video generation job for processing.
-
-        Args:
-            job_id: ID of the job to claim
-
-        Returns:
-            True if job was successfully claimed
-        """
-        return self.video_ops.claim_video_generation_job(job_id)
-
-    def complete_video_generation_job(
+    def get_videos(
         self,
-        job_id: int,
-        video_path: str,
-        success: bool = True,
-        error_message: Optional[str] = None,
-    ) -> bool:
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Video]:
         """
-        Complete a video generation job.
+        Get videos with optional filtering (sync version).
 
         Args:
-            job_id: ID of the job
-            video_path: Path to the generated video
-            success: Whether the job completed successfully
-            error_message: Optional error message if failed
+            timelapse_id: Optional filter by timelapse ID
+            camera_id: Optional filter by camera ID
+            status: Optional filter by video status
+            limit: Maximum number of videos to return
+            offset: Number of videos to skip for pagination
 
         Returns:
-            True if job was successfully completed
-        """
-        # Calculate timestamp for database operation
-        event_timestamp_dt = get_timezone_aware_timestamp_sync(self.settings_ops)
-        event_timestamp = event_timestamp_dt.isoformat() if event_timestamp_dt else None
-        return self.video_ops.complete_video_generation_job(
-            job_id, success, error_message, video_path, event_timestamp
-        )
-
-    def create_video_record(self, video_data: Dict[str, Any]) -> Video:
-        """
-        Create a new video record with timezone-aware timestamps.
-
-        Args:
-            video_data: Dictionary containing video metadata
-
-        Returns:
-            Created Video model instance
-        """
-        # Ensure timezone-aware creation timestamp
-        if "created_at" not in video_data:
-            video_data["created_at"] = get_timezone_aware_timestamp_sync(
-                self.settings_ops
-            )
-
-        return self.video_ops.create_video_record(video_data)
-
-    def generate_video_for_timelapse(
-        self, timelapse_id: int, job_id: int, video_settings: Dict[str, Any]
-    ) -> Tuple[bool, str, Optional[Video]]:
-        """
-        Generate video for a timelapse using FFmpeg utilities and proper Pydantic models.
-
-        This method orchestrates the complete video generation process:
-        1. Get timelapse and image data from database using operations
-        2. Configure video generation settings
-        3. Call FFmpeg utilities to generate video
-        4. Create video record in database
-        5. Update job status
-
-        Args:
-            timelapse_id: ID of the timelapse to generate video for
-            job_id: ID of the video generation job
-            video_settings: Video generation configuration
-
-        Returns:
-            Tuple of (success, message, video_record_or_none)
+            List of video records matching criteria
         """
         try:
-            # Get timelapse data using operations (returns Pydantic model)
-            timelapse = self.timelapse_ops.get_timelapse_by_id(timelapse_id)
-            if not timelapse:
-                error_msg = f"Timelapse {timelapse_id} not found"
-                self.complete_video_generation_job(job_id, "", False, error_msg)
-                return False, error_msg, None
-
-            # Get images for timelapse using the new method (returns Pydantic models)
-            images = self.image_ops.get_images_for_timelapse(timelapse_id)
-            if not images:
-                error_msg = f"No images found for timelapse {timelapse_id}"
-                self.complete_video_generation_job(job_id, "", False, error_msg)
-                return False, error_msg, None
-
-            # Get camera data using operations (returns Pydantic model)
-            camera_data = self.camera_ops.get_camera_by_id(timelapse.camera_id)
-            if not camera_data:
-                error_msg = f"Camera {timelapse.camera_id} not found"
-                self.complete_video_generation_job(job_id, "", False, error_msg)
-                return False, error_msg, None
-
-            # Use file_helpers for secure path operations
-            images_dir = validate_file_path(
-                f"cameras/camera-{timelapse.camera_id}/images",
-                base_directory=settings.data_directory,
-                must_exist=True,
+            logger.debug(
+                f"Retrieving videos (sync) with filters: timelapse_id={timelapse_id}, camera_id={camera_id}"
             )
 
-            # Generate output filename with timezone-aware timestamp
-            timestamp_str = get_timezone_aware_timestamp_sync(
-                self.settings_ops
-            ).strftime("%Y%m%d_%H%M%S")
-            output_filename = f"timelapse_{timelapse_id}_{timestamp_str}.mp4"
-
-            # Use file_helpers to ensure output directory exists
-            videos_dir = ensure_directory_exists(settings.videos_directory)
-            output_path = videos_dir / output_filename
-
-            # Extract day numbers from images using Pydantic model attributes
-            day_numbers = [img.day_number for img in images]
-
-            # Configure overlay settings
-            overlay_settings = video_settings.get(
-                "overlay_settings", ffmpeg_utils.DEFAULT_OVERLAY_SETTINGS
+            videos = self.video_ops.get_videos(
+                timelapse_id=timelapse_id,
+                camera_id=camera_id,
+                status=status,
+                limit=limit,
+                offset=offset,
             )
 
-            # Get quality from constants if not specified
-            quality = video_settings.get("quality")
-            if quality not in VIDEO_QUALITIES:
-                quality = "medium"  # Default fallback
-
-            logger.info(f"Starting video generation for timelapse {timelapse_id}")
-
-            # Generate video using FFmpeg utilities
-            success, message, metadata = ffmpeg_utils.generate_video(
-                images_directory=images_dir,
-                output_path=str(output_path),
-                framerate=float(video_settings.get("fps", 24.0)),
-                quality=quality,
-                overlay_settings=overlay_settings,
-                day_numbers=day_numbers,
-            )
-
-            if success:
-                # Create video record using Pydantic model attributes
-                video_data = {
-                    "camera_id": timelapse.camera_id,
-                    "timelapse_id": timelapse_id,
-                    "name": f"Timelapse {timelapse.name}",
-                    "file_path": get_relative_path(
-                        output_path, settings.data_directory
-                    ),
-                    "status": "completed",
-                    "settings": video_settings,
-                    "image_count": metadata.get("image_count", len(images)),
-                    "file_size": metadata.get("file_size_bytes", 0),
-                    "duration_seconds": metadata.get("duration_seconds", 0),
-                    "calculated_fps": metadata.get(
-                        "framerate", video_settings.get("fps", 24.0)
-                    ),
-                    "images_start_date": timelapse.start_date,
-                    "images_end_date": timelapse.last_capture_at
-                    or timelapse.start_date,
-                    "trigger_type": video_settings.get("trigger_type", "manual"),
-                    "job_id": job_id,
-                    "created_at": get_timezone_aware_timestamp_sync(self.settings_ops),
-                }
-
-                video_record = self.create_video_record(video_data)
-
-                # Complete job successfully
-                self.complete_video_generation_job(job_id, str(output_path), True)
-
-                logger.info(
-                    f"Video generation completed successfully for timelapse {timelapse_id}"
-                )
-                return (
-                    True,
-                    f"Video generated successfully: {output_path}",
-                    video_record,
-                )
-
-            else:
-                # Complete job with failure
-                self.complete_video_generation_job(job_id, "", False, message)
-                logger.error(
-                    f"Video generation failed for timelapse {timelapse_id}: {message}"
-                )
-                return False, message, None
+            logger.debug(f"Retrieved {len(videos)} videos (sync)")
+            return videos
 
         except Exception as e:
-            error_msg = f"Error generating video for timelapse {timelapse_id}: {str(e)}"
-            logger.error(error_msg)
-            try:
-                self.complete_video_generation_job(job_id, "", False, error_msg)
-            except Exception as completion_error:
-                logger.error(f"Failed to update job status: {completion_error}")
-            return False, error_msg, None
+            logger.error(f"Failed to get videos (sync): {e}")
+            return []
 
-    def cleanup_old_video_jobs(
-        self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS
-    ) -> int:
+    def get_video_by_id(self, video_id: int) -> Optional[Video]:
         """
-        Clean up old completed video generation jobs.
+        Get video by ID (sync version).
 
         Args:
-            days_to_keep: Number of days to keep completed jobs (default: 30)
+            video_id: Video ID to retrieve
 
         Returns:
-            Number of jobs deleted
+            Video record or None if not found
         """
-        return self.video_ops.cleanup_old_video_jobs(days_to_keep)
+        try:
+            logger.debug(f"Retrieving video {video_id} (sync)")
+
+            video = self.video_ops.get_video_by_id(video_id)
+            if video:
+                logger.debug(f"Found video {video_id} (sync)")
+            else:
+                logger.warning(f"Video {video_id} not found (sync)")
+
+            return video
+
+        except Exception as e:
+            logger.error(f"Failed to get video {video_id} (sync): {e}")
+            return None
+
+    def create_video_record(self, video_data: Dict[str, Any]) -> Optional[Video]:
+        """
+        Create a new video record (sync version).
+
+        Args:
+            video_data: Video creation data as dictionary
+
+        Returns:
+            Created video record or None if failed
+        """
+        try:
+            logger.debug(
+                f"Creating video record (sync) for timelapse {video_data.get('timelapse_id')}"
+            )
+
+            # Ensure timezone-aware timestamp
+            current_time = get_timezone_aware_timestamp_sync(self.db)
+
+            # Prepare video record data
+            video_record_data = {
+                **video_data,
+                "created_at": current_time,
+                "updated_at": current_time,
+            }
+
+            # Create video record
+            video_record = self.video_ops.create_video_record(video_record_data)
+
+            if video_record:
+                logger.info(
+                    f"✅ Created video record {video_record.id} (sync) for timelapse {video_data.get('timelapse_id')}"
+                )
+
+                # Broadcast SSE event
+                self._broadcast_video_event(
+                    event_type=EVENT_VIDEO_CREATED,
+                    video_id=video_record.id,
+                    event_data={
+                        "video_id": video_record.id,
+                        "timelapse_id": video_data.get("timelapse_id"),
+                        "camera_id": video_data.get("camera_id"),
+                        "name": video_data.get("name"),
+                        "file_path": video_data.get("file_path"),
+                        "status": video_data.get("status"),
+                        "trigger_type": video_data.get("trigger_type", "unknown"),
+                    },
+                )
+
+                return video_record
+            else:
+                logger.error(
+                    f"❌ Failed to create video record (sync) for timelapse {video_data.get('timelapse_id')}"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error creating video record (sync): {e}")
+            return None
+
+    def delete_video(self, video_id: int) -> bool:
+        """
+        Delete a video record (sync version).
+
+        Args:
+            video_id: Video ID to delete
+
+        Returns:
+            True if deleted successfully
+        """
+        try:
+            logger.debug(f"Deleting video {video_id} (sync)")
+
+            # Get video info before deletion for event data
+            video_info = self.get_video_by_id(video_id)
+            if not video_info:
+                logger.error(f"Video {video_id} not found for deletion (sync)")
+                return False
+
+            # Perform deletion
+            success = self.video_ops.delete_video(video_id)
+
+            if success:
+                logger.info(f"✅ Deleted video {video_id} (sync)")
+
+                # Broadcast SSE event
+                self._broadcast_video_event(
+                    event_type=EVENT_VIDEO_DELETED,
+                    video_id=video_id,
+                    event_data={
+                        "video_id": video_id,
+                        "timelapse_id": video_info.timelapse_id,
+                        "camera_id": video_info.camera_id,
+                        "name": video_info.name,
+                        "file_path": video_info.file_path,
+                    },
+                )
+
+                return True
+            else:
+                logger.error(f"❌ Failed to delete video {video_id} (sync)")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error deleting video {video_id} (sync): {e}")
+            return False
+
+    def _broadcast_video_event(
+        self,
+        event_type: str,
+        video_id: Optional[int],
+        event_data: Dict[str, Any],
+        priority: str = SSEPriority.NORMAL,
+        source: str = "video_service",
+    ) -> None:
+        """
+        Broadcast SSE event for video operations (sync version).
+
+        Args:
+            event_type: Type of event
+            video_id: Video ID (if applicable)
+            event_data: Event payload data
+            priority: Event priority
+            source: Event source
+        """
+        try:
+            # Add timestamp to all events
+            event_data_with_timestamp = {
+                **event_data,
+                "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+            }
+
+            self.sse_ops.create_event(
+                event_type=event_type,
+                event_data=event_data_with_timestamp,
+                priority=priority,
+                source=source,
+            )
+
+            logger.debug(
+                f"Broadcasted SSE event (sync): {event_type} for video {video_id}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to broadcast SSE event (sync) {event_type}: {e}")
+
+    def get_queue_statistics_with_health(self, video_pipeline) -> dict:
+        """
+        Get comprehensive queue statistics with health assessment.
+        
+        Args:
+            video_pipeline: Video pipeline service for accessing job data
+            
+        Returns:
+            Dictionary with queue statistics and health status
+        """
+        from ..constants import VIDEO_QUEUE_WARNING_THRESHOLD, VIDEO_QUEUE_ERROR_THRESHOLD
+        
+        try:
+            # Get basic queue statistics from job service
+            queue_status = video_pipeline.job_service.get_queue_status()
+            
+            # Calculate derived statistics
+            total_jobs = sum(queue_status.values())
+            pending_jobs = queue_status.get("pending", 0)
+            processing_jobs = queue_status.get("processing", 0)
+            completed_jobs = queue_status.get("completed", 0)
+            failed_jobs = queue_status.get("failed", 0)
+            
+            # Determine queue health based on thresholds
+            if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
+                queue_health = "unhealthy"
+            elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
+                queue_health = "degraded"
+            else:
+                queue_health = "healthy"
+            
+            return {
+                "total_jobs": total_jobs,
+                "pending_jobs": pending_jobs,
+                "processing_jobs": processing_jobs,
+                "completed_jobs": completed_jobs,
+                "failed_jobs": failed_jobs,
+                "queue_health": queue_health
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get queue statistics: {e}")
+            return {
+                "total_jobs": 0,
+                "pending_jobs": 0,
+                "processing_jobs": 0,
+                "completed_jobs": 0,
+                "failed_jobs": 0,
+                "queue_health": "unhealthy"
+            }

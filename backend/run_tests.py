@@ -123,6 +123,21 @@ def run_thumbnail_frontend_tests() -> int:
     return run_command(cmd, Path(__file__).parent)
 
 
+def run_integration_tests() -> int:
+    """Run integration tests."""
+    cmd = [
+        "python3",
+        "-m",
+        "pytest",
+        "tests/integration/",
+        "-v",
+        "--tb=short",
+        "-m",
+        "integration",
+    ]
+    return run_command(cmd, Path(__file__).parent)
+
+
 def install_test_dependencies() -> int:
     """Install test dependencies."""
     cmd = ["pip", "install", "pytest", "pytest-asyncio", "pytest-cov"]
@@ -132,7 +147,7 @@ def install_test_dependencies() -> int:
 def main():
     """Main test runner."""
     if len(sys.argv) < 2:
-        print("Usage: python run_tests.py [cache|all|coverage|thumbnail|thumbnail-unit|thumbnail-coverage|thumbnail-frontend|install]")
+        print("Usage: python run_tests.py [cache|all|coverage|thumbnail|thumbnail-unit|thumbnail-coverage|thumbnail-frontend|integration|install]")
         print()
         print("Commands:")
         print("  cache             - Run cache-related tests")
@@ -142,6 +157,7 @@ def main():
         print("  thumbnail-unit    - Run thumbnail unit tests only")
         print("  thumbnail-coverage - Run thumbnail tests with coverage")
         print("  thumbnail-frontend - Run thumbnail frontend integration tests")
+        print("  integration       - Run integration tests")
         print("  install           - Install test dependencies")
         sys.exit(1)
 
@@ -161,6 +177,8 @@ def main():
         exit_code = run_thumbnail_coverage()
     elif command == "thumbnail-frontend":
         exit_code = run_thumbnail_frontend_tests()
+    elif command == "integration":
+        exit_code = run_integration_tests()
     elif command == "install":
         exit_code = install_test_dependencies()
     else:

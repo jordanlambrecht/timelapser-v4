@@ -30,9 +30,9 @@ from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 from zoneinfo import ZoneInfo
 
-from backend.app.database import sync_db
-from backend.app.database.sse_events_operations import SyncSSEEventsOperations
-from backend.app.enums import SSEPriority
+from ...database import sync_db
+from ...database.sse_events_operations import SyncSSEEventsOperations
+from ...enums import SSEPriority
 
 
 # Import centralized time utilities (AI-CONTEXT compliant)

@@ -8,7 +8,7 @@ export async function GET(
     const { id } = await params
 
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/timelapses/${id}/thumbnails/stats`,
+      `${process.env.NEXT_PUBLIC_FASTAPI_URL}/timelapses/${id}/thumbnails/stats`,
       {
         headers: {
           "Content-Type": "application/json",

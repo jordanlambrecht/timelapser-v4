@@ -11,14 +11,18 @@ export async function GET(
   try {
     // Extract query parameters
     const { searchParams } = new URL(request.url)
-    const page = searchParams.get('page') || '1'
-    const per_page = searchParams.get('per_page') || '50'
+    const page = parseInt(searchParams.get('page') || '1')
+    const per_page = parseInt(searchParams.get('per_page') || '50')
     const search = searchParams.get('search') || ''
+
+    // Convert page/per_page to limit/offset for FastAPI
+    const limit = per_page
+    const offset = (page - 1) * per_page
 
     // Build query string for FastAPI
     const queryParams = new URLSearchParams({
-      page,
-      per_page,
+      limit: limit.toString(),
+      offset: offset.toString(),
       ...(search && { search }),
     })
 

@@ -24,10 +24,11 @@ export function CombinedStatusBadge({
 }: CombinedStatusBadgeProps) {
   // Handle offline/unknown cameras
   if (healthStatus === "offline" || healthStatus === "unknown") {
-    const badgeClass = healthStatus === "offline" 
-      ? "bg-failure/20 text-failure border-failure/30" 
-      : "bg-warn/20 text-warn border-warn/30"
-    
+    const badgeClass =
+      healthStatus === "offline"
+        ? "bg-failure/20 text-failure border-failure/30"
+        : "bg-warn/20 text-warn border-warn/30"
+
     return (
       <div
         className={cn(
@@ -38,7 +39,7 @@ export function CombinedStatusBadge({
         )}
       >
         <span>●</span>
-        <span className="capitalize">{healthStatus}</span>
+        <span className='capitalize'>{healthStatus}</span>
       </div>
     )
   }
@@ -59,12 +60,12 @@ export function CombinedStatusBadge({
 
       if (isWithinTime) {
         statusClass = "bg-success/20 text-success border-success/30"
-        icon = <div className="w-2 h-2 rounded-full bg-success" />
+        icon = <div className='w-2 h-2 rounded-full bg-success' />
         label = "Recording"
         shouldAnimate = true
       } else {
         statusClass = "bg-purple/20 text-purple-light border-purple/30"
-        icon = <div className="w-2 h-2 rounded-full bg-purple-light" />
+        icon = <div className='w-2 h-2 rounded-full bg-purple-light' />
         label = "Snoozing"
         shouldAnimate = true
       }
@@ -72,13 +73,13 @@ export function CombinedStatusBadge({
 
     case "paused":
       statusClass = "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-      icon = <Pause className="w-3 h-3" />
+      icon = <Pause className='w-3 h-3' />
       label = "Paused"
       break
 
     default:
       statusClass = "bg-cyan/20 text-cyan border-cyan/30"
-      icon = <Circle className="w-3 h-3" />
+      icon = <Circle className='w-3 h-3' />
       label = "Completed"
       break
   }
@@ -88,7 +89,8 @@ export function CombinedStatusBadge({
       className={cn(
         "inline-flex items-center space-x-2 text-xs font-medium px-3 py-1.5 rounded-full border transition-all duration-300",
         statusClass,
-        shouldAnimate && "[&>*:first-child]:animate-pulse [&>*:first-child]:shadow-lg",
+        shouldAnimate &&
+          "[&>*:first-child]:animate-pulse [&>*:first-child]:shadow-lg",
         className
       )}
     >
@@ -106,10 +108,12 @@ export function StatusBadge({
   status: "online" | "offline" | "unknown"
   className?: string
 }) {
-  const statusClass = 
-    status === "online" ? "bg-success/20 text-success border-success/30" :
-    status === "offline" ? "bg-failure/20 text-failure border-failure/30" :
-    "bg-warn/20 text-warn border-warn/30"
+  const statusClass =
+    status === "online"
+      ? "bg-success/20 text-success border-success/30"
+      : status === "offline"
+      ? "bg-failure/20 text-failure border-failure/30"
+      : "bg-warn/20 text-warn border-warn/30"
 
   return (
     <div
@@ -121,7 +125,7 @@ export function StatusBadge({
       )}
     >
       <span>●</span>
-      <span className="capitalize">{status}</span>
+      <span className='capitalize'>{status}</span>
     </div>
   )
 }

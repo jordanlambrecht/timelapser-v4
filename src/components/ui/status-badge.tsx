@@ -42,7 +42,8 @@ export function StatusBadge({
 
   // For online cameras, determine combined status
   const isTimelapsePaused = timelapseStatus === "paused"
-  const isTimelapseCompleted = !timelapseStatus || timelapseStatus === "completed"
+  const isTimelapseCompleted =
+    !timelapseStatus || timelapseStatus === "completed"
 
   if (isTimelapseRunning) {
     const isWithinTime = isWithinTimeWindow({

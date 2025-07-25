@@ -240,7 +240,7 @@ class AsyncTimelapseWorker:
             )
 
             self.overlay_worker = OverlayWorker(
-                sync_db=sync_db,
+                db=sync_db,
                 settings_service=self.settings_service,
                 weather_manager=self.weather_manager,
             )

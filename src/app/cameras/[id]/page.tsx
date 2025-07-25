@@ -13,9 +13,20 @@ import { useCameraDetails } from "@/hooks/use-camera-details"
 import { useCameraSSE } from "@/hooks/use-camera-sse"
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
+import {
+  pauseTimelapse,
+  resumeTimelapse,
+  stopTimelapse,
+  startTimelapse,
+} from "@/lib/camera-actions"
 import { TimelapseSettingsModal } from "@/components/ui/timelapse-settings-modal"
 import { TimelapseDetailsModal } from "@/components/timelapse-details-modal"
-import { CreateTimelapseDialog } from "@/components/create-timelapse-dialog"
+import {
+  TimelapseCreationModal,
+  type TimelapseForm,
+} from "@/components/timelapse-creation"
+import { EnhancedCameraModal } from "@/components/enhanced-camera-modal"
+import { EditTimelapseModal } from "@/components/edit-timelapse-modal"
 import { CameraDetailsImage } from "@/components/camera-image-unified"
 import { useLatestImageDetails } from "@/hooks/use-latest-image"
 import { downloadLatestImage } from "@/lib/latest-image-api"
@@ -48,6 +59,8 @@ import {
   Download,
   ChevronRight,
   PlayCircle,
+  Cog,
+  Edit,
 } from "lucide-react"
 import cn from "clsx"
 import Image from "next/image"
@@ -84,9 +97,11 @@ export default function CameraDetailsPage() {
   // Modal states
   const [selectedTimelapse, setSelectedTimelapse] = useState<any>(null)
   const [timelapseModalOpen, setTimelapseModalOpen] = useState(false)
+  const [editTimelapseModalOpen, setEditTimelapseModalOpen] = useState(false)
   const [newTimelapseDialogOpen, setNewTimelapseDialogOpen] = useState(false)
   const [confirmStopOpen, setConfirmStopOpen] = useState(false)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [cameraSettingsModalOpen, setCameraSettingsModalOpen] = useState(false)
 
   // Computed values from clean data
   const completedTimelapses = timelapses.filter((t) => t.status === "completed")
@@ -201,19 +216,13 @@ export default function CameraDetailsPage() {
     try {
       setActionLoading("pause")
 
-      const response = await fetch(
-        `/api/cameras/${camera.id}/pause-timelapse`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      )
+      const result = await pauseTimelapse(camera.id)
 
-      if (response.ok) {
+      if (result.success) {
         // SSE event will handle state update automatically - no manual refetch needed
         // toast.timelapsePaused(camera.name) // Removed - SSE handler shows toast
       } else {
-        throw new Error("Failed to pause timelapse")
+        throw new Error(result.message || "Failed to pause timelapse")
       }
     } catch (error) {
       console.error("Error pausing timelapse:", error)
@@ -232,19 +241,13 @@ export default function CameraDetailsPage() {
     try {
       setActionLoading("resume")
 
-      const response = await fetch(
-        `/api/cameras/${camera.id}/resume-timelapse`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      )
+      const result = await resumeTimelapse(camera.id)
 
-      if (response.ok) {
+      if (result.success) {
         // SSE event will handle state update automatically - no manual refetch needed
         // toast.timelapseResumed(camera.name) // Removed - SSE handler shows toast
       } else {
-        throw new Error("Failed to resume timelapse")
+        throw new Error(result.message || "Failed to resume timelapse")
       }
     } catch (error) {
       console.error("Error resuming timelapse:", error)
@@ -263,17 +266,13 @@ export default function CameraDetailsPage() {
     try {
       setActionLoading("stop")
 
-      // Complete the timelapse using camera-centric endpoint
-      const response = await fetch(`/api/cameras/${camera.id}/stop-timelapse`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      })
+      const result = await stopTimelapse(camera.id)
 
-      if (response.ok) {
+      if (result.success) {
         // SSE event will handle state update automatically - no manual refetch needed
         // Toast and image refresh handled by SSE event handler
       } else {
-        throw new Error("Failed to stop timelapse")
+        throw new Error(result.message || "Failed to stop timelapse")
       }
     } catch (error) {
       console.error("Error stopping timelapse:", error)
@@ -286,91 +285,140 @@ export default function CameraDetailsPage() {
     }
   }
 
-  const handleStartNewTimelapse = async (config: TimelapseConfig) => {
+  const handleTimelapseFormSubmit = async (form: TimelapseForm) => {
     if (!camera) return
 
     try {
-      setActionLoading("start")
+      // Convert TimelapseForm to backend API format
+      const timelapseData = {
+        name:
+          form.name ||
+          `Timelapse ${new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace("T", " ")}`,
+        capture_interval_seconds: form.captureInterval,
 
-      // ARCHITECTURAL LAW: Timezone-aware validation for auto-stop
-      if (config.useAutoStop && config.autoStopAt) {
-        const autoStopDate = new Date(config.autoStopAt)
-        const now = new Date()
-        if (autoStopDate <= now) {
-          toast.error("Auto-stop time must be in the future")
-          throw new Error("Invalid auto-stop time")
-        }
+        // Time window settings
+        time_window_type: form.runWindowEnabled
+          ? form.runWindowType === "sunrise-sunset"
+            ? "sunrise_sunset"
+            : "time"
+          : "none",
+        time_window_start:
+          form.runWindowEnabled && form.runWindowType === "between"
+            ? form.timeWindowStart
+            : null,
+        time_window_end:
+          form.runWindowEnabled && form.runWindowType === "between"
+            ? form.timeWindowEnd
+            : null,
+        sunrise_offset_minutes:
+          form.runWindowEnabled && form.runWindowType === "sunrise-sunset"
+            ? form.sunriseOffsetMinutes
+            : null,
+        sunset_offset_minutes:
+          form.runWindowEnabled && form.runWindowType === "sunrise-sunset"
+            ? form.sunsetOffsetMinutes
+            : null,
+        use_custom_time_window: form.runWindowEnabled,
+
+        // Stop time settings
+        auto_stop_at:
+          form.stopTimeEnabled && form.stopType === "datetime"
+            ? form.stopDateTime
+            : null,
+
+        // Video generation settings
+        video_generation_mode: form.videoGenerationMode,
+        standard_fps: form.videoStandardFps,
+        enable_time_limits: form.videoEnableTimeLimits,
+        min_time_seconds: form.videoEnableTimeLimits
+          ? form.videoMinDuration * 60
+          : null,
+        max_time_seconds: form.videoEnableTimeLimits
+          ? form.videoMaxDuration * 60
+          : null,
+        target_time_seconds:
+          form.videoGenerationMode === "target"
+            ? form.videoTargetDuration * 60
+            : null,
+        fps_bounds_min: form.videoFpsMin,
+        fps_bounds_max: form.videoFpsMax,
+
+        // Video automation settings
+        video_automation_mode: form.videoManualOnly
+          ? "manual"
+          : form.videoPerCapture
+          ? "per_capture"
+          : form.videoScheduled
+          ? "scheduled"
+          : form.videoMilestone
+          ? "milestone"
+          : "manual",
+
+        // Generation schedule (for scheduled automation)
+        generation_schedule: form.videoScheduled
+          ? {
+              type: form.videoScheduleType,
+              time: form.videoScheduleTime,
+              enabled: true,
+              timezone: "UTC",
+            }
+          : null,
+
+        // Milestone config (for milestone automation)
+        milestone_config: form.videoMilestone
+          ? {
+              thresholds: [form.videoMilestoneInterval],
+              enabled: true,
+              reset_on_completion: !form.videoMilestoneOverwrite,
+            }
+          : null,
       }
 
-      // Send minimal data - let backend apply defaults via Pydantic model
-      const timelapseData: any = {
-        name: config.name,
-      }
-
-      // Only include optional fields if they differ from defaults
-      if (config.useAutoStop && config.autoStopAt) {
-        timelapseData.auto_stop_at = config.autoStopAt
-      }
-
-      if (config.timeWindowType === "time") {
-        timelapseData.time_window_type = "time"
-        timelapseData.time_window_start = config.timeWindowStart
-        timelapseData.time_window_end = config.timeWindowEnd
-        timelapseData.use_custom_time_window = true
-      } else if (config.timeWindowType === "sunrise_sunset") {
-        timelapseData.time_window_type = "sunrise_sunset"
-        timelapseData.use_custom_time_window = true
-      }
-
-      // Include video settings if provided
-      if (config.videoSettings) {
-        Object.assign(timelapseData, config.videoSettings)
-      }
-
-      // No optimistic updates needed - comprehensive hook will handle data updates
-
-      // Use the camera-centric start timelapse endpoint
+      // Call the camera timelapse action API to create and start the timelapse
       const response = await fetch(
-        `/api/cameras/${camera.id}/start-timelapse`,
+        `/api/cameras/${camera.id}/timelapse-action`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(timelapseData),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "create",
+            timelapse_data: timelapseData,
+          }),
         }
       )
 
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(
+          errorData.detail ||
+            `HTTP ${response.status}: Failed to create timelapse`
+        )
+      }
+
       const result = await response.json()
 
-      if (response.ok) {
-        toast.timelapseStarted(camera.name)
+      if (result.success) {
+        toast.success(
+          `Timelapse "${timelapseData.name}" created and started successfully!`
+        )
         setNewTimelapseDialogOpen(false)
-        // SSE event will handle all state updates automatically
-        // Force image refresh with cache-busting
-        setImageKey(Date.now())
-      } else {
-        // On failure, refetch to get fresh state
+        // SSE events will handle real-time updates
         refetch()
-        throw new Error(result.detail || "Failed to start timelapse")
+      } else {
+        throw new Error(result.message || "Failed to create timelapse")
       }
     } catch (error) {
-      console.error("Error starting new timelapse:", error)
-      toast.error("Failed to start timelapse", {
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        duration: 6000,
-      })
-      throw error // Re-throw so dialog handles loading state properly
-    } finally {
-      setActionLoading(null)
+      console.error("Failed to create timelapse:", error)
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create timelapse"
+      )
     }
   }
-
-  // 🎯 REMOVED: handleDeleteImages function - referenced undefined selectedVideo variable
-  // This function was never called from the UI and contained references to undefined variables.
-  // Image management functionality should be implemented with proper state management when needed.
-
-  // 🎯 REMOVED: handleRegenerateVideo function - no longer called after removing handleDeleteImages
-  // Video regeneration functionality should be implemented through the main video management UI when needed.
 
   // Helper functions
   const formatFileSize = (bytes: number) => {
@@ -507,16 +555,27 @@ export default function CameraDetailsPage() {
                   </div>
                 )}
 
-                {/* Settings Button */}
-                <Button
-                  onClick={() => setSettingsModalOpen(true)}
-                  size='sm'
-                  variant='outline'
-                  className='border-purple-muted/40 hover:bg-purple/20 text-white'
-                  title='Camera Settings'
-                >
-                  <Settings className='w-4 h-4' />
-                </Button>
+                {/* Settings Buttons */}
+                <div className='flex items-center gap-2'>
+                  <Button
+                    onClick={() => setCameraSettingsModalOpen(true)}
+                    size='sm'
+                    variant='outline'
+                    className='border-cyan/40 hover:bg-cyan/20 text-white'
+                    title='Camera Settings & Crop/Rotation'
+                  >
+                    <Cog className='w-4 h-4' />
+                  </Button>
+                  <Button
+                    onClick={() => setSettingsModalOpen(true)}
+                    size='sm'
+                    variant='outline'
+                    className='border-purple-muted/40 hover:bg-purple/20 text-white'
+                    title='Timelapse Settings'
+                  >
+                    <Settings className='w-4 h-4' />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -707,9 +766,16 @@ export default function CameraDetailsPage() {
                           <p className='text-lg font-medium'>
                             No images captured yet
                           </p>
-                          <p className='text-sm mt-2'>
+                          <p className='text-sm mt-2 mb-4'>
                             Start a timelapse to begin capturing
                           </p>
+                          <Button
+                            onClick={() => setNewTimelapseDialogOpen(true)}
+                            className='bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-700 hover:to-cyan-700 text-white font-medium'
+                          >
+                            <Play className='w-4 h-4 mr-2' />
+                            Start New Timelapse
+                          </Button>
                         </div>
                       </div>
                     )
@@ -1017,6 +1083,36 @@ export default function CameraDetailsPage() {
                               </td>
                               <td className='py-4 px-4'>
                                 <div className='flex items-center gap-2'>
+                                  {/* Edit button for running/paused timelapses */}
+                                  {(timelapse.status === "running" || timelapse.status === "paused") && (
+                                    <Button
+                                      size='sm'
+                                      variant='outline'
+                                      className='text-cyan border-cyan hover:bg-cyan hover:text-black'
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+
+                                        const numericId = parseInt(
+                                          timelapse.id?.toString()
+                                        )
+                                        if (isNaN(numericId)) {
+                                          toast.error("Invalid timelapse ID")
+                                          return
+                                        }
+
+                                        setSelectedTimelapse({
+                                          ...timelapse,
+                                          id: numericId,
+                                        })
+                                        setEditTimelapseModalOpen(true)
+                                      }}
+                                      title="Edit timelapse settings"
+                                    >
+                                      <Edit className='w-4 h-4' />
+                                    </Button>
+                                  )}
+                                  
+                                  {/* View details button */}
                                   <Button
                                     size='sm'
                                     variant='outline'
@@ -1038,6 +1134,7 @@ export default function CameraDetailsPage() {
                                       })
                                       setTimelapseModalOpen(true)
                                     }}
+                                    title="View timelapse details"
                                   >
                                     <Eye className='w-4 h-4' />
                                   </Button>
@@ -1584,6 +1681,41 @@ export default function CameraDetailsPage() {
         />
       )}
 
+      {/* Edit Timelapse Modal */}
+      {selectedTimelapse && (
+        <EditTimelapseModal
+          isOpen={editTimelapseModalOpen}
+          onClose={() => {
+            setEditTimelapseModalOpen(false)
+            setSelectedTimelapse(null)
+          }}
+          timelapse={selectedTimelapse}
+          cameraId={camera.id}
+          cameraName={camera.name}
+          onSave={async (updates) => {
+            try {
+              const response = await fetch(`/api/timelapses/${selectedTimelapse.id}`, {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(updates),
+              })
+
+              if (!response.ok) {
+                throw new Error("Failed to update timelapse")
+              }
+
+              toast.success("Timelapse settings updated!")
+              refetch()
+            } catch (error) {
+              console.error("Error updating timelapse:", error)
+              toast.error("Failed to update timelapse settings")
+            }
+          }}
+        />
+      )}
+
       {/* Settings Modal */}
       <TimelapseSettingsModal
         isOpen={settingsModalOpen}
@@ -1594,6 +1726,39 @@ export default function CameraDetailsPage() {
           // Refetch data for settings updates
           refetch()
         }}
+      />
+
+      {/* Camera Settings Modal */}
+      <EnhancedCameraModal
+        isOpen={cameraSettingsModalOpen}
+        onClose={() => setCameraSettingsModalOpen(false)}
+        onSave={async (updatedData) => {
+          try {
+            const response = await fetch(`/api/cameras/${camera.id}`, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(updatedData),
+            })
+
+            if (!response.ok) {
+              throw new Error("Failed to update camera")
+            }
+
+            // Refetch camera data after successful update
+            refetch()
+            setCameraSettingsModalOpen(false)
+
+            toast.success("Camera settings updated successfully!")
+          } catch (error) {
+            console.error("Error updating camera:", error)
+            toast.error("Failed to update camera settings")
+            throw error // Re-throw to allow modal to handle error state
+          }
+        }}
+        camera={camera}
+        title='Camera Settings'
       />
 
       {/* Stop Timelapse Confirmation Dialog */}
@@ -1641,18 +1806,12 @@ export default function CameraDetailsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Create New Timelapse Dialog*/}
-      <CreateTimelapseDialog
+      {/* Create New Timelapse Modal */}
+      <TimelapseCreationModal
         isOpen={newTimelapseDialogOpen}
         onClose={() => setNewTimelapseDialogOpen(false)}
-        onConfirm={handleStartNewTimelapse}
+        onSubmit={handleTimelapseFormSubmit}
         cameraId={camera.id}
-        cameraName={camera.name}
-        defaultTimeWindow={{
-          start: camera.time_window_start || "06:00:00",
-          end: camera.time_window_end || "18:00:00",
-          enabled: camera.use_time_window || false,
-        }}
       />
     </div>
   )

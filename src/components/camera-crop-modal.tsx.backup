@@ -1,0 +1,754 @@
+// src/components/camera-crop-modal.tsx
+import { useState, useEffect } from "react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Slider } from "@/components/ui/slider"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { 
+  Crop, 
+  RotateCw, 
+  RefreshCw,
+  Monitor,
+  Settings
+} from "lucide-react"
+import { toast } from "@/lib/toast"
+import type { CropRotationSettings, CropSettings, AspectRatioSettings } from "@/types/cameras"
+
+interface CameraCropModalProps {
+  isOpen: boolean
+  onClose: () => void
+  onSave: (settings: CropRotationSettings) => void
+  cameraId?: number
+  cameraName?: string
+  initialSettings?: CropRotationSettings
+  inlineMode?: boolean
+}
+
+const ASPECT_RATIOS = [
+  { value: "16:9", label: "16:9 (Widescreen)" },
+  { value: "4:3", label: "4:3 (Standard)" },
+  { value: "1:1", label: "1:1 (Square)" },
+  { value: "21:9", label: "21:9 (Ultrawide)" },
+  { value: "custom", label: "Custom" },
+]
+
+const PROCESSING_ORDER_OPTIONS = [
+  { value: "crop,rotate,aspect_ratio", label: "Crop → Rotate → Aspect Ratio" },
+  { value: "rotate,crop,aspect_ratio", label: "Rotate → Crop → Aspect Ratio" },
+  { value: "aspect_ratio,crop,rotate", label: "Aspect Ratio → Crop → Rotate" },
+]
+
+export function CameraCropModal({
+  isOpen,
+  onClose,
+  onSave,
+  cameraId,
+  cameraName,
+  initialSettings,
+  inlineMode = false,
+}: CameraCropModalProps) {
+  const [settings, setSettings] = useState<CropRotationSettings>({
+    rotation: 0,
+    crop: undefined,
+    aspect_ratio: undefined,
+    processing_order: ["crop", "rotate", "aspect_ratio"],
+    preview_enabled: true,
+  })
+  const [saving, setSaving] = useState(false)
+
+  // Update settings when modal opens or initialSettings changes
+  useEffect(() => {
+    if (isOpen && initialSettings) {
+      setSettings(initialSettings)
+    }
+  }, [isOpen, initialSettings])
+
+  const handleRotationChange = (value: number[]) => {
+    setSettings(prev => ({ ...prev, rotation: value[0] as 0 | 90 | 180 | 270 }))
+  }
+
+  const handleCropChange = (field: keyof CropSettings, value: number) => {
+    setSettings(prev => {
+      if (!prev.crop) {
+        // Create new crop settings if they don't exist
+        const newCrop = { x: 0, y: 0, width: 100, height: 100 }
+        return { ...prev, crop: { ...newCrop, [field]: value } }
+      }
+      return { ...prev, crop: { ...prev.crop, [field]: value } }
+    })
+  }
+
+  const handleAspectRatioChange = (field: keyof AspectRatioSettings, value: string) => {
+    setSettings(prev => {
+      if (!prev.aspect_ratio) {
+        // Create new aspect ratio settings if they don't exist
+        const newAspectRatio = { enabled: true, ratio: "16:9", mode: "crop" as const }
+        return { ...prev, aspect_ratio: { ...newAspectRatio, [field]: value } }
+      }
+      return { ...prev, aspect_ratio: { ...prev.aspect_ratio, [field]: value } }
+    })
+  }
+
+  const toggleCrop = (enabled: boolean) => {
+    if (enabled) {
+      setSettings(prev => ({
+        ...prev,
+        crop: { x: 0, y: 0, width: 100, height: 100 }
+      }))
+    } else {
+      setSettings(prev => ({ ...prev, crop: undefined }))
+    }
+  }
+
+  const toggleAspectRatio = (enabled: boolean) => {
+    if (enabled) {
+      setSettings(prev => ({
+        ...prev,
+        aspect_ratio: { enabled: true, ratio: "16:9", mode: "crop" }
+      }))
+    } else {
+      setSettings(prev => ({ ...prev, aspect_ratio: undefined }))
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    
+    try {
+      await onSave(settings)
+      toast.success("Crop and rotation settings saved successfully!")
+      onClose()
+    } catch {
+      toast.error("Failed to save settings. Please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const resetToDefaults = () => {
+    setSettings({
+      rotation: 0,
+      crop: undefined,
+      aspect_ratio: undefined,
+      processing_order: ["crop", "rotate", "aspect_ratio"],
+      preview_enabled: true,
+    })
+  }
+
+  const content = (
+    <form onSubmit={handleSubmit} className='mt-6 space-y-6'>
+      <Tabs defaultValue="rotation" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 bg-black/30 border border-purple-muted/30">
+          <TabsTrigger value="rotation" className="data-[state=active]:bg-purple/20">
+            <RotateCw className="w-4 h-4 mr-2" />
+            Rotation
+          </TabsTrigger>
+          <TabsTrigger value="crop" className="data-[state=active]:bg-purple/20">
+            <Crop className="w-4 h-4 mr-2" />
+            Crop
+          </TabsTrigger>
+          <TabsTrigger value="aspect" className="data-[state=active]:bg-purple/20">
+            <Monitor className="w-4 h-4 mr-2" />
+            Aspect Ratio
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Rotation Tab */}
+        <TabsContent value="rotation" className="space-y-6 mt-6">
+          <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+            <div className='space-y-4'>
+              <div className='flex items-center justify-between'>
+                <Label className='text-lg font-bold text-white'>Camera Rotation</Label>
+                <div className='text-sm text-grey-light/70'>
+                  Current rotation: <strong className='text-white'>{settings.rotation}°</strong>
+                  {settings.rotation === 0 && " (Normal)"}
+                  {settings.rotation === 90 && " (Clockwise)"}
+                  {settings.rotation === 180 && " (Upside Down)"}
+                  {settings.rotation === 270 && " (Counter-Clockwise)"}
+                </div>
+              </div>
+              
+              <div className='space-y-4'>
+                <div className='space-y-3'>
+                  <Label className='text-white'>Rotation Angle</Label>
+                  <Slider
+                    value={[settings.rotation]}
+                    onValueChange={handleRotationChange}
+                    max={270}
+                    min={0}
+                    step={90}
+                    className="w-full"
+                  />
+                </div>
+                
+                <div className='grid grid-cols-4 gap-2'>
+                  {[0, 90, 180, 270].map((rotation) => (
+                    <Button
+                      key={rotation}
+                      type="button"
+                      size="sm"
+                      variant={settings.rotation === rotation ? "default" : "outline"}
+                      onClick={() => setSettings(prev => ({ ...prev, rotation: rotation as 0 | 90 | 180 | 270 }))}
+                      className='text-xs'
+                    >
+                      {rotation}°
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Crop Tab */}
+        <TabsContent value="crop" className="space-y-6 mt-6">
+          <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+            <div className='flex items-center justify-between'>
+              <div className='space-y-2'>
+                <Label className='text-lg font-bold text-white'>Image Cropping</Label>
+                <p className='text-sm text-grey-light/60'>
+                  Crop the captured image to focus on a specific area
+                </p>
+              </div>
+              <Switch
+                checked={!!settings.crop}
+                onCheckedChange={toggleCrop}
+                className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+              />
+            </div>
+
+            {settings.crop && (
+              <div className='space-y-4'>
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-2'>
+                    <Label className='text-white'>X Position</Label>
+                    <Input
+                      type="number"
+                      value={settings.crop.x}
+                      onChange={(e) => handleCropChange('x', parseInt(e.target.value) || 0)}
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                      min={0}
+                    />
+                  </div>
+                  <div className='space-y-2'>
+                    <Label className='text-white'>Y Position</Label>
+                    <Input
+                      type="number"
+                      value={settings.crop.y}
+                      onChange={(e) => handleCropChange('y', parseInt(e.target.value) || 0)}
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                      min={0}
+                    />
+                  </div>
+                </div>
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-2'>
+                    <Label className='text-white'>Width</Label>
+                    <Input
+                      type="number"
+                      value={settings.crop.width}
+                      onChange={(e) => handleCropChange('width', parseInt(e.target.value) || 0)}
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                      min={1}
+                    />
+                  </div>
+                  <div className='space-y-2'>
+                    <Label className='text-white'>Height</Label>
+                    <Input
+                      type="number"
+                      value={settings.crop.height}
+                      onChange={(e) => handleCropChange('height', parseInt(e.target.value) || 0)}
+                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                      min={1}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* Aspect Ratio Tab */}
+        <TabsContent value="aspect" className="space-y-6 mt-6">
+          <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+            <div className='flex items-center justify-between'>
+              <div className='space-y-2'>
+                <Label className='text-lg font-bold text-white'>Aspect Ratio Control</Label>
+                <p className='text-sm text-grey-light/60'>
+                  Automatically adjust image to specific aspect ratio
+                </p>
+              </div>
+              <Switch
+                checked={!!settings.aspect_ratio}
+                onCheckedChange={toggleAspectRatio}
+                className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+              />
+            </div>
+
+            {settings.aspect_ratio && (
+              <div className='space-y-4'>
+                <div className='space-y-2'>
+                  <Label className='text-white'>Aspect Ratio</Label>
+                  <Select 
+                    value={settings.aspect_ratio.ratio || "16:9"} 
+                    onValueChange={(value) => handleAspectRatioChange('ratio', value)}
+                  >
+                    <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASPECT_RATIOS.map((ratio) => (
+                        <SelectItem key={ratio.value} value={ratio.value}>
+                          {ratio.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className='space-y-2'>
+                  <Label className='text-white'>Adjustment Mode</Label>
+                  <Select 
+                    value={settings.aspect_ratio.mode || "crop"} 
+                    onValueChange={(value) => handleAspectRatioChange('mode', value as 'crop' | 'pad' | 'stretch')}
+                  >
+                    <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="crop">Crop (trim edges)</SelectItem>
+                      <SelectItem value="pad">Pad (add borders)</SelectItem>
+                      <SelectItem value="stretch">Stretch (distort)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {settings.aspect_ratio.ratio === "custom" && (
+                  <div className='grid grid-cols-2 gap-4'>
+                    <div className='space-y-2'>
+                      <Label className='text-white'>Custom Width</Label>
+                      <Input
+                        type="number"
+                        value={settings.aspect_ratio.custom_width || 16}
+                        onChange={(e) => handleAspectRatioChange('custom_width', parseInt(e.target.value) || 16)}
+                        className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                        min={1}
+                      />
+                    </div>
+                    <div className='space-y-2'>
+                      <Label className='text-white'>Custom Height</Label>
+                      <Input
+                        type="number"
+                        value={settings.aspect_ratio.custom_height || 9}
+                        onChange={(e) => handleAspectRatioChange('custom_height', parseInt(e.target.value) || 9)}
+                        className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'
+                        min={1}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {/* Processing Order and Advanced Settings */}
+      <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+        <div className='space-y-4'>
+          <Label className='text-lg font-bold text-white'>Processing Order</Label>
+          <p className='text-sm text-grey-light/60'>
+            Order in which transformations are applied to the image
+          </p>
+          <Select 
+            value={settings.processing_order.join(',')} 
+            onValueChange={(value) => setSettings(prev => ({ 
+              ...prev, 
+              processing_order: value.split(',') as ('crop' | 'rotate' | 'aspect_ratio')[]
+            }))}
+          >
+            <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-cyan/50 rounded-xl'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROCESSING_ORDER_OPTIONS.map((order) => (
+                <SelectItem key={order.value} value={order.value}>
+                  {order.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className='flex items-center justify-between'>
+          <div className='space-y-2'>
+            <Label className='text-white font-medium'>Preview Mode</Label>
+            <p className='text-sm text-grey-light/60'>
+              Show preview of transformations when capturing
+            </p>
+          </div>
+          <Switch
+            checked={settings.preview_enabled}
+            onCheckedChange={(checked) => setSettings(prev => ({ ...prev, preview_enabled: checked }))}
+            className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+          />
+        </div>
+      </div>
+
+      {!inlineMode && (
+        <DialogFooter className='gap-3 pt-4'>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={resetToDefaults}
+            className='px-6 border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white'
+          >
+            <RefreshCw className='w-4 h-4 mr-2' />
+            Reset to Defaults
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={onClose}
+            className='px-6 border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white'
+          >
+            Cancel
+          </Button>
+          <Button
+            type='submit'
+            className='px-8 font-bold text-black transition-all duration-300 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan hover:shadow-lg hover:shadow-pink/20'
+          >
+            Save Settings
+          </Button>
+        </DialogFooter>
+      )}
+    </form>
+  )
+
+  return (
+    <>
+      {inlineMode ? (
+        // Inline content without dialog wrapper
+        <div className='space-y-6'>
+          <div className='flex items-center space-x-3'>
+            <div className='p-2 bg-gradient-to-br from-cyan/20 to-purple/20 rounded-xl'>
+              <Crop className='w-6 h-6 text-white' />
+            </div>
+            <div>
+              <h3 className='text-xl font-bold text-white'>Crop & Rotation Settings</h3>
+              <p className='text-grey-light/70 text-sm'>
+                Configure image cropping, rotation, and aspect ratio
+              </p>
+            </div>
+          </div>
+          {content}
+        </div>
+      ) : (
+        // Dialog mode
+        <Dialog open={isOpen} onOpenChange={onClose}>
+          <DialogContent className='max-w-3xl glass-strong border-purple-muted/50 max-h-[90vh] overflow-y-auto'>
+            <DialogHeader className='relative'>
+              <div className='absolute w-16 h-16 rounded-full -top-2 -right-2 bg-gradient-to-bl from-pink/10 to-transparent' />
+              <DialogTitle className='flex items-center space-x-3 text-xl'>
+                <div className='p-2 bg-gradient-to-br from-cyan/20 to-purple/20 rounded-xl'>
+                  <Crop className='w-6 h-6 text-white' />
+                </div>
+                <span className='text-white'>Crop & Rotation Settings</span>
+              </DialogTitle>
+              <p className='text-grey-light/70 mt-2'>
+                Configure image cropping, rotation, and aspect ratio for <strong className='text-white'>{cameraName}</strong>
+              </p>
+            </DialogHeader>
+            {content}
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  )
+}
+}
+
+        <form onSubmit={handleSubmit} className='mt-6 space-y-6'>
+          <Tabs defaultValue="rotation" className="w-full">
+            <TabsList className="grid w-full grid-cols-3 bg-black/30 border border-purple-muted/30">
+              <TabsTrigger value="rotation" className="data-[state=active]:bg-purple/20">
+                <RotateCw className="w-4 h-4 mr-2" />
+                Rotation
+              </TabsTrigger>
+              <TabsTrigger value="crop" className="data-[state=active]:bg-purple/20">
+                <Crop className="w-4 h-4 mr-2" />
+                Crop
+              </TabsTrigger>
+              <TabsTrigger value="aspect" className="data-[state=active]:bg-purple/20">
+                <Monitor className="w-4 h-4 mr-2" />
+                Aspect Ratio
+              </TabsTrigger>
+            </TabsList>
+            
+            {/* Rotation Tab */}
+            <TabsContent value="rotation" className="space-y-6 mt-6">
+              <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+                <div className='space-y-4'>
+                  <Label className='flex items-center space-x-2 font-medium text-white'>
+                    <RotateCw className='w-4 h-4 text-cyan/70' />
+                    <span>Camera Rotation</span>
+                  </Label>
+                  
+                  <div className='space-y-4'>
+                    <Slider
+                      value={[settings.rotation]}
+                      onValueChange={handleRotationChange}
+                      max={270}
+                      min={0}
+                      step={90}
+                      className="w-full"
+                    />
+                    
+                    <div className='grid grid-cols-4 gap-2'>
+                      {[0, 90, 180, 270].map((rotation) => (
+                        <Button
+                          key={rotation}
+                          type="button"
+                          variant={settings.rotation === rotation ? "default" : "outline"}
+                          onClick={() => setSettings(prev => ({ ...prev, rotation: rotation as 0 | 90 | 180 | 270 }))}
+                          className='text-sm'
+                        >
+                          {rotation}°
+                        </Button>
+                      ))}
+                    </div>
+                    
+                    <p className='text-sm text-grey-light/60'>
+                      Current rotation: <strong className='text-white'>{settings.rotation}°</strong>
+                      {settings.rotation === 0 && " (Normal)"}
+                      {settings.rotation === 90 && " (Clockwise)"}
+                      {settings.rotation === 180 && " (Upside Down)"}
+                      {settings.rotation === 270 && " (Counter-Clockwise)"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Crop Tab */}
+            <TabsContent value="crop" className="space-y-6 mt-6">
+              <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+                <div className='flex items-center justify-between'>
+                  <div className='space-y-2'>
+                    <Label className='flex items-center space-x-2 font-medium text-white'>
+                      <Crop className='w-4 h-4 text-cyan/70' />
+                      <span>Enable Cropping</span>
+                    </Label>
+                    <p className='text-sm text-grey-light/60'>
+                      Crop images to focus on a specific area
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!settings.crop}
+                    onCheckedChange={toggleCrop}
+                    className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+                  />
+                </div>
+
+                {settings.crop && (
+                  <div className='space-y-4 pt-4 border-t border-purple-muted/20'>
+                    <div className='grid grid-cols-2 gap-4'>
+                      <div className='space-y-2'>
+                        <Label className='text-sm text-grey-light/70'>X Position (%)</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={settings.crop?.x || 0}
+                          onChange={(e) => handleCropChange('x', parseInt(e.target.value) || 0)}
+                          className='h-10 text-white bg-black/30 border-purple-muted/30'
+                        />
+                      </div>
+                      <div className='space-y-2'>
+                        <Label className='text-sm text-grey-light/70'>Y Position (%)</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={settings.crop?.y || 0}
+                          onChange={(e) => handleCropChange('y', parseInt(e.target.value) || 0)}
+                          className='h-10 text-white bg-black/30 border-purple-muted/30'
+                        />
+                      </div>
+                      <div className='space-y-2'>
+                        <Label className='text-sm text-grey-light/70'>Width (%)</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={settings.crop?.width || 100}
+                          onChange={(e) => handleCropChange('width', parseInt(e.target.value) || 100)}
+                          className='h-10 text-white bg-black/30 border-purple-muted/30'
+                        />
+                      </div>
+                      <div className='space-y-2'>
+                        <Label className='text-sm text-grey-light/70'>Height (%)</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={settings.crop?.height || 100}
+                          onChange={(e) => handleCropChange('height', parseInt(e.target.value) || 100)}
+                          className='h-10 text-white bg-black/30 border-purple-muted/30'
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className='p-3 bg-cyan/10 border border-cyan/20 rounded-xl'>
+                      <p className='text-sm text-cyan/80'>
+                        Crop area: {settings.crop?.width || 100}×{settings.crop?.height || 100}% starting at ({settings.crop?.x || 0}%, {settings.crop?.y || 0}%)
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            {/* Aspect Ratio Tab */}
+            <TabsContent value="aspect" className="space-y-6 mt-6">
+              <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
+                <div className='flex items-center justify-between'>
+                  <div className='space-y-2'>
+                    <Label className='flex items-center space-x-2 font-medium text-white'>
+                      <Monitor className='w-4 h-4 text-cyan/70' />
+                      <span>Enable Aspect Ratio</span>
+                    </Label>
+                    <p className='text-sm text-grey-light/60'>
+                      Force images to a specific aspect ratio
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!settings.aspect_ratio?.enabled}
+                    onCheckedChange={toggleAspectRatio}
+                    className='data-[state=checked]:bg-cyan data-[state=unchecked]:bg-purple-muted/50'
+                  />
+                </div>
+
+                {settings.aspect_ratio?.enabled && (
+                  <div className='space-y-4 pt-4 border-t border-purple-muted/20'>
+                    <div className='space-y-2'>
+                      <Label className='text-sm text-grey-light/70'>Aspect Ratio</Label>
+                      <Select
+                        value={settings.aspect_ratio?.ratio || '16:9'}
+                        onValueChange={(value) => handleAspectRatioChange('ratio', value)}
+                      >
+                        <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ASPECT_RATIOS.map((ratio) => (
+                            <SelectItem key={ratio.value} value={ratio.value}>
+                              {ratio.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className='space-y-2'>
+                      <Label className='text-sm text-grey-light/70'>Mode</Label>
+                      <Select
+                        value={settings.aspect_ratio?.mode || 'crop'}
+                        onValueChange={(value) => handleAspectRatioChange('mode', value as 'crop' | 'letterbox')}
+                      >
+                        <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="crop">Crop (Remove excess)</SelectItem>
+                          <SelectItem value="letterbox">Letterbox (Add padding)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {/* Processing Order */}
+          <div className='p-6 space-y-4 border bg-black/20 rounded-2xl border-purple-muted/20'>
+            <Label className='flex items-center space-x-2 font-medium text-white'>
+              <Settings className='w-4 h-4 text-cyan/70' />
+              <span>Processing Order</span>
+            </Label>
+            <Select
+              value={settings.processing_order.join(",")}
+              onValueChange={(value) => setSettings(prev => ({ 
+                ...prev, 
+                processing_order: value.split(",") as ('crop' | 'aspect_ratio' | 'rotate')[]
+              }))}
+            >
+              <SelectTrigger className='h-10 text-white bg-black/30 border-purple-muted/30'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROCESSING_ORDER_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className='text-xs text-grey-light/60'>
+              Order in which image processing operations are applied
+            </p>
+          </div>
+
+          <DialogFooter className='gap-3 pt-4'>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={resetToDefaults}
+              className='px-6 border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white'
+            >
+              <RefreshCw className='w-4 h-4 mr-2' />
+              Reset to Defaults
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={onClose}
+              className='px-6 border-purple-muted/40 hover:bg-purple-muted/20 text-grey-light hover:text-white'
+            >
+              Cancel
+            </Button>
+            <Button
+              type='submit'
+              disabled={saving}
+              className='px-8 font-bold text-black transition-all duration-300 bg-gradient-to-r from-pink to-cyan hover:from-pink-dark hover:to-cyan hover:shadow-lg hover:shadow-pink/20 disabled:opacity-50 disabled:cursor-not-allowed'
+            >
+              {saving ? (
+                <>
+                  <div className='w-4 h-4 mr-2 border-2 rounded-full border-black/30 border-t-black animate-spin' />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Crop className='w-4 h-4 mr-2' />
+                  Save Settings
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}

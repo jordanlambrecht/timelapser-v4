@@ -39,6 +39,7 @@ from ..models import VideoWithDetails
 from ..models.image_model import Image
 from ..models.shared_models import (
     TimelapseStatistics,
+    TimelapseLibraryStatistics,
     BulkThumbnailResponse,
 )
 from ..utils.router_helpers import handle_exceptions, validate_entity_exists
@@ -185,6 +186,41 @@ async def get_timelapses(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve timelapses",
+        )
+
+
+# IMPLEMENTED: ETag + 15 minute cache (global statistics change slowly)
+@router.get("/timelapses/statistics", response_model=TimelapseLibraryStatistics)
+@handle_exceptions("get timelapse library statistics")
+async def get_timelapse_library_statistics(
+    response: Response,
+    timelapse_service: TimelapseServiceDep,
+):
+    """
+    Get global statistics for the timelapse library.
+
+    Returns comprehensive statistics including total counts, storage usage,
+    and activity metrics across all timelapses.
+    """
+    try:
+        stats = await timelapse_service.get_library_statistics()
+
+        # Generate ETag based on stats content
+        etag = generate_content_hash_etag(f"library-stats-{stats}")
+
+        # Add longer cache for library statistics (they change slowly)
+        response.headers["Cache-Control"] = (
+            "public, max-age=900, s-maxage=900"  # 15 minutes
+        )
+        response.headers["ETag"] = etag
+
+        return stats
+
+    except Exception:
+        # Error logging handled in service layer
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve timelapse library statistics",
         )
 
 

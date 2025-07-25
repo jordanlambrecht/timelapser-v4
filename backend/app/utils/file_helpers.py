@@ -217,23 +217,6 @@ def ensure_directory_exists(directory_path: str) -> Path:
         raise HTTPException(status_code=500, detail="Failed to create directory")
 
 
-def get_file_size(file_path: Path) -> int:
-    """
-    Get file size safely.
-
-    Args:
-        file_path: Path to the file
-
-    Returns:
-        File size in bytes, or 0 if file doesn't exist
-    """
-    try:
-        return file_path.stat().st_size if file_path.exists() else 0
-    except Exception as e:
-        logger.warning(f"Error getting file size for {file_path}: {e}")
-        return 0
-
-
 def clean_filename(filename: str) -> str:
     """
     Clean a filename to be safe for filesystem use.
@@ -556,3 +539,249 @@ def calculate_directory_size(directory_path: str) -> float:
 
 # Note: Use existing delete_file_safe() function instead of duplicating
 # Note: Use Path.exists() directly instead of wrapper function
+
+
+def get_overlay_path_for_image(
+    image_path: str,
+    camera_id: int,
+    timelapse_id: int,
+    base_directory: Optional[str] = None,
+) -> Path:
+    """
+    Get the standardized overlay file path for a given image.
+
+    Args:
+        image_path: Path to original image file
+        camera_id: Camera ID
+        timelapse_id: Timelapse ID
+        base_directory: Base directory (defaults to settings.data_directory)
+
+    Returns:
+        Path to overlay file following standard structure
+    """
+    from ..config import settings
+
+    # Use provided base directory or default to settings
+    if base_directory:
+        base_dir = Path(base_directory)
+    else:
+        base_dir = settings.data_path
+
+    # Extract image filename without extension
+    image_file = Path(image_path)
+    image_stem = image_file.stem
+
+    # Standard overlay structure: data/cameras/camera-{id}/timelapse-{id}/overlays/
+    overlay_dir = (
+        base_dir
+        / "cameras"
+        / f"camera-{camera_id}"
+        / f"timelapse-{timelapse_id}"
+        / "overlays"
+    )
+
+    # Handle date subdirectories if image is in date-based structure
+    # Check if image path contains date pattern (YYYY-MM-DD)
+    import re
+
+    for part in image_file.parts:
+        if re.match(r"\d{4}-\d{2}-\d{2}", part):
+            overlay_dir = overlay_dir / part
+            break
+
+    # Generate overlay filename: original_name_overlay.png
+    overlay_filename = f"{image_stem}_overlay.png"
+    return overlay_dir / overlay_filename
+
+
+def get_overlay_path_from_image_path(
+    image_file: str, base_directory: Optional[Path] = None
+) -> Optional[Path]:
+    """
+    Get overlay path by extracting camera/timelapse info from image file path.
+
+    Used by video generation when camera_id/timelapse_id aren't directly available.
+
+    Args:
+        image_file: Path to original image file
+        base_directory: Base directory to search from
+
+    Returns:
+        Path to overlay file, or None if structure doesn't match expected pattern
+    """
+    import re
+
+    try:
+        image_path = Path(image_file)
+
+        # Extract camera and timelapse info from path
+        if "camera-" in str(image_path) and (
+            "timelapse-" in str(image_path)
+            or re.search(r"\d{4}-\d{2}-\d{2}", str(image_path))
+        ):
+            path_parts = image_path.parts
+
+            # Find camera directory and extract camera_id
+            camera_id = None
+            camera_dir_idx = None
+            for i, part in enumerate(path_parts):
+                if part.startswith("camera-"):
+                    camera_dir_idx = i
+                    # Extract camera_id from "camera-123" format
+                    camera_id = int(part.split("-")[1])
+                    break
+
+            if camera_id is not None and camera_dir_idx is not None:
+                # Look for timelapse directory and extract timelapse_id
+                timelapse_id = None
+                for i in range(camera_dir_idx + 1, len(path_parts)):
+                    if path_parts[i].startswith("timelapse-"):
+                        # Extract timelapse_id from "timelapse-456" format
+                        timelapse_id = int(path_parts[i].split("-")[1])
+                        break
+
+                if timelapse_id is not None:
+                    # Use the standard overlay path function
+                    return get_overlay_path_for_image(
+                        image_path=image_file,
+                        camera_id=camera_id,
+                        timelapse_id=timelapse_id,
+                        base_directory=str(base_directory) if base_directory else None,
+                    )
+
+        return None
+
+    except Exception as e:
+        logger.warning(
+            f"Failed to determine overlay path from image path {image_file}: {e}"
+        )
+        return None
+
+
+def prepare_image_metadata_for_serving(
+    image_data: Dict[str, Any], data_directory: str, size: str = "full"
+) -> Dict[str, Any]:
+    """
+    Prepare image metadata for serving with proper file path resolution.
+
+    This is a pure function that doesn't depend on database or service state.
+
+    Args:
+        image_data: Image metadata dict with file paths
+        data_directory: Base data directory path
+        size: Requested size (full, small, thumbnail)
+
+    Returns:
+        Dictionary with file path and metadata for serving
+    """
+    try:
+        # Convert to format expected by get_image_with_fallbacks
+        image_dict = {
+            "id": image_data.get("id"),
+            "file_path": image_data.get("file_path"),
+            "thumbnail_path": image_data.get("thumbnail_path"),
+            "small_path": image_data.get("small_path"),
+        }
+
+        file_path = get_image_with_fallbacks(image_dict, size, data_directory)
+
+        # Import here to avoid circular imports
+        from ..constants import ALLOWED_IMAGE_EXTENSIONS
+
+        media_type = validate_media_type(file_path, ALLOWED_IMAGE_EXTENSIONS)
+
+        return {
+            "success": True,
+            "file_path": str(file_path),
+            "media_type": media_type,
+            "image_id": image_data.get("id"),
+            "size": size,
+            "fallback_used": False,  # get_image_with_fallbacks handles this internally
+            "image_data": image_data,
+        }
+
+    except Exception as e:
+        logger.error(
+            f"Failed to prepare image {image_data.get('id', 'unknown')} for serving: {e}"
+        )
+        return {
+            "success": False,
+            "error": f"Image preparation failed: {str(e)}",
+        }
+
+
+def serve_image_with_metadata(
+    file_path: str,
+    media_type: str,
+    image_data: Optional[Dict[str, Any]] = None,
+    image_id: Optional[int] = None,
+) -> FileResponse:
+    """
+    Create a FileResponse for serving an image with proper caching headers.
+
+    Args:
+        file_path: Path to the image file
+        media_type: MIME type for the response
+        image_data: Optional image metadata for ETag generation
+        image_id: Optional image ID for ETag generation
+
+    Returns:
+        FileResponse with proper caching headers
+    """
+    try:
+        # Generate ETag and cache headers based on image metadata
+        if image_data and image_data.get("captured_at") and image_id:
+            # Simple ETag generation using image ID and timestamp
+            captured_at = image_data["captured_at"]
+            if hasattr(captured_at, "timestamp"):
+                etag = f"img-{image_id}-{int(captured_at.timestamp())}"
+            else:
+                # Handle string timestamps
+                etag = f"img-{image_id}-{hash(str(captured_at))}"
+
+            headers = {"ETag": f'"{etag}"', "Cache-Control": "max-age=3600, public"}
+
+            return create_file_response(
+                file_path=Path(file_path), media_type=media_type, headers=headers
+            )
+        else:
+            # Fallback without caching if no image metadata
+            return FileResponse(path=file_path, media_type=media_type)
+
+    except Exception as e:
+        logger.error(f"Failed to create image response for {file_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve image file")
+
+
+def get_file_size(file_path: str) -> int:
+    """
+    Get file size in bytes.
+
+    Args:
+        file_path: Path to file
+
+    Returns:
+        File size in bytes, 0 if file doesn't exist
+    """
+    try:
+        return Path(file_path).stat().st_size
+    except Exception:
+        return 0
+
+
+def build_camera_image_urls(camera_id: int) -> Dict[str, str]:
+    """
+    Build standard camera latest image URLs.
+
+    Args:
+        camera_id: Camera ID
+
+    Returns:
+        Dictionary with full, small, thumbnail, and download URLs
+    """
+    return {
+        "full": f"/api/cameras/{camera_id}/latest-image/full",
+        "small": f"/api/cameras/{camera_id}/latest-image/small",
+        "thumbnail": f"/api/cameras/{camera_id}/latest-image/thumbnail",
+        "download": f"/api/cameras/{camera_id}/latest-image/download",
+    }

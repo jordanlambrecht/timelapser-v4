@@ -23,7 +23,15 @@ markers = [
     "sse: Tests for SSE event broadcasting",
     "thumbnail: Tests for thumbnail generation system",
     "cache: Tests related to caching functionality",
-    "frontend: Tests as frontend integration tests"
+    "frontend: Tests as frontend integration tests",
+    "scheduler_trust_model: Tests for scheduler trust model validation",
+    "scheduler_validation: Tests for scheduler validation logic",
+    "service_factory: Tests for service factory patterns",
+    "service_constructors: Tests for service constructor standardization",
+    "capture_pipeline: Tests for capture pipeline integration",
+    "overlay: Tests for overlay system functionality",
+    "overlay_pipeline: Tests for overlay pipeline integration",
+    "overlay_router: Tests for overlay router endpoints"
 ]
 asyncio_mode = "auto"
 log_cli = true

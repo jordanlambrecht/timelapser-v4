@@ -7,11 +7,13 @@ orchestrate multiple database operations following composition pattern.
 
 Available Services:
 - CameraService: Camera lifecycle and health management
-- VideoService: Video metadata and generation coordination
-- VideoAutomationService: Automated video generation workflows
+- VideoService: Video metadata and generation coordination (LEGACY)
+- VideoAutomationService: Automated video generation workflows (LEGACY)
+- VideoPipeline: New unified video generation pipeline (3-service architecture)
 - TimelapseService: Timelapse entity lifecycle management
 - ImageService: Image metadata and serving
-- ImageCaptureService: RTSP image capture coordination
+- RTSPService: Unified RTSP capture operations (capture pipeline)
+- WorkflowOrchestratorService: Complete 12-step capture workflow orchestration
 - CorruptionService: Image quality analysis
 - SettingsService: System configuration management
 - StatisticsService: System-wide metrics aggregation
@@ -20,7 +22,7 @@ Available Services:
 - SchedulingService: Task scheduling coordination
 - TimeWindowService: Time window calculations
 - WorkerCorruptionIntegrationService: Worker process corruption integration
-- RTSPCaptureService: High-level RTSP capture orchestration
+# Note: RTSPCaptureService and ImageCaptureService consolidated into RTSPService
 
 Subdirectory Services:
 - CorruptionDetection: Advanced corruption analysis (in corruption_detection/)
@@ -29,36 +31,42 @@ Subdirectory Services:
 
 # Core business logic services
 from .camera_service import CameraService, SyncCameraService
-from .video_service import VideoService, SyncVideoService
-from .video_automation_service import VideoAutomationService
+# from .video_service import VideoService, SyncVideoService  # REMOVED: Use video_pipeline instead
+# from .video_automation_service import VideoAutomationService  # REMOVED: Use video_pipeline instead
+from .video_pipeline import create_video_pipeline  # NEW: Unified video pipeline
 from .timelapse_service import TimelapseService
 from .image_service import ImageService
-from .image_capture_service import ImageCaptureService
-from .corruption_service import CorruptionService
+from .capture_pipeline import RTSPService, AsyncRTSPService, WorkflowOrchestratorService
+# from .corruption_service import CorruptionService  # Replaced by corruption_pipeline
 from .settings_service import SettingsService, SyncSettingsService
 from .statistics_service import StatisticsService, SyncStatisticsService
 from .health_service import HealthService
 from .log_service import LogService
-from .scheduling_service import SchedulingService
-from .time_window_service import TimeWindowService
+from .scheduling import SchedulingService, SyncSchedulingService
+from .scheduling import TimeWindowService, SyncTimeWindowService  
+from .scheduling import SchedulerService
+from .scheduling import JobQueueService, SyncJobQueueService
 
-from .rtsp_capture_service import RTSPCaptureService
+# Note: RTSPCaptureService and ImageCaptureService have been consolidated into RTSPService
 
 # Service aliases for backward compatibility
-image_capture = ImageCaptureService
-video_automation = VideoAutomationService
+rtsp_service = RTSPService
+# video_automation = VideoAutomationService  # REMOVED: Use video_pipeline instead
 
 __all__ = [
     # Core services
     "CameraService",
     "SyncCameraService",
-    "VideoService",
-    "SyncVideoService",
-    "VideoAutomationService",
+    # "VideoService",  # REMOVED: Use video_pipeline instead
+    # "SyncVideoService",  # REMOVED: Use video_pipeline instead
+    # "VideoAutomationService",  # REMOVED: Use video_pipeline instead
+    "create_video_pipeline",  # NEW: Unified video pipeline
     "TimelapseService",
     "ImageService",
-    "ImageCaptureService",
-    "CorruptionService",
+    "RTSPService",
+    "AsyncRTSPService", 
+    "WorkflowOrchestratorService",
+    # "CorruptionService",  # Replaced by corruption_pipeline
     "SettingsService",
     "SyncSettingsService",
     "StatisticsService",
@@ -66,9 +74,13 @@ __all__ = [
     "HealthService",
     "LogService",
     "SchedulingService",
+    "SyncSchedulingService", 
     "TimeWindowService",
-    "RTSPCaptureService",
+    "SyncTimeWindowService",
+    "SchedulerService",
+    "JobQueueService",
+    "SyncJobQueueService",
     # Aliases
-    "image_capture",
-    "video_automation",
+    "rtsp_service",
+    # "video_automation",  # REMOVED: Use video_pipeline instead
 ]

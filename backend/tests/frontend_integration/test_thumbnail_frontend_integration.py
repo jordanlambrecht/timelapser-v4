@@ -19,14 +19,10 @@ from app.models.shared_models import (
     BulkThumbnailResponse,
     ThumbnailJobStatistics
 )
-from app.constants import (
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_STATUS_PROCESSING,
-    THUMBNAIL_JOB_STATUS_COMPLETED,
-    THUMBNAIL_JOB_PRIORITY_HIGH,
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
-    THUMBNAIL_JOB_TYPE_SINGLE,
-    THUMBNAIL_JOB_TYPE_BULK,
+from app.enums import (
+    ThumbnailJobStatus,
+    ThumbnailJobPriority,
+    ThumbnailJobType,
 )
 
 
@@ -140,7 +136,7 @@ class TestThumbnailFrontendIntegration:
         # 2. User clicks "Start Regeneration"
         bulk_request = BulkThumbnailRequest(
             image_ids=[1, 2, 3, 4, 5],
-            priority=THUMBNAIL_JOB_PRIORITY_HIGH
+            priority=ThumbnailJobPriority.HIGH
         )
         
         bulk_response = await thumbnail_service.queue_bulk_thumbnails(bulk_request)
@@ -214,7 +210,7 @@ class TestThumbnailFrontendIntegration:
         # 1. Start bulk regeneration
         bulk_request = BulkThumbnailRequest(
             image_ids=[1, 2, 3],
-            priority=THUMBNAIL_JOB_PRIORITY_MEDIUM
+            priority=ThumbnailJobPriority.MEDIUM
         )
         
         bulk_response = await thumbnail_service.queue_bulk_thumbnails(bulk_request)
@@ -352,11 +348,11 @@ class TestThumbnailFrontendIntegration:
         # 2. Test single image thumbnail generation
         job = await thumbnail_service.queue_single_image_thumbnail(
             image_id=123,
-            priority=THUMBNAIL_JOB_PRIORITY_HIGH
+            priority=ThumbnailJobPriority.HIGH
         )
         assert job is not None
         assert job.image_id == 123
-        assert job.priority == THUMBNAIL_JOB_PRIORITY_HIGH
+        assert job.priority == ThumbnailJobPriority.HIGH
         
         # Frontend calls POST /api/images/123/generate-thumbnail
         mock_frontend_client.set_response('/api/images/123/generate-thumbnail', {
@@ -372,7 +368,7 @@ class TestThumbnailFrontendIntegration:
         # 3. Test bulk generation endpoint
         bulk_request = BulkThumbnailRequest(
             image_ids=[100, 101, 102],
-            priority=THUMBNAIL_JOB_PRIORITY_MEDIUM
+            priority=ThumbnailJobPriority.MEDIUM
         )
         
         bulk_response = await thumbnail_service.queue_bulk_thumbnails(bulk_request)
@@ -386,7 +382,7 @@ class TestThumbnailFrontendIntegration:
         
         bulk_api_response = await mock_frontend_client.post('/api/thumbnails/generate-bulk', {
             'image_ids': [100, 101, 102],
-            'priority': THUMBNAIL_JOB_PRIORITY_MEDIUM
+            'priority': ThumbnailJobPriority.MEDIUM
         })
         
         assert bulk_api_response.status_code == 200

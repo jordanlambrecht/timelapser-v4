@@ -6,7 +6,7 @@ This service handles timelapse-related business logic using dependency injection
 for database operations, providing type-safe Pydantic model interfaces.
 
 ARCHITECTURAL COMPLIANCE:
-- Uses timezone_utils for all datetime operations
+- Uses time_utils for all datetime operations
 - Uses constants.py for status values
 - Uses response_helpers for structured responses and SSE events
 - Proper dependency injection pattern
@@ -17,6 +17,8 @@ from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 
 from loguru import logger
+
+from ..enums import SSEPriority
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.timelapse_operations import TimelapseOperations, SyncTimelapseOperations
@@ -29,23 +31,24 @@ from ..models.timelapse_model import (
 )
 from ..models.shared_models import (
     TimelapseStatistics,
+    TimelapseLibraryStatistics,
     TimelapseForCleanup,
     TimelapseVideoSettings,
 )
 from ..constants import (
+    JOB_STATUS_LIST,
     TIMELAPSE_STATUSES,
     TIMELAPSE_STATUS_COMPLETED,
     TimelapseStatus,
     EVENT_TIMELAPSE_CREATED,
     EVENT_TIMELAPSE_UPDATED,
     EVENT_TIMELAPSE_COMPLETED,
-    EVENT_TIMELAPSE_ARCHIVED,
     EVENT_TIMELAPSE_HEALTH_MONITORED,
     EVENT_TIMELAPSE_STATISTICS_UPDATED,
     EVENT_HEALTH_CHECK_COMPLETED,
     SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
 )
-from ..utils.timezone_utils import (
+from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     utc_now,
 )
@@ -185,7 +188,7 @@ class TimelapseService:
                     "status": new_timelapse.status,
                     "name": new_timelapse.name,
                 },
-                priority="normal",
+                priority=SSEPriority.NORMAL,
                 source="api",
             )
 
@@ -234,7 +237,7 @@ class TimelapseService:
                     "status": updated_timelapse.status,
                     "name": updated_timelapse.name,
                 },
-                priority="normal",
+                priority=SSEPriority.NORMAL,
                 source="api",
             )
 
@@ -277,7 +280,7 @@ class TimelapseService:
                             "camera_id": timelapse_to_delete.camera_id,
                             "name": timelapse_to_delete.name,
                         },
-                        priority="normal",
+                        priority=SSEPriority.NORMAL,
                         source="api",
                     )
             return result
@@ -348,6 +351,24 @@ class TimelapseService:
             self._stats_cache.pop(cache_key, None)
             logger.debug(f"Invalidated statistics cache for timelapse {timelapse_id}")
 
+    async def get_library_statistics(self) -> TimelapseLibraryStatistics:
+        """
+        Get global statistics for the timelapse library.
+
+        Returns comprehensive statistics across all timelapses including
+        total counts, activity metrics, storage usage, and date ranges.
+        """
+        try:
+            stats = await self.timelapse_ops.get_library_statistics()
+            return stats
+
+        except Exception as e:
+            LoggingHelper.log_operation_error(
+                "get_library_statistics", "timelapse", None, e
+            )
+            # Return empty statistics on error
+            return TimelapseLibraryStatistics()
+
     async def get_active_timelapse_for_camera(
         self, camera_id: int
     ) -> Optional[Timelapse]:
@@ -394,7 +415,11 @@ class TimelapseService:
         if not current_timelapse:
             raise ValueError(f"Timelapse {timelapse_id} not found")
 
-        # Create update with minimal changes - only status
+        # Ensure only allowed status values are passed to TimelapseUpdate
+        if status not in TIMELAPSE_STATUSES:
+            raise ValueError(
+                f"Invalid status '{status}' for TimelapseUpdate. Allowed: {TIMELAPSE_STATUSES}"
+            )
         timelapse_update = TimelapseUpdate(status=status)
 
         # Update timelapse
@@ -409,7 +434,7 @@ class TimelapseService:
                 "status": status,
                 "action": action_name,
             },
-            priority="high",
+            priority=SSEPriority.HIGH,
             source="api",
         )
 
@@ -515,7 +540,7 @@ class TimelapseService:
                     "status": completed_timelapse.status,
                     "name": completed_timelapse.name,
                 },
-                priority="high",
+                priority=SSEPriority.HIGH,
                 source="api",
             )
 
@@ -661,7 +686,7 @@ class TimelapseService:
                         "status": timelapse.status,
                         "name": timelapse.name,
                     },
-                    priority="normal",
+                    priority=SSEPriority.NORMAL,
                     source="api",
                 )
 
@@ -725,7 +750,7 @@ class TimelapseService:
                 await self.video_automation_service.queue_video_generation(
                     timelapse_id=timelapse_id,
                     trigger_type="completion",
-                    priority="high",
+                    priority=SSEPriority.HIGH,
                 )
 
             # Calculate final statistics
@@ -1078,7 +1103,7 @@ class TimelapseService:
             await self.sse_ops.create_event(
                 event_type="timelapse_health_monitored",
                 event_data=health_data,
-                priority="low",
+                priority=SSEPriority.LOW,
                 source="system",
             )
 
@@ -1121,7 +1146,7 @@ class TimelapseService:
                 await self.sse_ops.create_event(
                     event_type="timelapse_statistics_updated",
                     event_data=stats_data,
-                    priority="low",
+                    priority=SSEPriority.LOW,
                     source="system",
                 )
 
@@ -1197,14 +1222,14 @@ class SyncTimelapseService:
     def update_timelapse_status(
         self,
         timelapse_id: int,
-        status: Literal["running", "paused", "completed", "archived"],
+        status: Literal["running", "paused", "completed"],
     ) -> bool:
         """
         Update timelapse status.
 
         Args:
             timelapse_id: ID of the timelapse
-            status: New status ('running', 'paused', 'completed', 'archived')
+            status: New status ('running', 'paused', 'completed')
 
         Returns:
             True if update was successful
@@ -1261,7 +1286,7 @@ class SyncTimelapseService:
     def _update_timelapse_status_with_logging(
         self,
         timelapse_id: int,
-        status: Literal["running", "paused", "completed", "archived"],
+        status: Literal["running", "paused", "completed"],
         action_name: str,
     ) -> bool:
         """

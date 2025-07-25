@@ -12,8 +12,8 @@ Maintains all functionality while using shared infrastructure:
 import time
 from typing import List, Dict, Any
 
-from backend.app.database.timelapse_operations import SyncTimelapseOperations
-from backend.app.workers.mixins.job_batch_processor import ProcessableJob
+from ..database.timelapse_operations import SyncTimelapseOperations
+from .mixins.job_batch_processor import ProcessableJob
 
 from .mixins.job_processing_mixin import JobProcessingMixin
 from ..utils.time_utils import utc_now
@@ -183,7 +183,18 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
             result_dict: Dict[str, Any] = (
                 self.thumbnail_pipeline.process_image_thumbnails(job.image_id)
             )
-            result = ThumbnailGenerationResult(**result_dict)
+            
+            # Ensure result_dict contains all required fields for ThumbnailGenerationResult
+            if not isinstance(result_dict, dict):
+                self.log_error(f"Invalid result type from thumbnail pipeline: {type(result_dict)}")
+                return False
+                
+            # Create ThumbnailGenerationResult with proper type checking
+            try:
+                result = ThumbnailGenerationResult(**result_dict)
+            except Exception as e:
+                self.log_error(f"Failed to create ThumbnailGenerationResult: {e}")
+                return False
 
             processing_time_ms = int((time.time() - job_start_time) * 1000)
 
@@ -334,7 +345,7 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
                 e,
             )
 
-    def _get_job_data_for_events(self, job: ProcessableJob) -> Dict[str, Any]:
+    def _get_job_data_for_events(self, job: ThumbnailGenerationJob) -> Dict[str, Any]:
         """
         Extract thumbnail-specific job data for SSE events.
 
@@ -345,17 +356,11 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
             Dictionary with thumbnail job data for events
         """
 
-        if isinstance(job, ThumbnailGenerationJob):
-            return {
-                "job_id": job.id,
-                "image_id": job.image_id,
-                "priority": job.priority,
-                "retry_count": job.retry_count,
-                "job_type": "thumbnail_generation",
-            }
-        # Fallback for generic ProcessableJob
         return {
-            "job_id": getattr(job, "id", None),
+            "job_id": job.id,
+            "image_id": job.image_id,
+            "priority": job.priority,
+            "retry_count": job.retry_count,
             "job_type": "thumbnail_generation",
         }
 

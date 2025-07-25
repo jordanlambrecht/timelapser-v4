@@ -45,12 +45,22 @@ async def sse_event_stream(db: AsyncDatabaseDep):
         Yields:
             SSE-formatted event strings
         """
-        sse_ops = SSEEventsOperations(db)
-        last_heartbeat = datetime.utcnow()
-
         logger.info("SSE client connected, starting event stream (polling mode)")
 
         try:
+            # Send immediate test event to confirm stream is working
+            test_event = {
+                "type": "stream_started",
+                "data": {"message": "SSE stream initialized"},
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            yield f"data: {json.dumps(test_event)}\n\n"
+            logger.info("🔄 Sent initial test event")
+            
+            # Initialize SSE operations after first yield
+            sse_ops = SSEEventsOperations(db)
+            last_heartbeat = datetime.utcnow()
+            
             # Process any existing events first
             existing_events = await sse_ops.get_pending_events(limit=50)
             if existing_events:
@@ -122,9 +132,9 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         await sse_ops.mark_events_processed(event_ids)
                         logger.debug(f"Streamed {len(events)} SSE events to client")
 
-                    # Send heartbeat every 30 seconds
+                    # Send heartbeat every 5 seconds (temporarily for debugging)
                     now = datetime.utcnow()
-                    if (now - last_heartbeat).total_seconds() > 30:
+                    if (now - last_heartbeat).total_seconds() > 5:
                         heartbeat_event = {
                             "type": "heartbeat",
                             "data": {"timestamp": now.isoformat()},

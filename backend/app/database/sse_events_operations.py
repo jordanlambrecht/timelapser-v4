@@ -236,11 +236,11 @@ class SSEEventsOperations:
 
                     if row:
                         stats = {
-                            "total_events": row[0],
-                            "pending_events": row[1],
-                            "processed_events": row[2],
-                            "recent_events": row[3],
-                            "unique_event_types": row[4],
+                            "total_events": row["total_events"],
+                            "pending_events": row["pending_events"],
+                            "processed_events": row["processed_events"],
+                            "recent_events": row["recent_events"],
+                            "unique_event_types": row["unique_event_types"],
                         }
                         return stats
                     else:

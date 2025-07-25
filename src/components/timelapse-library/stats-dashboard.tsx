@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card"
-import { Video, Star, PlayCircle, Camera, HardDrive, Calendar } from "lucide-react"
+import { Video, Star, PlayCircle, Camera, HardDrive, Calendar, AlertTriangle } from "lucide-react"
 
 interface StatsDashboardProps {
   statistics?: {
@@ -10,9 +10,28 @@ interface StatsDashboardProps {
     total_storage_bytes: number
     oldest_timelapse_date?: string
   }
+  error?: boolean
 }
 
-export function StatsDashboard({ statistics }: StatsDashboardProps) {
+export function StatsDashboard({ statistics, error }: StatsDashboardProps) {
+  if (error) {
+    return (
+      <div className="glass p-6 rounded-2xl border border-failure/30">
+        <div className="flex items-center justify-center py-8">
+          <div className="text-center space-y-3">
+            <div className="w-12 h-12 mx-auto bg-failure/20 rounded-xl flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-failure" />
+            </div>
+            <div>
+              <h3 className="text-white font-medium">Statistics Unavailable</h3>
+              <p className="text-grey-light/70 text-sm">Unable to load library statistics</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (!statistics) {
     return (
       <div className="glass p-6 rounded-2xl">

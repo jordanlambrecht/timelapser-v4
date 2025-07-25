@@ -779,8 +779,8 @@ const CameraCardComponent = ({
               {isTimelapsePaused && !isNow && (
                 <p className='mt-1 text-xs text-yellow-400'>Paused</p>
               )}
-              {(!timelapse || timelapse?.status === "stopped") && !isNow && (
-                <p className='mt-1 text-xs text-yellow-400'>Stopped</p>
+              {(!timelapse || timelapse?.status === "completed") && !isNow && (
+                <p className='mt-1 text-xs text-yellow-400'>Completed</p>
               )}
             </div>
           </ProgressBorder>

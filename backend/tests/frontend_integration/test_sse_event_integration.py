@@ -13,12 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
 from app.database.sse_events_operations import SSEEventsOperations
+from app.enums import JobStatus, JobPriority
 from app.constants import (
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_STATUS_PROCESSING,
-    THUMBNAIL_JOB_STATUS_COMPLETED,
-    THUMBNAIL_JOB_PRIORITY_HIGH,
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
     THUMBNAIL_JOB_TYPE_SINGLE,
     THUMBNAIL_JOB_TYPE_BULK,
 )
@@ -179,7 +175,7 @@ class TestSSEEventIntegration:
                 "event_data": {
                     "job_id": 123,
                     "image_id": 456,
-                    "priority": THUMBNAIL_JOB_PRIORITY_HIGH,
+                    "priority": JobPriority.HIGH,
                     "job_type": THUMBNAIL_JOB_TYPE_SINGLE,
                 },
             },
@@ -258,7 +254,7 @@ class TestSSEEventIntegration:
                 "event_data": {
                     "total_jobs": 50,
                     "failed_jobs": 0,
-                    "priority": THUMBNAIL_JOB_PRIORITY_MEDIUM,
+                    "priority": JobPriority.MEDIUM,
                     "operation_id": "bulk_op_789",
                 },
             },

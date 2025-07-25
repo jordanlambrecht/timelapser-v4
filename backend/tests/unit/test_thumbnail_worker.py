@@ -17,13 +17,8 @@ from app.models.shared_models import (
     ThumbnailGenerationJobCreate,
 )
 from app.models.image_model import Image
+from app.enums import JobStatus, JobPriority
 from app.constants import (
-    THUMBNAIL_JOB_STATUS_PENDING,
-    THUMBNAIL_JOB_STATUS_PROCESSING,
-    THUMBNAIL_JOB_STATUS_COMPLETED,
-    THUMBNAIL_JOB_STATUS_FAILED,
-    THUMBNAIL_JOB_PRIORITY_HIGH,
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
     THUMBNAIL_JOB_TYPE_SINGLE,
 )
 

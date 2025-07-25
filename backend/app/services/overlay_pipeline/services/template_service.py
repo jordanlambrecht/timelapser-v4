@@ -19,7 +19,7 @@ class SyncOverlayTemplateService:
     def __init__(self, db: SyncDatabase):
         """Initialize with sync database."""
         self.db = db
-        self.template_cache = OverlayTemplateCache()
+        self.template_cache = OverlayTemplateManager()
 
     def get_template_by_name(self, template_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -236,7 +236,7 @@ class OverlayTemplateService:
     def __init__(self, db: AsyncDatabase):
         """Initialize with async database."""
         self.db = db
-        self.template_cache = OverlayTemplateCache()
+        self.template_cache = OverlayTemplateManager()
 
     async def get_template_by_name(self, template_name: str) -> Optional[Dict[str, Any]]:
         """Get overlay template configuration by name (async)."""

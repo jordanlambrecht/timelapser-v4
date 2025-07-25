@@ -27,7 +27,7 @@ import json
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
-from backend.app.enums import SSEPriority
+from ...enums import SSEPriority
 
 
 from ...utils.time_utils import get_timezone_aware_timestamp_sync, utc_now

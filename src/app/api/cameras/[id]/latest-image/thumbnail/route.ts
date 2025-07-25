@@ -4,8 +4,8 @@
  * Serves 200×150 optimized thumbnail for dashboard display
  */
 
-import { NextRequest, NextResponse } from "next/server"
-import { proxyImageRequest } from "../proxy-utils"
+import { NextRequest } from "next/server"
+import { proxyImageRequest } from "@/lib/proxy-utils"
 
 export async function GET(
   request: NextRequest,
@@ -15,10 +15,7 @@ export async function GET(
   const fastApiUrl = process.env.NEXT_PUBLIC_FASTAPI_URL
 
   if (!fastApiUrl) {
-    return NextResponse.json(
-      { error: "FastAPI URL not configured" },
-      { status: 500 }
-    )
+    throw new Error("FastAPI URL not configured")
   }
 
   return proxyImageRequest({
