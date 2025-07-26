@@ -252,3 +252,18 @@ class SSEEventSource(str, Enum):
     SYSTEM = "system"
     WORKER = "worker"
     FFMPEG = "ffmpeg"
+
+
+# =============================================================================
+# TIMELAPSE SYSTEMS
+# =============================================================================
+
+
+class TimelapseStatus(str, Enum):
+    """Timelapse status values for tracking timelapse lifecycle."""
+
+    CREATED = "created"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"

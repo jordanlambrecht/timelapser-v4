@@ -6,7 +6,7 @@ Centralized location for all application constants to avoid hardcoded values
 throughout the codebase.
 """
 
-from typing import Set, Literal
+from typing import Set
 from enum import Enum
 
 from .models.health_model import HealthStatus
@@ -32,6 +32,7 @@ from .enums import (
     OverlayType,
     # Timelapse Systems
     TimelapseAction,
+    TimelapseStatus,
 )
 
 # =============================================================================
@@ -823,24 +824,8 @@ EVENT_VIDEO_JOB_COMPLETED = "video_job_completed"
 # TIMELAPSE SYSTEM CONSTANTS
 # ====================================================================
 
-# Timelapse statuses
-TIMELAPSE_STATUS_CREATED = "created"
-TIMELAPSE_STATUS_RUNNING = "running"
-TIMELAPSE_STATUS_PAUSED = "paused"
-TIMELAPSE_STATUS_COMPLETED = "completed"
-TIMELAPSE_STATUS_FAILED = "failed"
-
-# Valid timelapse statuses list
-TIMELAPSE_STATUSES = [
-    TIMELAPSE_STATUS_CREATED,
-    TIMELAPSE_STATUS_RUNNING,
-    TIMELAPSE_STATUS_PAUSED,
-    TIMELAPSE_STATUS_COMPLETED,
-    TIMELAPSE_STATUS_FAILED,
-]
-
-# Type alias for timelapse statuses
-TimelapseStatus = Literal["created", "running", "paused", "completed", "failed"]
+# Valid timelapse statuses list (using enum values)
+TIMELAPSE_STATUSES = [status.value for status in TimelapseStatus]
 
 # Timelapse event types
 EVENT_TIMELAPSE_CREATED = "timelapse_created"
