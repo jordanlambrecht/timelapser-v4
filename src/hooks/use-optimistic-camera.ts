@@ -309,9 +309,12 @@ export const useOptimisticCamera = (
     });
 
     try {
-      await makeApiRequest(`/api/cameras/${cameraId}/start-timelapse`, {
+      await makeApiRequest(`/api/cameras/${cameraId}/timelapse-action`, {
         method: 'POST',
-        body: JSON.stringify(options),
+        body: JSON.stringify({
+          action: 'create',
+          timelapse_data: options
+        }),
       });
 
       // Success - SSE will provide the confirmed state
@@ -337,8 +340,11 @@ export const useOptimisticCamera = (
     });
 
     try {
-      await makeApiRequest(`/api/cameras/${cameraId}/stop-timelapse`, {
+      await makeApiRequest(`/api/cameras/${cameraId}/timelapse-action`, {
         method: 'POST',
+        body: JSON.stringify({
+          action: 'end'
+        }),
       });
     } catch (error) {
       handleApiError(error, operation);
@@ -361,8 +367,11 @@ export const useOptimisticCamera = (
     });
 
     try {
-      await makeApiRequest(`/api/cameras/${cameraId}/pause-timelapse`, {
+      await makeApiRequest(`/api/cameras/${cameraId}/timelapse-action`, {
         method: 'POST',
+        body: JSON.stringify({
+          action: 'pause'
+        }),
       });
     } catch (error) {
       handleApiError(error, operation);
@@ -385,8 +394,11 @@ export const useOptimisticCamera = (
     });
 
     try {
-      await makeApiRequest(`/api/cameras/${cameraId}/resume-timelapse`, {
+      await makeApiRequest(`/api/cameras/${cameraId}/timelapse-action`, {
         method: 'POST',
+        body: JSON.stringify({
+          action: 'resume'
+        }),
       });
     } catch (error) {
       handleApiError(error, operation);
@@ -410,8 +422,11 @@ export const useOptimisticCamera = (
     });
 
     try {
-      await makeApiRequest(`/api/cameras/${cameraId}/complete-timelapse`, {
+      await makeApiRequest(`/api/cameras/${cameraId}/timelapse-action`, {
         method: 'POST',
+        body: JSON.stringify({
+          action: 'end'
+        }),
       });
     } catch (error) {
       handleApiError(error, operation);

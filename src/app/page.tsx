@@ -172,6 +172,8 @@ export default function Dashboard() {
             "[Dashboard SSE] Received timelapse_status_changed event:",
             event.data
           )
+          
+          // Update timelapses state
           setTimelapses((prev) => {
             console.log(
               "[Dashboard SSE] Current timelapses before update:",
@@ -215,6 +217,25 @@ export default function Dashboard() {
             )
             return updated
           })
+
+          // CRITICAL FIX: Also update cameras state to reflect timelapse status change
+          setCameras((prev) =>
+            prev.map((camera) =>
+              camera.id === event.data.camera_id
+                ? {
+                    ...camera,
+                    active_timelapse_id: event.data.status === "completed" ? null : event.data.timelapse_id,
+                    timelapse_status: event.data.status,
+                  }
+                : camera
+            )
+          )
+          console.log(
+            "[Dashboard SSE] Updated camera timelapse status for camera",
+            event.data.camera_id,
+            "to",
+            event.data.status
+          )
           break
 
         case "image_captured":
