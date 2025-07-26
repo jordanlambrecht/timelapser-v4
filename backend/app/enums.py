@@ -255,6 +255,143 @@ class SSEEventSource(str, Enum):
 
 
 # =============================================================================
+# LOGGING SYSTEM
+# =============================================================================
+
+
+class LogLevel(str, Enum):
+    """Log level constants for centralized logging system."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class LogSource(str, Enum):
+    """Log source constants for identifying log origins."""
+
+    API = "api"
+    WORKER = "worker"
+    SYSTEM = "system"
+    CAMERA = "camera"
+    DATABASE = "database"
+    SCHEDULER = "scheduler"
+    PIPELINE = "pipeline"
+    MIDDLEWARE = "middleware"
+
+
+class LogEmoji(str, Enum):
+    """Type-safe emoji constants for log messages."""
+
+    # Request/Response emojis
+    INCOMING = "📥"
+    OUTGOING = "📤"
+    REQUEST = "📥"
+    RESPONSE = "📤"
+
+    # Status emojis
+    SUCCESS = "✅"
+    COMPLETED = "✅"
+    FAILED = "💥"
+    ERROR = "💥"
+    WARNING = "⚠️"
+    INFO = "ℹ️"
+    DEBUG = "🔍"
+    CRITICAL = "🚨"
+
+    # Work emojis
+    PROCESSING = "🔄"
+    WORKING = "🔄"
+    JOB = "🔄"
+    TASK = "🔄"
+    RUNNING = "▶️"
+    STOPPED = "⏹️"
+    PAUSED = "⏸️"
+    RESUMED = "▶️"
+
+    # Camera/Video emojis
+    CAMERA = "📹"
+    VIDEO = "🎥"
+    IMAGE = "🖼️"
+    CAPTURE = "📸"
+    THUMBNAIL = "🖼️"
+    OVERLAY = "🎨"
+    TIMELAPSE = "⏯️"
+
+    # System emojis
+    SYSTEM = "⚙️"
+    STARTUP = "🚀"
+    SHUTDOWN = "🔌"
+    HEALTH = "💓"
+    CLEANUP = "🧹"
+    MAINTENANCE = "🔧"
+
+    # Database emojis
+    DATABASE = "🗄️"
+    STORAGE = "💾"
+    BACKUP = "💾"
+
+    # Network emojis
+    NETWORK = "🌐"
+    CONNECTION = "🔗"
+    DISCONNECTED = "🔌"
+
+    # Worker emojis
+    WORKER = "👷"
+    SCHEDULER = "⏰"
+    QUEUE = "📋"
+
+    # Other emojis
+    CLOWN = "🤡"
+    PARTY = "🎉"
+    FIRE = "🔥"
+    ROCKET = "🚀"
+    MAGIC = "✨"
+    ROBOT = "🤖"
+
+
+class LoggerName(str, Enum):
+    """Logger name constants for categorizing log entries. Consolidated with SSEEventSource."""
+
+    # API/Request loggers
+    REQUEST_LOGGER = "request_logger"
+    ERROR_HANDLER = "error_handler"
+    MIDDLEWARE = "middleware"
+
+    # Worker loggers (consolidated from SSEEventSource)
+    CAPTURE_WORKER = "capture_worker"
+    THUMBNAIL_WORKER = "thumbnail_worker"
+    OVERLAY_WORKER = "overlay_worker"
+    SCHEDULER_WORKER = "scheduler_worker"
+    HEALTH_WORKER = "health_worker"
+    VIDEO_WORKER = "video_worker"
+
+    # Pipeline loggers (consolidated from SSEEventSource)
+    VIDEO_PIPELINE = "video_pipeline"
+    CAPTURE_PIPELINE = "capture_pipeline"
+    THUMBNAIL_PIPELINE = "thumbnail_pipeline"
+    OVERLAY_PIPELINE = "overlay_pipeline"
+    CORRUPTION_PIPELINE = "corruption_pipeline"
+
+    # Service loggers (consolidated from SSEEventSource)
+    CAMERA_SERVICE = "camera_service"
+    IMAGE_SERVICE = "image_service"
+    TIMELAPSE_SERVICE = "timelapse_service"
+    VIDEO_SERVICE = "video_service"
+    SETTINGS_SERVICE = "settings_service"
+    LOG_SERVICE = "log_service"
+
+    # System loggers (consolidated from SSEEventSource)
+    SYSTEM = "system"
+    FFMPEG = "ffmpeg"
+
+    # Generic
+    UNKNOWN = "unknown"
+
+
+# =============================================================================
 # TIMELAPSE SYSTEMS
 # =============================================================================
 

@@ -5,6 +5,8 @@ routers of the Timelapser backend. Each router is responsible for a specific
 domain of the application. For detailed request/response schemas, refer to the
 source code or OpenAPI docs.
 
+Last Updated: July 26th 2025
+
 ---
 
 ## Routers and Their Endpoints
