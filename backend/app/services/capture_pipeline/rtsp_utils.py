@@ -41,7 +41,9 @@ def configure_opencv_logging() -> None:
         pass
 
 
-def configure_rtsp_capture(cap: cv2.VideoCapture, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS) -> None:
+def configure_rtsp_capture(
+    cap: cv2.VideoCapture, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS
+) -> None:
     """
     Configure VideoCapture object for optimal RTSP/HEVC performance.
 
@@ -66,11 +68,13 @@ def configure_rtsp_capture(cap: cv2.VideoCapture, timeout_seconds: int = DEFAULT
 
 
 def capture_frame_from_rtsp(
-    rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS, skip_frames: int = 3
+    rtsp_url: str,
+    timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS,
+    skip_frames: int = 3,
 ) -> Optional[Any]:
     """
     Capture a single frame from RTSP stream with timeout handling.
-    
+
     Supports both regular RTSP and RTSPS (RTSP over SSL/TLS) connections.
 
     Args:
@@ -88,20 +92,22 @@ def capture_frame_from_rtsp(
     cap = None
     try:
         logger.debug(f"Connecting to RTSP stream: {rtsp_url}")
-        
+
         # Check if this is an RTSPS (secure) connection
-        is_rtsps = rtsp_url.lower().startswith('rtsps://')
+        is_rtsps = rtsp_url.lower().startswith("rtsps://")
         if is_rtsps:
             logger.debug("Configuring capture for RTSPS (secure RTSP) connection")
             # Set FFmpeg options for SSL/TLS RTSP connections
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|rw_timeout;10000000|stimeout;10000000"
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|rw_timeout;10000000|stimeout;10000000"
+            )
 
         # Configure OpenCV for RTSP with HEVC/H.265 optimization
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
 
         # Apply RTSP configuration
         configure_rtsp_capture(cap, timeout_seconds)
-        
+
         # Additional configuration for RTSPS streams
         if is_rtsps:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffering for SSL streams
@@ -111,7 +117,9 @@ def capture_frame_from_rtsp(
             if is_rtsps:
                 logger.debug("Primary RTSPS capture failed, attempting fallbacks...")
                 cap.release()
-                return _capture_frame_rtsps_fallback(rtsp_url, timeout_seconds, skip_frames)
+                return _capture_frame_rtsps_fallback(
+                    rtsp_url, timeout_seconds, skip_frames
+                )
             else:
                 raise RTSPConnectionError(f"Failed to open RTSP stream: {rtsp_url}")
 
@@ -131,7 +139,9 @@ def capture_frame_from_rtsp(
             if is_rtsps:
                 logger.debug("RTSPS frame capture failed, trying fallback...")
                 cap.release()
-                return _capture_frame_rtsps_fallback(rtsp_url, timeout_seconds, skip_frames)
+                return _capture_frame_rtsps_fallback(
+                    rtsp_url, timeout_seconds, skip_frames
+                )
             else:
                 raise RTSPCaptureError(
                     f"Failed to read frame from stream (took {elapsed_time:.2f}s)"
@@ -146,10 +156,12 @@ def capture_frame_from_rtsp(
         # For RTSPS, try fallback on exception
         if cap is not None:
             cap.release()
-        if rtsp_url.lower().startswith('rtsps://'):
+        if rtsp_url.lower().startswith("rtsps://"):
             logger.debug(f"RTSPS capture exception, trying fallback: {e}")
             try:
-                return _capture_frame_rtsps_fallback(rtsp_url, timeout_seconds, skip_frames)
+                return _capture_frame_rtsps_fallback(
+                    rtsp_url, timeout_seconds, skip_frames
+                )
             except:
                 pass
         raise RTSPCaptureError(f"Exception during frame capture: {e}")
@@ -158,15 +170,17 @@ def capture_frame_from_rtsp(
             cap.release()
 
 
-def _capture_frame_rtsps_fallback(rtsp_url: str, timeout_seconds: int, skip_frames: int) -> Optional[Any]:
+def _capture_frame_rtsps_fallback(
+    rtsp_url: str, timeout_seconds: int, skip_frames: int
+) -> Optional[Any]:
     """
     Fallback frame capture for RTSPS connections.
-    
+
     Args:
         rtsp_url: RTSPS URL to capture from
         timeout_seconds: Timeout for capture operations
         skip_frames: Number of frames to skip
-        
+
     Returns:
         OpenCV frame if successful, None if failed
     """
@@ -176,67 +190,73 @@ def _capture_frame_rtsps_fallback(rtsp_url: str, timeout_seconds: int, skip_fram
             tcp_url = rtsp_url + "&rtsp_transport=tcp"
         else:
             tcp_url = rtsp_url + "?rtsp_transport=tcp"
-            
+
         logger.debug(f"Trying RTSPS capture with TCP transport: {tcp_url}")
         cap = cv2.VideoCapture(tcp_url, cv2.CAP_FFMPEG)
         configure_rtsp_capture(cap, timeout_seconds)
-        
+
         if cap.isOpened():
             # Skip frames
             for _ in range(skip_frames):
                 ret, _ = cap.read()
                 if not ret:
                     break
-            
+
             ret, frame = cap.read()
             cap.release()
-            
+
             if ret and frame is not None:
                 logger.info("RTSPS TCP fallback capture successful")
                 return frame
         else:
             cap.release()
-        
+
         # Approach 2: Try converting to regular RTSP without SRTP parameter
         regular_rtsp_url = rtsp_url.replace("rtsps://", "rtsp://")
         # Remove enableSrtp parameter as it may not be compatible with regular RTSP
         if "enableSrtp" in regular_rtsp_url:
             regular_rtsp_url = regular_rtsp_url.split("?")[0]
         logger.info(f"🔍 RTSP Capture Fallback Debug - Original URL: {rtsp_url}")
-        logger.info(f"🔍 RTSP Capture Fallback Debug - Modified URL: {regular_rtsp_url}")
+        logger.info(
+            f"🔍 RTSP Capture Fallback Debug - Modified URL: {regular_rtsp_url}"
+        )
         logger.debug(f"Trying regular RTSP fallback capture: {regular_rtsp_url}")
-        
+
         cap = cv2.VideoCapture(regular_rtsp_url, cv2.CAP_FFMPEG)
         configure_rtsp_capture(cap, timeout_seconds)
-        
+
         if cap.isOpened():
             # Skip frames
             for _ in range(skip_frames):
                 ret, _ = cap.read()
                 if not ret:
                     break
-            
+
             ret, frame = cap.read()
             cap.release()
-            
+
             if ret and frame is not None:
-                logger.warning("Regular RTSP fallback capture successful (insecure connection)")
+                logger.warning(
+                    "Regular RTSP fallback capture successful (insecure connection)"
+                )
                 return frame
         else:
             cap.release()
-            
+
         logger.error("All RTSPS capture fallback approaches failed")
         return None
-        
+
     except Exception as e:
         logger.error(f"RTSPS capture fallback failed: {e}")
         return None
 
 
-def test_rtsp_connection(rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS) -> Tuple[bool, str]:
+def test_rtsp_connection(
+    rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS
+) -> Tuple[bool, str]:
     """
     Test RTSP connection without capturing frames.
-    
+
     Supports both regular RTSP and RTSPS (RTSP over SSL/TLS) connections.
 
     Args:
@@ -248,31 +268,33 @@ def test_rtsp_connection(rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIME
     """
     try:
         logger.info(f"🔗 Testing RTSP connection to: {rtsp_url}")
-        
+
         # Check if this is an RTSPS (secure) connection
-        is_rtsps = rtsp_url.lower().startswith('rtsps://')
+        is_rtsps = rtsp_url.lower().startswith("rtsps://")
         if is_rtsps:
             logger.info("🔒 Detected RTSPS (secure RTSP) connection")
         else:
             logger.info("🔓 Detected regular RTSP connection")
-        
+
         # Configure environment for SSL/TLS support
         if is_rtsps:
             # Set FFmpeg options for SSL/TLS RTSP connections with relaxed SSL verification
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|rw_timeout;10000000|stimeout;10000000|tls_verify;0"
-        
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|rw_timeout;10000000|stimeout;10000000|tls_verify;0"
+            )
+
         # Try primary approach with FFmpeg backend
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
         cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_seconds * 1000)
-        
+
         # For RTSPS streams, set additional properties
         if is_rtsps:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffering for SSL streams
-            
+
         if not cap.isOpened():
             cap.release()
-            
+
             # If RTSPS failed, try fallback approaches
             if is_rtsps:
                 logger.debug("RTSPS connection failed, trying fallback approaches...")
@@ -302,11 +324,11 @@ def test_rtsp_connection(rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIME
 def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str]:
     """
     Fallback testing for RTSPS connections with alternative approaches.
-    
+
     Args:
         rtsp_url: RTSPS URL to test
         timeout_seconds: Connection timeout
-        
+
     Returns:
         Tuple of (success: bool, message: str)
     """
@@ -316,22 +338,27 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
             tcp_url = rtsp_url + "&rtsp_transport=tcp"
         else:
             tcp_url = rtsp_url + "?rtsp_transport=tcp"
-            
+
         logger.debug(f"Trying RTSPS with TCP transport: {tcp_url}")
         cap = cv2.VideoCapture(tcp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
-        
+
         if cap.isOpened():
             width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             cap.release()
-            
+
             if width > 0 and height > 0:
-                logger.info(f"RTSPS TCP fallback successful: {int(width)}x{int(height)}")
-                return True, f"RTSPS TCP connection successful - Stream: {int(width)}x{int(height)}"
+                logger.info(
+                    f"RTSPS TCP fallback successful: {int(width)}x{int(height)}"
+                )
+                return (
+                    True,
+                    f"RTSPS TCP connection successful - Stream: {int(width)}x{int(height)}",
+                )
         else:
             cap.release()
-        
+
         # Approach 2: Try converting to regular RTSP without SRTP parameter
         regular_rtsp_url = rtsp_url.replace("rtsps://", "rtsp://")
         # Remove enableSrtp parameter as it may not be compatible with regular RTSP
@@ -340,23 +367,28 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
         logger.info(f"🔍 RTSP Fallback Debug - Original URL: {rtsp_url}")
         logger.info(f"🔍 RTSP Fallback Debug - Modified URL: {regular_rtsp_url}")
         logger.debug(f"Trying regular RTSP fallback (no SRTP): {regular_rtsp_url}")
-        
+
         cap = cv2.VideoCapture(regular_rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
-        
+
         if cap.isOpened():
             width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             cap.release()
-            
+
             if width > 0 and height > 0:
-                logger.warning(f"Regular RTSP fallback worked (insecure): {int(width)}x{int(height)}")
-                return True, f"Fallback RTSP connection successful - Stream: {int(width)}x{int(height)} (using insecure connection)"
+                logger.warning(
+                    f"Regular RTSP fallback worked (insecure): {int(width)}x{int(height)}"
+                )
+                return (
+                    True,
+                    f"Fallback RTSP connection successful - Stream: {int(width)}x{int(height)} (using insecure connection)",
+                )
         else:
             cap.release()
-            
+
         return False, "All RTSPS fallback approaches failed"
-        
+
     except Exception as e:
         logger.error(f"RTSPS fallback failed: {e}")
         return False, f"RTSPS fallback failed: {str(e)}"
@@ -732,3 +764,35 @@ def capture_with_retry(
 
 # Initialize OpenCV logging suppression when module is imported
 configure_opencv_logging()
+
+# def detect_source_resolution(
+#     rtsp_url: str,
+#     max_retries: int = DEFAULT_MAX_RETRIES,
+#     timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS,
+#     use_fallback: bool = True,
+# ) -> Tuple[int, int]:
+#     """
+#     Detect the source resolution (width, height) of an RTSP stream.
+
+#     Args:
+#         rtsp_url: RTSP stream URL
+#         max_retries: Maximum number of retry attempts
+#         timeout_seconds: Timeout for each attempt
+#         use_fallback: Whether to use fallback strategies
+
+#     Returns:
+#         Tuple of (width, height). Returns (0, 0) if detection fails.
+#     """
+#     frame = capture_with_retry(
+#         rtsp_url,
+#         max_retries=max_retries,
+#         timeout_seconds=timeout_seconds,
+#         use_fallback=use_fallback,
+#     )
+#     if frame is not None:
+#         return get_frame_resolution(frame)
+#     else:
+#         logger.error(
+#             f"❌ Failed to detect source resolution for RTSP stream: {rtsp_url}"
+#         )
+#         return 0, 0

@@ -22,6 +22,7 @@ import psycopg
 
 from .core import AsyncDatabase, SyncDatabase
 from ..utils.database_helpers import DatabaseQueryBuilder
+
 # Removed unused constants imports
 from ..models.camera_model import (
     Camera,
@@ -70,6 +71,7 @@ def _prepare_camera_data_shared(
 
 class AsyncCameraOperations:
     """Async camera database operations using composition pattern."""
+
     def __init__(self, db: AsyncDatabase, settings_service) -> None:
         self.db = db
         self.settings_service = settings_service
@@ -374,22 +376,26 @@ class AsyncCameraOperations:
             camera = await db.create_camera({
                 'name': 'Front Door',
                 'rtsp_url': 'rtsp://camera/stream',
-                'enabled': True
+                'enabled': True,
+                'source_resolution': {'width': 2688, 'height': 1512}
             })
         """
+
         query = """
         INSERT INTO cameras (
-            name, rtsp_url, enabled, rotation,
-            capture_interval, quality_setting, resolution_width, resolution_height,
-            overlay_text, watermark_enabled, watermark_text, watermark_position,
-            watermark_font_size, watermark_opacity, fps, video_bitrate,
-            corruption_detection_heavy
+            name, rtsp_url, status, rotation,
+            crop_rotation_enabled, crop_rotation_settings, source_resolution,
+            corruption_detection_heavy, corruption_score, is_flagged,
+            lifetime_glitch_count, consecutive_corruption_failures,
+            degraded_mode_active, last_degraded_at, enabled, is_connected,
+            last_error, last_error_message
         ) VALUES (
-            %(name)s, %(rtsp_url)s, %(enabled)s, %(rotation)s,
-            %(capture_interval)s, %(quality_setting)s, %(resolution_width)s, %(resolution_height)s,
-            %(overlay_text)s, %(watermark_enabled)s, %(watermark_text)s, %(watermark_position)s,
-            %(watermark_font_size)s, %(watermark_opacity)s, %(fps)s, %(video_bitrate)s,
-            %(corruption_detection_heavy)s
+            %(name)s, %(rtsp_url)s, %(status)s, %(rotation)s,
+            %(crop_rotation_enabled)s, %(crop_rotation_settings)s, %(source_resolution)s,
+            %(corruption_detection_heavy)s, %(corruption_score)s, %(is_flagged)s,
+            %(lifetime_glitch_count)s, %(consecutive_corruption_failures)s,
+            %(degraded_mode_active)s, %(last_degraded_at)s, %(enabled)s, %(is_connected)s,
+            %(last_error)s, %(last_error_message)s
         ) RETURNING *
         """
 

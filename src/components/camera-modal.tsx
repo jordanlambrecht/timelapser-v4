@@ -34,9 +34,6 @@ export function CameraModal({
   const [formData, setFormData] = useState({
     name: "",
     rtsp_url: "",
-    use_time_window: false,
-    time_window_start: "06:00",
-    time_window_end: "18:00",
     corruption_detection_heavy: false,
   })
   const [saving, setSaving] = useState(false)
@@ -47,9 +44,6 @@ export function CameraModal({
       setFormData({
         name: camera?.name || "",
         rtsp_url: camera?.rtsp_url || "",
-        use_time_window: camera?.use_time_window || false,
-        time_window_start: camera?.time_window_start || "06:00",
-        time_window_end: camera?.time_window_end || "18:00",
         corruption_detection_heavy: camera?.corruption_detection_heavy || false,
       })
       setSaving(false) // Reset saving state when modal opens
@@ -100,7 +94,7 @@ export function CameraModal({
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, name: e.target.value }))
                 }
-                placeholder='e.g., Front Door Camera'
+                placeholder='Cactus Camera'
                 className='h-12 text-white bg-black/30 border-purple-muted/30 placeholder:text-grey-light/40 focus:border-pink/50 focus:ring-2 focus:ring-pink/20 rounded-xl'
                 required
               />
@@ -128,91 +122,6 @@ export function CameraModal({
               <p className='mt-2 text-xs text-grey-light/60'>
                 Secure RTSP streams (rtsps://) are supported
               </p>
-            </div>
-
-            {/* Time Window Section */}
-            <div className='p-6 space-y-6 border bg-black/20 rounded-2xl border-purple-muted/20'>
-              <div className='flex items-center justify-between'>
-                <div className='space-y-2'>
-                  <Label className='flex items-center space-x-2 font-medium text-white'>
-                    <Clock className='w-4 h-4 text-yellow/70' />
-                    <span>Time Window</span>
-                  </Label>
-                  <p className='text-sm text-grey-light/60'>
-                    Capture only during specific hours (e.g., daylight only)
-                  </p>
-                </div>
-                <Switch
-                  checked={formData.use_time_window}
-                  onCheckedChange={(checked) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      use_time_window: checked,
-                    }))
-                  }
-                  className='data-[state=checked]:bg-success data-[state=unchecked]:bg-purple-muted/50'
-                />
-              </div>
-
-              {formData.use_time_window && (
-                <div className='grid grid-cols-2 gap-4 mt-4'>
-                  <div className='space-y-2'>
-                    <Label
-                      htmlFor='time_start'
-                      className='text-sm text-grey-light/70'
-                    >
-                      Start Time
-                    </Label>
-                    <Input
-                      id='time_start'
-                      type='time'
-                      value={formData.time_window_start}
-                      onChange={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          time_window_start: e.target.value,
-                        }))
-                      }
-                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
-                    />
-                  </div>
-                  <div className='space-y-2'>
-                    <Label
-                      htmlFor='time_end'
-                      className='text-sm text-grey-light/70'
-                    >
-                      End Time
-                    </Label>
-                    <Input
-                      id='time_end'
-                      type='time'
-                      value={formData.time_window_end}
-                      onChange={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          time_window_end: e.target.value,
-                        }))
-                      }
-                      className='h-10 text-white bg-black/30 border-purple-muted/30 focus:border-success/50 rounded-xl'
-                    />
-                  </div>
-                </div>
-              )}
-
-              {formData.use_time_window && (
-                <div className='p-3 mt-4 border bg-success/10 border-success/20 rounded-xl'>
-                  <p className='text-sm text-success/80'>
-                    ✓ Camera will capture from{" "}
-                    <span className='font-mono'>
-                      {formData.time_window_start}
-                    </span>{" "}
-                    to{" "}
-                    <span className='font-mono'>
-                      {formData.time_window_end}
-                    </span>
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* Image Quality Detection Section */}

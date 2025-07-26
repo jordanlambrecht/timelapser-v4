@@ -30,6 +30,8 @@ Architecture: Composition-based with dependency injection for type-safe operatio
 from typing import List, Optional, Dict, Any
 from loguru import logger
 
+# from ..services.capture_pipeline.rtsp_utils import detect_source_resolution
+
 from ..enums import SSEPriority, JobPriority
 
 from ..database.core import AsyncDatabase, SyncDatabase
@@ -70,7 +72,11 @@ from ..utils.time_utils import (
 
 from ..utils.file_helpers import validate_file_path, ensure_directory_exists
 from ..utils.database_helpers import DatabaseUtilities, CommonQueries
-from ..utils.validation_helpers import validate_camera_exists, validate_camera_name, validate_rtsp_url
+from ..utils.validation_helpers import (
+    validate_camera_exists,
+    validate_camera_name,
+    validate_rtsp_url,
+)
 from ..database.sse_events_operations import SSEEventsOperations
 from ..models.camera_action_models import TimelapseActionRequest
 from ..constants import (
@@ -85,7 +91,6 @@ from ..constants import (
     EVENT_CAMERA_DELETED,
     EVENT_CAMERA_STATUS_UPDATED,
     EVENT_CAMERA_HEALTH_UPDATED,
-
     # Camera health constants
     CAMERA_HEALTH_FAILURE_THRESHOLD,
     CAMERA_HEALTH_DEGRADED_THRESHOLD,
@@ -94,7 +99,6 @@ from ..constants import (
     CAMERA_HEALTH_OFFLINE,
     CAMERA_CAPTURE_READY_STATUSES,
     CAMERA_TIMELAPSE_READY_STATUSES,
-
     # Timelapse status enum
     TimelapseStatus,
 )
@@ -155,12 +159,12 @@ class CameraService:
     def determine_camera_health_status(self, consecutive_failures: int) -> str:
         """
         Determine camera health status based on consecutive failures.
-        
+
         Business logic moved from database layer to service layer.
-        
+
         Args:
             consecutive_failures: Number of consecutive capture failures
-            
+
         Returns:
             Health status string (online, degraded, offline)
         """
@@ -171,42 +175,47 @@ class CameraService:
         else:
             return CAMERA_HEALTH_OFFLINE
 
-    def is_camera_capture_ready(self, camera_status: str, timelapse_status: Optional[str], 
-                               degraded_mode_active: bool, corruption_detection_heavy: bool) -> bool:
+    def is_camera_capture_ready(
+        self,
+        camera_status: str,
+        timelapse_status: Optional[str],
+        degraded_mode_active: bool,
+        corruption_detection_heavy: bool,
+    ) -> bool:
         """
         Determine if camera is ready for capture based on business rules.
-        
+
         Business logic moved from database layer to service layer.
-        
+
         Args:
             camera_status: Camera status (active, inactive, etc.)
-            timelapse_status: Timelapse status (running, paused, etc.) 
+            timelapse_status: Timelapse status (running, paused, etc.)
             degraded_mode_active: Whether camera is in degraded mode
             corruption_detection_heavy: Whether corruption detection is enabled
-            
+
         Returns:
             True if camera is ready for capture
         """
         # Check basic status requirements
         if camera_status not in CAMERA_CAPTURE_READY_STATUSES:
             return False
-            
+
         if timelapse_status not in CAMERA_TIMELAPSE_READY_STATUSES:
             return False
-            
-        # Check degraded mode requirements  
+
+        # Check degraded mode requirements
         if degraded_mode_active and not corruption_detection_heavy:
             return False
-            
+
         return True
 
     def should_update_health_to_degraded(self, consecutive_failures: int) -> bool:
         """
         Determine if camera health should be updated to degraded status.
-        
+
         Args:
             consecutive_failures: Current consecutive failure count
-            
+
         Returns:
             True if health should be marked as degraded
         """
@@ -215,10 +224,10 @@ class CameraService:
     def should_update_health_to_offline(self, consecutive_failures: int) -> bool:
         """
         Determine if camera health should be updated to offline status.
-        
+
         Args:
             consecutive_failures: Current consecutive failure count
-            
+
         Returns:
             True if health should be marked as offline
         """
@@ -227,7 +236,7 @@ class CameraService:
     # ====================================================================
     # CAMERA CRUD OPERATIONS
     # ====================================================================
-        
+
     async def get_cameras(self) -> List[Camera]:
         """
         Retrieve all cameras with their current status and statistics.
@@ -261,27 +270,33 @@ class CameraService:
         return camera
 
     # Private helper methods for common patterns
-    async def _broadcast_camera_event(self, event_type: str, camera_id: int, **event_data):
+    async def _broadcast_camera_event(
+        self, event_type: str, camera_id: int, **event_data
+    ):
         """Helper method to broadcast camera-related SSE events with consistent structure."""
         await self.sse_ops.create_event(
             event_type=event_type,
             event_data={"camera_id": camera_id, **event_data},
         )
 
-    async def _broadcast_timelapse_status_event(self, timelapse_id: int, camera_id: int, status: str, **extra_data):
+    async def _broadcast_timelapse_status_event(
+        self, timelapse_id: int, camera_id: int, status: str, **extra_data
+    ):
         """Helper method to broadcast timelapse status change events."""
         event_data = {
             "timelapse_id": timelapse_id,
             "camera_id": camera_id,
             "status": status,
-            **extra_data
+            **extra_data,
         }
         await self.sse_ops.create_event(
             event_type="timelapse_status_changed",
             event_data=event_data,
         )
 
-    async def _broadcast_scheduler_event(self, event_data: dict, priority: str = JobPriority.MEDIUM):
+    async def _broadcast_scheduler_event(
+        self, event_data: dict, priority: str = JobPriority.MEDIUM
+    ):
         """Helper method to broadcast scheduler-related events."""
         await self.sse_ops.create_event(
             event_type="scheduler_sync_requested",
@@ -310,6 +325,21 @@ class CameraService:
         return await self.camera_ops.get_camera_comprehensive_status(camera_id)
 
     async def create_camera(self, camera_data: CameraCreate) -> Camera:
+        # If source_resolution is not provided, fetch it from RTSP
+        # if not getattr(camera_data, "source_resolution", None):
+
+        #     width, height = detect_source_resolution(camera_data.rtsp_url)
+        #     if width > 0 and height > 0:
+        #         camera_data.source_resolution = {"width": width, "height": height}
+        #         logger.info(
+        #             f"📷 Detected source resolution for camera '{camera_data.name}': {width}x{height}"
+        #         )
+        #     else:
+        #         logger.error(
+        #             f"❌ Could not detect source resolution for camera: {camera_data.name} ({camera_data.rtsp_url})"
+        #         )
+        #         camera_data.source_resolution = {"width": 0, "height": 0}
+
         """
         Create a new camera with business logic orchestration.
 
@@ -622,7 +652,7 @@ class CameraService:
         """
         try:
             success = await self.camera_ops.update_camera_health(camera_id, health_data)
-            
+
             if success:
                 logger.info(
                     f"Updated health data for camera {camera_id}",
@@ -632,7 +662,7 @@ class CameraService:
                         "operation": "update_camera_health",
                     },
                 )
-                
+
                 # Broadcast SSE event for health update
                 await self.sse_ops.create_event(
                     event_type=EVENT_CAMERA_HEALTH_UPDATED,
@@ -643,7 +673,7 @@ class CameraService:
                     priority=SSEPriority.NORMAL,
                     source="camera_service",
                 )
-            
+
             return success
 
         except Exception as e:
@@ -770,17 +800,24 @@ class CameraService:
         )
 
         # Reset capture timing fields for new timelapse - let scheduler handle timing
-        logger.info(f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts with clean state")
+        logger.info(
+            f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts with clean state"
+        )
         try:
             update_result = await self.camera_ops.update_camera(
-                camera_id, {
+                camera_id,
+                {
                     "last_capture_at": None,
-                    "next_capture_at": None  # Clean state - scheduler will set proper timing
-                }
+                    "next_capture_at": None,  # Clean state - scheduler will set proper timing
+                },
             )
-            logger.info(f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}")
+            logger.info(
+                f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}"
+            )
         except Exception as e:
-            logger.error(f"❌ Failed to reset capture timing for camera {camera_id}: {e}")
+            logger.error(
+                f"❌ Failed to reset capture timing for camera {camera_id}: {e}"
+            )
             # Continue with timelapse creation even if timing reset fails
 
         # Trigger immediate scheduler sync for the new timelapse
@@ -798,20 +835,31 @@ class CameraService:
 
         # Schedule immediate first capture using scheduler authority service
         if self.scheduler_authority_service:
-            logger.info(f"🎯 Scheduling immediate first capture for timelapse {timelapse.id}")
+            logger.info(
+                f"🎯 Scheduling immediate first capture for timelapse {timelapse.id}"
+            )
             try:
-                capture_result = await self.scheduler_authority_service.schedule_immediate_capture(
-                    camera_id=camera_id,
-                    timelapse_id=timelapse.id
+                capture_result = (
+                    await self.scheduler_authority_service.schedule_immediate_capture(
+                        camera_id=camera_id, timelapse_id=timelapse.id
+                    )
                 )
                 if capture_result:
-                    logger.info(f"✅ Immediate capture scheduled successfully for timelapse {timelapse.id}")
+                    logger.info(
+                        f"✅ Immediate capture scheduled successfully for timelapse {timelapse.id}"
+                    )
                 else:
-                    logger.warning(f"⚠️ Failed to schedule immediate capture for timelapse {timelapse.id}")
+                    logger.warning(
+                        f"⚠️ Failed to schedule immediate capture for timelapse {timelapse.id}"
+                    )
             except Exception as e:
-                logger.error(f"❌ Error scheduling immediate capture for timelapse {timelapse.id}: {e}")
+                logger.error(
+                    f"❌ Error scheduling immediate capture for timelapse {timelapse.id}: {e}"
+                )
         else:
-            logger.warning("⚠️ Scheduler authority service not available - immediate capture skipped")
+            logger.warning(
+                "⚠️ Scheduler authority service not available - immediate capture skipped"
+            )
 
         # Note: First capture scheduled immediately, then will follow normal scheduled interval
 
@@ -825,7 +873,6 @@ class CameraService:
             "timelapse_status": TimelapseStatus.RUNNING,
             "message": "Timelapse started successfully",
         }
-
 
     async def _handle_pause_action(
         self, camera_id: int, camera: Camera
@@ -1033,11 +1080,11 @@ class CameraService:
                     "operation": "coordinate_health_monitoring",
                 },
             )
-            
+
             monitoring_timestamp = await get_timezone_aware_timestamp_async(
                 self.settings_service
             )
-            
+
             return CameraHealthMonitoringResult(
                 success=False,
                 camera_id=camera_id,
@@ -1144,24 +1191,26 @@ class CameraService:
                     rtsp_result = await self.rtsp_service.test_connection(
                         camera_id, camera.rtsp_url
                     )
-                    
+
                     # Update camera connectivity based on test results
                     await self.update_camera_connectivity(
                         camera_id,
                         rtsp_result.success,
                         rtsp_result.error if not rtsp_result.success else None,
                     )
-                    
+
                     logger.info(
                         f"Connectivity test completed",
                         extra={
                             "camera_id": camera_id,
                             "success": rtsp_result.success,
-                            "response_time": getattr(rtsp_result, "response_time_ms", None),
+                            "response_time": getattr(
+                                rtsp_result, "response_time_ms", None
+                            ),
                             "operation": "test_connectivity",
                         },
                     )
-                    
+
                     return rtsp_result
 
                 except Exception as rtsp_error:
@@ -1173,12 +1222,12 @@ class CameraService:
                             "operation": "test_connectivity",
                         },
                     )
-                    
+
                     # Update connectivity as failed
                     await self.update_camera_connectivity(
                         camera_id, False, str(rtsp_error)
                     )
-                    
+
                     return CameraConnectivityTestResult(
                         success=False,
                         camera_id=camera_id,
@@ -1220,7 +1269,7 @@ class CameraService:
             test_timestamp = await get_timezone_aware_timestamp_async(
                 self.settings_service
             )
-            
+
             return CameraConnectivityTestResult(
                 success=False,
                 camera_id=camera_id,
@@ -1229,12 +1278,9 @@ class CameraService:
                 error=str(e),
                 test_timestamp=test_timestamp,
             )
-    
+
     async def update_camera_connectivity(
-        self, 
-        camera_id: int, 
-        is_connected: bool, 
-        error_message: Optional[str] = None
+        self, camera_id: int, is_connected: bool, error_message: Optional[str] = None
     ) -> bool:
         """
         Update camera connectivity status.
@@ -1249,12 +1295,10 @@ class CameraService:
         """
         try:
             updated_camera = await self.camera_ops.update_camera(
-                camera_id, {
-                    "health_status": "online" if is_connected else "offline"
-                }
+                camera_id, {"health_status": "online" if is_connected else "offline"}
             )
             success = updated_camera is not None
-            
+
             if success:
                 logger.debug(
                     f"Updated connectivity status for camera {camera_id}",
@@ -1265,7 +1309,7 @@ class CameraService:
                         "operation": "update_camera_connectivity",
                     },
                 )
-            
+
             return success
 
         except Exception as e:
@@ -1561,7 +1605,7 @@ class CameraService:
 
         Applies business rules for capture readiness:
         - Active status
-        - Have running timelapses  
+        - Have running timelapses
         - Are due for capture (next_capture_at <= now)
         - Not in degraded mode or have corruption detection enabled
 
@@ -1571,7 +1615,7 @@ class CameraService:
         try:
             # Get cameras due for capture (no business logic filtering)
             due_cameras = await self.camera_ops.get_cameras_due_for_capture()
-            
+
             # Apply business logic filtering in service layer
             ready_cameras = []
             for camera in due_cameras:
@@ -1579,15 +1623,15 @@ class CameraService:
                     camera.status,
                     camera.timelapse_status,
                     camera.degraded_mode_active,
-                    camera.corruption_detection_heavy
+                    camera.corruption_detection_heavy,
                 ):
                     ready_cameras.append(camera)
-                    
+
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture"}
+                extra={"operation": "get_cameras_ready_for_capture"},
             )
-            
+
             return ready_cameras
         except Exception as e:
             logger.error(
@@ -1597,7 +1641,13 @@ class CameraService:
             # Return empty list rather than failing entirely
             return []
 
-    async def update_camera_capture_stats(self, camera_id: int, success: bool, consecutive_failures: int = 0, error_message: Optional[str] = None) -> bool:
+    async def update_camera_capture_stats(
+        self,
+        camera_id: int,
+        success: bool,
+        consecutive_failures: int = 0,
+        error_message: Optional[str] = None,
+    ) -> bool:
         """
         Update camera capture statistics using business logic for health determination.
 
@@ -1612,13 +1662,15 @@ class CameraService:
         """
         try:
             # Use business logic to determine health status
-            health_status = self.determine_camera_health_status(consecutive_failures + (0 if success else 1))
-            
+            health_status = self.determine_camera_health_status(
+                consecutive_failures + (0 if success else 1)
+            )
+
             # Update database with determined health status
             result = await self.camera_ops.update_camera_capture_stats(
                 camera_id, success, health_status, error_message
             )
-            
+
             if result:
                 logger.debug(
                     f"Updated capture stats for camera",
@@ -1634,7 +1686,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update camera capture stats",
-                extra={"camera_id": camera_id, "error": str(e), "operation": "update_capture_stats"},
+                extra={
+                    "camera_id": camera_id,
+                    "error": str(e),
+                    "operation": "update_capture_stats",
+                },
             )
             return False
 
@@ -1647,7 +1703,13 @@ class SyncCameraService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase, rtsp_service=None, scheduling_service=None, settings_service=None):
+    def __init__(
+        self,
+        db: SyncDatabase,
+        rtsp_service=None,
+        scheduling_service=None,
+        settings_service=None,
+    ):
         """
         Initialize SyncCameraService with sync database instance.
 
@@ -1672,12 +1734,12 @@ class SyncCameraService:
     def determine_camera_health_status(self, consecutive_failures: int) -> str:
         """
         Determine camera health status based on consecutive failures.
-        
+
         Business logic moved from database layer to service layer.
-        
+
         Args:
             consecutive_failures: Number of consecutive capture failures
-            
+
         Returns:
             Health status string (online, degraded, offline)
         """
@@ -1688,42 +1750,47 @@ class SyncCameraService:
         else:
             return CAMERA_HEALTH_OFFLINE
 
-    def is_camera_capture_ready(self, camera_status: str, timelapse_status: Optional[str], 
-                               degraded_mode_active: bool, corruption_detection_heavy: bool) -> bool:
+    def is_camera_capture_ready(
+        self,
+        camera_status: str,
+        timelapse_status: Optional[str],
+        degraded_mode_active: bool,
+        corruption_detection_heavy: bool,
+    ) -> bool:
         """
         Determine if camera is ready for capture based on business rules.
-        
+
         Business logic moved from database layer to service layer.
-        
+
         Args:
             camera_status: Camera status (active, inactive, etc.)
-            timelapse_status: Timelapse status (running, paused, etc.) 
+            timelapse_status: Timelapse status (running, paused, etc.)
             degraded_mode_active: Whether camera is in degraded mode
             corruption_detection_heavy: Whether corruption detection is enabled
-            
+
         Returns:
             True if camera is ready for capture
         """
         # Check basic status requirements
         if camera_status not in CAMERA_CAPTURE_READY_STATUSES:
             return False
-            
+
         if timelapse_status not in CAMERA_TIMELAPSE_READY_STATUSES:
             return False
-            
-        # Check degraded mode requirements  
+
+        # Check degraded mode requirements
         if degraded_mode_active and not corruption_detection_heavy:
             return False
-            
+
         return True
 
     def should_update_health_to_degraded(self, consecutive_failures: int) -> bool:
         """
         Determine if camera health should be updated to degraded status.
-        
+
         Args:
             consecutive_failures: Current consecutive failure count
-            
+
         Returns:
             True if health should be marked as degraded
         """
@@ -1732,10 +1799,10 @@ class SyncCameraService:
     def should_update_health_to_offline(self, consecutive_failures: int) -> bool:
         """
         Determine if camera health should be updated to offline status.
-        
+
         Args:
             consecutive_failures: Current consecutive failure count
-            
+
         Returns:
             True if health should be marked as offline
         """
@@ -1824,14 +1891,14 @@ class SyncCameraService:
                     rtsp_result = self.rtsp_service.test_connection(
                         camera_id, camera.rtsp_url
                     )
-                    
+
                     # Update connectivity status
                     self.update_camera_connectivity(
                         camera_id,
                         rtsp_result.success,
                         rtsp_result.error if not rtsp_result.success else None,
                     )
-                    
+
                     return rtsp_result
 
                 except Exception as rtsp_error:
@@ -1842,7 +1909,7 @@ class SyncCameraService:
                             "error": str(rtsp_error),
                         },
                     )
-                    
+
                     return CameraConnectivityTestResult(
                         success=False,
                         camera_id=camera_id,
@@ -1866,9 +1933,9 @@ class SyncCameraService:
                 f"Sync connectivity test failed for camera {camera_id}",
                 extra={"camera_id": camera_id, "error": str(e)},
             )
-            
+
             test_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
-            
+
             return CameraConnectivityTestResult(
                 success=False,
                 camera_id=camera_id,
@@ -1923,7 +1990,7 @@ class SyncCameraService:
     ) -> Optional[CorruptionSettingsModel]:
         """
         Get camera-specific corruption detection settings.
-        
+
         Note: This method still delegates to camera_ops since it's a data retrieval
         operation rather than a health monitoring operation.
 
@@ -1940,7 +2007,7 @@ class SyncCameraService:
     ) -> bool:
         """
         Update camera corruption failure counters.
-        
+
         Note: This method still delegates to camera_ops since SyncCameraHealthService
         doesn't have this method yet. This could be moved to health service later.
 
@@ -1958,7 +2025,7 @@ class SyncCameraService:
     def set_camera_degraded_mode(self, camera_id: int, is_degraded: bool) -> bool:
         """
         Set camera degraded mode status.
-        
+
         Note: This method still delegates to camera_ops since SyncCameraHealthService
         doesn't have this method yet. This could be moved to health service later.
 
@@ -1974,7 +2041,7 @@ class SyncCameraService:
     def reset_camera_corruption_failures(self, camera_id: int) -> bool:
         """
         Reset camera corruption failure counters.
-        
+
         Note: This method still delegates to camera_ops since SyncCameraHealthService
         doesn't have this method yet. This could be moved to health service later.
 
@@ -2022,7 +2089,7 @@ class SyncCameraService:
 
         Applies business rules for capture readiness:
         - Active status
-        - Have running timelapses  
+        - Have running timelapses
         - Are due for capture (next_capture_at <= now)
         - Not in degraded mode or have corruption detection enabled
 
@@ -2032,7 +2099,7 @@ class SyncCameraService:
         try:
             # Get cameras due for capture (no business logic filtering)
             due_cameras = self.camera_ops.get_cameras_due_for_capture()
-            
+
             # Apply business logic filtering in service layer
             ready_cameras = []
             for camera in due_cameras:
@@ -2040,15 +2107,15 @@ class SyncCameraService:
                     camera.status,
                     camera.timelapse_status,
                     camera.degraded_mode_active,
-                    camera.corruption_detection_heavy
+                    camera.corruption_detection_heavy,
                 ):
                     ready_cameras.append(camera)
-                    
+
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture"}
+                extra={"operation": "get_cameras_ready_for_capture"},
             )
-            
+
             return ready_cameras
         except Exception as e:
             logger.error(
@@ -2074,7 +2141,7 @@ class SyncCameraService:
         try:
             # Get cameras due for capture (no business logic filtering)
             due_cameras = self.camera_ops.get_cameras_due_for_capture()
-            
+
             # Apply business logic filtering in service layer
             ready_cameras = []
             for camera in due_cameras:
@@ -2082,20 +2149,23 @@ class SyncCameraService:
                     camera.status,
                     camera.timelapse_status,
                     camera.degraded_mode_active,
-                    camera.corruption_detection_heavy
+                    camera.corruption_detection_heavy,
                 ):
                     ready_cameras.append(camera)
-                    
+
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture_sync"}
+                extra={"operation": "get_cameras_ready_for_capture_sync"},
             )
-            
+
             return ready_cameras
         except Exception as e:
             logger.error(
                 f"Failed to get cameras ready for capture",
-                extra={"error": str(e), "operation": "get_cameras_ready_for_capture_sync"},
+                extra={
+                    "error": str(e),
+                    "operation": "get_cameras_ready_for_capture_sync",
+                },
             )
             # Return empty list rather than failing entirely
             return []
@@ -2118,18 +2188,22 @@ class SyncCameraService:
             # Get current camera to determine consecutive failures
             camera = self.get_camera_by_id(camera_id)
             if not camera:
-                logger.error(f"Camera {camera_id} not found when updating capture stats")
+                logger.error(
+                    f"Camera {camera_id} not found when updating capture stats"
+                )
                 return False
-                
+
             # Determine new consecutive failures count
             if success:
                 new_consecutive_failures = 0
             else:
                 new_consecutive_failures = camera.consecutive_failures + 1
-                
+
             # Determine health status using business logic
-            health_status = self.determine_camera_health_status(new_consecutive_failures)
-            
+            health_status = self.determine_camera_health_status(
+                new_consecutive_failures
+            )
+
             success_result = self.camera_ops.update_camera_capture_stats(
                 camera_id, success, health_status, error_message
             )
