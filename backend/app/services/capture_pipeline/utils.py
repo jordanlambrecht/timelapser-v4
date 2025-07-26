@@ -148,19 +148,20 @@ def validate_capture_prerequisites(camera_info: Dict, timelapse_info: Dict) -> b
 
 def generate_capture_filename(timelapse_id: int, timestamp: datetime) -> str:
     """
-    Generate standardized filename for captured image.
+    Generate standardized filename for captured image following FILE_STRUCTURE_GUIDE.md.
 
     Args:
         timelapse_id: ID of timelapse
         timestamp: Capture timestamp
 
     Returns:
-        Standardized filename string
+        Standardized filename string in format: timelapse-{id}_{YYYYMMDD}_{HHMMSS}.jpg
     """
-    # Format: capture_YYYYMMDD_HHMMSS_tlXXXX.jpg
+    # Format: timelapse-{id}_{YYYYMMDD}_{HHMMSS}.jpg (per FILE_STRUCTURE_GUIDE.md)
     timestamp_str = format_filename_timestamp(timestamp)
-    filename = f"capture_{timestamp_str}_tl{timelapse_id:04d}.jpg"
+    filename = f"timelapse-{timelapse_id}_{timestamp_str}.jpg"
     return clean_filename(filename)
+
 
 
 def calculate_workflow_step_timeout(step_name: str) -> int:

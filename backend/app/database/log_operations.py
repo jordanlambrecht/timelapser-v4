@@ -176,7 +176,7 @@ class LogOperations:
             COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
             COUNT(CASE WHEN level = 'WARNING' THEN 1 END) as warning_count
         FROM logs
-        WHERE timestamp > NOW() - INTERVAL '{DEFAULT_DASHBOARD_QUALITY_TREND_DAYS} days'
+        WHERE timestamp > NOW() - INTERVAL '7 days'
         GROUP BY source
         ORDER BY source
         """

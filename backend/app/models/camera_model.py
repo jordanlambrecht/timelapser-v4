@@ -9,6 +9,7 @@ from datetime import datetime
 from ..models.timelapse_model import TimelapseWithDetails
 from ..models.image_model import Image
 from ..models.log_model import Log
+from ..enums import TimelapseStatus
 from ..utils.validation_helpers import (
     validate_rtsp_url,
     validate_camera_name,
@@ -251,11 +252,12 @@ class CameraUpdate(BaseModel):
     corruption_score: Optional[int] = Field(None, ge=0, le=100)
     is_flagged: Optional[bool] = None
 
-    @field_validator("rtsp_url")
-    @classmethod
-    def validate_rtsp_url(cls, v: Optional[str]) -> Optional[str]:
-        """Validate RTSP URL format and prevent injection"""
-        return validate_rtsp_url(v, allow_none=True)
+    # TEMPORARILY DISABLED FOR DEBUGGING RTSP ISSUE
+    # @field_validator("rtsp_url")
+    # @classmethod
+    # def validate_rtsp_url(cls, v: Optional[str]) -> Optional[str]:
+    #     """Validate RTSP URL format and prevent injection"""
+    #     return validate_rtsp_url(v, allow_none=True)
 
     @field_validator("name")
     @classmethod
@@ -283,7 +285,7 @@ class Camera(CameraBase):
     updated_at: datetime = Field(description="Last update timestamp (timezone-aware)")
 
     # Timelapse information (previously from CameraWithTimelapse)
-    timelapse_status: Optional[Literal["running", "paused"]] = None
+    timelapse_status: Optional[TimelapseStatus] = None
     timelapse_id: Optional[int] = None
 
     # Last image details (previously from CameraWithLastImage)

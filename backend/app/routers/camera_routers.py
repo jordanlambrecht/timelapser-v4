@@ -11,6 +11,7 @@ Architecture: API Layer - delegates all business logic to services
 
 from typing import List, Optional
 from datetime import datetime
+import asyncio
 
 from fastapi import (
     APIRouter,
@@ -375,40 +376,64 @@ async def trigger_manual_capture(
     capture_timestamp = await get_timezone_aware_timestamp_async(settings_service)
 
     try:
-        # 🎯 MOCK CAPTURE: Return successful mock response for demonstration
-        # TODO: Replace with actual capture workflow when worker infrastructure is available
+        # 🎯 REAL CAPTURE: Execute actual capture workflow using WorkflowOrchestratorService
         logger.info(
-            f"Mock capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}"
+            f"Real capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}"
         )
 
-        # Simulate successful capture
-        capture_success = True
-        capture_time_ms = 150  # Mock capture time
+        # Get workflow orchestrator from dependencies
+        from ..dependencies import get_workflow_orchestrator_service
+        
+        # Get the timelapse ID (we already validated it exists above)
+        timelapse_id = camera.timelapse_id
+        if not timelapse_id:
+            # Fallback to active_timelapse_id if timelapse_id is somehow None
+            timelapse_id = camera.active_timelapse_id
+            if not timelapse_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="No active timelapse ID found for capture",
+                )
 
-        # Create workflow result based on mock capture execution
+        # Execute real capture workflow in executor to handle sync service
+        def execute_capture():
+            workflow_orchestrator = get_workflow_orchestrator_service()
+            return workflow_orchestrator.execute_capture_workflow(
+                camera_id,
+                timelapse_id,
+                {"source": "manual_capture", "camera_name": camera.name}
+            )
+        
+        capture_result = await asyncio.get_event_loop().run_in_executor(None, execute_capture)
+
+        # Convert RTSPCaptureResult to CameraCaptureWorkflowResult
         return CameraCaptureWorkflowResult(
-            workflow_status="completed" if capture_success else "failed",
+            workflow_status="completed" if capture_result.success else "failed",
             camera_id=camera_id,
             connectivity=CameraConnectivityTestResult(
-                success=True,
+                success=capture_result.success,
                 camera_id=camera_id,
                 rtsp_url=camera.rtsp_url,
-                response_time_ms=capture_time_ms,
-                connection_status="mock_capture_executed",
+                response_time_ms=None,
+                connection_status="capture_executed" if capture_result.success else "capture_failed",
+                error=capture_result.error if not capture_result.success else None,
                 test_timestamp=capture_timestamp,
             ),
             health_monitoring=CameraHealthMonitoringResult(
-                success=True,
+                success=capture_result.success,
                 camera_id=camera_id,
                 monitoring_timestamp=capture_timestamp,
+                error=capture_result.error if not capture_result.success else None,
             ),
             capture_scheduling=CameraCaptureScheduleResult(
-                success=capture_success,
+                success=capture_result.success,
                 camera_id=camera_id,
-                message="Mock capture executed successfully",
+                message=capture_result.message or ("Real capture executed successfully" if capture_result.success else "Real capture failed"),
                 scheduled_at=capture_timestamp,
+                error=capture_result.error if not capture_result.success else None,
             ),
-            overall_success=capture_success,
+            overall_success=capture_result.success,
+            error=capture_result.error if not capture_result.success else None,
         )
 
     except HTTPException:

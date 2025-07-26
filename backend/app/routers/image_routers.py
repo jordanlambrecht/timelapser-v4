@@ -139,12 +139,7 @@ async def get_image(response: Response, image_id: int, image_service: ImageServi
     response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"  # 1 hour
     response.headers["ETag"] = etag
 
-    return ResponseFormatter.success(
-        message="Image retrieved successfully",
-        data=image.model_dump(),
-        entity_type="image",
-        entity_id=image_id,
-    )
+    return image
 
 
 # ====================================================================

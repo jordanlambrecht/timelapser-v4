@@ -177,10 +177,13 @@ class SSEEventsOperations:
 
     async def cleanup_old_events(self, max_age_hours: int = 24) -> int:
         """
-        Clean up old processed SSE events to prevent table bloat.
+        Clean up old SSE events to prevent table bloat.
+
+        FIXED: Now cleans up events by created_at age instead of only processed events.
+        This ensures all old events are cleaned up, not just processed ones.
 
         Args:
-            max_age_hours: Maximum age of processed events to keep
+            max_age_hours: Maximum age of events to keep in hours
 
         Returns:
             Number of events deleted
@@ -191,17 +194,17 @@ class SSEEventsOperations:
         try:
             query = """
                 DELETE FROM sse_events
-                WHERE processed_at IS NOT NULL
-                    AND processed_at < %s
+                WHERE created_at < NOW() - INTERVAL '%s hours'
             """
-
-            cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (cutoff_time,))
+                    await cur.execute(query, (max_age_hours,))
                     deleted_count = cur.rowcount
-                    logger.info(f"Cleaned up {deleted_count} old SSE events")
+                    if deleted_count > 0:
+                        logger.info(f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)")
+                    else:
+                        logger.debug(f"No old SSE events found for cleanup (older than {max_age_hours}h)")
                     return deleted_count
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:

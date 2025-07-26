@@ -9,7 +9,7 @@ All services receive database instances via dependency injection using FastAPI's
 from typing import Annotated
 from fastapi import Depends
 
-from backend.app.services.video_pipeline.video_workflow_service import (
+from .services.video_pipeline.video_workflow_service import (
     VideoWorkflowService,
 )
 
@@ -88,11 +88,19 @@ async def get_camera_service() -> CameraService:
     async_rtsp_service = await get_async_rtsp_service()
     # Create scheduling service for capture scheduling
     scheduling_service = await get_scheduling_service()
+    # Create scheduler authority service for immediate captures
+    try:
+        scheduler_authority_service = await get_scheduler_service()
+    except RuntimeError:
+        # SchedulerWorker not initialized yet - will be None
+        scheduler_authority_service = None
+    
     return CameraService(
         async_db,
         settings_service,
         rtsp_service=async_rtsp_service,
         scheduling_service=scheduling_service,
+        scheduler_authority_service=scheduler_authority_service,
     )
 
 

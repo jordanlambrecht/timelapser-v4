@@ -166,6 +166,7 @@ def create_capture_pipeline(
             scheduling_service=scheduling_service,
             weather_service=weather_service,
             overlay_service=overlay_service,
+            settings_service=settings_service,
         )
         
         # Step 6: Validate all services were created successfully

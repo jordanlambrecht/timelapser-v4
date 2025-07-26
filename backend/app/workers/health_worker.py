@@ -77,6 +77,8 @@ class HealthWorker(BaseWorker):
                     camera_id = validate_camera_id(camera_id)
 
                     # Test RTSP connectivity using unified RTSP service
+                    self.log_info(f"🔍 Health check - testing camera {camera_name} (ID: {camera_id})")
+                    self.log_info(f"🔍 Health check - RTSP URL: {camera.rtsp_url}")
                     connectivity_result = await self.run_in_executor(
                         self.rtsp_service.test_connection, camera_id, camera.rtsp_url
                     )

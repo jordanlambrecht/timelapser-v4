@@ -265,6 +265,7 @@ class SchedulerWorker(BaseWorker):
 
             # Create capture wrapper with validation
             async def capture_wrapper():
+                self.log_info(f"🎯 Capture wrapper called for timelapse {timelapse_id}")
                 try:
                     # Validate capture readiness
                     validation_result = self.scheduling_service.validate_capture_readiness(
@@ -273,14 +274,15 @@ class SchedulerWorker(BaseWorker):
                     )
 
                     if not validation_result.valid:
-                        self.log_debug(
-                            f"Capture blocked for timelapse {timelapse_id}: "
+                        self.log_info(
+                            f"❌ Capture blocked for timelapse {timelapse_id}: "
                             f"{validation_result.error or 'Unknown reason'}"
                         )
                         return
 
                     # Execute capture
                     if self.timelapse_capture_func is not None:
+                        self.log_info(f"🚀 Executing capture for timelapse {timelapse_id}")
                         await self.timelapse_capture_func(timelapse_id)
                     else:
                         self.log_error(
@@ -463,6 +465,7 @@ class SchedulerWorker(BaseWorker):
     def set_timelapse_capture_function(self, func: Callable) -> None:
         """Set the timelapse capture function reference."""
         self.timelapse_capture_func = func
+        self.log_info(f"✅ Set timelapse capture function: {func.__name__ if func else 'None'}")
 
         # Update immediate job manager reference
         self.immediate_job_manager.timelapse_capture_func = func

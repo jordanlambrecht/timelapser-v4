@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, Literal
 from datetime import datetime
 
 # Import constants for action types
-from ..enums import TimelapseAction
+from ..enums import TimelapseAction, TimelapseStatus
 
 
 class TimelapseActionRequest(BaseModel):
@@ -30,7 +30,7 @@ class TimelapseActionResponse(BaseModel):
     action: str
     camera_id: int
     timelapse_id: Optional[int] = None
-    timelapse_status: Optional[str] = None
+    timelapse_status: Optional[TimelapseStatus] = None
     data: Optional[Dict[str, Any]] = None
 
 
@@ -55,7 +55,7 @@ class CameraStatusResponse(BaseModel):
 
     # Current timelapse information
     active_timelapse_id: Optional[int] = None
-    timelapse_status: Optional[Literal["running", "paused"]] = None
+    timelapse_status: Optional[TimelapseStatus] = None
 
     # Corruption information
     corruption_score: int = Field(ge=0, le=100)

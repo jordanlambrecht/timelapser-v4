@@ -11,12 +11,13 @@ from .shared_models import (
     GenerationSchedule,
     MilestoneConfig,
 )
+from ..enums import TimelapseStatus
 
 
 class TimelapseBase(BaseModel):
     camera_id: int = Field(..., description="ID of the associated camera")
-    status: Literal["created", "running", "paused", "completed", "failed"] = Field(
-        default="created", description="Timelapse status"
+    status: TimelapseStatus = Field(
+        default=TimelapseStatus.CREATED, description="Timelapse status"
     )
 
 
@@ -133,7 +134,7 @@ class TimelapseCreate(TimelapseBase):
 class TimelapseUpdate(BaseModel):
     """Model for updating a timelapse"""
 
-    status: Optional[Literal["created", "running", "paused", "completed", "failed"]] = None
+    status: Optional[TimelapseStatus] = None
     starred: Optional[bool] = Field(
         default=None, description="Whether the timelapse is starred"
     )

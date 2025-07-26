@@ -94,6 +94,9 @@ from ..constants import (
     CAMERA_HEALTH_OFFLINE,
     CAMERA_CAPTURE_READY_STATUSES,
     CAMERA_TIMELAPSE_READY_STATUSES,
+
+    # Timelapse status enum
+    TimelapseStatus,
 )
 
 
@@ -121,6 +124,7 @@ class CameraService:
         # corruption_service=None,  # Removed - using corruption_pipeline
         scheduling_service=None,
         timelapse_service=None,
+        scheduler_authority_service=None,
     ):
         """
         Initialize CameraService with async database instance, settings service, and service dependencies.
@@ -141,6 +145,7 @@ class CameraService:
         self.rtsp_service = rtsp_service
         # self.corruption_service = corruption_service  # Removed
         self.scheduling_service = scheduling_service
+        self.scheduler_authority_service = scheduler_authority_service
         self.timelapse_service = timelapse_service
 
     # ====================================================================
@@ -731,7 +736,7 @@ class CameraService:
 
         # Set camera_id and status correctly for TimelapseBase
         timelapse_create_data["camera_id"] = camera_id
-        timelapse_create_data["status"] = "running"
+        timelapse_create_data["status"] = TimelapseStatus.RUNNING
 
         logger.info(f"Creating timelapse with cleaned data: {timelapse_create_data}")
 
@@ -760,20 +765,17 @@ class CameraService:
         await self._broadcast_timelapse_status_event(
             timelapse.id,
             camera_id,
-            "running",
+            TimelapseStatus.RUNNING,
             action="start",
         )
 
-        # Reset capture timing fields for new timelapse and schedule immediate first capture
-        logger.info(f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts fresh with immediate capture")
+        # Reset capture timing fields for new timelapse - let scheduler handle timing
+        logger.info(f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts with clean state")
         try:
-            # Get current time and timezone for immediate capture
-            current_time = await get_timezone_aware_timestamp_async(self.settings_service)
-            
             update_result = await self.camera_ops.update_camera(
                 camera_id, {
                     "last_capture_at": None,
-                    "next_capture_at": current_time  # Set to now for immediate capture
+                    "next_capture_at": None  # Clean state - scheduler will set proper timing
                 }
             )
             logger.info(f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}")
@@ -794,7 +796,24 @@ class CameraService:
             priority=SSEPriority.HIGH,
         )
 
-        # Note: First capture will happen on the normal scheduled interval
+        # Schedule immediate first capture using scheduler authority service
+        if self.scheduler_authority_service:
+            logger.info(f"🎯 Scheduling immediate first capture for timelapse {timelapse.id}")
+            try:
+                capture_result = await self.scheduler_authority_service.schedule_immediate_capture(
+                    camera_id=camera_id,
+                    timelapse_id=timelapse.id
+                )
+                if capture_result:
+                    logger.info(f"✅ Immediate capture scheduled successfully for timelapse {timelapse.id}")
+                else:
+                    logger.warning(f"⚠️ Failed to schedule immediate capture for timelapse {timelapse.id}")
+            except Exception as e:
+                logger.error(f"❌ Error scheduling immediate capture for timelapse {timelapse.id}: {e}")
+        else:
+            logger.warning("⚠️ Scheduler authority service not available - immediate capture skipped")
+
+        # Note: First capture scheduled immediately, then will follow normal scheduled interval
 
         logger.info(
             f"Successfully started timelapse {timelapse.id} for camera {camera_id}"
@@ -803,6 +822,7 @@ class CameraService:
         return {
             "success": True,
             "timelapse_id": timelapse.id,
+            "timelapse_status": TimelapseStatus.RUNNING,
             "message": "Timelapse started successfully",
         }
 
@@ -838,7 +858,7 @@ class CameraService:
             )
         else:
             # Fallback to direct database operations
-            timelapse_update = TimelapseUpdate(status="paused")
+            timelapse_update = TimelapseUpdate(status=TimelapseStatus.PAUSED)
             await self.timelapse_ops.update_timelapse(timelapse_id, timelapse_update)
             logger.info(
                 f"Successfully updated timelapse {timelapse_id} to paused status"
@@ -848,13 +868,14 @@ class CameraService:
         await self._broadcast_timelapse_status_event(
             timelapse_id,
             camera_id,
-            "paused",
+            TimelapseStatus.PAUSED,
             action="pause",
         )
 
         return {
             "success": True,
             "timelapse_id": timelapse_id,
+            "timelapse_status": TimelapseStatus.PAUSED,
             "message": "Timelapse paused successfully",
         }
 
@@ -887,7 +908,7 @@ class CameraService:
             )
         else:
             # Fallback to direct database operations
-            timelapse_update = TimelapseUpdate(status="running")
+            timelapse_update = TimelapseUpdate(status=TimelapseStatus.RUNNING)
             await self.timelapse_ops.update_timelapse(timelapse_id, timelapse_update)
             logger.info(
                 f"Successfully updated timelapse {timelapse_id} to running status"
@@ -897,13 +918,14 @@ class CameraService:
         await self._broadcast_timelapse_status_event(
             timelapse_id,
             camera_id,
-            "running",
+            TimelapseStatus.RUNNING,
             action="resume",
         )
 
         return {
             "success": True,
             "timelapse_id": timelapse_id,
+            "timelapse_status": TimelapseStatus.RUNNING,
             "message": "Timelapse resumed successfully",
         }
 
@@ -935,7 +957,7 @@ class CameraService:
             )
         else:
             # Fallback to direct database operations
-            timelapse_update = TimelapseUpdate(status="completed")
+            timelapse_update = TimelapseUpdate(status=TimelapseStatus.COMPLETED)
             await self.timelapse_ops.update_timelapse(timelapse_id, timelapse_update)
             logger.info(
                 f"Successfully updated timelapse {timelapse_id} to completed status"
@@ -952,13 +974,14 @@ class CameraService:
             await self._broadcast_timelapse_status_event(
                 timelapse_id,
                 camera_id,
-                "completed",
+                TimelapseStatus.COMPLETED,
                 action="complete",
             )
 
         return {
             "success": True,
             "timelapse_id": timelapse_id,
+            "timelapse_status": TimelapseStatus.COMPLETED,
             "message": "Timelapse completed successfully",
         }
 

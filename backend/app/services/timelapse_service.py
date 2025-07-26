@@ -38,7 +38,6 @@ from ..models.shared_models import (
 from ..constants import (
     JOB_STATUS_LIST,
     TIMELAPSE_STATUSES,
-    TIMELAPSE_STATUS_COMPLETED,
     TimelapseStatus,
     EVENT_TIMELAPSE_CREATED,
     EVENT_TIMELAPSE_UPDATED,
@@ -488,7 +487,7 @@ class TimelapseService:
             Updated Timelapse model instance
         """
         updated_timelapse = await self._update_timelapse_status(
-            timelapse_id, TIMELAPSE_STATUS_COMPLETED, "stop"
+            timelapse_id, TimelapseStatus.COMPLETED, "stop"
         )
 
         # SSE broadcasting handled by higher-level service layer

@@ -64,8 +64,12 @@ class DatabaseLogHandler:
         try:
             # Loguru passes a record object, not a dictionary
             level = record.level.name if hasattr(record, "level") else "INFO"
-            message = str(record.message) if hasattr(record, "message") else ""
+            message = str(record.message) if hasattr(record, "message") and record.message else "No message provided"
             logger_name = getattr(record, "name", "unknown")
+            
+            # Skip logs with empty or meaningless messages to avoid database clutter
+            if not message.strip() or message.strip() == "No message provided":
+                return
 
             # Check if this log level should be written to database
             if not self._should_log_to_database(level):

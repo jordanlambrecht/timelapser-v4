@@ -374,12 +374,12 @@ class ImageOperations:
         """
         query = """
         INSERT INTO images (
-            timelapse_id, camera_id, file_path, file_size, captured_at,
+            timelapse_id, camera_id, file_path, filename, file_size, captured_at,
             day_number, thumbnail_path, corruption_detected,
             corruption_score, is_flagged,
             weather_temperature, weather_conditions, weather_icon, weather_fetched_at
         ) VALUES (
-            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(file_size)s, %(captured_at)s,
+            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(filename)s, %(file_size)s, %(captured_at)s,
             %(day_number)s, %(thumbnail_path)s, %(corruption_detected)s,
             %(corruption_score)s, %(is_flagged)s,
             %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s
@@ -575,12 +575,12 @@ class SyncImageOperations:
         """
         query = """
         INSERT INTO images (
-            timelapse_id, camera_id, file_path, file_size, captured_at,
+            timelapse_id, camera_id, file_path, filename, file_size, captured_at,
             day_number, thumbnail_path, corruption_detected,
             corruption_score, is_flagged,
             weather_temperature, weather_conditions, weather_icon, weather_fetched_at
         ) VALUES (
-            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(file_size)s, %(captured_at)s,
+            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(filename)s, %(file_size)s, %(captured_at)s,
             %(day_number)s, %(thumbnail_path)s, %(corruption_detected)s,
             %(corruption_score)s, %(is_flagged)s,
             %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s

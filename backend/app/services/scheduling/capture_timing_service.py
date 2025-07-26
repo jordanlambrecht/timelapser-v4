@@ -655,6 +655,17 @@ class SyncCaptureTimingService:
             camera_ops = SyncCameraOperations(self.db)
             timelapse_ops = SyncTimelapseOperations(self.db)
 
+            # Step 0: Extract camera_id from timelapse if camera_id=0 (scheduler convenience)
+            if camera_id == 0:
+                timelapse = timelapse_ops.get_timelapse_by_id(timelapse_id)
+                if not timelapse:
+                    return CaptureReadinessValidationResult(
+                        valid=False,
+                        error=f"Timelapse {timelapse_id} not found (needed to extract camera_id)",
+                        error_type="timelapse_not_found",
+                    )
+                camera_id = timelapse.camera_id
+
             # Step 1: Validate camera exists and is enabled
             camera = camera_ops.get_camera_by_id(camera_id)
             if not camera:

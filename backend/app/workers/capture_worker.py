@@ -112,9 +112,9 @@ class CaptureWorker(BaseWorker):
                 {"source": "capture_worker", "camera_name": camera_name},
             )
 
-            if result.was_successful:
+            if result.success:
                 self.log_info(
-                    f"✅ Capture workflow completed successfully: {result.overall_result.value}"
+                    f"✅ Capture workflow completed successfully"
                 )
 
                 # Update camera connectivity status to online
@@ -126,7 +126,7 @@ class CaptureWorker(BaseWorker):
                 )
             else:
                 self.log_error(
-                    f"❌ Capture workflow failed: {result.error_summary or result.overall_result.value}"
+                    f"❌ Capture workflow failed: {result.error or 'Unknown error'}"
                 )
 
                 # Update camera connectivity status to offline
@@ -134,7 +134,7 @@ class CaptureWorker(BaseWorker):
                     self.camera_service.update_camera_connectivity,
                     camera_id,
                     False,
-                    result.error_summary or result.overall_result.value,
+                    result.error or 'Unknown error',
                 )
 
         except Exception as e:
@@ -203,13 +203,13 @@ class CaptureWorker(BaseWorker):
                 {"source": "scheduler", "timelapse_id": timelapse_id},
             )
 
-            if result.was_successful:
+            if result.success:
                 self.log_info(
-                    f"✅ Timelapse capture workflow completed: {result.overall_result.value}"
+                    f"✅ Timelapse capture workflow completed successfully"
                 )
             else:
                 self.log_error(
-                    f"❌ Timelapse capture workflow failed: {result.error_summary or result.overall_result.value}"
+                    f"❌ Timelapse capture workflow failed: {result.error or 'Unknown error'}"
                 )
 
         except Exception as e:

@@ -91,6 +91,8 @@ class RTSPService:
             CameraConnectivityTestResult with test results and timing
         """
         try:
+            logger.info(f"🔍 RTSPService.test_connection called for camera {camera_id}")
+            logger.info(f"🔍 RTSP URL received: {rtsp_url}")
 
             start_time = time.time()
 
