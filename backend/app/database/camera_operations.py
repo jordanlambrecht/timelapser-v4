@@ -399,11 +399,17 @@ class AsyncCameraOperations:
         ) RETURNING *
         """
 
+        # Ensure all required fields are present with sensible defaults
+        camera_data.setdefault("enabled", True)
+        camera_data.setdefault("is_connected", True)
+        camera_data.setdefault("last_error", None)
+        camera_data.setdefault("last_error_message", None)
+        camera_data.setdefault("is_flagged", False)
+
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, camera_data)
                 results = await cur.fetchall()
-
                 if results:
                     row = results[0]
                     camera_data = await self._prepare_camera_data(row)
