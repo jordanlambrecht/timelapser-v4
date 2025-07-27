@@ -137,6 +137,11 @@ export default function LogsPage() {
     }
   }, [pagination.page])
 
+  // Fetch logs when limit changes
+  useEffect(() => {
+    fetchLogs(1) // Always fetch page 1 when limit changes
+  }, [pagination.limit])
+
   const fetchCameras = async () => {
     try {
       const response = await fetch("/api/cameras")
@@ -302,6 +307,10 @@ export default function LogsPage() {
 
   const handlePageChange = (newPage: number) => {
     setPagination((prev) => ({ ...prev, page: newPage }))
+  }
+
+  const handleLimitChange = (newLimit: number) => {
+    setPagination((prev) => ({ ...prev, limit: newLimit, page: 1 })) // Reset to page 1 when changing limit
   }
 
   const clearAllLogs = async () => {
@@ -515,7 +524,7 @@ export default function LogsPage() {
                 </div>
               </div>
 
-              <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
+              <div className='grid grid-cols-1 gap-4 md:grid-cols-4'>
                 {/* Log Level */}
                 <div>
                   <label className='block mb-2 text-sm font-medium text-gray-300'>
@@ -577,6 +586,24 @@ export default function LogsPage() {
                         {camera.name}
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                {/* Items Per Page */}
+                <div>
+                  <label className='block mb-2 text-sm font-medium text-gray-300'>
+                    Items Per Page
+                  </label>
+                  <select
+                    value={pagination.limit}
+                    onChange={(e) => handleLimitChange(Number(e.target.value))}
+                    className='block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={500}>500</option>
                   </select>
                 </div>
               </div>

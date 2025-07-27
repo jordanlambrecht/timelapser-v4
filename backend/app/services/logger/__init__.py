@@ -14,9 +14,9 @@ Features:
 Usage:
     from app.services.logger import LoggerService
     from app.enums import LogLevel, LogSource, LoggerName
-    
+
     logger_service = LoggerService(async_db, sync_db)
-    
+
     logger_service.log_request(
         message="📥 GET /api/cameras",
         request_info={"method": "GET", "path": "/api/cameras"},
@@ -29,7 +29,7 @@ Usage:
 
 from .logger_service import LoggerService
 from .handlers import EnhancedDatabaseHandler, ConsoleHandler, FileHandler
-from .services import SSEBroadcastService, LogCleanupService
+from .services import LogCleanupService
 from .utils import LogMessageFormatter, ContextExtractor
 
 # Re-export commonly used enums for convenience
@@ -38,15 +38,14 @@ from ...enums import LogLevel, LogSource, LoggerName, LogEmoji
 __all__ = [
     "LoggerService",
     "EnhancedDatabaseHandler",
-    "ConsoleHandler", 
+    "ConsoleHandler",
     "FileHandler",
-    "SSEBroadcastService",
     "LogCleanupService",
     "LogMessageFormatter",
     "ContextExtractor",
     # Enums
     "LogLevel",
-    "LogSource", 
+    "LogSource",
     "LoggerName",
-    "LogEmoji"
+    "LogEmoji",
 ]

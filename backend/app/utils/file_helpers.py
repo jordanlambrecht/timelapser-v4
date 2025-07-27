@@ -7,10 +7,13 @@ Provides standardized file serving, path resolution, and security validation.
 """
 
 from pathlib import Path
+import re
 from typing import Optional, Dict, Any
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, Response
 from loguru import logger
+
+from ..constants import ALLOWED_IMAGE_EXTENSIONS
 
 from ..config import settings
 
@@ -377,7 +380,6 @@ def ensure_entity_directory(
     Returns:
         Path to the entity directory
     """
-    from ..config import settings
 
     entity_dir = (
         settings.data_path
@@ -401,7 +403,6 @@ def ensure_camera_directories(camera_id: int, date_str: str) -> Dict[str, Path]:
     Returns:
         Dictionary mapping directory types to paths
     """
-    from ..config import settings
 
     base_dir = settings.data_path / "cameras" / f"camera-{camera_id}"
 
@@ -559,7 +560,6 @@ def get_overlay_path_for_image(
     Returns:
         Path to overlay file following standard structure
     """
-    from ..config import settings
 
     # Use provided base directory or default to settings
     if base_directory:
@@ -582,7 +582,6 @@ def get_overlay_path_for_image(
 
     # Handle date subdirectories if image is in date-based structure
     # Check if image path contains date pattern (YYYY-MM-DD)
-    import re
 
     for part in image_file.parts:
         if re.match(r"\d{4}-\d{2}-\d{2}", part):
@@ -609,7 +608,6 @@ def get_overlay_path_from_image_path(
     Returns:
         Path to overlay file, or None if structure doesn't match expected pattern
     """
-    import re
 
     try:
         image_path = Path(image_file)
@@ -684,9 +682,6 @@ def prepare_image_metadata_for_serving(
         }
 
         file_path = get_image_with_fallbacks(image_dict, size, data_directory)
-
-        # Import here to avoid circular imports
-        from ..constants import ALLOWED_IMAGE_EXTENSIONS
 
         media_type = validate_media_type(file_path, ALLOWED_IMAGE_EXTENSIONS)
 

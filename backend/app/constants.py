@@ -349,6 +349,34 @@ DEFAULT_CORRUPTION_RETRY_ENABLED = True
 DEFAULT_CORRUPTION_FALLBACK_SCORE = 100
 
 # ====================================================================
+# LOGGING SYSTEM CONSTANTS
+# ====================================================================
+
+# File logging configuration
+LOG_FILE_MAX_SIZE = 10 * 1024 * 1024  # 10MB
+LOG_FILE_MAX_COUNT = 10
+LOG_FILE_RETENTION_DAYS = 7
+LOG_FILE_DIRECTORY = "/tmp/timelapser_logs"
+LOG_FILE_BASE_NAME = "timelapser"
+
+# Log cleanup configuration
+LOG_CLEANUP_BATCH_SIZE = 1000
+LOG_CLEANUP_INTERVAL_HOURS = 24
+
+# Log batching configuration
+LOG_BATCH_SIZE = 100  # Maximum logs to batch before flush
+LOG_BATCH_TIMEOUT_SECONDS = 5.0  # Maximum time to wait before flush
+LOG_BATCH_MAX_RETRIES = 3  # Number of retries for failed batch inserts
+LOG_BATCH_RETRY_DELAY = 1.0  # Seconds to wait between retries
+
+# Context extraction limits
+LOG_CONTEXT_MAX_STACK_DEPTH = 10
+LOG_CONTEXT_MAX_SIZE = 1000  # characters
+
+# Performance thresholds
+LOG_FILE_ROTATION_CHECK_INTERVAL = 3600  # 1 hour in seconds
+
+# ====================================================================
 # API CONSTANTS
 # ====================================================================
 

@@ -1,30 +1,39 @@
 # backend/app/models/log_model.py
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Dict, Any
 from datetime import datetime
+from ..enums import LogLevel, LoggerName, LogSource, LogEmoji
 
 
 class LogBase(BaseModel):
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        ..., description="Log level"
-    )
+    level: LogLevel = Field(LogLevel.INFO, description="Log level")
     message: str = Field(..., description="Log message")
+
     camera_id: Optional[int] = Field(None, description="Associated camera ID")
 
 
 class LogCreate(LogBase):
     """Model for creating a new log entry"""
-    logger_name: Optional[str] = Field("system", description="Logger name")
-    source: Optional[str] = Field("system", description="Log source")
-    extra_data: Optional[Dict[str, Any]] = Field(None, description="Additional log data")
+
+    logger_name: Optional[LoggerName] = Field(
+        LoggerName.SYSTEM, description="Logger name"
+    )
+    emoji: Optional[LogEmoji] = Field(
+        None, description="Emoji representation of the log level"
+    )
+    source: Optional[LogSource] = Field(LogSource.SYSTEM, description="Log source")
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None, description="Additional log data"
+    )
 
 
 class Log(LogBase):
     """Full log model with all database fields"""
+
     id: int
     timestamp: datetime
-    logger_name: Optional[str] = None
-    source: Optional[str] = None
+    logger_name: Optional[LoggerName] = None
+    source: Optional[LogSource] = None
     extra_data: Optional[Dict[str, Any]] = None
     camera_name: Optional[str] = None  # From JOIN with cameras table
 

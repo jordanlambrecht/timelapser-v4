@@ -31,6 +31,7 @@ from .services.capture_pipeline import (
 from .services.settings_service import SettingsService
 from .services.statistics_service import StatisticsService
 from .services.log_service import LogService
+from .services.logger.logger_service import LoggerService
 from .services.weather.service import WeatherManager
 from .services.health_service import HealthService
 from .services.overlay_pipeline import AsyncOverlayService
@@ -51,6 +52,7 @@ from .database.thumbnail_job_operations import ThumbnailJobOperations
 from .database.overlay_job_operations import OverlayJobOperations
 from .database.sse_events_operations import SSEEventsOperations
 from .database.image_operations import AsyncImageOperations
+from .database.scheduled_job_operations import ScheduledJobOperations
 
 # Global scheduler worker instance (set by main worker on startup)
 _scheduler_worker_instance = None
@@ -177,6 +179,18 @@ async def get_log_service() -> LogService:
     return LogService(async_db)
 
 
+async def get_logger_service() -> LoggerService:
+    """Get LoggerService with async and sync database dependency injection"""
+    return LoggerService(
+        async_db=async_db,
+        sync_db=sync_db,
+        enable_console=True,
+        enable_file_logging=True,
+        enable_sse_broadcasting=True,
+        enable_batching=True,  # Enable batching by default for performance
+    )
+
+
 async def get_health_service() -> HealthService:
     """Get HealthService with async database dependency injection"""
     return HealthService(async_db)
@@ -292,6 +306,11 @@ async def get_overlay_job_service() -> AsyncOverlayJobService:
     return AsyncOverlayJobService(async_db, settings_service)
 
 
+async def get_scheduled_job_operations() -> ScheduledJobOperations:
+    """Get ScheduledJobOperations with async database dependency injection"""
+    return ScheduledJobOperations(async_db)
+
+
 # Type Annotations for Easy Usage
 AsyncDatabaseDep = Annotated[AsyncDatabase, Depends(get_async_database)]
 SyncDatabaseDep = Annotated[SyncDatabase, Depends(get_sync_database)]
@@ -312,6 +331,7 @@ SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 WeatherManagerDep = Annotated[WeatherManager, Depends(get_weather_manager)]
 StatisticsServiceDep = Annotated[StatisticsService, Depends(get_statistics_service)]
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
+LoggerServiceDep = Annotated[LoggerService, Depends(get_logger_service)]
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 TimeWindowServiceDep = Annotated[TimeWindowService, Depends(get_time_window_service)]
 SyncTimeWindowServiceDep = Annotated[
@@ -343,6 +363,9 @@ SyncVideoServiceDep = Annotated[SyncVideoService, Depends(get_sync_video_service
 OverlayServiceDep = Annotated[AsyncOverlayService, Depends(get_overlay_service)]
 OverlayJobServiceDep = Annotated[
     AsyncOverlayJobService, Depends(get_overlay_job_service)
+]
+ScheduledJobOperationsDep = Annotated[
+    ScheduledJobOperations, Depends(get_scheduled_job_operations)
 ]
 
 # Video Pipeline Dependencies (New Architecture)

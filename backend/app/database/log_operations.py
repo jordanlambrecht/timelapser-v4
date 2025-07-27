@@ -6,55 +6,28 @@ Log database operations module - Composition Pattern.
 This module handles all log-related database operations including:
 - Log retrieval and filtering
 - Log management operations
+- Analytics and reporting
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import List, Optional, Dict, Any, Tuple
+from datetime import datetime, timedelta
+import json
 from loguru import logger
-import psycopg
 
-# Import database core for composition
 from .core import AsyncDatabase, SyncDatabase
-from ..models.log_model import Log
-from ..models.log_summary_model import (
-    LogSourceModel,
-    LogSummaryModel,
-    ErrorCountBySourceModel,
-)
+from ..models.log_model import Log, LogCreate
 from ..constants import (
     DEFAULT_LOG_RETENTION_DAYS,
     DEFAULT_CORRUPTION_HISTORY_HOURS,
+    DEFAULT_DASHBOARD_QUALITY_TREND_DAYS,
 )
 
 
-def _row_to_log_shared(row: Dict[str, Any]) -> Log:
-    """
-    Shared helper function for converting database row to Log model.
-
-    This eliminates duplicate logic between async and sync classes.
-    Filters fields that belong to Log model and creates proper instance.
-
-    Args:
-        row: Database row data as dictionary
-
-    Returns:
-        Log model instance
-    """
-    # Filter fields that belong to Log model
-    log_fields = {k: v for k, v in row.items() if k in Log.model_fields.keys()}
-    return Log(**log_fields)
-
-
 class LogOperations:
-    """Log database operations using composition pattern."""
+    """Async log database operations."""
 
-    def __init__(self, db: AsyncDatabase) -> None:
-        """Initialize with database instance."""
+    def __init__(self, db: AsyncDatabase):
         self.db = db
-
-    def _row_to_log(self, row: Dict[str, Any]) -> Log:
-        """Convert database row to Log model."""
-        return _row_to_log_shared(row)
 
     async def get_logs(
         self,
@@ -65,291 +38,303 @@ class LogOperations:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         page: int = 1,
-        page_size: int = 100,
+        page_size: int = 25,
     ) -> Dict[str, Any]:
         """
-        Retrieve logs with comprehensive filtering and pagination.
+        Get logs with pagination and filtering.
 
         Args:
-            camera_id: Optional camera ID to filter by
-            level: Optional log level to filter by
-            source: Optional source to filter by
-            search_query: Optional text search in log messages
-            start_date: Optional start date for date range filtering
-            end_date: Optional end date for date range filtering
+            camera_id: Filter by camera ID
+            level: Filter by log level
+            source: Filter by source
+            search_query: Search in message content
+            start_date: Filter by start date
+            end_date: Filter by end date
             page: Page number (1-based)
             page_size: Number of logs per page
 
         Returns:
-            Dictionary containing Log models and pagination metadata
+            Dictionary with logs, pagination info, and metadata
         """
+        # Validate inputs
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))  # Cap at 100
+
         offset = (page - 1) * page_size
 
-        # Build WHERE clause based on filters
+        # Build where conditions
         where_conditions = []
-        params = []
-
-        if camera_id:
-            where_conditions.append("(camera_id = %s OR source = %s)")
-            params.extend([camera_id, f"camera_{camera_id}"])
+        params = {}
 
         if level:
-            where_conditions.append("level = %s")
-            params.append(level.upper())
+            where_conditions.append("l.level = %(level)s")
+            params["level"] = level.upper()
 
         if source:
-            where_conditions.append("source = %s")
-            params.append(source)
+            where_conditions.append("l.source = %(source)s")
+            params["source"] = source
 
-        if search_query:
-            where_conditions.append("(message ILIKE %s OR logger_name ILIKE %s)")
-            search_pattern = f"%{search_query}%"
-            params.extend([search_pattern, search_pattern])
+        if camera_id:
+            where_conditions.append(
+                "(l.camera_id = %(camera_id)s OR l.source = %(camera_source)s)"
+            )
+            params["camera_id"] = camera_id
+            params["camera_source"] = f"camera_{camera_id}"
 
         if start_date:
-            where_conditions.append("timestamp >= %s")
-            params.append(start_date)
+            where_conditions.append("l.timestamp >= %(start_date)s")
+            params["start_date"] = start_date
 
         if end_date:
-            where_conditions.append("timestamp <= %s")
-            params.append(end_date)
+            where_conditions.append("l.timestamp <= %(end_date)s")
+            params["end_date"] = end_date
 
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        if search_query:
+            where_conditions.append("l.message ILIKE %(search)s")
+            params["search"] = f"%{search_query}%"
+
+        where_clause = (
+            "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+        )
+
+        # Count query
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM logs l
+            LEFT JOIN cameras c ON l.camera_id = c.id
+            {where_clause}
+        """
+
+        # Data query
+        data_query = f"""
+            SELECT
+                l.*,
+                c.name as camera_name
+            FROM logs l
+            LEFT JOIN cameras c ON l.camera_id = c.id
+            {where_clause}
+            ORDER BY l.timestamp DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+        """
+
+        params.update({"limit": page_size, "offset": offset})
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
                 # Get total count
-                count_query = f"""
-                SELECT COUNT(*) as total_count
-                FROM logs
-                WHERE {where_clause}
-                """
                 await cur.execute(count_query, params)
-                count_results = await cur.fetchall()
-                total_count = count_results[0]["total_count"] if count_results else 0
+                total_count = (await cur.fetchone())[0]
 
-                # Get logs with pagination
-                logs_query = f"""
-                SELECT
-                    l.*,
-                    c.name as camera_name
-                FROM logs l
-                LEFT JOIN cameras c ON l.camera_id = c.id
-                WHERE {where_clause}
-                ORDER BY l.timestamp DESC
-                LIMIT %s OFFSET %s
-                """
+                # Get logs
+                await cur.execute(data_query, params)
+                results = await cur.fetchall()
+                logs = [self._row_to_log(row) for row in results]
 
-                logs_params = params + [page_size, offset]
-                await cur.execute(logs_query, logs_params)
-                log_rows = await cur.fetchall()
-                logs = [self._row_to_log(row) for row in log_rows]
+                total_pages = (total_count + page_size - 1) // page_size
 
                 return {
-                    "logs": logs,  # List[Log]
-                    "total_count": total_count,
-                    "page": page,
-                    "page_size": page_size,
-                    "total_pages": (total_count + page_size - 1) // page_size,
-                    "filters": {
-                        "camera_id": camera_id,
-                        "level": level,
-                        "source": source,
-                        "search_query": search_query,
-                        "start_date": start_date.isoformat() if start_date else None,
-                        "end_date": end_date.isoformat() if end_date else None,
+                    "logs": logs,
+                    "pagination": {
+                        "current_page": page,
+                        "page_size": page_size,
+                        "total_count": total_count,
+                        "total_pages": total_pages,
+                        "has_next": page < total_pages,
+                        "has_prev": page > 1,
                     },
                 }
-
-    async def get_log_sources(self) -> List[LogSourceModel]:
-        """
-        Get all available log sources.
-
-        Returns:
-            List of log source models with counts
-        """
-        query = """
-        SELECT
-            source,
-            COUNT(*) as log_count,
-            MAX(timestamp) as last_log_at,
-            COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
-            COUNT(CASE WHEN level = 'WARNING' THEN 1 END) as warning_count
-        FROM logs
-        WHERE timestamp > NOW() - INTERVAL '7 days'
-        GROUP BY source
-        ORDER BY source
-        """
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query)
-                rows = await cur.fetchall()
-                return [LogSourceModel(**row) for row in rows]
-
-    # DEPRECATED: get_log_levels() method removed - use static LOG_LEVELS constant from constants.py
-    # Log levels are hardcoded constants and don't require database queries
-
-    async def get_log_summary(
-        self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
-    ) -> LogSummaryModel:
-        """
-        Get log summary statistics for a time period.
-
-        Args:
-            hours: Number of hours to analyze
-
-        Returns:
-            Log summary model with statistics
-        """
-        query = """
-        SELECT
-            COUNT(*) as total_logs,
-            COUNT(CASE WHEN level = 'CRITICAL' THEN 1 END) as critical_count,
-            COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
-            COUNT(CASE WHEN level = 'WARNING' THEN 1 END) as warning_count,
-            COUNT(CASE WHEN level = 'INFO' THEN 1 END) as info_count,
-            COUNT(CASE WHEN level = 'DEBUG' THEN 1 END) as debug_count,
-            COUNT(DISTINCT source) as unique_sources,
-            COUNT(DISTINCT camera_id) as unique_cameras,
-            MIN(timestamp) as first_log_at,
-            MAX(timestamp) as last_log_at
-        FROM logs
-        WHERE timestamp > NOW() - INTERVAL '%s hours'
-        """
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (hours,))
-                results = await cur.fetchall()
-                if results:
-                    return LogSummaryModel(**results[0])
-                return LogSummaryModel(
-                    total_logs=0,
-                    critical_count=0,
-                    error_count=0,
-                    warning_count=0,
-                    info_count=0,
-                    debug_count=0,
-                    unique_sources=0,
-                    unique_cameras=0,
-                    first_log_at=None,
-                    last_log_at=None,
-                )
-
-    async def delete_old_logs(
-        self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS
-    ) -> int:
-        """
-        Delete old logs based on retention policy.
-
-        Args:
-            days_to_keep: Number of days to keep logs (default: from constants)
-                        If 0, deletes ALL logs
-
-        Returns:
-            Number of logs deleted
-        """
-        if days_to_keep == 0:
-            # Delete ALL logs
-            query = "DELETE FROM logs"
-            params = []
-        else:
-            # Delete logs older than specified days
-            query = """
-            DELETE FROM logs
-            WHERE timestamp < NOW() - INTERVAL '%s days'
-            """
-            params = [days_to_keep]
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                if params:
-                    await cur.execute(query, params)
-                else:
-                    await cur.execute(query)
-                affected = cur.rowcount
-
-                return affected or 0
 
     async def add_log_entry(
         self,
         level: str,
         message: str,
-        logger_name: str,
+        logger_name: str = "system",
         source: str = "system",
         camera_id: Optional[int] = None,
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> Log:
         """
-        Add a log entry to the database (async version).
+        Add a log entry to the database.
 
         Args:
-            level: Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+            level: Log level
             message: Log message
-            logger_name: Name of the logger
-            source: Source of the log (e.g., 'system', 'camera_1', 'worker')
-            camera_id: Optional camera ID if log is camera-specific
-            extra_data: Optional additional data as JSON
+            logger_name: Logger name
+            source: Log source
+            camera_id: Optional camera ID
+            extra_data: Optional extra data
 
         Returns:
-            Created Log model instance
+            Created Log model
         """
         query = """
-        INSERT INTO logs (
-            level, message, logger_name, source, camera_id, extra_data, timestamp
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, NOW()
-        ) RETURNING *
+            INSERT INTO logs (level, message, logger_name, source, camera_id, extra_data, timestamp)
+            VALUES (%(level)s, %(message)s, %(logger_name)s, %(source)s, %(camera_id)s, %(extra_data)s, NOW())
+            RETURNING *
+        """
+
+        params = {
+            "level": level.upper(),
+            "message": message,
+            "logger_name": logger_name,
+            "source": source,
+            "camera_id": camera_id,
+            "extra_data": json.dumps(extra_data) if extra_data else None,
+        }
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                result = await cur.fetchone()
+                return self._row_to_log(result)
+
+    async def create_log(self, log_entry: LogCreate) -> Log:
+        """
+        Create a single log entry from LogCreate model.
+
+        Args:
+            log_entry: LogCreate model instance
+
+        Returns:
+            Created Log model
+        """
+        return await self.add_log_entry(
+            level=log_entry.level,
+            message=log_entry.message,
+            logger_name=log_entry.logger_name or "system",
+            source=log_entry.source or "system",
+            camera_id=log_entry.camera_id,
+            extra_data=log_entry.extra_data,
+        )
+
+    async def bulk_create_logs(self, log_entries: List[LogCreate]) -> List[Log]:
+        """
+        Bulk create multiple log entries for efficient batching.
+
+        Args:
+            log_entries: List of LogCreate model instances
+
+        Returns:
+            List of created Log model instances
+        """
+        if not log_entries:
+            return []
+
+        # Build bulk insert query
+        values_clauses = []
+        params = {}
+
+        for i, log_entry in enumerate(log_entries):
+            values_clauses.append(
+                f"(%(level_{i})s, %(message_{i})s, %(logger_name_{i})s, %(source_{i})s, %(camera_id_{i})s, %(extra_data_{i})s, NOW())"
+            )
+            params.update(
+                {
+                    f"level_{i}": log_entry.level.upper(),
+                    f"message_{i}": log_entry.message,
+                    f"logger_name_{i}": log_entry.logger_name or "system",
+                    f"source_{i}": log_entry.source or "system",
+                    f"camera_id_{i}": log_entry.camera_id,
+                    f"extra_data_{i}": (
+                        json.dumps(log_entry.extra_data)
+                        if log_entry.extra_data
+                        else None
+                    ),
+                }
+            )
+
+        values_sql = ", ".join(values_clauses)
+        query = f"""
+            INSERT INTO logs (level, message, logger_name, source, camera_id, extra_data, timestamp)
+            VALUES {values_sql}
+            RETURNING *
         """
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    query,
-                    (
-                        level.upper(),
-                        message,
-                        logger_name,
-                        source,
-                        camera_id,
-                        extra_data,
-                    ),
-                )
+                await cur.execute(query, params)
                 results = await cur.fetchall()
+                return [self._row_to_log(row) for row in results]
 
-                if results:
-                    log_entry_row = results[0]
-                    log_entry = self._row_to_log(log_entry_row)
+    async def get_camera_logs(
+        self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
+    ) -> List[Log]:
+        """
+        Get logs for a specific camera.
 
-                    return log_entry
+        Args:
+            camera_id: Camera ID
+            hours: Hours to look back
 
-                raise psycopg.DatabaseError("Failed to write log entry")
+        Returns:
+            List of Log models
+        """
+        query = """
+            SELECT * FROM logs
+            WHERE (camera_id = %(camera_id)s OR source = %(camera_source)s)
+              AND timestamp > NOW() - INTERVAL '%(hours)s hours'
+            ORDER BY timestamp DESC
+        """
+
+        params = {
+            "camera_id": camera_id,
+            "camera_source": f"camera_{camera_id}",
+            "hours": hours,
+        }
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                results = await cur.fetchall()
+                return [self._row_to_log(row) for row in results]
+
+    async def delete_old_logs(
+        self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS
+    ) -> int:
+        """
+        Delete old log entries.
+
+        Args:
+            days_to_keep: Number of days to keep
+
+        Returns:
+            Number of logs deleted
+        """
+        if days_to_keep == 0:
+            query = "DELETE FROM logs"
+            params = {}
+        else:
+            query = """
+                DELETE FROM logs
+                WHERE timestamp < NOW() - INTERVAL '%(days)s days'
+            """
+            params = {"days": days_to_keep}
+
+        async with self.db.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return cur.rowcount or 0
+
+    def _row_to_log(self, row: Tuple) -> Log:
+        """Convert database row to Log model."""
+        return Log(
+            id=row[0],
+            level=row[1],
+            message=row[2],
+            timestamp=row[3],
+            camera_id=row[4],
+            source=row[5],
+            logger_name=row[6],
+            extra_data=json.loads(row[7]) if row[7] else None,
+            camera_name=row[8] if len(row) > 8 else None,
+        )
 
 
 class SyncLogOperations:
-    """Sync log database operations for worker processes."""
+    """Sync log database operations."""
 
-    def __init__(self, db: SyncDatabase) -> None:
-        """Initialize with sync database instance."""
+    def __init__(self, db: SyncDatabase):
         self.db = db
-
-    def _row_to_log(self, row: Dict[str, Any]) -> Log:
-        """Convert database row to Log model."""
-        return _row_to_log_shared(row)
-
-    def add_log_entry(
-        self,
-        level: str,
-        message: str,
-        source: str = "system",
-        camera_id: Optional[int] = None,
-        **_kwargs,  # Accept additional args for compatibility (unused)
-    ) -> Log:
-        """Alias for write_log_entry for compatibility."""
-        return self.write_log_entry(
-            level=level, message=message, source=source, camera_id=camera_id
-        )
 
     def write_log_entry(
         self,
@@ -361,72 +346,99 @@ class SyncLogOperations:
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> Log:
         """
-        Write a log entry to the database using the actual table schema.
+        Write a log entry to the database.
 
         Args:
-            level: Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+            level: Log level
             message: Log message
-            source: Source of the log (e.g., 'system', 'camera_1', 'worker')
-            camera_id: Optional camera ID if log is camera-specific
+            source: Log source
+            camera_id: Optional camera ID
             logger_name: Optional logger name
-            extra_data: Optional additional data as JSON
+            extra_data: Optional extra data
 
         Returns:
-            Created Log model instance
+            Created Log model
         """
-        # Use the actual logs table schema including all fields
         query = """
-        INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
-        VALUES (%s, %s, %s, %s, %s, %s, NOW())
-        RETURNING *
+            INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
+            VALUES (%(level)s, %(message)s, %(camera_id)s, %(source)s, %(logger_name)s, %(extra_data)s, NOW())
+            RETURNING *
         """
+
+        params = {
+            "level": level.upper(),
+            "message": message,
+            "camera_id": camera_id,
+            "source": source,
+            "logger_name": logger_name,
+            "extra_data": json.dumps(extra_data) if extra_data else None,
+        }
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    query,
-                    (
-                        level.upper(),
-                        message,
-                        camera_id,
-                        source,
-                        logger_name,
-                        extra_data,
-                    ),
-                )
-                results = cur.fetchall()
+                cur.execute(query, params)
+                result = cur.fetchone()
+                return self._row_to_log(result)
 
-                if results:
-                    log_entry_row = results[0]
-                    log_entry = self._row_to_log(log_entry_row)
-
-                    return log_entry
-
-                raise psycopg.DatabaseError("Failed to write log entry")
-
-    def get_camera_logs(
-        self, camera_id: int, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
-    ) -> List[Log]:
+    def create_log(self, log_entry: LogCreate) -> Log:
         """
-        Get logs for a specific camera.
+        Create a single log entry from LogCreate model.
 
         Args:
-            camera_id: ID of the camera
-            hours: Number of hours to look back
+            log_entry: LogCreate model instance
 
         Returns:
-            List of camera Log models
+            Created Log model
         """
-        query = """
-        SELECT * FROM logs
-        WHERE (camera_id = %s OR source = %s)
-        AND timestamp > NOW() - INTERVAL '%s hours'
-        ORDER BY timestamp DESC
+        return self.write_log_entry(
+            level=log_entry.level,
+            message=log_entry.message,
+            logger_name=log_entry.logger_name or "system",
+            source=log_entry.source or "system",
+            camera_id=log_entry.camera_id,
+            extra_data=log_entry.extra_data,
+        )
+
+    def bulk_create_logs(self, log_entries: List[LogCreate]) -> List[Log]:
+        """
+        Bulk create multiple log entries for efficient batching.
+
+        Args:
+            log_entries: List of LogCreate model instances
+
+        Returns:
+            List of created Log model instances
+        """
+        if not log_entries:
+            return []
+
+        # Build bulk insert query
+        values_clauses = []
+        params = []
+
+        for log_entry in log_entries:
+            values_clauses.append("(%s, %s, %s, %s, %s, %s, NOW())")
+            params.extend(
+                [
+                    log_entry.level.upper(),
+                    log_entry.message,
+                    log_entry.camera_id,
+                    log_entry.source or "system",
+                    log_entry.logger_name or "system",
+                    json.dumps(log_entry.extra_data) if log_entry.extra_data else None,
+                ]
+            )
+
+        values_sql = ", ".join(values_clauses)
+        query = f"""
+            INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
+            VALUES {values_sql}
+            RETURNING *
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (camera_id, f"camera_{camera_id}", hours))
+                cur.execute(query, params)
                 results = cur.fetchall()
                 return [self._row_to_log(row) for row in results]
 
@@ -435,68 +447,44 @@ class SyncLogOperations:
         Clean up old log entries.
 
         Args:
-            days_to_keep: Number of days to keep logs (default: from constants)
-                        If 0, deletes ALL logs
+            days_to_keep: Number of days to keep
 
         Returns:
             Number of logs deleted
         """
         if days_to_keep == 0:
-            # Delete ALL logs
             query = "DELETE FROM logs"
-            params = []
+            params = ()
         else:
-            # Delete logs older than specified days
             query = """
-            DELETE FROM logs
-            WHERE timestamp < NOW() - INTERVAL '%s days'
+                DELETE FROM logs
+                WHERE timestamp < NOW() - INTERVAL '%s days'
             """
-            params = [days_to_keep]
+            params = (days_to_keep,)
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                if params:
-                    cur.execute(query, params)
-                else:
-                    cur.execute(query)
-                affected = cur.rowcount
+                cur.execute(query, params)
+                affected = cur.rowcount or 0
 
-                if affected and affected > 0:
+                if affected > 0:
                     if days_to_keep == 0:
                         logger.info(f"Cleaned up ALL {affected} log entries")
                     else:
                         logger.info(f"Cleaned up {affected} old log entries")
 
-                return affected or 0
+                return affected
 
-    def get_error_count_by_source(
-        self, hours: int = DEFAULT_CORRUPTION_HISTORY_HOURS
-    ) -> List[ErrorCountBySourceModel]:
-        """
-        Get error count by source for monitoring.
-
-        Args:
-            hours: Number of hours to analyze
-
-        Returns:
-            List of source error count models
-        """
-        query = """
-        SELECT
-            source,
-            COUNT(CASE WHEN level = 'ERROR' THEN 1 END) as error_count,
-            COUNT(CASE WHEN level = 'CRITICAL' THEN 1 END) as critical_count,
-            COUNT(*) as total_count,
-            MAX(CASE WHEN level IN ('ERROR', 'CRITICAL') THEN timestamp END) as last_error_at
-        FROM logs
-        WHERE timestamp > NOW() - INTERVAL '%s hours'
-        GROUP BY source
-        HAVING COUNT(CASE WHEN level IN ('ERROR', 'CRITICAL') THEN 1 END) > 0
-        ORDER BY error_count + critical_count DESC
-        """
-
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (hours,))
-                rows = cur.fetchall()
-                return [ErrorCountBySourceModel(**row) for row in rows]
+    def _row_to_log(self, row: Tuple) -> Log:
+        """Convert database row to Log model."""
+        return Log(
+            id=row[0],
+            level=row[1],
+            message=row[2],
+            timestamp=row[3],
+            camera_id=row[4],
+            source=row[5],
+            logger_name=row[6],
+            extra_data=json.loads(row[7]) if row[7] else None,
+            camera_name=row[8] if len(row) > 8 else None,
+        )

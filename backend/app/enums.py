@@ -238,6 +238,29 @@ class SSEEvent(str, Enum):
     SYSTEM_ERROR = "system_error"
     SYSTEM_WARNING = "system_warning"
 
+    # Log Events
+    LOG_CREATED = "log_created"
+    LOG_UPDATED = "log_updated"
+    LOG_DELETED = "log_deleted"
+    LOG_REQUESTED = "log_requested"
+    LOG_FOR_SYSTEM = "log_system_log"
+    LOG_FOR_WORKER = "log_worker_log"
+    LOG_FOR_CAPTURE = "log_capture_log"
+    LOG_FOR_THUMBNAIL = "log_thumbnail_log"
+    LOG_FOR_OVERLAY = "log_overlay_log"
+    LOG_FOR_VIDEO = "log_video_log"
+    LOG_FOR_CAMERA = "log_camera_log"
+    LOG_FOR_SETTINGS = "log_settings_log"
+    LOG_FOR_ADMIN = "log_admin_log"
+    LOG_CLEANUP_STARTED = "log_cleanup_started"
+    LOG_CLEANUP_COMPLETED = "log_cleanup_completed"
+    LOG_CLEANUP_FAILED = "log_cleanup_failed"
+    LOG_BROADCASTED = "log_broadcasted"
+    LOG = "log"  # Generic log event for all log messages
+
+    # Admin Events
+    ADMIN_ACTION = "admin_action"
+
 
 class SSEEventSource(str, Enum):
     """SSE event sources for identifying event origins."""
@@ -249,9 +272,11 @@ class SSEEventSource(str, Enum):
     CAPTURE_PIPELINE = "capture_pipeline"
     CAMERA_SERVICE = "camera_service"
     SETTINGS_SERVICE = "settings_service"
+    LOGGING_SERVICE = "logging_service"
     SYSTEM = "system"
     WORKER = "worker"
     FFMPEG = "ffmpeg"
+    ADMIN = "admin"
 
 
 # =============================================================================
@@ -262,6 +287,8 @@ class SSEEventSource(str, Enum):
 class LogLevel(str, Enum):
     """Log level constants for centralized logging system."""
 
+    UNKNOWN = "UNKNOWN"
+    TRACE = "TRACE"
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -360,7 +387,7 @@ class LoggerName(str, Enum):
     ERROR_HANDLER = "error_handler"
     MIDDLEWARE = "middleware"
 
-    # Worker loggers (consolidated from SSEEventSource)
+    # Worker loggers
     CAPTURE_WORKER = "capture_worker"
     THUMBNAIL_WORKER = "thumbnail_worker"
     OVERLAY_WORKER = "overlay_worker"
@@ -368,14 +395,14 @@ class LoggerName(str, Enum):
     HEALTH_WORKER = "health_worker"
     VIDEO_WORKER = "video_worker"
 
-    # Pipeline loggers (consolidated from SSEEventSource)
+    # Pipeline loggers
     VIDEO_PIPELINE = "video_pipeline"
     CAPTURE_PIPELINE = "capture_pipeline"
     THUMBNAIL_PIPELINE = "thumbnail_pipeline"
     OVERLAY_PIPELINE = "overlay_pipeline"
     CORRUPTION_PIPELINE = "corruption_pipeline"
 
-    # Service loggers (consolidated from SSEEventSource)
+    # Service loggers
     CAMERA_SERVICE = "camera_service"
     IMAGE_SERVICE = "image_service"
     TIMELAPSE_SERVICE = "timelapse_service"
@@ -383,12 +410,37 @@ class LoggerName(str, Enum):
     SETTINGS_SERVICE = "settings_service"
     LOG_SERVICE = "log_service"
 
-    # System loggers (consolidated from SSEEventSource)
+    # System loggers
     SYSTEM = "system"
     FFMPEG = "ffmpeg"
 
     # Generic
     UNKNOWN = "unknown"
+
+
+# =============================================================================
+# SCHEDULED JOB SYSTEMS
+# =============================================================================
+
+
+class ScheduledJobStatus(str, Enum):
+    """Scheduled job status values for tracking job lifecycle."""
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+    DISABLED = "disabled"
+    ERROR = "error"
+
+
+class ScheduledJobType(str, Enum):
+    """Scheduled job types for different system operations."""
+
+    TIMELAPSE_CAPTURE = "timelapse_capture"
+    HEALTH_CHECK = "health_check"
+    CLEANUP = "cleanup"
+    VIDEO_GENERATION = "video_generation"
+    THUMBNAIL_GENERATION = "thumbnail_generation"
+    OVERLAY_GENERATION = "overlay_generation"
 
 
 # =============================================================================

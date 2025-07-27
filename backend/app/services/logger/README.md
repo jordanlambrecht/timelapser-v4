@@ -1,6 +1,8 @@
 # Logger Service Module
 
-A centralized logging system for Timelapser v4 that provides unified logging across all application components with database storage, console output, file logging, and SSE broadcasting capabilities.
+A centralized logging system for Timelapser v4 that provides unified logging
+across all application components with database storage, console output, file
+logging, and SSE broadcasting capabilities.
 
 ## Architecture Overview
 
@@ -142,7 +144,7 @@ logger_service.log_system(
 class RequestLoggerMiddleware:
     def __init__(self, app: ASGIApp, logger_service: LoggerService):
         self.logger_service = logger_service
-    
+
     async def dispatch(self, request: Request, call_next):
         # Log request start
         self.logger_service.log_request(
@@ -166,7 +168,7 @@ class BaseWorker:
     def __init__(self, name: str, logger_service: LoggerService):
         self.name = name
         self.logger_service = logger_service
-    
+
     def log_info(self, message: str, **context):
         """Enhanced log_info that routes through LoggerService"""
         self.logger_service.log_worker(
@@ -186,11 +188,11 @@ class BaseWorker:
 class CameraService:
     def __init__(self, logger_service: LoggerService):
         self.logger_service = logger_service
-    
+
     async def create_camera(self, camera_data):
         try:
             # ... camera creation logic ...
-            
+
             self.logger_service.log_system(
                 message=f"📹 Camera created: {camera.name}",
                 system_context={"camera_id": camera.id, "name": camera.name},
@@ -219,7 +221,7 @@ class CameraService:
 ```python
 # High-frequency logs - don't store in DB
 logger_service.log_system(
-    message="🔄 Health check passed", 
+    message="🔄 Health check passed",
     store_in_db=False  # Keep DB clean
 )
 
@@ -260,16 +262,20 @@ LOGGER_SETTINGS = {
 
 ## Type-Safe Emoji System
 
-The logger supports both automatic emoji selection and explicit type-safe emoji specification:
+The logger supports both automatic emoji selection and explicit type-safe emoji
+specification:
 
 ### Automatic Emoji Selection
+
 When no emoji is provided, the system intelligently selects emojis based on:
-1. **Message content** - Keywords like "request", "error", "capture" 
+
+1. **Message content** - Keywords like "request", "error", "capture"
 2. **Log level** - ERROR→💥, WARNING→⚠️, DEBUG→🔍
 3. **Source** - CAMERA→📹, WORKER→👷, API→📥
 4. **Logger name** - THUMBNAIL_WORKER→🖼️, VIDEO_PIPELINE→🎥
 
 ### Explicit Emoji Usage
+
 ```python
 # Type-safe emoji specification
 logger_service.log_error(
@@ -280,7 +286,7 @@ logger_service.log_error(
 
 # Available fun emojis
 LogEmoji.CLOWN     # 🤡
-LogEmoji.PARTY     # 🎉  
+LogEmoji.PARTY     # 🎉
 LogEmoji.FIRE      # 🔥
 LogEmoji.ROCKET    # 🚀
 LogEmoji.MAGIC     # ✨
@@ -288,22 +294,25 @@ LogEmoji.ROBOT     # 🤖
 ```
 
 ### Smart Emoji Fallbacks
+
 1. **Explicit emoji** (if provided) → Used directly
 2. **Auto-detection** (if enabled) → Smart selection based on context
-3. **Level-based fallback** → LogLevel.ERROR → LogEmoji.ERROR 
+3. **Level-based fallback** → LogLevel.ERROR → LogEmoji.ERROR
 4. **Source-based fallback** → LogSource.CAMERA → LogEmoji.CAMERA
 5. **No emoji** → Clean message without emoji prefix
 
 ## Enum Reference
 
 ### LogLevel
+
 - `LogLevel.DEBUG` - Detailed debugging information
-- `LogLevel.INFO` - General information messages  
+- `LogLevel.INFO` - General information messages
 - `LogLevel.WARNING` - Warning messages
 - `LogLevel.ERROR` - Error messages
 - `LogLevel.CRITICAL` - Critical system failures
 
 ### LogSource
+
 - `LogSource.API` - API endpoints and controllers
 - `LogSource.WORKER` - Background workers
 - `LogSource.SYSTEM` - System-level events
@@ -314,6 +323,7 @@ LogEmoji.ROBOT     # 🤖
 - `LogSource.MIDDLEWARE` - Middleware operations
 
 ### LoggerName
+
 - `LoggerName.REQUEST_LOGGER` - HTTP request logging
 - `LoggerName.ERROR_HANDLER` - Error handler middleware
 - `LoggerName.CAPTURE_WORKER` - Image capture worker
@@ -328,16 +338,18 @@ LogEmoji.ROBOT     # 🤖
 ## Best Practices
 
 ### 1. Use Appropriate Log Levels
+
 ```python
 # ✅ Good
 logger_service.log_worker("🔄 Job started", level=LogLevel.INFO)
 logger_service.log_error("💥 Job failed", level=LogLevel.ERROR)
 
-# ❌ Bad  
+# ❌ Bad
 logger_service.log_worker("💥 Job failed", level=LogLevel.INFO)  # Wrong level
 ```
 
 ### 2. Include Context Information
+
 ```python
 # ✅ Good
 logger_service.log_worker(
@@ -354,10 +366,11 @@ logger_service.log_worker("🔄 Processing thumbnail")  # No context
 ```
 
 ### 3. Use Emojis Consistently
+
 ```python
 # ✅ Good emoji patterns
 "📥 Incoming request"    # Incoming data
-"📤 Outgoing response"   # Outgoing data  
+"📤 Outgoing response"   # Outgoing data
 "🔄 Processing job"      # Work in progress
 "✅ Job completed"       # Success
 "💥 Job failed"          # Error
@@ -369,17 +382,19 @@ logger_service.log_worker("🔄 Processing thumbnail")  # No context
 ```
 
 ### 4. Control Database Storage
+
 ```python
 # ✅ Store important events
 logger_service.log_error("💥 Critical failure", store_in_db=True)
 logger_service.log_worker("✅ Job completed", store_in_db=True)
 
-# ✅ Don't store noisy events  
+# ✅ Don't store noisy events
 logger_service.log_system("🔄 Health check", store_in_db=False)
 logger_service.log_system("🔍 Debug trace", store_in_db=False)
 ```
 
 ### 5. Use SSE Broadcasting Wisely
+
 ```python
 # ✅ Broadcast user-facing events
 logger_service.log_error("💥 Camera offline", broadcast_sse=True)
@@ -392,6 +407,7 @@ logger_service.log_system("🔄 Internal cleanup", broadcast_sse=False)
 ## Migration from Direct Loguru Usage
 
 ### Before (Direct Loguru)
+
 ```python
 from loguru import logger
 
@@ -400,6 +416,7 @@ logger.error(f"Error occurred: {error}")
 ```
 
 ### After (LoggerService)
+
 ```python
 from app.services.logger import LoggerService
 from app.enums import LogLevel, LogSource, LoggerName
@@ -425,16 +442,19 @@ logger_service.log_error(
 ### Common Issues
 
 1. **Logs not appearing in database**
+
    - Check `store_in_db=True` is set
    - Verify database connection is healthy
    - Check log level filtering in database settings
 
 2. **SSE events not broadcasting**
+
    - Verify `broadcast_sse=True` is set
    - Check SSE service is running
    - Confirm SSE event types are configured
 
 3. **File logs not being written**
+
    - Check file logging is enabled in settings
    - Verify file permissions and disk space
    - Check log rotation settings
@@ -452,4 +472,6 @@ logger_service.log_error(
 - SSE broadcasting is optional and configurable per log
 - Context extraction is optimized for minimal overhead
 
-This logger service provides a robust, centralized logging solution that scales with your application while maintaining excellent performance and developer experience.
+This logger service provides a robust, centralized logging solution that scales
+with your application while maintaining excellent performance and developer
+experience.
