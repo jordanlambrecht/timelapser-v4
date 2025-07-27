@@ -14,8 +14,8 @@ from ....models.shared_models import (
 )
 from ....enums import (
     JobPriority,
-    JobStatus,
-    JobTypes,
+    ThumbnailJobPriority,
+    ThumbnailJobType,
 )
 
 
@@ -29,12 +29,15 @@ class SyncThumbnailJobService:
         self.settings_service = settings_service
 
     def queue_job(
-        self, image_id: int, priority: str = JobPriority.MEDIUM, force_regenerate: bool = False
+        self,
+        image_id: int,
+        priority: ThumbnailJobPriority = ThumbnailJobPriority.MEDIUM,
+        force_regenerate: bool = False,
     ) -> Optional[int]:
         """Queue a thumbnail generation job."""
         try:
             job_data = ThumbnailGenerationJobCreate(
-                image_id=image_id, priority=priority, job_type="single"
+                image_id=image_id, priority=priority, job_type=ThumbnailJobType.SINGLE
             )
             job = self.thumbnail_job_ops.create_job(job_data)
             return job.id if job else None
@@ -82,7 +85,9 @@ class SyncThumbnailJobService:
     def schedule_retry(self, job_id: int, retry_count: int, delay_minutes: int) -> bool:
         """Schedule job retry with delay."""
         try:
-            return self.thumbnail_job_ops.schedule_retry(job_id, retry_count, delay_minutes)
+            return self.thumbnail_job_ops.schedule_retry(
+                job_id, retry_count, delay_minutes
+            )
         except Exception as e:
             logger.error(f"Failed to schedule retry for job {job_id}: {e}")
             return False
@@ -114,7 +119,10 @@ class ThumbnailJobService:
         pass
 
     async def queue_job(
-        self, image_id: int, priority: str = JobPriority.MEDIUM, force_regenerate: bool = False
+        self,
+        image_id: int,
+        priority: str = JobPriority.MEDIUM,
+        force_regenerate: bool = False,
     ) -> Optional[int]:
         """Queue a thumbnail generation job (async)."""
         # TODO: Implement async version when needed

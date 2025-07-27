@@ -747,6 +747,7 @@ CAMERA_CAPTURE_SUCCESS = "Capture successful"
 # Thumbnail job statuses - MOVED TO enums.py, use JobStatus enum instead
 
 # Thumbnail job types
+# TODO: delete these
 THUMBNAIL_JOB_TYPE_SINGLE = "single"
 THUMBNAIL_JOB_TYPE_BULK = "bulk"
 
