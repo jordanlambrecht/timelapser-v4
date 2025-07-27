@@ -10,6 +10,20 @@ import sys
 from typing import Dict, Any, Optional
 from datetime import datetime
 from ....enums import LogEmoji, LogLevel, LogSource, LoggerName
+from ....utils.time_utils import utc_now
+from ..constants import (
+    ANSI_COLOR_CYAN,
+    ANSI_COLOR_GREEN,
+    ANSI_COLOR_YELLOW,
+    ANSI_COLOR_RED,
+    ANSI_COLOR_MAGENTA,
+    ANSI_RESET,
+    ANSI_BOLD,
+    ANSI_DIM,
+    CONSOLE_TIMESTAMP_FORMAT,
+    CONSOLE_MAX_CONTEXT_ITEMS,
+    CONSOLE_CONTEXT_INDENTATION,
+)
 
 
 class ConsoleHandler:
@@ -26,21 +40,21 @@ class ConsoleHandler:
 
     # ANSI color codes for different log levels
     COLORS = {
-        LogLevel.DEBUG: "\033[36m",  # Cyan
-        LogLevel.INFO: "\033[32m",  # Green
-        LogLevel.WARNING: "\033[33m",  # Yellow
-        LogLevel.ERROR: "\033[31m",  # Red
-        LogLevel.CRITICAL: "\033[35m",  # Magenta
+        LogLevel.DEBUG: ANSI_COLOR_CYAN,
+        LogLevel.INFO: ANSI_COLOR_GREEN,
+        LogLevel.WARNING: ANSI_COLOR_YELLOW,
+        LogLevel.ERROR: ANSI_COLOR_RED,
+        LogLevel.CRITICAL: ANSI_COLOR_MAGENTA,
     }
 
     # Reset color code
-    RESET = "\033[0m"
+    RESET = ANSI_RESET
 
     # Bold text
-    BOLD = "\033[1m"
+    BOLD = ANSI_BOLD
 
     # Dim text
-    DIM = "\033[2m"
+    DIM = ANSI_DIM
 
     def __init__(
         self,
@@ -94,14 +108,14 @@ class ConsoleHandler:
 
             # Use current time if timestamp not provided
             if timestamp is None:
-                timestamp = datetime.now()
+                timestamp = utc_now()
 
             # Build console output
             output_parts = []
 
             # Add timestamp if enabled
             if self.include_timestamp:
-                timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                timestamp_str = timestamp.strftime(CONSOLE_TIMESTAMP_FORMAT)
                 if self.use_colors:
                     output_parts.append(f"{self.DIM}[{timestamp_str}]{self.RESET}")
                 else:
@@ -281,10 +295,14 @@ class DevConsoleHandler(ConsoleHandler):
             if context_preview:
                 if self.use_colors:
                     print(
-                        f"  {self.DIM}↳ {context_preview}{self.RESET}", file=sys.stdout
+                        f"{CONSOLE_CONTEXT_INDENTATION}{self.DIM}{context_preview}{self.RESET}",
+                        file=sys.stdout,
                     )
                 else:
-                    print(f"  ↳ {context_preview}", file=sys.stdout)
+                    print(
+                        f"{CONSOLE_CONTEXT_INDENTATION}{context_preview}",
+                        file=sys.stdout,
+                    )
                 sys.stdout.flush()
 
     def _should_show_context(self, context: Dict[str, Any]) -> bool:
@@ -336,11 +354,13 @@ class DevConsoleHandler(ConsoleHandler):
                 if key in context:
                     value = context[key]
                     preview_items.append(f"{key}={value}")
-                    if len(preview_items) >= 3:  # Limit preview length
+                    if (
+                        len(preview_items) >= CONSOLE_MAX_CONTEXT_ITEMS
+                    ):  # Limit preview length
                         break
 
             # Add other interesting keys if we have room
-            if len(preview_items) < 3:
+            if len(preview_items) < CONSOLE_MAX_CONTEXT_ITEMS:
                 for key, value in context.items():
                     if key not in priority_keys and key not in {
                         "timestamp",
@@ -349,7 +369,7 @@ class DevConsoleHandler(ConsoleHandler):
                         "logger_name",
                     }:
                         preview_items.append(f"{key}={value}")
-                        if len(preview_items) >= 3:
+                        if len(preview_items) >= CONSOLE_MAX_CONTEXT_ITEMS:
                             break
 
             return ", ".join(preview_items) if preview_items else ""

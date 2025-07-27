@@ -17,7 +17,14 @@ import uuid
 
 import psutil
 
-from backend.app.utils.time_utils import utc_now, utc_timestamp
+from ....utils.time_utils import utc_now, utc_timestamp
+from ..constants import (
+    DEFAULT_MAX_STACK_DEPTH, MAX_CONTEXT_STRING_LENGTH, 
+    CONTEXT_STRING_TRUNCATE_LENGTH, CONTEXT_TRUNCATE_SUFFIX,
+    MEMORY_USAGE_DECIMAL_PLACES, CPU_PERCENT_DECIMAL_PLACES,
+    STACK_FILTER_PATTERNS, DOCKER_ENV_FILE, DOCKER_CONTAINER_ENV_VAR,
+    TIMELAPSER_MODULE_INDICATOR
+)
 
 # Note: Using UTC timestamps for consistency across async/sync contexts
 # For future enhancement: could integrate with time_utils for user timezone display
@@ -38,7 +45,7 @@ class ContextExtractor:
 
     def __init__(
         self,
-        max_stack_depth: int = 10,
+        max_stack_depth: int = DEFAULT_MAX_STACK_DEPTH,
         include_environment: bool = True,
         include_stack_traces: bool = False,
     ):
@@ -150,11 +157,7 @@ class ContextExtractor:
             function_name = frame_info.function
 
             # Skip logger-related frames
-            if any(skip in filename.lower() for skip in ["logger", "log_", "handler"]):
-                continue
-
-            # Skip this extractor
-            if "context_extractor" in filename.lower():
+            if any(skip in filename.lower() for skip in STACK_FILTER_PATTERNS):
                 continue
 
             relevant_frames.append(
@@ -191,9 +194,9 @@ class ContextExtractor:
             process = psutil.Process()
             memory_info = process.memory_info()
             return {
-                "memory_usage_mb": round(memory_info.rss / 1024 / 1024, 2),
-                "memory_percent": round(process.memory_percent(), 2),
-                "cpu_percent": round(process.cpu_percent(), 2),
+                "memory_usage_mb": round(memory_info.rss / 1024 / 1024, MEMORY_USAGE_DECIMAL_PLACES),
+                "memory_percent": round(process.memory_percent(), MEMORY_USAGE_DECIMAL_PLACES),
+                "cpu_percent": round(process.cpu_percent(), CPU_PERCENT_DECIMAL_PLACES),
                 "thread_count": process.num_threads(),
             }
 
@@ -214,7 +217,7 @@ class ContextExtractor:
             context["environment"] = os.environ["ENVIRONMENT"]
 
         # Docker/container detection
-        if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER"):
+        if os.path.exists(DOCKER_ENV_FILE) or os.environ.get(DOCKER_CONTAINER_ENV_VAR):
             context["container"] = "docker"
 
         return context
@@ -230,11 +233,11 @@ class ContextExtractor:
             Module name
         """
         # Extract meaningful module path
-        if "timelapser" in filename:
+        if TIMELAPSER_MODULE_INDICATOR in filename:
             # Find the part after timelapser
             parts = filename.split(os.sep)
-            if "timelapser" in parts:
-                timelapser_idx = parts.index("timelapser")
+            if TIMELAPSER_MODULE_INDICATOR in parts:
+                timelapser_idx = parts.index(TIMELAPSER_MODULE_INDICATOR)
                 module_parts = parts[timelapser_idx + 1 :]
                 # Remove .py extension
                 if module_parts and module_parts[-1].endswith(".py"):
@@ -268,8 +271,8 @@ class ContextExtractor:
                 case list() | dict() as col if not col:
                     continue
                 # Limit string length
-                case str() as s if len(s) > 500:
-                    cleaned[key] = s[:497] + "..."
+                case str() as s if len(s) > MAX_CONTEXT_STRING_LENGTH:
+                    cleaned[key] = s[:CONTEXT_STRING_TRUNCATE_LENGTH] + CONTEXT_TRUNCATE_SUFFIX
                 case _:
                     cleaned[key] = value
 

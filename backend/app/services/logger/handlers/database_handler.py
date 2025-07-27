@@ -13,6 +13,7 @@ from ....enums import LogLevel, LogSource, LoggerName
 
 from ....database.log_operations import LogOperations, SyncLogOperations
 from ....models.log_model import Log
+from ..constants import FALLBACK_LOG_LEVEL, FALLBACK_LOG_SOURCE, FALLBACK_LOGGER_NAME
 
 
 class EnhancedDatabaseHandler:
@@ -35,6 +36,52 @@ class EnhancedDatabaseHandler:
         self.async_log_ops = async_log_ops
         self.sync_log_ops = sync_log_ops
         self._healthy = True
+
+    def _ensure_enum_types(
+        self, 
+        level: LogLevel,
+        source: LogSource, 
+        logger_name: LoggerName
+    ) -> tuple[LogLevel, LogSource, LoggerName]:
+        """
+        Ensure parameters are proper enum types, converting from strings if necessary.
+        
+        Args:
+            level: Log level (enum or string)
+            source: Log source (enum or string)
+            logger_name: Logger name (enum or string)
+            
+        Returns:
+            Tuple of properly converted enum values
+        """
+        # Convert level to enum if it's a string
+        if isinstance(level, str):
+            try:
+                level = LogLevel(level.upper())
+            except ValueError:
+                level = LogLevel(FALLBACK_LOG_LEVEL)  # Default fallback
+        elif not isinstance(level, LogLevel):
+            level = LogLevel(FALLBACK_LOG_LEVEL)
+            
+        # Convert source to enum if it's a string  
+        if isinstance(source, str):
+            try:
+                source = LogSource(source.lower())
+            except ValueError:
+                source = LogSource(FALLBACK_LOG_SOURCE)  # Default fallback
+        elif not isinstance(source, LogSource):
+            source = LogSource(FALLBACK_LOG_SOURCE)
+            
+        # Convert logger_name to enum if it's a string
+        if isinstance(logger_name, str):
+            try:
+                logger_name = LoggerName(logger_name.lower())
+            except ValueError:
+                logger_name = LoggerName(FALLBACK_LOGGER_NAME)  # Default fallback
+        elif not isinstance(logger_name, LoggerName):
+            logger_name = LoggerName(FALLBACK_LOGGER_NAME)
+            
+        return level, source, logger_name
 
     async def handle_async(
         self,
@@ -64,8 +111,8 @@ class EnhancedDatabaseHandler:
             if not message or not message.strip():
                 return None  # Skip empty messages
 
-            if not level or level not in LogLevel:
-                level = LogLevel.INFO  # Default to INFO for invalid levels
+            # Ensure proper enum types with conversion if necessary
+            level, source, logger_name = self._ensure_enum_types(level, source, logger_name)
 
             # Create log entry in database
             log_entry = await self.async_log_ops.add_log_entry(
@@ -114,8 +161,8 @@ class EnhancedDatabaseHandler:
             if not message or not message.strip():
                 return None  # Skip empty messages
 
-            if not level or level not in LogLevel:
-                level = LogLevel.INFO  # Default to INFO for invalid levels
+            # Ensure proper enum types with conversion if necessary
+            level, source, logger_name = self._ensure_enum_types(level, source, logger_name)
 
             # Create log entry in database
             log_entry = self.sync_log_ops.write_log_entry(

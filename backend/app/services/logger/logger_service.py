@@ -28,9 +28,7 @@ from ...database.sse_events_operations import (
 )
 
 # Timezone utilities available if needed
-from ...utils.time_utils import (
-    get_timezone_aware_timestamp_sync,
-)
+from ...utils.time_utils import utc_now
 from .handlers.database_handler import EnhancedDatabaseHandler
 from .handlers.batching_database_handler import BatchingDatabaseHandler
 from .handlers.console_handler import ConsoleHandler
@@ -770,7 +768,7 @@ class LoggerService:
 
             event_data_with_timestamp = {
                 **event_data,
-                "timestamp": get_timezone_aware_timestamp_sync(),
+                "timestamp": utc_now().isoformat(),
             }
 
             await self.sse_ops.create_event(

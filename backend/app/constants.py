@@ -425,15 +425,8 @@ HEALTH_VIDEO_QUEUE_ERROR = 100  # Error if pending jobs exceed this
 # ====================================================================
 
 
-# Log levels
-# LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-class LogLevel(str, Enum):
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
-
+# Log levels (using centralized enum from enums.py)
+from .enums import LogLevel
 
 LOG_LEVELS = LogLevel
 LOG_LEVELS_LIST = [level.value for level in LogLevel]
