@@ -19,6 +19,7 @@ from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJo
 from ..enums import JobStatus
 
 from ..utils.time_utils import utc_now
+from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
 class ThumbnailJobOperations:
@@ -32,6 +33,7 @@ class ThumbnailJobOperations:
     def __init__(self, db: AsyncDatabase):
         """Initialize with async database instance."""
         self.db = db
+        self.recovery_ops = RecoveryOperations(db)
 
     async def create_job(
         self, job_data: ThumbnailGenerationJobCreate
@@ -530,6 +532,31 @@ class ThumbnailJobOperations:
             logger.error(f"Error cancelling active jobs: {e}")
             return 0
 
+    async def recover_stuck_jobs(
+        self,
+        max_processing_age_minutes: int = 30,
+        sse_broadcaster: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Recover jobs stuck in 'processing' status by resetting them to 'pending'.
+
+        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+
+        Args:
+            max_processing_age_minutes: Maximum time a job can be in 'processing' status
+                                       before being considered stuck (default: 30 minutes)
+            sse_broadcaster: Optional SSE broadcaster for real-time updates
+
+        Returns:
+            Dictionary with comprehensive recovery statistics
+        """
+        return await self.recovery_ops.recover_stuck_jobs_for_table(
+            table_name="thumbnail_generation_jobs",
+            max_processing_age_minutes=max_processing_age_minutes,
+            job_type_name="thumbnail jobs",
+            sse_broadcaster=sse_broadcaster,
+        )
+
 
 class SyncThumbnailJobOperations:
     """
@@ -565,6 +592,7 @@ class SyncThumbnailJobOperations:
     def __init__(self, db: SyncDatabase):
         """Initialize with sync database instance."""
         self.db = db
+        self.recovery_ops = SyncRecoveryOperations(db)
 
     def create_job(
         self, job_data: ThumbnailGenerationJobCreate
@@ -814,6 +842,40 @@ class SyncThumbnailJobOperations:
             logger.error(f"Error cancelling jobs with status {status}: {e}")
             return 0
 
+    def get_recovered_jobs(self, max_age_hours: int = 24) -> List[Dict[str, Any]]:
+        """
+        Get jobs that were recently recovered from stuck processing state.
+        
+        Args:
+            max_age_hours: Maximum age of jobs to consider
+            
+        Returns:
+            List of job dictionaries with recovery information
+        """
+        try:
+            query = """
+                SELECT id, image_id, error_message, created_at
+                FROM thumbnail_generation_jobs
+                WHERE status = %s
+                  AND error_message LIKE %s
+                  AND created_at > NOW() - INTERVAL '%s hours'
+                ORDER BY created_at DESC
+            """
+            
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (
+                        JobStatus.PENDING, 
+                        '%recovered from stuck processing state%',
+                        max_age_hours
+                    ))
+                    rows = cur.fetchall()
+                    return [dict(row) for row in rows] if rows else []
+                    
+        except (psycopg.Error, KeyError, ValueError) as e:
+            logger.error(f"Error getting recovered jobs: {e}")
+            return []
+
     def cancel_active_jobs(self) -> int:
         """
         Cancel all jobs that are not in final states (completed, failed, cancelled).
@@ -1007,3 +1069,28 @@ class SyncThumbnailJobOperations:
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error promoting old thumbnail jobs: {e}")
             return 0
+
+    def recover_stuck_jobs(
+        self,
+        max_processing_age_minutes: int = 30,
+        sse_broadcaster: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Recover jobs stuck in 'processing' status by resetting them to 'pending' (sync version).
+
+        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+
+        Args:
+            max_processing_age_minutes: Maximum time a job can be in 'processing' status
+                                       before being considered stuck (default: 30 minutes)
+            sse_broadcaster: Optional SSE broadcaster for real-time updates
+
+        Returns:
+            Dictionary with comprehensive recovery statistics
+        """
+        return self.recovery_ops.recover_stuck_jobs_for_table(
+            table_name="thumbnail_generation_jobs",
+            max_processing_age_minutes=max_processing_age_minutes,
+            job_type_name="thumbnail jobs",
+            sse_broadcaster=sse_broadcaster,
+        )

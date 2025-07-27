@@ -236,6 +236,7 @@ class SSEEvent(str, Enum):
     WORKER_STARTED = "worker_started"
     WORKER_STOPPED = "worker_stopped"
     SYSTEM_ERROR = "system_error"
+    SYSTEM_INFO = "system_info"
     SYSTEM_WARNING = "system_warning"
 
     # Log Events

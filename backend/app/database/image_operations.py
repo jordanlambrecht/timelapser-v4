@@ -430,9 +430,9 @@ class ImageOperations:
             Latest Image model instance, or None if no images found
         """
         query = """
-        SELECT * FROM images 
-        WHERE camera_id = %s 
-        ORDER BY captured_at DESC 
+        SELECT * FROM images
+        WHERE camera_id = %s
+        ORDER BY captured_at DESC
         LIMIT 1
         """
         async with self.db.get_connection() as conn:
@@ -858,6 +858,43 @@ class SyncImageOperations:
                 cur.execute(query, (image_id,))
                 return cur.fetchone()
 
+    def get_all_file_paths(self) -> set:
+        """
+        Get all file paths referenced in the images table.
+
+        Returns:
+            Set of all file paths (file_path, thumbnail_path, small_path, overlay_path)
+        """
+        try:
+            file_paths = set()
+            query = """
+                SELECT file_path, thumbnail_path, small_path, overlay_path
+                FROM images
+                WHERE file_path IS NOT NULL
+            """
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    rows = cur.fetchall()
+
+                    for row in rows:
+                        # Add all non-null paths to the set
+                        for path_field in [
+                            "file_path",
+                            "thumbnail_path",
+                            "small_path",
+                            "overlay_path",
+                        ]:
+                            if row.get(path_field):
+                                file_paths.add(row[path_field])
+
+            return file_paths
+
+        except Exception as e:
+            logger.error(f"Error getting all file paths: {e}")
+            return set()
+
     def delete_image(self, image_id: int) -> None:
         """
         Delete an image record from the database.
@@ -1210,18 +1247,18 @@ class AsyncImageOperations:
 
                 # Return default stats if no result
                 return {
-                        "total_images": 0,
-                        "last_24h_images": 0,
-                        "last_7d_images": 0,
-                        "total_file_size": 0,
-                        "average_file_size": 0.0,
-                        "flagged_images": 0,
-                        "avg_quality_score": 100.0,
-                        "first_image_at": None,
-                        "last_image_at": None,
-                        "unique_cameras": 0,
-                        "unique_timelapses": 0,
-                    }
+                    "total_images": 0,
+                    "last_24h_images": 0,
+                    "last_7d_images": 0,
+                    "total_file_size": 0,
+                    "average_file_size": 0.0,
+                    "flagged_images": 0,
+                    "avg_quality_score": 100.0,
+                    "first_image_at": None,
+                    "last_image_at": None,
+                    "unique_cameras": 0,
+                    "unique_timelapses": 0,
+                }
 
     async def get_images_without_thumbnails(
         self, limit: int = MAX_BULK_OPERATION_ITEMS

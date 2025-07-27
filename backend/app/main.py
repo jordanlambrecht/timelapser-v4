@@ -10,14 +10,18 @@ clean separation between the web server and background job processing.
 
 If you're tempted to add a worker here, add it to worker.py instead!
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 from loguru import logger
 
+from backend.app.services.logger.logger_service import LoggerService
+
 from .config import settings
 from .database import async_db, sync_db
+from .enums import LogLevel
 
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
 
@@ -37,10 +41,13 @@ from app.routers import (
     monitoring_routers as monitoring,
     sse_routers as sse,
     camera_crop_router as camera_crop,
+    admin_routers as admin,
 )
 
 # Import full overlay router with complete functionality
 from app.routers import overlay_routers as overlay
+
+from app.utils.ascii_text import print_welcome_message
 
 
 @asynccontextmanager
@@ -52,17 +59,36 @@ async def lifespan(_app: FastAPI):
     sync_db.initialize()
     logger.info("Database connections initialized")
 
-    # Setup database logging for FastAPI
+    # Initialize centralized LoggerService for application logging
     try:
-        from app.logging.database_handler import setup_database_logging
 
-        setup_database_logging(sync_db)
-        logger.info("Database logging enabled for FastAPI")
+        # Create global logger service instance with batching enabled
+        global_logger_service = LoggerService(
+            async_db=async_db,
+            sync_db=sync_db,
+            enable_console=True,
+            enable_file_logging=True,
+            enable_sse_broadcasting=True,
+            enable_batching=True,  # Enable batching for performance
+        )
+
+        # Store in app state for access by middleware and routes
+        _app.state.logger_service = global_logger_service
+
+        # Log startup success with the new system
+        await global_logger_service.log_system(
+            message="🚀 FastAPI application started with centralized logging system",
+            level=LogLevel.INFO,
+            store_in_db=True,
+            broadcast_sse=True,
+        )
+
+        logger.info("Centralized LoggerService initialized with batching enabled")
     except Exception as e:
-        logger.error(f"Failed to enable database logging: {e}")
+        logger.error(f"Failed to initialize LoggerService: {e}")
 
     # ⚠️ IMPORTANT: DO NOT START WORKERS HERE! ⚠️
-    # Background workers (ThumbnailWorker, OverlayWorker, CaptureWorker, etc.) 
+    # Background workers (ThumbnailWorker, OverlayWorker, CaptureWorker, etc.)
     # are managed by the separate worker.py process. Starting workers here would:
     # - Create duplicate instances competing for the same jobs
     # - Violate separation of concerns between web server and job processing
@@ -74,6 +100,21 @@ async def lifespan(_app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down FastAPI application")
+
+    # Gracefully shutdown LoggerService with final flush
+    try:
+        if hasattr(_app.state, "logger_service"):
+            await _app.state.logger_service.log_system(
+                message="🛑 FastAPI application shutting down",
+                level=LogLevel.INFO,
+                store_in_db=True,
+                broadcast_sse=True,
+            )
+            # Ensure all batched logs are written before shutdown
+            await _app.state.logger_service.shutdown()
+            logger.info("LoggerService shutdown complete")
+    except Exception as e:
+        logger.error(f"Error during LoggerService shutdown: {e}")
 
     await async_db.close()
     sync_db.close()
@@ -135,6 +176,7 @@ app.include_router(corruption.router, prefix="/api", tags=["corruption"])
 app.include_router(video_automation.router, prefix="/api", tags=["video-automation"])
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
 app.include_router(sse.router, prefix="/api", tags=["sse"])
+app.include_router(admin.router, prefix="/api", tags=["admin"])
 
 
 # NOTE: Legacy SSE endpoint removed - now handled by sse_routers.py
@@ -155,6 +197,8 @@ async def root():
 
 
 if __name__ == "__main__":
+    print_welcome_message()
+
     uvicorn.run(
         "app.main:app",
         host=settings.api_host,

@@ -34,6 +34,7 @@ from .services.log_service import LogService
 from .services.logger.logger_service import LoggerService
 from .services.weather.service import WeatherManager
 from .services.health_service import HealthService
+from .services.admin_service import AdminService
 from .services.overlay_pipeline import AsyncOverlayService
 from .services.overlay_pipeline.services.job_service import AsyncOverlayJobService
 from .services.scheduling.capture_timing_service import (
@@ -96,7 +97,7 @@ async def get_camera_service() -> CameraService:
     except RuntimeError:
         # SchedulerWorker not initialized yet - will be None
         scheduler_authority_service = None
-    
+
     return CameraService(
         async_db,
         settings_service,
@@ -194,6 +195,12 @@ async def get_logger_service() -> LoggerService:
 async def get_health_service() -> HealthService:
     """Get HealthService with async database dependency injection"""
     return HealthService(async_db)
+
+
+async def get_admin_service() -> AdminService:
+    """Get AdminService with async database dependency injection"""
+    scheduled_job_ops = await get_scheduled_job_operations()
+    return AdminService(scheduled_job_ops)
 
 
 async def get_time_window_service() -> TimeWindowService:
@@ -333,6 +340,7 @@ StatisticsServiceDep = Annotated[StatisticsService, Depends(get_statistics_servi
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
 LoggerServiceDep = Annotated[LoggerService, Depends(get_logger_service)]
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
+AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
 TimeWindowServiceDep = Annotated[TimeWindowService, Depends(get_time_window_service)]
 SyncTimeWindowServiceDep = Annotated[
     SyncTimeWindowService, Depends(get_sync_time_window_service)

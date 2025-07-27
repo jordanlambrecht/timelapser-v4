@@ -19,6 +19,7 @@ from ..models.shared_models import (
     VideoGenerationJobWithDetails,
     VideoStatistics,
 )
+from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
 class VideoOperations:
@@ -37,6 +38,7 @@ class VideoOperations:
             db: AsyncDatabase instance
         """
         self.db = db
+        self.recovery_ops = RecoveryOperations(db)
 
     def _row_to_video(self, row: Dict[str, Any]) -> Video:
         """Convert database row to Video model."""
@@ -539,6 +541,31 @@ class VideoOperations:
             logger.error(f"Error searching videos: {e}")
             return []
 
+    async def recover_stuck_jobs(
+        self, 
+        max_processing_age_minutes: int = 30,
+        sse_broadcaster: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Recover jobs stuck in 'processing' status by resetting them to 'pending'.
+        
+        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+        
+        Args:
+            max_processing_age_minutes: Maximum time a job can be in 'processing' status
+                                       before being considered stuck (default: 30 minutes)
+            sse_broadcaster: Optional SSE broadcaster for real-time updates
+        
+        Returns:
+            Dictionary with comprehensive recovery statistics
+        """
+        return await self.recovery_ops.recover_stuck_jobs_for_table(
+            table_name="video_generation_jobs",
+            max_processing_age_minutes=max_processing_age_minutes,
+            job_type_name="video generation jobs",
+            sse_broadcaster=sse_broadcaster
+        )
+
 
 class SyncVideoOperations:
     """
@@ -555,6 +582,7 @@ class SyncVideoOperations:
             db: SyncDatabase instance
         """
         self.db = db
+        self.recovery_ops = SyncRecoveryOperations(db)
 
     def _row_to_video_generation_job_with_details(
         self, row: Dict[str, Any]
@@ -1299,3 +1327,54 @@ class SyncVideoOperations:
                 f"Error getting last milestone video for timelapse {timelapse_id}: {e}"
             )
             return None
+
+    def recover_stuck_jobs(
+        self, 
+        max_processing_age_minutes: int = 30,
+        sse_broadcaster: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Recover video generation jobs stuck in 'processing' status by resetting them to 'pending' (sync version).
+        
+        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+        
+        Args:
+            max_processing_age_minutes: Maximum time a job can be in 'processing' status
+                                       before being considered stuck (default: 30 minutes)
+            sse_broadcaster: Optional SSE broadcaster for real-time updates
+        
+        Returns:
+            Dictionary with comprehensive recovery statistics
+        """
+        return self.recovery_ops.recover_stuck_jobs_for_table(
+            table_name="video_generation_jobs",
+            max_processing_age_minutes=max_processing_age_minutes,
+            job_type_name="video generation jobs",
+            sse_broadcaster=sse_broadcaster
+        )
+
+    def get_all_video_file_paths(self) -> set:
+        """
+        Get all video file paths referenced in the videos table.
+        
+        Returns:
+            Set of all video file paths
+        """
+        try:
+            file_paths = set()
+            query = "SELECT file_path FROM videos WHERE file_path IS NOT NULL"
+            
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    rows = cur.fetchall()
+                    
+                    for row in rows:
+                        if row.get("file_path"):
+                            file_paths.add(row["file_path"])
+                            
+            return file_paths
+            
+        except Exception as e:
+            logger.error(f"Error getting video file paths: {e}")
+            return set()

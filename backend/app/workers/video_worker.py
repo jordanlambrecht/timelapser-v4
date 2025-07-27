@@ -51,6 +51,34 @@ class VideoWorker(BaseWorker):
             # Create video pipeline using factory
             self.workflow_service = create_video_pipeline(self.db)
             self.log_info("✅ Initialized video worker with simplified pipeline")
+
+            # Perform startup recovery for stuck video jobs
+            if self.workflow_service and hasattr(self.workflow_service, "video_ops"):
+                try:
+                    self.log_info(
+                        "🔄 Performing startup recovery for stuck video generation jobs..."
+                    )
+                    recovery_results = await self.run_in_executor(
+                        self.workflow_service.video_ops.recover_stuck_jobs, 30
+                    )
+
+                    if recovery_results.get("stuck_jobs_recovered", 0) > 0:
+                        self.log_info(
+                            f"✅ Recovered {recovery_results['stuck_jobs_recovered']} stuck video jobs on startup"
+                        )
+                    elif recovery_results.get("stuck_jobs_found", 0) > 0:
+                        self.log_warning(
+                            f"⚠️ Found {recovery_results['stuck_jobs_found']} stuck video jobs but only recovered "
+                            f"{recovery_results['stuck_jobs_recovered']}"
+                        )
+                    else:
+                        self.log_debug(
+                            "No stuck video jobs found during startup recovery"
+                        )
+
+                except Exception as e:
+                    self.log_error(f"Error during startup recovery for video jobs: {e}")
+
         except Exception as e:
             self.log_error("❌ Failed to initialize video worker", e)
             raise

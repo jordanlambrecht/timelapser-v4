@@ -37,7 +37,7 @@ from ..constants import (
 )
 
 
-class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
+class OverlayWorker(JobProcessingMixin[OverlayGenerationJob]):
     """
     Refactored high-performance background worker for overlay generation.
 
@@ -143,6 +143,32 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
         # Validate that job service is properly configured
         if not self.job_service:
             raise ValueError("OverlayJobService not properly initialized")
+
+        # Perform startup recovery for stuck overlay jobs
+        try:
+            self.log_info(
+                "🔄 Performing startup recovery for stuck overlay generation jobs..."
+            )
+            recovery_results = (
+                self.overlay_job_service.overlay_job_ops.recover_stuck_jobs(
+                    max_processing_age_minutes=30
+                )
+            )
+
+            if recovery_results.get("stuck_jobs_recovered", 0) > 0:
+                self.log_info(
+                    f"✅ Recovered {recovery_results['stuck_jobs_recovered']} stuck overlay jobs on startup"
+                )
+            elif recovery_results.get("stuck_jobs_found", 0) > 0:
+                self.log_warning(
+                    f"⚠️ Found {recovery_results['stuck_jobs_found']} stuck overlay jobs but only recovered "
+                    f"{recovery_results['stuck_jobs_recovered']}"
+                )
+            else:
+                self.log_debug("No stuck overlay jobs found during startup recovery")
+
+        except Exception as e:
+            self.log_error(f"Error during startup recovery for overlay jobs: {e}")
 
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
@@ -377,7 +403,3 @@ class OverlayWorkerRefactored(JobProcessingMixin[OverlayGenerationJob]):
         )
 
         return status
-
-
-# Alias for backward compatibility
-OverlayWorker = OverlayWorkerRefactored

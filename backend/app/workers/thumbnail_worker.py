@@ -36,7 +36,7 @@ from ..constants import (
 )
 
 
-class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
+class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
     """
     Refactored high-performance background worker for thumbnail generation.
 
@@ -117,6 +117,30 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
             f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}"
         )
 
+        # Perform startup recovery for stuck thumbnail jobs
+        try:
+            self.log_info("🔄 Performing startup recovery for stuck thumbnail jobs...")
+            recovery_results = (
+                self.thumbnail_job_service.thumbnail_job_ops.recover_stuck_jobs(
+                    max_processing_age_minutes=30
+                )
+            )
+
+            if recovery_results.get("stuck_jobs_recovered", 0) > 0:
+                self.log_info(
+                    f"✅ Recovered {recovery_results['stuck_jobs_recovered']} stuck thumbnail jobs on startup"
+                )
+            elif recovery_results.get("stuck_jobs_found", 0) > 0:
+                self.log_warning(
+                    f"⚠️ Found {recovery_results['stuck_jobs_found']} stuck jobs but only recovered "
+                    f"{recovery_results['stuck_jobs_recovered']}"
+                )
+            else:
+                self.log_debug("No stuck thumbnail jobs found during startup recovery")
+
+        except Exception as e:
+            self.log_error(f"Error during startup recovery for thumbnail jobs: {e}")
+
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
             worker_config=self._get_worker_config()
@@ -183,12 +207,14 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
             result_dict: Dict[str, Any] = (
                 self.thumbnail_pipeline.process_image_thumbnails(job.image_id)
             )
-            
+
             # Ensure result_dict contains all required fields for ThumbnailGenerationResult
             if not isinstance(result_dict, dict):
-                self.log_error(f"Invalid result type from thumbnail pipeline: {type(result_dict)}")
+                self.log_error(
+                    f"Invalid result type from thumbnail pipeline: {type(result_dict)}"
+                )
                 return False
-                
+
             # Create ThumbnailGenerationResult with proper type checking
             try:
                 result = ThumbnailGenerationResult(**result_dict)
@@ -389,7 +415,3 @@ class ThumbnailWorkerRefactored(JobProcessingMixin[ThumbnailGenerationJob]):
         )
 
         return status
-
-
-# Alias for backward compatibility
-ThumbnailWorker = ThumbnailWorkerRefactored
