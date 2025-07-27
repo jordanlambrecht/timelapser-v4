@@ -6,12 +6,11 @@ Provides centralized management of temporary files for overlay previews,
 test captures, and other transient file operations.
 """
 
-import os
 import time
 import tempfile
 from pathlib import Path
-from typing import List, Optional
-from datetime import datetime, timedelta
+from typing import Optional
+from datetime import datetime
 from loguru import logger
 
 
@@ -293,3 +292,22 @@ def get_overlay_preview_path(
         Unique file path for overlay preview image
     """
     return temp_file_manager.create_overlay_preview_path(camera_id, timestamp)
+
+
+def get_timelapser_temp_file_count() -> int:
+    """
+    Get count of all timelapser-related temporary files in system temp directory.
+
+    This includes any files/directories matching the 'timelapser_*' pattern.
+    Useful for cleanup recommendations and system health monitoring.
+
+    Returns:
+        Number of timelapser temporary files found
+    """
+    try:
+        temp_dir = Path(tempfile.gettempdir())
+        temp_files = list(temp_dir.glob("timelapser_*/*"))
+        return len(temp_files)
+    except Exception as e:
+        logger.debug(f"Could not check temp directory for timelapser files: {e}")
+        return 0
