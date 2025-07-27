@@ -13,8 +13,6 @@ This module combines timezone-aware operations with pure time utilities:
 - Filename and timestamp formatting utilities
 - Time calculation and duration parsing
 
-MERGED FROM:
-- app/utils/time_utils.py (pure time utilities)
 
 Related Files:
 - cache_manager.py: Provides the underlying caching infrastructure for settings
@@ -35,6 +33,7 @@ import re
 # Note: get_timezone_async is only used by async functions.
 # Sync functions use direct settings service access to avoid event loop conflicts.
 from app.utils.cache_manager import get_timezone_async
+from ..services import settings_service
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -173,7 +172,7 @@ def get_supported_timezones() -> list[str]:
 
 
 # Updated: Use cache-backed timezone for sync timestamp
-def get_timezone_aware_timestamp_sync(settings_service) -> datetime:
+def get_timezone_aware_timestamp_sync() -> datetime:
     """
     Get current timestamp in database timezone (sync version).
 
@@ -228,7 +227,7 @@ def get_timezone_aware_date_sync(settings_service) -> str:
     Returns:
         Date string in YYYY-MM-DD format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync(settings_service)
+    timestamp = get_timezone_aware_timestamp_sync()
     return timestamp.strftime("%Y-%m-%d")
 
 
@@ -246,7 +245,7 @@ async def get_timezone_aware_date_async(settings_service) -> str:
     return timestamp.strftime("%Y-%m-%d")
 
 
-def get_timezone_aware_timestamp_string_sync(settings_service) -> str:
+def get_timezone_aware_timestamp_string_sync() -> str:
     """
     Get current timestamp as filename-safe string in database timezone (sync).
 
@@ -256,7 +255,7 @@ def get_timezone_aware_timestamp_string_sync(settings_service) -> str:
     Returns:
         Timestamp string in YYYYMMDD_HHMMSS format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync(settings_service)
+    timestamp = get_timezone_aware_timestamp_sync()
     return timestamp.strftime("%Y%m%d_%H%M%S")
 
 
@@ -356,7 +355,7 @@ def get_timezone_aware_time_sync(settings_service) -> str:
     Returns:
         Time string in HH:MM:SS format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync(settings_service)
+    timestamp = get_timezone_aware_timestamp_sync()
     return timestamp.strftime("%H:%M:%S")
 
 

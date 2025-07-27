@@ -13,7 +13,7 @@ from loguru import logger
 
 from ...utils.time_utils import (
     get_timezone_from_cache_sync,
-    get_timezone_aware_timestamp_sync
+    get_timezone_aware_timestamp_sync,
 )
 from ...services.settings_service import SyncSettingsService
 
@@ -21,7 +21,7 @@ from ...services.settings_service import SyncSettingsService
 class SchedulerTimeUtils:
     """
     Utility class for timezone and time-related scheduler operations.
-    
+
     Uses modern zoneinfo and aligns with codebase timezone-aware patterns.
     """
 
@@ -64,7 +64,7 @@ class SchedulerTimeUtils:
     def get_immediate_run_time(self, delay_seconds: int = 2) -> datetime:
         """
         Get timezone-aware datetime for immediate job scheduling.
-        
+
         Uses codebase-standard timezone-aware timestamp generation.
 
         Args:
@@ -73,17 +73,17 @@ class SchedulerTimeUtils:
         Returns:
             Timezone-aware datetime for job scheduling
         """
-        current_time = get_timezone_aware_timestamp_sync(self.settings_service)
+        current_time = get_timezone_aware_timestamp_sync()
         return current_time + timedelta(seconds=delay_seconds)
 
     def get_current_time(self) -> datetime:
         """
         Get current timezone-aware datetime using codebase standards.
-        
+
         Returns:
             Current timezone-aware datetime from database settings
         """
-        return get_timezone_aware_timestamp_sync(self.settings_service)
+        return get_timezone_aware_timestamp_sync()
 
     def invalidate_cache(self) -> None:
         """Manually invalidate the timezone cache."""

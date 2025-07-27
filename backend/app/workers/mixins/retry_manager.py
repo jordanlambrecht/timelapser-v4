@@ -11,7 +11,7 @@ from typing import List, Protocol, runtime_checkable
 from datetime import datetime, timedelta
 from loguru import logger
 
-from ...utils.time_utils import utc_now
+from ...utils.time_utils import utc_now, utc_timestamp
 
 
 @runtime_checkable
@@ -190,7 +190,7 @@ class RetryManager:
             "retry_count": retry_info["next_retry_count"],
             "max_retries": self.max_retries,
             "error_message": error_message,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             "is_final_attempt": retry_info["is_final_attempt"],
         }
 

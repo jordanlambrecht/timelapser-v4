@@ -17,7 +17,7 @@ import uuid
 
 import psutil
 
-from backend.app.utils.time_utils import utc_now
+from backend.app.utils.time_utils import utc_now, utc_timestamp
 
 # Note: Using UTC timestamps for consistency across async/sync contexts
 # For future enhancement: could integrate with time_utils for user timezone display
@@ -113,9 +113,9 @@ class ContextExtractor:
         # Use UTC timestamp for consistency across contexts
 
         return {
-            "extracted_at": utc_now().isoformat(),
+            "extracted_at": utc_timestamp(),
             "extracted_timestamp": utc_now().timestamp(),
-            "extracted_at_utc": utc_now().isoformat(),
+            "extracted_at_utc": utc_timestamp(),
         }
 
     def _get_execution_context(self) -> Dict[str, Any]:

@@ -16,14 +16,18 @@ from ....database.overlay_operations import SyncOverlayOperations, OverlayOperat
 from ....database.image_operations import SyncImageOperations, AsyncImageOperations
 from ....models.overlay_model import (
     OverlayConfiguration,
-    OverlayPreset, 
+    OverlayPreset,
     TimelapseOverlay,
     OverlayPreviewRequest,
     OverlayPreviewResponse,
     GlobalOverlayOptions,
 )
 from ....models.image_model import Image as ImageModel
-from ....utils.time_utils import utc_now, get_timezone_aware_timestamp_sync
+from ....utils.time_utils import (
+    utc_now,
+    get_timezone_aware_timestamp_sync,
+    utc_timestamp,
+)
 from ....utils.file_helpers import (
     ensure_directory_exists,
     validate_file_path,
@@ -41,11 +45,17 @@ class SyncOverlayIntegrationService:
     """
     Synchronous integration service coordinating overlay generation.
     Main business logic layer for overlay system integration.
-    
+
     Uses proven logic migrated from original overlay_service.py.
     """
 
-    def __init__(self, db: SyncDatabase, settings_service=None, weather_manager=None, sse_ops=None):
+    def __init__(
+        self,
+        db: SyncDatabase,
+        settings_service=None,
+        weather_manager=None,
+        sse_ops=None,
+    ):
         """
         Initialize with sync database and optional services.
 
@@ -77,7 +87,7 @@ class SyncOverlayIntegrationService:
         """
         try:
             logger.info(f"🎨 Starting overlay generation for image {image_id}")
-            
+
             # Create SSE event for overlay generation start
             if self.sse_ops:
                 try:
@@ -86,8 +96,8 @@ class SyncOverlayIntegrationService:
                         event_data={
                             "image_id": image_id,
                             "force_regenerate": force_regenerate,
-                            "timestamp": utc_now().isoformat()
-                        }
+                            "timestamp": utc_timestamp(),
+                        },
                     )
                     logger.debug("📡 SSE event: overlay_generation_started")
                 except Exception as e:
@@ -105,8 +115,8 @@ class SyncOverlayIntegrationService:
                             event_data={
                                 "image_id": image_id,
                                 "error": "Image not found",
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -114,7 +124,9 @@ class SyncOverlayIntegrationService:
 
             # Check if overlay already exists and force_regenerate is False
             if not force_regenerate and image.has_valid_overlay:
-                logger.debug(f"✅ Overlay already exists for image {image_id}, skipping")
+                logger.debug(
+                    f"✅ Overlay already exists for image {image_id}, skipping"
+                )
                 # Create SSE event for skipped
                 if self.sse_ops:
                     try:
@@ -124,8 +136,8 @@ class SyncOverlayIntegrationService:
                                 "image_id": image_id,
                                 "timelapse_id": image.timelapse_id,
                                 "reason": "overlay_exists",
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -136,7 +148,9 @@ class SyncOverlayIntegrationService:
                 image.timelapse_id
             )
             if not timelapse_overlay or not timelapse_overlay.enabled:
-                logger.debug(f"⚪ No overlay configuration found for timelapse {image.timelapse_id}")
+                logger.debug(
+                    f"⚪ No overlay configuration found for timelapse {image.timelapse_id}"
+                )
                 # Create SSE event for skipped (no config)
                 if self.sse_ops:
                     try:
@@ -146,8 +160,8 @@ class SyncOverlayIntegrationService:
                                 "image_id": image_id,
                                 "timelapse_id": image.timelapse_id,
                                 "reason": "no_configuration",
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -171,8 +185,8 @@ class SyncOverlayIntegrationService:
                                 "image_id": image_id,
                                 "timelapse_id": image.timelapse_id,
                                 "error": "Invalid configuration",
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -209,8 +223,8 @@ class SyncOverlayIntegrationService:
                                 "camera_id": image.camera_id,
                                 "overlay_path": str(overlay_path),
                                 "timestamp": overlay_updated_at.isoformat(),
-                                "force_regenerate": force_regenerate
-                            }
+                                "force_regenerate": force_regenerate,
+                            },
                         )
                         logger.debug("📡 SSE event: overlay_generated")
                     except Exception as e:
@@ -227,8 +241,8 @@ class SyncOverlayIntegrationService:
                                 "image_id": image_id,
                                 "timelapse_id": image.timelapse_id,
                                 "error": "Overlay rendering failed",
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -246,8 +260,8 @@ class SyncOverlayIntegrationService:
                         event_data={
                             "image_id": image_id,
                             "error": str(e),
-                            "timestamp": utc_now().isoformat()
-                        }
+                            "timestamp": utc_timestamp(),
+                        },
                     )
                 except Exception:
                     pass
@@ -266,8 +280,10 @@ class SyncOverlayIntegrationService:
             Preview response with generated image paths
         """
         try:
-            logger.info(f"🎨 Starting overlay preview generation for camera {request.camera_id}")
-            
+            logger.info(
+                f"🎨 Starting overlay preview generation for camera {request.camera_id}"
+            )
+
             # Create SSE event for preview generation start
             if self.sse_ops:
                 try:
@@ -275,8 +291,8 @@ class SyncOverlayIntegrationService:
                         event_type="overlay_preview_started",
                         event_data={
                             "camera_id": request.camera_id,
-                            "timestamp": utc_now().isoformat()
-                        }
+                            "timestamp": utc_timestamp(),
+                        },
                     )
                     logger.debug("📡 SSE event: overlay_preview_started")
                 except Exception as e:
@@ -295,8 +311,8 @@ class SyncOverlayIntegrationService:
                             event_data={
                                 "camera_id": request.camera_id,
                                 "error": error_msg,
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -320,8 +336,8 @@ class SyncOverlayIntegrationService:
                                 "camera_id": request.camera_id,
                                 "error": error_msg,
                                 "test_image_path": str(test_image_path),
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -348,18 +364,23 @@ class SyncOverlayIntegrationService:
                                 "camera_id": request.camera_id,
                                 "preview_path": str(preview_path),
                                 "test_image_path": str(test_image_path),
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                         logger.debug("📡 SSE event: overlay_preview_generated")
                     except Exception as e:
-                        logger.warning(f"⚠️ Failed to create SSE preview success event: {e}")
-                        
-                logger.info(f"✅ Successfully generated overlay preview for camera {request.camera_id}")
+                        logger.warning(
+                            f"⚠️ Failed to create SSE preview success event: {e}"
+                        )
+
+                logger.info(
+                    f"✅ Successfully generated overlay preview for camera {request.camera_id}"
+                )
                 return OverlayPreviewResponse(
                     image_path=str(preview_path),
                     test_image_path=str(test_image_path),
                     success=True,
+                    error_message=None,
                 )
             else:
                 error_msg = "Failed to generate overlay preview"
@@ -373,8 +394,8 @@ class SyncOverlayIntegrationService:
                                 "camera_id": request.camera_id,
                                 "error": error_msg,
                                 "test_image_path": str(test_image_path),
-                                "timestamp": utc_now().isoformat()
-                            }
+                                "timestamp": utc_timestamp(),
+                            },
                         )
                     except Exception:
                         pass
@@ -394,15 +415,18 @@ class SyncOverlayIntegrationService:
                     self.sse_ops.create_event(
                         event_type="overlay_preview_failed",
                         event_data={
-                            "camera_id": getattr(request, 'camera_id', 'unknown'),
+                            "camera_id": getattr(request, "camera_id", "unknown"),
                             "error": error_msg,
-                            "timestamp": utc_now().isoformat()
-                        }
+                            "timestamp": utc_timestamp(),
+                        },
                     )
                 except Exception:
                     pass
             return OverlayPreviewResponse(
-                image_path="", test_image_path="", success=False, error_message=error_msg
+                image_path="",
+                test_image_path="",
+                success=False,
+                error_message=error_msg,
             )
 
     def get_effective_overlay_config(
@@ -691,13 +715,13 @@ class SyncOverlayIntegrationService:
     def get_service_health(self) -> Dict[str, Any]:
         """
         Get comprehensive health status of overlay integration service.
-        
+
         Returns:
             Dict containing detailed health metrics for monitoring
         """
         try:
             logger.debug("🩺 Checking overlay integration service health")
-            
+
             # Check database connectivity
             db_healthy = False
             db_error = None
@@ -705,27 +729,33 @@ class SyncOverlayIntegrationService:
                 # Test database connection with a simple query
                 test_result = self.overlay_ops.get_preset_count() is not None
                 db_healthy = test_result
-                logger.debug(f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}")
+                logger.debug(
+                    f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}"
+                )
             except Exception as e:
                 db_error = str(e)
                 logger.error(f"🗄️ Database connectivity failed: {e}")
-                
+
             # Check settings service
             settings_healthy = True
             settings_error = None
             if self.settings_service:
                 try:
                     # Test settings access
-                    test_setting = self.settings_service.get_setting("data_directory", None)
+                    test_setting = self.settings_service.get_setting(
+                        "data_directory", None
+                    )
                     settings_healthy = test_setting is not None
-                    logger.debug(f"⚙️ Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}")
+                    logger.debug(
+                        f"⚙️ Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}"
+                    )
                 except Exception as e:
                     settings_healthy = False
                     settings_error = str(e)
                     logger.error(f"⚙️ Settings service failed: {e}")
             else:
                 logger.debug("⚙️ Settings service: ⚪ not configured")
-                
+
             # Check weather manager
             weather_healthy = True
             weather_error = None
@@ -734,14 +764,16 @@ class SyncOverlayIntegrationService:
                     # Test weather manager access
                     current_weather = self.weather_manager.get_current_weather()
                     weather_healthy = current_weather is not None
-                    logger.debug(f"🌤️ Weather manager: {'✅ healthy' if weather_healthy else '⚠️ degraded'}")
+                    logger.debug(
+                        f"🌤️ Weather manager: {'✅ healthy' if weather_healthy else '⚠️ degraded'}"
+                    )
                 except Exception as e:
                     weather_healthy = False
                     weather_error = str(e)
                     logger.warning(f"🌤️ Weather manager degraded: {e}")
             else:
                 logger.debug("🌤️ Weather manager: ⚪ not configured")
-                
+
             # Check SSE operations
             sse_healthy = True
             sse_error = None
@@ -749,127 +781,147 @@ class SyncOverlayIntegrationService:
                 try:
                     # Test SSE operations - this is optional, so degraded is acceptable
                     # We can't easily test without creating actual events
-                    sse_healthy = hasattr(self.sse_ops, 'create_event')
-                    logger.debug(f"📡 SSE operations: {'✅ healthy' if sse_healthy else '⚠️ degraded'}")
+                    sse_healthy = hasattr(self.sse_ops, "create_event")
+                    logger.debug(
+                        f"📡 SSE operations: {'✅ healthy' if sse_healthy else '⚠️ degraded'}"
+                    )
                 except Exception as e:
                     sse_healthy = False
                     sse_error = str(e)
                     logger.warning(f"📡 SSE operations degraded: {e}")
             else:
                 logger.debug("📡 SSE operations: ⚪ not configured")
-            
+
             # Determine overall health status
             # Core requirement: database must be healthy
             # Settings service is important but not critical
             # Weather and SSE are optional/degraded is acceptable
             critical_healthy = db_healthy
             optional_healthy = settings_healthy and weather_healthy and sse_healthy
-            
+
             if critical_healthy and optional_healthy:
                 overall_status = "healthy"
             elif critical_healthy:
                 overall_status = "degraded"
             else:
                 overall_status = "unhealthy"
-                
+
             health_data = {
                 "service": "overlay_integration_service",
                 "status": overall_status,
                 "database": {
                     "status": "healthy" if db_healthy else "unhealthy",
-                    "error": db_error
+                    "error": db_error,
                 },
                 "settings_service": {
-                    "status": "healthy" if settings_healthy else ("unhealthy" if self.settings_service else "not_configured"),
-                    "error": settings_error
+                    "status": (
+                        "healthy"
+                        if settings_healthy
+                        else (
+                            "unhealthy" if self.settings_service else "not_configured"
+                        )
+                    ),
+                    "error": settings_error,
                 },
                 "weather_manager": {
-                    "status": "healthy" if weather_healthy else ("degraded" if self.weather_manager else "not_configured"),
-                    "error": weather_error
+                    "status": (
+                        "healthy"
+                        if weather_healthy
+                        else ("degraded" if self.weather_manager else "not_configured")
+                    ),
+                    "error": weather_error,
                 },
                 "sse_operations": {
-                    "status": "healthy" if sse_healthy else ("degraded" if self.sse_ops else "not_configured"),
-                    "error": sse_error
+                    "status": (
+                        "healthy"
+                        if sse_healthy
+                        else ("degraded" if self.sse_ops else "not_configured")
+                    ),
+                    "error": sse_error,
                 },
-                "timestamp": utc_now().isoformat(),
+                "timestamp": utc_timestamp(),
                 "critical_services_healthy": critical_healthy,
-                "optional_services_healthy": optional_healthy
+                "optional_services_healthy": optional_healthy,
             }
-            
+
             logger.debug(f"🩺 Overlay integration service health: {overall_status}")
             return health_data
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to get overlay integration service health: {e}")
             return {
-                "service": "overlay_integration_service", 
+                "service": "overlay_integration_service",
                 "status": "unhealthy",
                 "error": str(e),
-                "timestamp": utc_now().isoformat()
+                "timestamp": utc_timestamp(),
             }
 
     def get_overlay_generation_statistics(self) -> Dict[str, Any]:
         """
         Get comprehensive overlay generation statistics for monitoring and performance analysis.
-        
+
         Returns:
             Dict containing detailed overlay generation metrics
         """
         try:
             logger.debug("📊 Collecting overlay generation statistics")
-            
+
             # Get basic job queue statistics
             job_stats = None
-            if hasattr(self, 'overlay_job_ops'):
+            if hasattr(self, "overlay_job_ops"):
                 try:
                     # Use job operations directly for sync context
                     job_stats = self.overlay_job_ops.get_job_statistics()
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to get job statistics: {e}")
-            
+
             # Get image overlay statistics from database
             overlay_image_stats = self._get_image_overlay_stats()
-            
-            # Get timelapse overlay configuration statistics  
+
+            # Get timelapse overlay configuration statistics
             timelapse_config_stats = self._get_timelapse_config_stats()
-            
+
             # Calculate success rates and performance metrics
-            performance_metrics = self._calculate_performance_metrics(job_stats, overlay_image_stats)
-            
+            performance_metrics = self._calculate_performance_metrics(
+                job_stats, overlay_image_stats
+            )
+
             from ....utils.time_utils import utc_now
-            
+
             comprehensive_stats = {
                 "service": "overlay_generation_statistics",
-                "timestamp": utc_now().isoformat(),
+                "timestamp": utc_timestamp(),
                 "job_queue": job_stats.model_dump() if job_stats else None,
                 "image_overlays": overlay_image_stats,
                 "timelapse_configurations": timelapse_config_stats,
                 "performance_metrics": performance_metrics,
-                "collection_status": "success"
+                "collection_status": "success",
             }
-            
+
             logger.debug("📊 Overlay generation statistics collected successfully")
             return comprehensive_stats
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to collect overlay generation statistics: {e}")
             from ....utils.time_utils import utc_now
+
             return {
                 "service": "overlay_generation_statistics",
-                "timestamp": utc_now().isoformat(),
+                "timestamp": utc_timestamp(),
                 "collection_status": "error",
-                "error": str(e)
+                "error": str(e),
             }
 
     def _get_image_overlay_stats(self) -> Dict[str, Any]:
         """Get statistics about images with overlays."""
         try:
             logger.debug("📊 Collecting image overlay statistics")
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     # Get overlay coverage statistics
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT 
                             COUNT(*) as total_images,
                             COUNT(*) FILTER (WHERE has_valid_overlay = true) as images_with_overlay,
@@ -881,33 +933,47 @@ class SyncOverlayIntegrationService:
                                 ELSE NULL END) as avg_overlay_delay_ms
                         FROM images 
                         WHERE captured_at > NOW() - INTERVAL '30 days'
-                    """)
-                    
+                    """
+                    )
+
                     row = cur.fetchone()
                     if row:
                         stats_dict = dict(row)
-                        
+
                         total_images = int(stats_dict.get("total_images", 0))
-                        images_with_overlay = int(stats_dict.get("images_with_overlay", 0))
-                        
+                        images_with_overlay = int(
+                            stats_dict.get("images_with_overlay", 0)
+                        )
+
                         # Calculate overlay coverage percentage
                         overlay_coverage_pct = (
-                            (images_with_overlay / total_images * 100) 
-                            if total_images > 0 else 0
+                            (images_with_overlay / total_images * 100)
+                            if total_images > 0
+                            else 0
                         )
-                        
+
                         return {
                             "total_images_30d": total_images,
                             "images_with_overlay": images_with_overlay,
-                            "overlay_coverage_percentage": round(overlay_coverage_pct, 2),
-                            "overlays_generated_24h": int(stats_dict.get("overlays_generated_24h", 0)),
-                            "overlays_generated_7d": int(stats_dict.get("overlays_generated_7d", 0)),
-                            "images_captured_24h": int(stats_dict.get("images_captured_24h", 0)),
-                            "avg_overlay_delay_ms": int(stats_dict.get("avg_overlay_delay_ms", 0) or 0),
+                            "overlay_coverage_percentage": round(
+                                overlay_coverage_pct, 2
+                            ),
+                            "overlays_generated_24h": int(
+                                stats_dict.get("overlays_generated_24h", 0)
+                            ),
+                            "overlays_generated_7d": int(
+                                stats_dict.get("overlays_generated_7d", 0)
+                            ),
+                            "images_captured_24h": int(
+                                stats_dict.get("images_captured_24h", 0)
+                            ),
+                            "avg_overlay_delay_ms": int(
+                                stats_dict.get("avg_overlay_delay_ms", 0) or 0
+                            ),
                         }
-            
+
             return {"error": "No data available"}
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to collect image overlay statistics: {e}")
             return {"error": str(e)}
@@ -916,11 +982,12 @@ class SyncOverlayIntegrationService:
         """Get statistics about timelapse overlay configurations."""
         try:
             logger.debug("📊 Collecting timelapse configuration statistics")
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     # Get timelapse overlay configuration statistics
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT 
                             COUNT(*) as total_timelapses,
                             COUNT(*) FILTER (WHERE enabled = true) as enabled_configurations,
@@ -928,67 +995,87 @@ class SyncOverlayIntegrationService:
                             COUNT(DISTINCT preset_id) FILTER (WHERE preset_id IS NOT NULL) as unique_presets_used,
                             COUNT(*) FILTER (WHERE enabled = true AND updated_at > NOW() - INTERVAL '7 days') as configurations_updated_7d
                         FROM timelapse_overlays
-                    """)
-                    
+                    """
+                    )
+
                     row = cur.fetchone()
                     if row:
                         stats_dict = dict(row)
-                        
+
                         total_timelapses = int(stats_dict.get("total_timelapses", 0))
-                        enabled_configs = int(stats_dict.get("enabled_configurations", 0))
-                        
+                        enabled_configs = int(
+                            stats_dict.get("enabled_configurations", 0)
+                        )
+
                         # Calculate configuration adoption percentage
                         config_adoption_pct = (
-                            (enabled_configs / total_timelapses * 100) 
-                            if total_timelapses > 0 else 0
+                            (enabled_configs / total_timelapses * 100)
+                            if total_timelapses > 0
+                            else 0
                         )
-                        
+
                         return {
                             "total_timelapse_configs": total_timelapses,
                             "enabled_configurations": enabled_configs,
-                            "configuration_adoption_percentage": round(config_adoption_pct, 2),
-                            "timelapses_using_presets": int(stats_dict.get("timelapses_using_presets", 0)),
-                            "unique_presets_used": int(stats_dict.get("unique_presets_used", 0)),
-                            "configurations_updated_7d": int(stats_dict.get("configurations_updated_7d", 0))
+                            "configuration_adoption_percentage": round(
+                                config_adoption_pct, 2
+                            ),
+                            "timelapses_using_presets": int(
+                                stats_dict.get("timelapses_using_presets", 0)
+                            ),
+                            "unique_presets_used": int(
+                                stats_dict.get("unique_presets_used", 0)
+                            ),
+                            "configurations_updated_7d": int(
+                                stats_dict.get("configurations_updated_7d", 0)
+                            ),
                         }
-            
+
             return {"error": "No data available"}
-            
+
         except Exception as e:
-            logger.warning(f"⚠️ Failed to collect timelapse configuration statistics: {e}")
+            logger.warning(
+                f"⚠️ Failed to collect timelapse configuration statistics: {e}"
+            )
             return {"error": str(e)}
 
     def _calculate_performance_metrics(
-        self, 
-        job_stats: Optional['OverlayJobStatistics'], 
-        image_stats: Dict[str, Any]
+        self, job_stats: Optional["OverlayJobStatistics"], image_stats: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Calculate derived performance metrics from collected statistics."""
         try:
             logger.debug("📊 Calculating performance metrics")
-            
+
             metrics = {}
-            
+
             if job_stats:
                 # Calculate success rate
-                total_completed = job_stats.completed_jobs_24h + job_stats.failed_jobs_24h
+                total_completed = (
+                    job_stats.completed_jobs_24h + job_stats.failed_jobs_24h
+                )
                 if total_completed > 0:
-                    success_rate = (job_stats.completed_jobs_24h / total_completed) * 100
+                    success_rate = (
+                        job_stats.completed_jobs_24h / total_completed
+                    ) * 100
                     metrics["success_rate_24h_percentage"] = round(success_rate, 2)
                 else:
                     metrics["success_rate_24h_percentage"] = 0
-                
+
                 # Calculate queue efficiency
-                total_jobs = job_stats.pending_jobs + job_stats.processing_jobs + total_completed
+                total_jobs = (
+                    job_stats.pending_jobs + job_stats.processing_jobs + total_completed
+                )
                 if total_jobs > 0:
                     queue_efficiency = (job_stats.completed_jobs_24h / total_jobs) * 100
                     metrics["queue_efficiency_percentage"] = round(queue_efficiency, 2)
                 else:
                     metrics["queue_efficiency_percentage"] = 0
-                
+
                 # Processing speed metrics
-                metrics["avg_processing_time_seconds"] = round(job_stats.avg_processing_time_ms / 1000, 2)
-                
+                metrics["avg_processing_time_seconds"] = round(
+                    job_stats.avg_processing_time_ms / 1000, 2
+                )
+
                 # Queue backlog health
                 if job_stats.pending_jobs == 0:
                     metrics["queue_backlog_status"] = "healthy"
@@ -996,18 +1083,22 @@ class SyncOverlayIntegrationService:
                     metrics["queue_backlog_status"] = "moderate"
                 else:
                     metrics["queue_backlog_status"] = "high"
-            
+
             # Image processing metrics
             if isinstance(image_stats, dict) and "error" not in image_stats:
                 images_captured = image_stats.get("images_captured_24h", 0)
                 overlays_generated = image_stats.get("overlays_generated_24h", 0)
-                
+
                 if images_captured > 0:
-                    overlay_generation_rate = (overlays_generated / images_captured) * 100
-                    metrics["overlay_generation_rate_24h_percentage"] = round(overlay_generation_rate, 2)
+                    overlay_generation_rate = (
+                        overlays_generated / images_captured
+                    ) * 100
+                    metrics["overlay_generation_rate_24h_percentage"] = round(
+                        overlay_generation_rate, 2
+                    )
                 else:
                     metrics["overlay_generation_rate_24h_percentage"] = 0
-                
+
                 # Overlay delay performance
                 avg_delay = image_stats.get("avg_overlay_delay_ms", 0)
                 if avg_delay < 5000:  # Less than 5 seconds
@@ -1018,9 +1109,9 @@ class SyncOverlayIntegrationService:
                     metrics["overlay_delay_performance"] = "acceptable"
                 else:
                     metrics["overlay_delay_performance"] = "slow"
-            
+
             return metrics
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to calculate performance metrics: {e}")
             return {"error": str(e)}
@@ -1032,7 +1123,13 @@ class OverlayIntegrationService:
     Provides async versions for use in API endpoints.
     """
 
-    def __init__(self, db: AsyncDatabase, settings_service=None, weather_manager=None, sse_ops=None):
+    def __init__(
+        self,
+        db: AsyncDatabase,
+        settings_service=None,
+        weather_manager=None,
+        sse_ops=None,
+    ):
         """Initialize with async database and optional services."""
         self.db = db
         self.overlay_ops = OverlayOperations(db)
@@ -1100,7 +1197,9 @@ class OverlayIntegrationService:
         sync_service = SyncOverlayIntegrationService(
             None, self.settings_service, self.weather_manager, self.sse_ops
         )
-        return sync_service._get_effective_overlay_config_for_timelapse(timelapse_overlay)
+        return sync_service._get_effective_overlay_config_for_timelapse(
+            timelapse_overlay
+        )
 
     # ================================================================
     # PRESET MANAGEMENT METHODS (Required by Router)
@@ -1148,7 +1247,9 @@ class OverlayIntegrationService:
         self, timelapse_id: int, config_data
     ) -> Optional[TimelapseOverlay]:
         """Update timelapse overlay configuration."""
-        return await self.overlay_ops.update_timelapse_overlay(timelapse_id, config_data)
+        return await self.overlay_ops.update_timelapse_overlay(
+            timelapse_id, config_data
+        )
 
     async def delete_timelapse_overlay_config(self, timelapse_id: int) -> bool:
         """Delete timelapse overlay configuration."""
@@ -1184,6 +1285,7 @@ class OverlayIntegrationService:
         """Validate overlay configuration."""
         try:
             from ..utils.overlay_utils import validate_overlay_configuration
+
             return validate_overlay_configuration(config_dict)
         except Exception as e:
             logger.error(f"Failed to validate overlay configuration: {e}")

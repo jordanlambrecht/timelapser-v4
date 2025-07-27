@@ -6,12 +6,12 @@ Provides standardized Server-Sent Events broadcasting for worker job lifecycle e
 eliminating duplication between ThumbnailWorker and OverlayWorker.
 """
 
-from typing import Dict, Any, Optional, Protocol
+from typing import Dict, Any, Optional
 from loguru import logger
 
 from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import SSEPriority, SSEEvent, SSEEventSource
-from ...utils.time_utils import utc_now
+from ...enums import SSEPriority, SSEEventSource
+from ...utils.time_utils import utc_timestamp
 
 
 class SSEBroadcaster:
@@ -69,7 +69,7 @@ class SSEBroadcaster:
         event_data = {
             "job_id": job_id,
             "worker_name": self.worker_name,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **job_data,
         }
 
@@ -100,7 +100,7 @@ class SSEBroadcaster:
             "job_id": job_id,
             "worker_name": self.worker_name,
             "processing_time_ms": processing_time_ms,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **job_data,
         }
 
@@ -136,7 +136,7 @@ class SSEBroadcaster:
             "worker_name": self.worker_name,
             "error_message": error_message,
             "is_permanent_failure": is_permanent,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **job_data,
         }
 
@@ -173,7 +173,7 @@ class SSEBroadcaster:
             "retry_count": retry_count,
             "retry_delay_minutes": retry_delay_minutes,
             "error_message": error_message,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **job_data,
         }
 
@@ -196,7 +196,7 @@ class SSEBroadcaster:
         """
         event_data = {
             "worker_name": self.worker_name,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **stats,
         }
 
@@ -219,7 +219,7 @@ class SSEBroadcaster:
         """
         event_data = {
             "worker_name": self.worker_name,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **worker_config,
         }
 
@@ -247,7 +247,7 @@ class SSEBroadcaster:
         event_data = {
             "worker_name": self.worker_name,
             "stop_reason": stop_reason,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
         }
 
         if final_stats:
@@ -277,7 +277,7 @@ class SSEBroadcaster:
         event_data = {
             "worker_name": self.worker_name,
             "error_message": error_message,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **error_context,
         }
 
@@ -302,7 +302,7 @@ class SSEBroadcaster:
         """
         event_data = {
             "worker_name": self.worker_name,
-            "timestamp": utc_now().isoformat(),
+            "timestamp": utc_timestamp(),
             **performance_metrics,
         }
 

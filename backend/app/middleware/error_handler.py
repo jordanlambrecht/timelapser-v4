@@ -10,7 +10,11 @@ import traceback
 import uuid
 
 from datetime import datetime, timezone
-from ..utils.time_utils import get_timezone_aware_timestamp_from_settings, utc_now
+from ..utils.time_utils import (
+    get_timezone_aware_timestamp_from_settings,
+    utc_now,
+    utc_timestamp,
+)
 
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
@@ -120,7 +124,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 else dict(settings)
             )
         except Exception:
-            timestamp = utc_now().isoformat()
+            timestamp = utc_timestamp()
         response_data = {
             "error": {
                 "type": "http_error",

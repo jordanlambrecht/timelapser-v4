@@ -9,8 +9,17 @@ following the architecture pattern of service -> operations -> database.
 from typing import List, Optional
 from loguru import logger
 
-from ....database.overlay_job_operations import SyncOverlayJobOperations, OverlayJobOperations
-from ....models.overlay_model import OverlayGenerationJob, OverlayGenerationJobCreate, OverlayJobStatistics
+from backend.app.utils.time_utils import utc_timestamp
+
+from ....database.overlay_job_operations import (
+    SyncOverlayJobOperations,
+    OverlayJobOperations,
+)
+from ....models.overlay_model import (
+    OverlayGenerationJob,
+    OverlayGenerationJobCreate,
+    OverlayJobStatistics,
+)
 from ....enums import (
     OverlayJobPriority,
     OverlayJobStatus,
@@ -48,7 +57,7 @@ class SyncOverlayJobService:
     - No shared state between instances
     """
 
-    def __init__(self, db: 'SyncDatabase', settings_service=None):
+    def __init__(self, db: "SyncDatabase", settings_service=None):
         """
         Initialize overlay job service with database and optional settings.
 
@@ -206,19 +215,21 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.cancel_pending_jobs_for_image(image_id)
         except Exception as e:
-            logger.error(f"Failed to cancel pending overlay jobs for image {image_id}: {e}")
+            logger.error(
+                f"Failed to cancel pending overlay jobs for image {image_id}: {e}"
+            )
             return 0
 
     def get_service_health(self) -> dict:
         """
         Get comprehensive health status of overlay job service.
-        
+
         Returns:
             Dict containing detailed health metrics for monitoring
         """
         try:
             logger.debug("🩺 Checking overlay job service health")
-            
+
             # Check database connectivity
             db_healthy = False
             db_error = None
@@ -226,11 +237,13 @@ class SyncOverlayJobService:
                 # Test database connection by getting job statistics
                 stats = self.overlay_job_ops.get_job_statistics()
                 db_healthy = stats is not None
-                logger.debug(f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}")
+                logger.debug(
+                    f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}"
+                )
             except Exception as e:
                 db_error = str(e)
                 logger.error(f"🗄️ Database connectivity failed: {e}")
-            
+
             # Get queue metrics if database is healthy
             queue_stats = None
             queue_healthy = False
@@ -239,26 +252,32 @@ class SyncOverlayJobService:
                     queue_stats = self.get_job_statistics()
                     # Consider queue healthy if we can get statistics
                     queue_healthy = queue_stats is not None
-                    logger.debug(f"📋 Job queue: {'✅ healthy' if queue_healthy else '⚠️ degraded'}")
+                    logger.debug(
+                        f"📋 Job queue: {'✅ healthy' if queue_healthy else '⚠️ degraded'}"
+                    )
                 except Exception as e:
                     logger.warning(f"📋 Job queue degraded: {e}")
-            
+
             # Check settings service if provided
             settings_healthy = True
             settings_error = None
             if self.settings_service:
                 try:
                     # Test basic settings access
-                    test_setting = self.settings_service.get_setting("data_directory", None)
+                    test_setting = self.settings_service.get_setting(
+                        "data_directory", None
+                    )
                     settings_healthy = test_setting is not None
-                    logger.debug(f"⚙️ Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}")
+                    logger.debug(
+                        f"⚙️ Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}"
+                    )
                 except Exception as e:
                     settings_healthy = False
                     settings_error = str(e)
                     logger.error(f"⚙️ Settings service failed: {e}")
             else:
                 logger.debug("⚙️ Settings service: ⚪ not configured")
-            
+
             # Determine overall health
             # Core requirement: database connectivity
             # Queue stats and settings are important but not critical
@@ -269,38 +288,45 @@ class SyncOverlayJobService:
                 overall_status = "degraded"
             else:
                 overall_status = "unhealthy"
-            
+
             from ....utils.time_utils import utc_now
-            
+
             health_data = {
                 "service": "overlay_job_service",
                 "status": overall_status,
                 "database": {
                     "status": "healthy" if db_healthy else "unhealthy",
-                    "error": db_error
+                    "error": db_error,
                 },
                 "job_queue": {
                     "status": "healthy" if queue_healthy else "degraded",
-                    "statistics": queue_stats.model_dump() if queue_stats else None
+                    "statistics": queue_stats.model_dump() if queue_stats else None,
                 },
                 "settings_service": {
-                    "status": "healthy" if settings_healthy else ("unhealthy" if self.settings_service else "not_configured"),
-                    "error": settings_error
+                    "status": (
+                        "healthy"
+                        if settings_healthy
+                        else (
+                            "unhealthy" if self.settings_service else "not_configured"
+                        )
+                    ),
+                    "error": settings_error,
                 },
-                "timestamp": utc_now().isoformat()
+                "timestamp": utc_timestamp(),
             }
-            
+
             logger.debug(f"🩺 Overlay job service health: {overall_status}")
             return health_data
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to get overlay job service health: {e}")
             from ....utils.time_utils import utc_now
+
             return {
                 "service": "overlay_job_service",
-                "status": "unhealthy", 
+                "status": "unhealthy",
                 "error": str(e),
-                "timestamp": utc_now().isoformat()
+                "timestamp": utc_timestamp(),
             }
 
 
@@ -312,7 +338,7 @@ class AsyncOverlayJobService:
     endpoints and other async contexts.
     """
 
-    def __init__(self, db: 'AsyncDatabase', settings_service=None):
+    def __init__(self, db: "AsyncDatabase", settings_service=None):
         """
         Initialize async overlay job service with database and optional settings.
 
@@ -378,5 +404,7 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.cancel_pending_jobs_for_image(image_id)
         except Exception as e:
-            logger.error(f"Failed to cancel pending overlay jobs for image {image_id}: {e}")
+            logger.error(
+                f"Failed to cancel pending overlay jobs for image {image_id}: {e}"
+            )
             return 0

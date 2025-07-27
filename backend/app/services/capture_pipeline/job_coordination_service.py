@@ -27,10 +27,19 @@ import json
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
-from ...enums import SSEPriority
+from ...enums import (
+    SSEPriority,
+    ThumbnailJobPriority,
+    ThumbnailJobStatus,
+    ThumbnailJobType,
+)
 
 
-from ...utils.time_utils import get_timezone_aware_timestamp_sync, utc_now
+from ...utils.time_utils import (
+    get_timezone_aware_timestamp_sync,
+    utc_now,
+    utc_timestamp,
+)
 
 from .constants import (
     JOB_VALIDATION_RESULT_VALID,
@@ -203,11 +212,12 @@ class JobCoordinationService:
                 logger.warning(
                     f"⚠️ Using direct database fallback for image {image_id} - scheduler and job queue not available"
                 )
+
                 job_data = ThumbnailGenerationJobCreate(
                     image_id=image_id,
-                    priority=priority,
-                    status=JOB_STATUS.PENDING,
-                    job_type=THUMBNAIL_JOB_TYPE_SINGLE,
+                    priority=ThumbnailJobPriority(priority),
+                    status=ThumbnailJobStatus.PENDING,
+                    job_type=ThumbnailJobType.SINGLE,
                 )
 
                 job = self.thumbnail_job_ops.create_job(job_data)
@@ -422,7 +432,7 @@ class JobCoordinationService:
                 }
 
                 # Use video operations to create job directly
-                event_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+                event_timestamp = get_timezone_aware_timestamp_sync()
                 job_id = self.video_ops.create_video_generation_job(
                     job_data, event_timestamp.isoformat()
                 )
@@ -724,7 +734,9 @@ class JobCoordinationService:
             elif job_type == JOB_TYPE.VIDEO_GENERATION:
                 # Track video job status
                 try:
-                    video_job = self.video_ops.get_video_generation_job_by_id(int(job_id))
+                    video_job = self.video_ops.get_video_generation_job_by_id(
+                        int(job_id)
+                    )
                     if video_job:
                         job_status.update(
                             {
@@ -793,7 +805,7 @@ class JobCoordinationService:
 
             # Add tracking timestamp
 
-            job_status["tracked_at"] = utc_now().isoformat()
+            job_status["tracked_at"] = utc_timestamp()
 
             logger.debug(
                 f"📊 Job status tracking - {job_type} {job_id}: {job_status['status']}"
@@ -808,7 +820,7 @@ class JobCoordinationService:
                 "job_type": job_type,
                 "status": JOB_STATUS.TRACKING_ERROR,
                 "error_message": str(e),
-                "tracked_at": utc_now().isoformat(),
+                "tracked_at": utc_timestamp(),
             }
 
     def cancel_pending_jobs(
@@ -942,7 +954,7 @@ class JobCoordinationService:
 
             # Add timestamp
 
-            cancellation_results["cancelled_at"] = utc_now().isoformat()
+            cancellation_results["cancelled_at"] = utc_timestamp()
 
             logger.info(
                 f"✅ Job cancellation completed: {cancellation_results['total_cancelled']} jobs cancelled, "
@@ -977,7 +989,7 @@ class JobCoordinationService:
 
             queue_status = {
                 "success": True,
-                "timestamp": utc_now().isoformat(),
+                "timestamp": utc_timestamp(),
                 "overall_health": HEALTH_STATUS.HEALTHY,
                 "total_pending": 0,
                 "total_processing": 0,
@@ -1132,7 +1144,7 @@ class JobCoordinationService:
                 "success": False,
                 "error": str(e),
                 "overall_health": HEALTH_STATUS.ERROR,
-                "timestamp": utc_now().isoformat(),
+                "timestamp": utc_timestamp(),
             }
 
     def _determine_thumbnail_priority(self, capture_context: Dict[str, Any]) -> str:
@@ -1452,7 +1464,7 @@ class JobCoordinationService:
                             "trigger_type", "workflow_coordination"
                         ),
                         "method": job_result.get("method", "coordination_service"),
-                        "coordinated_at": utc_now().isoformat(),
+                        "coordinated_at": utc_timestamp(),
                     }
 
                     # Add type-specific data

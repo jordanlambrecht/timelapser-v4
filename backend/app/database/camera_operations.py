@@ -290,17 +290,17 @@ class AsyncCameraOperations:
         LEFT JOIN images i_active ON i_active.timelapse_id = t.id  -- Only active timelapse images
         LEFT JOIN LATERAL (
             SELECT id, captured_at, file_path, file_size, day_number,
-                   thumbnail_path, thumbnail_size, small_path, small_size
-            FROM images 
-            WHERE camera_id = c.id 
-            ORDER BY captured_at DESC 
+                    thumbnail_path, thumbnail_size, small_path, small_size
+            FROM images
+            WHERE camera_id = c.id
+            ORDER BY captured_at DESC
             LIMIT 1
         ) latest_img ON true
         WHERE c.id = %s
-        GROUP BY c.id, t.id, t.status, t.name, 
-                 latest_img.id, latest_img.captured_at, latest_img.file_path, 
-                 latest_img.file_size, latest_img.day_number, latest_img.thumbnail_path,
-                 latest_img.thumbnail_size, latest_img.small_path, latest_img.small_size
+        GROUP BY c.id, t.id, t.status, t.name,
+                latest_img.id, latest_img.captured_at, latest_img.file_path,
+                latest_img.file_size, latest_img.day_number, latest_img.thumbnail_path,
+                latest_img.thumbnail_size, latest_img.small_path, latest_img.small_size
         """
 
         async with self.db.get_connection() as conn:
@@ -324,7 +324,7 @@ class AsyncCameraOperations:
             Dictionary containing comprehensive status information, or None if camera not found
         """
         query = """
-        SELECT 
+        SELECT
             c.id,
             c.status,
             c.health_status,
@@ -473,9 +473,9 @@ class AsyncCameraOperations:
         params["updated_at"] = now
 
         query = f"""
-        UPDATE cameras 
+        UPDATE cameras
         SET {', '.join(update_fields)}
-        WHERE id = %(camera_id)s 
+        WHERE id = %(camera_id)s
         RETURNING *
         """
 
@@ -550,7 +550,7 @@ class AsyncCameraOperations:
             COUNT(cl.id) as corruption_logs_count,
             AVG(cl.corruption_score) as avg_corruption_score
         FROM cameras c
-        LEFT JOIN corruption_logs cl ON c.id = cl.camera_id 
+        LEFT JOIN corruption_logs cl ON c.id = cl.camera_id
             AND cl.created_at > %s
         WHERE c.id = %s
         GROUP BY c.id
@@ -751,8 +751,8 @@ class AsyncCameraOperations:
         now = await get_timezone_aware_timestamp_async(self.db)
 
         query = """
-        UPDATE cameras 
-        SET status = %s, 
+        UPDATE cameras
+        SET status = %s,
             last_error = %s,
             updated_at = %s
         WHERE id = %s
@@ -839,12 +839,12 @@ class AsyncCameraOperations:
         now = await get_timezone_aware_timestamp_async(self.db)
 
         query = """
-        SELECT 
+        SELECT
             c.*,
             t.id as active_timelapse_id,
             t.status as timelapse_status
         FROM cameras c
-        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
+        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
         WHERE (c.next_capture_at IS NULL OR c.next_capture_at <= %s)
         ORDER BY c.next_capture_at ASC NULLS FIRST
         """
@@ -880,9 +880,9 @@ class AsyncCameraOperations:
             True if successful
         """
         query = """
-            UPDATE cameras 
-            SET crop_rotation_settings = $1, 
-                crop_rotation_enabled = $2, 
+            UPDATE cameras
+            SET crop_rotation_settings = $1,
+                crop_rotation_enabled = $2,
                 updated_at = $3
             WHERE id = $4
         """
@@ -1035,7 +1035,7 @@ class SyncCameraOperations:
             camera = db.get_camera_by_id(1)
         """
         query = """
-        SELECT 
+        SELECT
             c.*,
             t.id as active_timelapse_id,
             t.status as timelapse_status
@@ -1077,11 +1077,11 @@ class SyncCameraOperations:
             success = db.update_camera_connectivity(1, False, "Connection timeout")
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         query = """
-        UPDATE cameras 
-        SET is_connected = %s, 
+        UPDATE cameras
+        SET is_connected = %s,
             last_error = %s,
             updated_at = %s
         WHERE id = %s
@@ -1172,7 +1172,7 @@ class SyncCameraOperations:
             success = db.update_camera_corruption_failure_count(1, True)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         if increment:
             query = """
@@ -1213,7 +1213,7 @@ class SyncCameraOperations:
             success = db.set_camera_degraded_mode(1, True)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         query = """
         UPDATE cameras
@@ -1243,7 +1243,7 @@ class SyncCameraOperations:
             success = db.reset_camera_corruption_failures(1)
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         query = """
         UPDATE cameras
@@ -1286,7 +1286,7 @@ class SyncCameraOperations:
             success = db.update_camera_capture_stats(1, False, 'degraded', "Connection timeout")
         """
         # Get timezone-aware timestamp for sync operation
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         if success:
             # Reset consecutive failures and update last success time
@@ -1335,15 +1335,15 @@ class SyncCameraOperations:
             due_cameras = db.get_cameras_due_for_capture()
         """
         # Get current timezone-aware timestamp for comparison (sync)
-        now = get_timezone_aware_timestamp_sync(self.settings_ops)
+        now = get_timezone_aware_timestamp_sync()
 
         query = """
-        SELECT 
+        SELECT
             c.*,
             t.id as active_timelapse_id,
             t.status as timelapse_status
         FROM cameras c
-        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
+        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
         WHERE (c.next_capture_at IS NULL OR c.next_capture_at <= %s)
         ORDER BY c.next_capture_at ASC NULLS FIRST
         """
