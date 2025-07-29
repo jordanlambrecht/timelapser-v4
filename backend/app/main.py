@@ -55,9 +55,21 @@ async def lifespan(_app: FastAPI):
     """Handle application startup and shutdown"""
     # Startup
     logger.info("Starting FastAPI application")
-    await async_db.initialize()
-    sync_db.initialize()
-    logger.info("Database connections initialized")
+
+    # Initialize database with hybrid approach
+    from .database.migrations import initialize_database, DatabaseInitializationError
+
+    try:
+        result = initialize_database()
+        logger.info(f"Database initialized successfully: {result['method']}")
+
+        # Initialize async and sync databases
+        await async_db.initialize()
+        sync_db.initialize()
+
+    except DatabaseInitializationError as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise RuntimeError(f"Cannot start application: {e}") from e
 
     # Initialize centralized LoggerService for application logging
     try:
@@ -116,6 +128,7 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.error(f"Error during LoggerService shutdown: {e}")
 
+    # Database cleanup
     await async_db.close()
     sync_db.close()
     logger.info("Database connections closed")
