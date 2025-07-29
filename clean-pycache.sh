@@ -5,6 +5,9 @@
 
 echo "🧹 Cleaning __pycache__ directories from timelapser-v4 codebase..."
 
+# Get the script directory (project root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "🧹 Cleaning .pytest_cache directories..."
 pytest_cache_count=0
 
@@ -18,9 +21,6 @@ while IFS= read -r -d '' pytest_cache_dir; do
   rm -rf "$pytest_cache_dir"
   ((pytest_cache_count++))
 done < <(find "$SCRIPT_DIR" -type d -name ".pytest_cache" -print0)
-
-# Get the script directory (project root)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Counter for removed directories
 removed_count=0
