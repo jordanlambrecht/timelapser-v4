@@ -19,7 +19,77 @@ from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJo
 from ..enums import JobStatus
 
 from ..utils.time_utils import utc_now
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_composite_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.database_helpers import DatabaseQueryBuilder
 from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
+
+
+class ThumbnailJobQueryBuilder:
+    """Centralized query builder for thumbnail job operations."""
+
+    @staticmethod
+    def get_base_select_fields():
+        """Get standard fields for thumbnail job queries."""
+        return """
+            id, image_id, priority, status, job_type, created_at,
+            started_at, completed_at, error_message, processing_time_ms, retry_count
+        """
+
+    @staticmethod
+    def build_pending_jobs_query():
+        """Build optimized query for pending jobs with priority ordering."""
+        fields = ThumbnailJobQueryBuilder.get_base_select_fields()
+        return f"""
+            SELECT {fields}
+            FROM thumbnail_generation_jobs
+            WHERE status = %s
+            ORDER BY
+                CASE priority
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'low' THEN 3
+                    ELSE 4
+                END,
+                created_at ASC
+            LIMIT %s
+        """
+
+    @staticmethod
+    def build_job_statistics_query():
+        """Build optimized statistics query using CTEs for better performance."""
+        return """
+            WITH job_stats AS (
+                SELECT
+                    status,
+                    COUNT(*) as count,
+                    AVG(processing_time_ms) as avg_processing_time_ms
+                FROM thumbnail_generation_jobs
+                WHERE created_at > %s - INTERVAL '24 hours'
+                GROUP BY status
+            )
+            SELECT
+                status,
+                count,
+                avg_processing_time_ms
+            FROM job_stats
+        """
+
+    @staticmethod
+    def build_active_job_counts_query():
+        """Build query for active job counts."""
+        return """
+            SELECT
+                status,
+                COUNT(*) as count
+            FROM thumbnail_generation_jobs
+            WHERE status IN (%s, %s)
+            GROUP BY status
+        """
 
 
 class ThumbnailJobOperations:
@@ -30,10 +100,47 @@ class ThumbnailJobOperations:
     following the established database operations pattern.
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
         self.recovery_ops = RecoveryOperations(db)
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_thumbnail_job_caches(
+        self,
+        job_id: Optional[int] = None,
+        image_id: Optional[int] = None,
+        updated_at: Optional[datetime] = None,
+    ) -> None:
+        """Clear caches related to thumbnail jobs using sophisticated cache system."""
+        # Clear thumbnail job caches using advanced cache manager
+        cache_patterns = [
+            "thumbnail_job:get_pending_jobs",
+            "thumbnail_job:get_job_statistics",
+            "thumbnail_job:get_active_job_counts",
+        ]
+
+        if job_id:
+            cache_patterns.extend(
+                [
+                    f"thumbnail_job:get_job_by_id:{job_id}",
+                    f"thumbnail_job:metadata:{job_id}",
+                ]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(job_id, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"thumbnail_job:metadata:{job_id}", etag
+                )
+
+        if image_id:
+            cache_patterns.append(f"thumbnail_job:image:{image_id}")
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     async def create_job(
         self, job_data: ThumbnailGenerationJobCreate
@@ -49,42 +156,47 @@ class ThumbnailJobOperations:
         """
         try:
             query = """
-                INSERT INTO thumbnail_generation_jobs 
+                INSERT INTO thumbnail_generation_jobs
                 (image_id, priority, status, job_type, created_at, retry_count)
-                VALUES ($1, $2, $3, $4, NOW(), 0)
+                VALUES (%s, %s, %s, %s, %s, 0)
                 RETURNING id, image_id, priority, status, job_type, created_at,
                         started_at, completed_at, error_message, processing_time_ms, retry_count
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        query.replace("$1", "%s")
-                        .replace("$2", "%s")
-                        .replace("$3", "%s")
-                        .replace("$4", "%s"),
+                        query,
                         (
                             job_data.image_id,
                             job_data.priority,
                             job_data.status,
                             job_data.job_type,
+                            current_time,
                         ),
                     )
                     result = await cur.fetchone()
 
             if result:
-                return ThumbnailGenerationJob(**dict(result))
+                job = ThumbnailGenerationJob(**dict(result))
+                # Clear related caches after successful creation
+                await self._clear_thumbnail_job_caches(
+                    job.id, job.image_id, updated_at=utc_now()
+                )
+                return job
             return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error creating thumbnail job: {e}")
             return None
 
+    @cached_response(ttl_seconds=15, key_prefix="thumbnail_job")
     async def get_pending_jobs(
         self, batch_size: int = 5
     ) -> List[ThumbnailGenerationJob]:
         """
-        Get pending jobs ordered by priority and creation time.
+        Get pending jobs ordered by priority and creation time using optimized query builder.
 
         Args:
             batch_size: Maximum number of jobs to retrieve
@@ -93,22 +205,8 @@ class ThumbnailJobOperations:
             List of pending ThumbnailGenerationJob instances
         """
         try:
-            # Priority order: high, medium, low
-            query = """
-                SELECT id, image_id, priority, status, job_type, created_at,
-                        started_at, completed_at, error_message, processing_time_ms, retry_count
-                FROM thumbnail_generation_jobs
-                WHERE status = %s
-                ORDER BY
-                    CASE priority
-                        WHEN 'high' THEN 1
-                        WHEN 'medium' THEN 2
-                        WHEN 'low' THEN 3
-                        ELSE 4
-                    END,
-                    created_at ASC
-                LIMIT %s
-            """
+            # Use optimized query builder for consistent query construction
+            query = ThumbnailJobQueryBuilder.build_pending_jobs_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -133,21 +231,27 @@ class ThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, started_at = NOW()
+                SET status = %s, started_at = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         query,
                         (
                             JobStatus.PROCESSING,
+                            current_time,
                             job_id,
                             JobStatus.PENDING,
                         ),
                     )
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after successful update
+                        await self._clear_thumbnail_job_caches(job_id)
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as started: {e}")
@@ -169,22 +273,28 @@ class ThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, completed_at = NOW(), processing_time_ms = %s
+                SET status = %s, completed_at = %s, processing_time_ms = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         query,
                         (
                             JobStatus.COMPLETED,
+                            current_time,
                             processing_time_ms,
                             job_id,
                             JobStatus.PROCESSING,
                         ),
                     )
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after successful completion
+                        await self._clear_thumbnail_job_caches(job_id)
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as completed: {e}")
@@ -207,10 +317,11 @@ class ThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, error_message = %s, retry_count = %s, completed_at = NOW()
+                SET status = %s, error_message = %s, retry_count = %s, completed_at = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -219,11 +330,16 @@ class ThumbnailJobOperations:
                             JobStatus.FAILED,
                             error_message,
                             retry_count,
+                            current_time,
                             job_id,
                             JobStatus.PROCESSING,
                         ),
                     )
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after failure
+                        await self._clear_thumbnail_job_caches(job_id)
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error marking job {job_id} as failed: {e}")
@@ -248,10 +364,11 @@ class ThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = %s, retry_count = %s, error_message = NULL,
-                    created_at = NOW() + %s * INTERVAL '1 minute'
+                    created_at = %s + %s * INTERVAL '1 minute'
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -259,12 +376,17 @@ class ThumbnailJobOperations:
                         (
                             JobStatus.PENDING,
                             retry_count,
+                            current_time,
                             delay_minutes,
                             job_id,
                             JobStatus.FAILED,
                         ),
                     )
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after retry scheduling
+                        await self._clear_thumbnail_job_caches(job_id)
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error scheduling retry for job {job_id}: {e}")
@@ -283,23 +405,27 @@ class ThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = $1, completed_at = NOW()
-                WHERE image_id = $2 AND status = $3
+                SET status = %s, completed_at = %s
+                WHERE image_id = %s AND status = %s
             """
 
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        query.replace("$1", "%s")
-                        .replace("$2", "%s")
-                        .replace("$3", "%s"),
+                        query,
                         (
                             JobStatus.CANCELLED,
+                            current_time,
                             image_id,
                             JobStatus.PENDING,
                         ),
                     )
-                    return cur.rowcount
+                    cancelled_count = cur.rowcount
+                    if cancelled_count > 0:
+                        # Clear related caches after cancellation
+                        await self._clear_thumbnail_job_caches(image_id=image_id)
+                    return cancelled_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling jobs for image {image_id}: {e}")
@@ -316,7 +442,7 @@ class ThumbnailJobOperations:
             Number of jobs cleaned up
         """
         try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=older_than_hours)
+            cutoff_time = utc_now() - timedelta(hours=older_than_hours)
 
             query = """
                 DELETE FROM thumbnail_generation_jobs
@@ -335,12 +461,17 @@ class ThumbnailJobOperations:
                             cutoff_time,
                         ),
                     )
-                    return cur.rowcount
+                    deleted_count = cur.rowcount
+                    if deleted_count > 0:
+                        # Clear related caches after cleanup
+                        await self._clear_thumbnail_job_caches()
+                    return deleted_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cleaning up completed jobs: {e}")
             return 0
 
+    @cached_response(ttl_seconds=30, key_prefix="thumbnail_job")
     async def get_active_job_counts(self) -> Dict[str, int]:
         """
         Get counts of active jobs (pending/processing) without time constraints.
@@ -349,14 +480,8 @@ class ThumbnailJobOperations:
             Dictionary with pending_jobs and processing_jobs counts
         """
         try:
-            query = """
-                SELECT
-                    status,
-                    COUNT(*) as count
-                FROM thumbnail_generation_jobs
-                WHERE status IN (%s, %s)
-                GROUP BY status
-            """
+            # Use optimized query builder
+            query = ThumbnailJobQueryBuilder.build_active_job_counts_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -387,6 +512,7 @@ class ThumbnailJobOperations:
             logger.error(f"Error getting active job counts: {error_msg}")
             return {"pending_jobs": 0, "processing_jobs": 0}
 
+    @cached_response(ttl_seconds=60, key_prefix="thumbnail_job")
     async def get_job_statistics(self) -> Dict[str, Any]:
         """
         Get job queue statistics for monitoring.
@@ -395,19 +521,13 @@ class ThumbnailJobOperations:
             Dictionary with job counts by status and other metrics
         """
         try:
-            query = """
-                SELECT
-                    status,
-                    COUNT(*) as count,
-                    AVG(processing_time_ms) as avg_processing_time_ms
-                FROM thumbnail_generation_jobs
-                WHERE created_at > NOW() - INTERVAL '24 hours'
-                GROUP BY status
-            """
+            # Use optimized CTE-based query for better performance
+            query = ThumbnailJobQueryBuilder.build_job_statistics_query()
+            current_time = utc_now()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query)
+                    await cur.execute(query, (current_time,))
                     results = await cur.fetchall()
 
             stats = {
@@ -462,12 +582,12 @@ class ThumbnailJobOperations:
                 SELECT id, image_id, priority, status, job_type, created_at,
                         started_at, completed_at, error_message, processing_time_ms, retry_count
                 FROM thumbnail_generation_jobs
-                WHERE id = $1
+                WHERE id = %s
             """
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query.replace("$1", "%s"), (job_id,))
+                    await cur.execute(query, (job_id,))
                     result = await cur.fetchone()
 
             if result:
@@ -492,14 +612,15 @@ class ThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = 'cancelled',
-                    completed_at = NOW(),
+                    completed_at = %s,
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
             """
-
+            
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (status,))
+                    await cur.execute(query, (current_time, status))
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -518,14 +639,15 @@ class ThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = 'cancelled',
-                    completed_at = NOW(),
+                    completed_at = %s,
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
             """
-
+            
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query)
+                    await cur.execute(query, (current_time,))
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -544,7 +666,7 @@ class ThumbnailJobOperations:
 
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status
-                                       before being considered stuck (default: 30 minutes)
+                                        before being considered stuck (default: 30 minutes)
             sse_broadcaster: Optional SSE broadcaster for real-time updates
 
         Returns:
@@ -589,7 +711,7 @@ class SyncThumbnailJobOperations:
     - Integrates with capture workflow for automatic job creation
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
         self.recovery_ops = SyncRecoveryOperations(db)
@@ -602,11 +724,12 @@ class SyncThumbnailJobOperations:
             query = """
                 INSERT INTO thumbnail_generation_jobs
                 (image_id, priority, status, job_type, created_at, retry_count)
-                VALUES (%s, %s, %s, %s, NOW(), 0)
+                VALUES (%s, %s, %s, %s, %s, 0)
                 RETURNING id, image_id, priority, status, job_type, created_at,
                         started_at, completed_at, error_message, processing_time_ms, retry_count
             """
 
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -616,6 +739,7 @@ class SyncThumbnailJobOperations:
                             job_data.priority,
                             job_data.status,
                             job_data.job_type,
+                            current_time,
                         ),
                     )
                     result = cur.fetchone()
@@ -664,16 +788,18 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, completed_at = NOW(), processing_time_ms = %s
+                SET status = %s, completed_at = %s, processing_time_ms = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         query,
                         (
                             JobStatus.COMPLETED,
+                            current_time,
                             processing_time_ms,
                             job_id,
                             JobStatus.PROCESSING,
@@ -690,16 +816,18 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, started_at = NOW()
+                SET status = %s, started_at = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         query,
                         (
                             JobStatus.PROCESSING,
+                            current_time,
                             job_id,
                             JobStatus.PENDING,
                         ),
@@ -717,10 +845,11 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET status = %s, error_message = %s, retry_count = %s, completed_at = NOW()
+                SET status = %s, error_message = %s, retry_count = %s, completed_at = %s
                 WHERE id = %s AND status = %s
             """
 
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -729,6 +858,7 @@ class SyncThumbnailJobOperations:
                             JobStatus.FAILED,
                             error_message,
                             retry_count,
+                            current_time,
                             job_id,
                             JobStatus.PROCESSING,
                         ),
@@ -792,10 +922,11 @@ class SyncThumbnailJobOperations:
             Number of jobs cleaned up
         """
         try:
+            cutoff_time = utc_now() - timedelta(hours=hours_old)
             query = """
                 DELETE FROM thumbnail_generation_jobs
                 WHERE status IN (%s, %s)
-                AND completed_at < NOW() - %s * INTERVAL '1 hour'
+                AND completed_at < %s
             """
 
             with self.db.get_connection() as conn:
@@ -805,7 +936,7 @@ class SyncThumbnailJobOperations:
                         (
                             JobStatus.COMPLETED,
                             JobStatus.FAILED,
-                            hours_old,
+                            cutoff_time,
                         ),
                     )
                     return cur.rowcount
@@ -828,14 +959,15 @@ class SyncThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = 'cancelled',
-                    completed_at = NOW(),
+                    completed_at = %s,
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
             """
-
+            
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (status,))
+                    cur.execute(query, (current_time, status))
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -845,10 +977,10 @@ class SyncThumbnailJobOperations:
     def get_recovered_jobs(self, max_age_hours: int = 24) -> List[Dict[str, Any]]:
         """
         Get jobs that were recently recovered from stuck processing state.
-        
+
         Args:
             max_age_hours: Maximum age of jobs to consider
-            
+
         Returns:
             List of job dictionaries with recovery information
         """
@@ -856,22 +988,27 @@ class SyncThumbnailJobOperations:
             query = """
                 SELECT id, image_id, error_message, created_at
                 FROM thumbnail_generation_jobs
-                WHERE status = %s
-                  AND error_message LIKE %s
-                  AND created_at > NOW() - INTERVAL '%s hours'
+                WHERE status = %(status)s
+                    AND error_message LIKE %(message_pattern)s
+                    AND created_at > %(current_time)s - %(hours)s * INTERVAL '1 hour'
                 ORDER BY created_at DESC
             """
-            
+
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (
-                        JobStatus.PENDING, 
-                        '%recovered from stuck processing state%',
-                        max_age_hours
-                    ))
+                    cur.execute(
+                        query,
+                        {
+                            "status": JobStatus.PENDING,
+                            "message_pattern": "%recovered from stuck processing state%",
+                            "current_time": current_time,
+                            "hours": max_age_hours,
+                        },
+                    )
                     rows = cur.fetchall()
                     return [dict(row) for row in rows] if rows else []
-                    
+
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting recovered jobs: {e}")
             return []
@@ -888,14 +1025,15 @@ class SyncThumbnailJobOperations:
             query = """
                 UPDATE thumbnail_generation_jobs
                 SET status = 'cancelled',
-                    completed_at = NOW(),
+                    completed_at = %s,
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
             """
-
+            
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query)
+                    cur.execute(query, (current_time,))
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -914,8 +1052,8 @@ class SyncThumbnailJobOperations:
         """
         try:
             query = """
-                SELECT id, camera_id, status, error_message, retry_count,
-                        created_at, started_at, completed_at, processing_time_ms
+                SELECT id, image_id, priority, status, job_type, created_at,
+                        started_at, completed_at, error_message, processing_time_ms, retry_count
                 FROM thumbnail_generation_jobs
                 WHERE id = %s
             """
@@ -949,13 +1087,14 @@ class SyncThumbnailJobOperations:
                     MIN(CASE WHEN status = 'pending' THEN created_at ELSE NULL END) as oldest_pending,
                     AVG(CASE WHEN status = 'completed' THEN processing_time_ms ELSE NULL END) as avg_processing_time
                 FROM thumbnail_generation_jobs
-                WHERE created_at > NOW() - INTERVAL '24 hours'
+                WHERE created_at > %(current_time)s - INTERVAL '24 hours'
                 GROUP BY status
             """
 
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query)
+                    cur.execute(query, {"current_time": current_time})
                     results = cur.fetchall()
 
             # Initialize stats with defaults
@@ -1017,13 +1156,14 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs j
-                SET status = 'cancelled', completed_at = NOW()
+                SET status = 'cancelled', completed_at = %s
                 FROM images i
                 WHERE j.image_id = i.id AND i.camera_id = %s AND j.status = 'pending'
             """
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (camera_id,))
+                    cur.execute(query, (current_time, camera_id))
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error cancelling thumbnail jobs for camera {camera_id}: {e}")
@@ -1034,13 +1174,14 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs j
-                SET status = 'cancelled', completed_at = NOW()
+                SET status = 'cancelled', completed_at = %s
                 FROM images i
                 WHERE j.image_id = i.id AND i.timelapse_id = %s AND j.status = 'pending'
             """
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (timelapse_id,))
+                    cur.execute(query, (current_time, timelapse_id))
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(
@@ -1053,18 +1194,19 @@ class SyncThumbnailJobOperations:
         try:
             query = """
                 UPDATE thumbnail_generation_jobs
-                SET priority = CASE 
-                                 WHEN priority = 'low' THEN 'medium'
-                                 WHEN priority = 'medium' THEN 'high'
-                                 ELSE 'high'
-                               END
+                SET priority = CASE
+                                WHEN priority = 'low' THEN 'medium'
+                                WHEN priority = 'medium' THEN 'high'
+                                ELSE 'high'
+                            END
                 WHERE status = 'pending'
-                AND created_at < NOW() - INTERVAL '%s minutes'
+                AND created_at < %(current_time)s - %(minutes)s * INTERVAL '1 minute'
                 AND priority != 'high'
             """
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (age_threshold_minutes,))
+                    cur.execute(query, {"current_time": current_time, "minutes": age_threshold_minutes})
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error promoting old thumbnail jobs: {e}")
@@ -1082,7 +1224,7 @@ class SyncThumbnailJobOperations:
 
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status
-                                       before being considered stuck (default: 30 minutes)
+                                        before being considered stuck (default: 30 minutes)
             sse_broadcaster: Optional SSE broadcaster for real-time updates
 
         Returns:

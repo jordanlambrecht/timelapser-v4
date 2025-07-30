@@ -18,7 +18,7 @@ from psycopg_pool import ConnectionPool, AsyncConnectionPool
 import psycopg
 
 from ..config import settings
-from ..utils.time_utils import utc_now
+from datetime import datetime, timezone
 
 
 class AsyncDatabaseCore:
@@ -60,7 +60,7 @@ class AsyncDatabaseCore:
                 open=False,
             )
             await self._pool.open()
-            self._pool_created_at = utc_now()
+            self._pool_created_at = datetime.now(timezone.utc)
             logger.info(
                 f"Async database pool initialized (min: 2, max: "
                 f"{settings.db_pool_size}, overflow: {settings.db_max_overflow})"
@@ -98,7 +98,9 @@ class AsyncDatabaseCore:
                     data = await cur.fetchall()
         """
         if not self._pool:
-            raise RuntimeError("Database pool not initialized. Call initialize() first.")
+            raise RuntimeError(
+                "Database pool not initialized. Call initialize() first."
+            )
 
         self._connection_attempts += 1
         start_time = time.time()
@@ -139,7 +141,7 @@ class AsyncDatabaseCore:
                     self._pool_created_at.isoformat() if self._pool_created_at else None
                 ),
                 "uptime_seconds": (
-                    (utc_now() - self._pool_created_at).total_seconds()
+                    (datetime.now(timezone.utc) - self._pool_created_at).total_seconds()
                     if self._pool_created_at
                     else 0
                 ),
@@ -216,7 +218,7 @@ class AsyncDatabaseCore:
                         result = await cur.fetchone()
 
             connection_time = time.time() - start_time
-            self._last_health_check = utc_now()
+            self._last_health_check = datetime.now(timezone.utc)
 
             return {
                 "status": "healthy",
@@ -308,7 +310,9 @@ class SyncDatabaseCore:
                     data = cur.fetchall()
         """
         if not self._pool:
-            raise RuntimeError("Database pool not initialized. Call initialize() first.")
+            raise RuntimeError(
+                "Database pool not initialized. Call initialize() first."
+            )
 
         with self._pool.connection() as conn:
             with conn.transaction():

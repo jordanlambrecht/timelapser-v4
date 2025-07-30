@@ -11,6 +11,7 @@ Responsibilities:
 """
 
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 import json
 from loguru import logger
 import psycopg
@@ -27,6 +28,131 @@ from ..models.overlay_model import (
     OverlayAssetCreate,
     OverlayConfiguration,
 )
+from ..utils.time_utils import utc_now
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_timestamp_etag,
+    generate_composite_etag,
+    generate_collection_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
+
+
+class OverlayQueryBuilder:
+    """Centralized query builder for overlay operations.
+    
+    IMPORTANT: For optimal performance, ensure these indexes exist:
+    - CREATE INDEX idx_overlay_presets_name ON overlay_presets(name);
+    - CREATE INDEX idx_overlay_presets_builtin ON overlay_presets(is_builtin, name);
+    - CREATE UNIQUE INDEX idx_overlay_presets_name_unique ON overlay_presets(name) WHERE is_builtin = false;
+    - CREATE INDEX idx_timelapse_overlays_timelapse ON timelapse_overlays(timelapse_id);
+    - CREATE INDEX idx_timelapse_overlays_preset ON timelapse_overlays(preset_id);
+    - CREATE INDEX idx_timelapse_overlays_enabled ON timelapse_overlays(enabled) WHERE enabled = true;
+    - CREATE INDEX idx_overlay_assets_filename ON overlay_assets(filename);
+    - CREATE INDEX idx_overlay_assets_uploaded ON overlay_assets(uploaded_at DESC);
+    - CREATE INDEX idx_overlay_assets_mime_type ON overlay_assets(mime_type);
+    """
+
+    @staticmethod
+    def get_preset_fields():
+        """Get standard fields for overlay preset queries."""
+        return (
+            "id, name, description, overlay_config, is_builtin, created_at, updated_at"
+        )
+
+    @staticmethod
+    def get_timelapse_overlay_fields():
+        """Get standard fields for timelapse overlay queries."""
+        return "id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at"
+
+    @staticmethod
+    def get_asset_fields():
+        """Get standard fields for overlay asset queries."""
+        return (
+            "id, filename, original_name, file_path, file_size, mime_type, uploaded_at"
+        )
+
+    @staticmethod
+    def build_preset_query_by_id():
+        """Build query to get preset by ID using named parameters."""
+        fields = OverlayQueryBuilder.get_preset_fields()
+        return f"""
+            SELECT {fields}
+            FROM overlay_presets
+            WHERE id = %(preset_id)s
+        """
+
+    @staticmethod
+    def build_preset_query_by_name():
+        """Build query to get preset by name using named parameters."""
+        fields = OverlayQueryBuilder.get_preset_fields()
+        return f"""
+            SELECT {fields}
+            FROM overlay_presets
+            WHERE name = %(name)s
+        """
+
+    @staticmethod
+    def build_all_presets_query(include_builtin: bool = True):
+        """Build query to get all presets with optional builtin filter using named parameters."""
+        fields = OverlayQueryBuilder.get_preset_fields()
+        query = f"""
+            SELECT {fields}
+            FROM overlay_presets
+        """
+
+        if not include_builtin:
+            query += " WHERE is_builtin = %(is_builtin)s"
+
+        query += " ORDER BY is_builtin DESC, name ASC"
+        return query
+
+    @staticmethod
+    def build_timelapse_overlay_query():
+        """Build query to get timelapse overlay configuration using named parameters."""
+        fields = OverlayQueryBuilder.get_timelapse_overlay_fields()
+        return f"""
+            SELECT {fields}
+            FROM timelapse_overlays
+            WHERE timelapse_id = %(timelapse_id)s
+        """
+
+    @staticmethod
+    def build_upsert_timelapse_overlay_query():
+        """Build upsert query for timelapse overlay using ON CONFLICT with named parameters."""
+        fields = OverlayQueryBuilder.get_timelapse_overlay_fields()
+        return f"""
+            INSERT INTO timelapse_overlays (timelapse_id, preset_id, overlay_config, enabled)
+            VALUES (%(timelapse_id)s, %(preset_id)s, %(overlay_config)s, %(enabled)s)
+            ON CONFLICT (timelapse_id)
+            DO UPDATE SET
+                preset_id = EXCLUDED.preset_id,
+                overlay_config = EXCLUDED.overlay_config,
+                enabled = EXCLUDED.enabled,
+                updated_at = %(updated_at)s
+            RETURNING {fields}
+        """
+
+    @staticmethod
+    def build_asset_query_by_id():
+        """Build query to get asset by ID using named parameters."""
+        fields = OverlayQueryBuilder.get_asset_fields()
+        return f"""
+            SELECT {fields}
+            FROM overlay_assets
+            WHERE id = %(asset_id)s
+        """
+
+    @staticmethod
+    def build_all_assets_query():
+        """Build query to get all assets."""
+        fields = OverlayQueryBuilder.get_asset_fields()
+        return f"""
+            SELECT {fields}
+            FROM overlay_assets
+            ORDER BY uploaded_at DESC
+        """
 
 
 def _row_to_overlay_preset(row: Dict[str, Any]) -> OverlayPreset:
@@ -84,9 +210,50 @@ class OverlayOperations:
     following the established database operations pattern.
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_overlay_caches(
+        self,
+        preset_id: Optional[int] = None,
+        timelapse_id: Optional[int] = None,
+        asset_id: Optional[int] = None,
+        updated_at: Optional[datetime] = None,
+    ) -> None:
+        """Clear caches related to overlay operations using sophisticated cache system."""
+        # Clear overlay-related caches using advanced cache manager
+        cache_patterns = [
+            "overlay:get_all_presets",
+            "overlay:preset_by_id",
+            "overlay:preset_by_name",
+            "overlay:timelapse_overlay",
+            "overlay:get_all_assets",
+            "overlay:asset_by_id",
+        ]
+
+        if preset_id:
+            cache_patterns.extend(
+                [f"overlay:preset_by_id:{preset_id}", f"overlay:metadata:{preset_id}"]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(preset_id, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"overlay:metadata:{preset_id}", etag
+                )
+
+        if timelapse_id:
+            cache_patterns.append(f"overlay:timelapse_overlay:{timelapse_id}")
+
+        if asset_id:
+            cache_patterns.append(f"overlay:asset_by_id:{asset_id}")
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     # ================================================================
     # OVERLAY PRESETS OPERATIONS
@@ -110,95 +277,88 @@ class OverlayOperations:
                     await cur.execute(
                         """
                         INSERT INTO overlay_presets (name, description, overlay_config, is_builtin)
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (%(name)s, %(description)s, %(overlay_config)s, %(is_builtin)s)
                         RETURNING id, name, description, overlay_config, is_builtin, created_at, updated_at
                         """,
-                        (
-                            preset_data.name,
-                            preset_data.description,
-                            json.dumps(preset_data.overlay_config.model_dump()),
-                            preset_data.is_builtin,
-                        ),
+                        {
+                            "name": preset_data.name,
+                            "description": preset_data.description,
+                            "overlay_config": json.dumps(preset_data.overlay_config.model_dump()),
+                            "is_builtin": preset_data.is_builtin,
+                        },
                     )
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_preset(dict(row))
+                        preset = _row_to_overlay_preset(dict(row))
+                        # Clear related caches after successful creation
+                        await self._clear_overlay_caches(
+                            preset_id=preset.id, updated_at=utc_now()
+                        )
+                        return preset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create overlay preset: {e}")
             return None
 
+    @cached_response(ttl_seconds=300, key_prefix="overlay")
     async def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:
-        """Get overlay preset by ID"""
+        """Get overlay preset by ID with 5-minute caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        FROM overlay_presets 
-                        WHERE id = %s
-                        """,
-                        (preset_id,),
-                    )
+                    # Use optimized query builder with named parameters
+                    query = OverlayQueryBuilder.build_preset_query_by_id()
+                    await cur.execute(query, {"preset_id": preset_id})
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_preset(dict(row))
+                        preset = _row_to_overlay_preset(dict(row))
+                        return preset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get overlay preset {preset_id}: {e}")
             return None
 
+    @cached_response(ttl_seconds=300, key_prefix="overlay")
     async def get_preset_by_name(self, name: str) -> Optional[OverlayPreset]:
-        """Get overlay preset by name"""
+        """Get overlay preset by name with 5-minute caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        FROM overlay_presets 
-                        WHERE name = %s
-                        """,
-                        (name,),
-                    )
+                    # Use optimized query builder with named parameters
+                    query = OverlayQueryBuilder.build_preset_query_by_name()
+                    await cur.execute(query, {"name": name})
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_preset(dict(row))
+                        preset = _row_to_overlay_preset(dict(row))
+                        return preset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get overlay preset '{name}': {e}")
             return None
 
+    @cached_response(ttl_seconds=120, key_prefix="overlay")
     async def get_all_presets(
         self, include_builtin: bool = True
     ) -> List[OverlayPreset]:
-        """Get all overlay presets"""
+        """Get all overlay presets with 2-minute caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    query = """
-                        SELECT id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        FROM overlay_presets
-                    """
-                    params = []
-
-                    if not include_builtin:
-                        query += " WHERE is_builtin = %s"
-                        params.append(False)
-
-                    query += " ORDER BY is_builtin DESC, name ASC"
+                    # Use optimized query builder with named parameters
+                    query = OverlayQueryBuilder.build_all_presets_query(include_builtin)
+                    params = {} if include_builtin else {"is_builtin": False}
 
                     await cur.execute(query, params)
                     rows = await cur.fetchall()
 
-                    return [_row_to_overlay_preset(dict(row)) for row in rows]
+                    presets = [_row_to_overlay_preset(dict(row)) for row in rows]
+                    return presets
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get overlay presets: {e}")
@@ -209,44 +369,47 @@ class OverlayOperations:
     ) -> Optional[OverlayPreset]:
         """Update overlay preset"""
         try:
-            # Build dynamic update query
+            # Build dynamic update query safely with named parameters
             update_fields = []
-            params = []
+            params = {"preset_id": preset_id, "updated_at": utc_now()}
 
             if preset_data.name is not None:
-                update_fields.append("name = %s")
-                params.append(preset_data.name)
+                update_fields.append("name = %(name)s")
+                params["name"] = preset_data.name
 
             if preset_data.description is not None:
-                update_fields.append("description = %s")
-                params.append(preset_data.description)
+                update_fields.append("description = %(description)s")
+                params["description"] = preset_data.description
 
             if preset_data.overlay_config is not None:
-                update_fields.append("overlay_config = %s")
-                params.append(json.dumps(preset_data.overlay_config.model_dump()))
+                update_fields.append("overlay_config = %(overlay_config)s")
+                params["overlay_config"] = json.dumps(preset_data.overlay_config.model_dump())
 
             if not update_fields:
                 # No fields to update, return existing preset
                 return await self.get_preset_by_id(preset_id)
 
-            update_fields.append("updated_at = NOW()")
-            params.append(preset_id)
+            update_fields.append("updated_at = %(updated_at)s")
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        f"""
-                        UPDATE overlay_presets 
+                    # Safe query construction - join is not user input
+                    query = f"""
+                        UPDATE overlay_presets
                         SET {', '.join(update_fields)}
-                        WHERE id = %s
+                        WHERE id = %(preset_id)s
                         RETURNING id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        """,
-                        params,
-                    )
+                    """
+                    await cur.execute(query, params)
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_preset(dict(row))
+                        preset = _row_to_overlay_preset(dict(row))
+                        # Clear related caches after successful update
+                        await self._clear_overlay_caches(
+                            preset_id=preset.id, updated_at=utc_now()
+                        )
+                        return preset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
@@ -258,13 +421,18 @@ class OverlayOperations:
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    # Only allow deletion of custom presets
+                    # Only allow deletion of custom presets using named parameters
                     await cur.execute(
-                        "DELETE FROM overlay_presets WHERE id = %s AND is_builtin = FALSE",
-                        (preset_id,),
+                        "DELETE FROM overlay_presets WHERE id = %(preset_id)s AND is_builtin = FALSE",
+                        {"preset_id": preset_id},
                     )
 
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after successful deletion
+                        await self._clear_overlay_caches(preset_id=preset_id)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to delete overlay preset {preset_id}: {e}")
@@ -284,45 +452,47 @@ class OverlayOperations:
                     await cur.execute(
                         """
                         INSERT INTO timelapse_overlays (timelapse_id, preset_id, overlay_config, enabled)
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (%(timelapse_id)s, %(preset_id)s, %(overlay_config)s, %(enabled)s)
                         RETURNING id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
                         """,
-                        (
-                            overlay_data.timelapse_id,
-                            overlay_data.preset_id,
-                            json.dumps(overlay_data.overlay_config.model_dump()),
-                            overlay_data.enabled,
-                        ),
+                        {
+                            "timelapse_id": overlay_data.timelapse_id,
+                            "preset_id": overlay_data.preset_id,
+                            "overlay_config": json.dumps(overlay_data.overlay_config.model_dump()),
+                            "enabled": overlay_data.enabled,
+                        },
                     )
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_timelapse_overlay(dict(row))
+                        overlay = _row_to_timelapse_overlay(dict(row))
+                        # Clear related caches after successful creation
+                        await self._clear_overlay_caches(
+                            timelapse_id=overlay.timelapse_id, updated_at=utc_now()
+                        )
+                        return overlay
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create timelapse overlay: {e}")
             return None
 
+    @cached_response(ttl_seconds=60, key_prefix="overlay")
     async def get_timelapse_overlay(
         self, timelapse_id: int
     ) -> Optional[TimelapseOverlay]:
-        """Get overlay configuration for timelapse"""
+        """Get overlay configuration for timelapse with 60s caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
-                        FROM timelapse_overlays
-                        WHERE timelapse_id = %s
-                        """,
-                        (timelapse_id,),
-                    )
+                    # Use optimized query builder with named parameters
+                    query = OverlayQueryBuilder.build_timelapse_overlay_query()
+                    await cur.execute(query, {"timelapse_id": timelapse_id})
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_timelapse_overlay(dict(row))
+                        overlay = _row_to_timelapse_overlay(dict(row))
+                        return overlay
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
@@ -334,44 +504,47 @@ class OverlayOperations:
     ) -> Optional[TimelapseOverlay]:
         """Update timelapse overlay configuration"""
         try:
-            # Build dynamic update query
+            # Build dynamic update query safely with named parameters
             update_fields = []
-            params = []
+            params = {"timelapse_id": timelapse_id, "updated_at": utc_now()}
 
             if overlay_data.preset_id is not None:
-                update_fields.append("preset_id = %s")
-                params.append(overlay_data.preset_id)
+                update_fields.append("preset_id = %(preset_id)s")
+                params["preset_id"] = overlay_data.preset_id
 
             if overlay_data.overlay_config is not None:
-                update_fields.append("overlay_config = %s")
-                params.append(json.dumps(overlay_data.overlay_config.model_dump()))
+                update_fields.append("overlay_config = %(overlay_config)s")
+                params["overlay_config"] = json.dumps(overlay_data.overlay_config.model_dump())
 
             if overlay_data.enabled is not None:
-                update_fields.append("enabled = %s")
-                params.append(overlay_data.enabled)
+                update_fields.append("enabled = %(enabled)s")
+                params["enabled"] = overlay_data.enabled
 
             if not update_fields:
                 # No fields to update, return existing configuration
                 return await self.get_timelapse_overlay(timelapse_id)
 
-            update_fields.append("updated_at = NOW()")
-            params.append(timelapse_id)
+            update_fields.append("updated_at = %(updated_at)s")
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        f"""
+                    # Safe query construction - join is not user input
+                    query = f"""
                         UPDATE timelapse_overlays 
                         SET {', '.join(update_fields)}
-                        WHERE timelapse_id = %s
+                        WHERE timelapse_id = %(timelapse_id)s
                         RETURNING id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
-                        """,
-                        params,
-                    )
+                    """
+                    await cur.execute(query, params)
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_timelapse_overlay(dict(row))
+                        overlay = _row_to_timelapse_overlay(dict(row))
+                        # Clear related caches after successful update
+                        await self._clear_overlay_caches(
+                            timelapse_id=overlay.timelapse_id, updated_at=utc_now()
+                        )
+                        return overlay
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
@@ -381,21 +554,32 @@ class OverlayOperations:
     async def create_or_update_timelapse_overlay(
         self, config_data
     ) -> Optional[TimelapseOverlay]:
-        """Create or update timelapse overlay configuration (upsert operation)."""
+        """Create or update timelapse overlay configuration (efficient upsert operation)."""
         try:
-            timelapse_id = config_data.timelapse_id
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Use optimized UPSERT query with ON CONFLICT using named parameters
+                    query = OverlayQueryBuilder.build_upsert_timelapse_overlay_query()
+                    await cur.execute(
+                        query,
+                        {
+                            "timelapse_id": config_data.timelapse_id,
+                            "preset_id": config_data.preset_id,
+                            "overlay_config": json.dumps(config_data.overlay_config.model_dump()),
+                            "enabled": config_data.enabled,
+                            "updated_at": utc_now(),
+                        },
+                    )
 
-            # Check if overlay config already exists
-            existing = await self.get_timelapse_overlay(timelapse_id)
-
-            if existing:
-                # Update existing configuration
-                return await self.update_timelapse_overlay(
-                    timelapse_id=timelapse_id, overlay_data=config_data
-                )
-            else:
-                # Create new configuration
-                return await self.create_timelapse_overlay(config_data)
+                    row = await cur.fetchone()
+                    if row:
+                        overlay = _row_to_timelapse_overlay(dict(row))
+                        # Clear related caches after successful upsert
+                        await self._clear_overlay_caches(
+                            timelapse_id=overlay.timelapse_id, updated_at=utc_now()
+                        )
+                        return overlay
+                    return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create or update timelapse overlay: {e}")
@@ -407,11 +591,16 @@ class OverlayOperations:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "DELETE FROM timelapse_overlays WHERE timelapse_id = %s",
-                        (timelapse_id,),
+                        "DELETE FROM timelapse_overlays WHERE timelapse_id = %(timelapse_id)s",
+                        {"timelapse_id": timelapse_id},
                     )
 
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after successful deletion
+                        await self._clear_overlay_caches(timelapse_id=timelapse_id)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to delete timelapse overlay {timelapse_id}: {e}")
@@ -431,65 +620,65 @@ class OverlayOperations:
                     await cur.execute(
                         """
                         INSERT INTO overlay_assets (filename, original_name, file_path, file_size, mime_type)
-                        VALUES (%s, %s, %s, %s, %s)
+                        VALUES (%(filename)s, %(original_name)s, %(file_path)s, %(file_size)s, %(mime_type)s)
                         RETURNING id, filename, original_name, file_path, file_size, mime_type, uploaded_at
                         """,
-                        (
-                            asset_data.filename,
-                            asset_data.original_name,
-                            asset_data.file_path,
-                            asset_data.file_size,
-                            asset_data.mime_type,
-                        ),
+                        {
+                            "filename": asset_data.filename,
+                            "original_name": asset_data.original_name,
+                            "file_path": asset_data.file_path,
+                            "file_size": asset_data.file_size,
+                            "mime_type": asset_data.mime_type,
+                        },
                     )
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_asset(dict(row))
+                        asset = _row_to_overlay_asset(dict(row))
+                        # Clear related caches after successful creation
+                        await self._clear_overlay_caches(
+                            asset_id=asset.id, updated_at=utc_now()
+                        )
+                        return asset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create overlay asset: {e}")
             return None
 
+    @cached_response(ttl_seconds=600, key_prefix="overlay")
     async def get_asset_by_id(self, asset_id: int) -> Optional[OverlayAsset]:
-        """Get overlay asset by ID"""
+        """Get overlay asset by ID with 10-minute caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, filename, original_name, file_path, file_size, mime_type, uploaded_at
-                        FROM overlay_assets 
-                        WHERE id = %s
-                        """,
-                        (asset_id,),
-                    )
+                    # Use optimized query builder with named parameters
+                    query = OverlayQueryBuilder.build_asset_query_by_id()
+                    await cur.execute(query, {"asset_id": asset_id})
 
                     row = await cur.fetchone()
                     if row:
-                        return _row_to_overlay_asset(dict(row))
+                        asset = _row_to_overlay_asset(dict(row))
+                        return asset
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get overlay asset {asset_id}: {e}")
             return None
 
+    @cached_response(ttl_seconds=180, key_prefix="overlay")
     async def get_all_assets(self) -> List[OverlayAsset]:
-        """Get all overlay assets"""
+        """Get all overlay assets with 3-minute caching."""
         try:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, filename, original_name, file_path, file_size, mime_type, uploaded_at
-                        FROM overlay_assets
-                        ORDER BY uploaded_at DESC
-                        """
-                    )
+                    # Use optimized query builder
+                    query = OverlayQueryBuilder.build_all_assets_query()
+                    await cur.execute(query)
 
                     rows = await cur.fetchall()
-                    return [_row_to_overlay_asset(dict(row)) for row in rows]
+                    assets = [_row_to_overlay_asset(dict(row)) for row in rows]
+                    return assets
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to get overlay assets: {e}")
@@ -501,11 +690,16 @@ class OverlayOperations:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "DELETE FROM overlay_assets WHERE id = %s",
-                        (asset_id,),
+                        "DELETE FROM overlay_assets WHERE id = %(asset_id)s",
+                        {"asset_id": asset_id},
                     )
 
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+                    if success:
+                        # Clear related caches after successful deletion
+                        await self._clear_overlay_caches(asset_id=asset_id)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to delete overlay asset {asset_id}: {e}")
@@ -520,7 +714,7 @@ class SyncOverlayOperations:
     for use in worker processes and synchronous contexts.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
 
@@ -538,15 +732,15 @@ class SyncOverlayOperations:
                     cur.execute(
                         """
                         INSERT INTO overlay_presets (name, description, overlay_config, is_builtin)
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (%(name)s, %(description)s, %(overlay_config)s, %(is_builtin)s)
                         RETURNING id, name, description, overlay_config, is_builtin, created_at, updated_at
                         """,
-                        (
-                            preset_data.name,
-                            preset_data.description,
-                            json.dumps(preset_data.overlay_config.model_dump()),
-                            preset_data.is_builtin,
-                        ),
+                        {
+                            "name": preset_data.name,
+                            "description": preset_data.description,
+                            "overlay_config": json.dumps(preset_data.overlay_config.model_dump()),
+                            "is_builtin": preset_data.is_builtin,
+                        },
                     )
 
                     row = cur.fetchone()
@@ -563,14 +757,9 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        FROM overlay_presets 
-                        WHERE id = %s
-                        """,
-                        (preset_id,),
-                    )
+                    # Use centralized query builder with named parameters
+                    query = OverlayQueryBuilder.build_preset_query_by_id()
+                    cur.execute(query, {"preset_id": preset_id})
 
                     row = cur.fetchone()
                     if row:
@@ -586,14 +775,9 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
-                        FROM timelapse_overlays
-                        WHERE timelapse_id = %s
-                        """,
-                        (timelapse_id,),
-                    )
+                    # Use centralized query builder with named parameters
+                    query = OverlayQueryBuilder.build_timelapse_overlay_query()
+                    cur.execute(query, {"timelapse_id": timelapse_id})
 
                     row = cur.fetchone()
                     if row:
@@ -611,18 +795,10 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    query = """
-                        SELECT id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        FROM overlay_presets
-                    """
-                    params = []
-
-                    if not include_builtin:
-                        query += " WHERE is_builtin = %s"
-                        params.append(False)
-
-                    query += " ORDER BY is_builtin DESC, name ASC"
-
+                    # Use centralized query builder with named parameters
+                    query = OverlayQueryBuilder.build_all_presets_query(include_builtin)
+                    params = {} if include_builtin else {"is_builtin": False}
+                    
                     cur.execute(query, params)
                     rows = cur.fetchall()
 
@@ -637,40 +813,38 @@ class SyncOverlayOperations:
     ) -> Optional[OverlayPreset]:
         """Update overlay preset (sync)"""
         try:
-            # Build dynamic update query
+            # Build dynamic update query safely with named parameters
             update_fields = []
-            params = []
+            params = {"preset_id": preset_id, "updated_at": utc_now()}
 
             if preset_data.name is not None:
-                update_fields.append("name = %s")
-                params.append(preset_data.name)
+                update_fields.append("name = %(name)s")
+                params["name"] = preset_data.name
 
             if preset_data.description is not None:
-                update_fields.append("description = %s")
-                params.append(preset_data.description)
+                update_fields.append("description = %(description)s")
+                params["description"] = preset_data.description
 
             if preset_data.overlay_config is not None:
-                update_fields.append("overlay_config = %s")
-                params.append(json.dumps(preset_data.overlay_config.model_dump()))
+                update_fields.append("overlay_config = %(overlay_config)s")
+                params["overlay_config"] = json.dumps(preset_data.overlay_config.model_dump())
 
             if not update_fields:
                 # No fields to update, return existing preset
                 return self.get_preset_by_id(preset_id)
 
-            update_fields.append("updated_at = NOW()")
-            params.append(preset_id)
+            update_fields.append("updated_at = %(updated_at)s")
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
-                        UPDATE overlay_presets 
+                    # Safe query construction - join is not user input
+                    query = f"""
+                        UPDATE overlay_presets
                         SET {', '.join(update_fields)}
-                        WHERE id = %s
+                        WHERE id = %(preset_id)s
                         RETURNING id, name, description, overlay_config, is_builtin, created_at, updated_at
-                        """,
-                        params,
-                    )
+                    """
+                    cur.execute(query, params)
 
                     row = cur.fetchone()
                     if row:
@@ -686,10 +860,10 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Only allow deletion of custom presets
+                    # Only allow deletion of custom presets using named parameters
                     cur.execute(
-                        "DELETE FROM overlay_presets WHERE id = %s AND is_builtin = FALSE",
-                        (preset_id,),
+                        "DELETE FROM overlay_presets WHERE id = %(preset_id)s AND is_builtin = FALSE",
+                        {"preset_id": preset_id},
                     )
 
                     return cur.rowcount > 0
@@ -708,15 +882,15 @@ class SyncOverlayOperations:
                     cur.execute(
                         """
                         INSERT INTO timelapse_overlays (timelapse_id, preset_id, overlay_config, enabled)
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (%(timelapse_id)s, %(preset_id)s, %(overlay_config)s, %(enabled)s)
                         RETURNING id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
                         """,
-                        (
-                            overlay_data.timelapse_id,
-                            overlay_data.preset_id,
-                            json.dumps(overlay_data.overlay_config.model_dump()),
-                            overlay_data.enabled,
-                        ),
+                        {
+                            "timelapse_id": overlay_data.timelapse_id,
+                            "preset_id": overlay_data.preset_id,
+                            "overlay_config": json.dumps(overlay_data.overlay_config.model_dump()),
+                            "enabled": overlay_data.enabled,
+                        },
                     )
 
                     row = cur.fetchone()
@@ -733,40 +907,38 @@ class SyncOverlayOperations:
     ) -> Optional[TimelapseOverlay]:
         """Update timelapse overlay configuration (sync)"""
         try:
-            # Build dynamic update query
+            # Build dynamic update query safely with named parameters
             update_fields = []
-            params = []
+            params = {"timelapse_id": timelapse_id, "updated_at": utc_now()}
 
             if overlay_data.preset_id is not None:
-                update_fields.append("preset_id = %s")
-                params.append(overlay_data.preset_id)
+                update_fields.append("preset_id = %(preset_id)s")
+                params["preset_id"] = overlay_data.preset_id
 
             if overlay_data.overlay_config is not None:
-                update_fields.append("overlay_config = %s")
-                params.append(json.dumps(overlay_data.overlay_config.model_dump()))
+                update_fields.append("overlay_config = %(overlay_config)s")
+                params["overlay_config"] = json.dumps(overlay_data.overlay_config.model_dump())
 
             if overlay_data.enabled is not None:
-                update_fields.append("enabled = %s")
-                params.append(overlay_data.enabled)
+                update_fields.append("enabled = %(enabled)s")
+                params["enabled"] = overlay_data.enabled
 
             if not update_fields:
                 # No fields to update, return existing configuration
                 return self.get_timelapse_overlay(timelapse_id)
 
-            update_fields.append("updated_at = NOW()")
-            params.append(timelapse_id)
+            update_fields.append("updated_at = %(updated_at)s")
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
+                    # Safe query construction - join is not user input
+                    query = f"""
                         UPDATE timelapse_overlays
                         SET {', '.join(update_fields)}
-                        WHERE timelapse_id = %s
+                        WHERE timelapse_id = %(timelapse_id)s
                         RETURNING id, timelapse_id, preset_id, overlay_config, enabled, created_at, updated_at
-                        """,
-                        params,
-                    )
+                    """
+                    cur.execute(query, params)
 
                     row = cur.fetchone()
                     if row:
@@ -782,21 +954,27 @@ class SyncOverlayOperations:
     def create_or_update_timelapse_overlay(
         self, config_data
     ) -> Optional[TimelapseOverlay]:
-        """Create or update timelapse overlay configuration (upsert operation) (sync)."""
+        """Create or update timelapse overlay configuration (efficient upsert operation) (sync)."""
         try:
-            timelapse_id = config_data.timelapse_id
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Use optimized UPSERT query with ON CONFLICT using named parameters
+                    query = OverlayQueryBuilder.build_upsert_timelapse_overlay_query()
+                    cur.execute(
+                        query,
+                        {
+                            "timelapse_id": config_data.timelapse_id,
+                            "preset_id": config_data.preset_id,
+                            "overlay_config": json.dumps(config_data.overlay_config.model_dump()),
+                            "enabled": config_data.enabled,
+                            "updated_at": utc_now(),
+                        },
+                    )
 
-            # Check if overlay config already exists
-            existing = self.get_timelapse_overlay(timelapse_id)
-
-            if existing:
-                # Update existing configuration
-                return self.update_timelapse_overlay(
-                    timelapse_id=timelapse_id, overlay_data=config_data
-                )
-            else:
-                # Create new configuration
-                return self.create_timelapse_overlay(config_data)
+                    row = cur.fetchone()
+                    if row:
+                        return _row_to_timelapse_overlay(dict(row))
+                    return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to create or update timelapse overlay (sync): {e}")
@@ -808,8 +986,8 @@ class SyncOverlayOperations:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "DELETE FROM timelapse_overlays WHERE timelapse_id = %s",
-                        (timelapse_id,),
+                        "DELETE FROM timelapse_overlays WHERE timelapse_id = %(timelapse_id)s",
+                        {"timelapse_id": timelapse_id},
                     )
 
                     return cur.rowcount > 0
@@ -828,16 +1006,16 @@ class SyncOverlayOperations:
                     cur.execute(
                         """
                         INSERT INTO overlay_assets (filename, original_name, file_path, file_size, mime_type)
-                        VALUES (%s, %s, %s, %s, %s)
+                        VALUES (%(filename)s, %(original_name)s, %(file_path)s, %(file_size)s, %(mime_type)s)
                         RETURNING id, filename, original_name, file_path, file_size, mime_type, uploaded_at
                         """,
-                        (
-                            asset_data.filename,
-                            asset_data.original_name,
-                            asset_data.file_path,
-                            asset_data.file_size,
-                            asset_data.mime_type,
-                        ),
+                        {
+                            "filename": asset_data.filename,
+                            "original_name": asset_data.original_name,
+                            "file_path": asset_data.file_path,
+                            "file_size": asset_data.file_size,
+                            "mime_type": asset_data.mime_type,
+                        },
                     )
 
                     row = cur.fetchone()
@@ -854,14 +1032,9 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT id, filename, original_name, file_path, file_size, mime_type, uploaded_at
-                        FROM overlay_assets 
-                        WHERE id = %s
-                        """,
-                        (asset_id,),
-                    )
+                    # Use centralized query builder with named parameters
+                    query = OverlayQueryBuilder.build_asset_query_by_id()
+                    cur.execute(query, {"asset_id": asset_id})
 
                     row = cur.fetchone()
                     if row:
@@ -877,13 +1050,9 @@ class SyncOverlayOperations:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT id, filename, original_name, file_path, file_size, mime_type, uploaded_at
-                        FROM overlay_assets
-                        ORDER BY uploaded_at DESC
-                        """
-                    )
+                    # Use centralized query builder
+                    query = OverlayQueryBuilder.build_all_assets_query()
+                    cur.execute(query)
 
                     rows = cur.fetchall()
                     return [_row_to_overlay_asset(dict(row)) for row in rows]
@@ -898,8 +1067,8 @@ class SyncOverlayOperations:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "DELETE FROM overlay_assets WHERE id = %s",
-                        (asset_id,),
+                        "DELETE FROM overlay_assets WHERE id = %(asset_id)s",
+                        {"asset_id": asset_id},
                     )
 
                     return cur.rowcount > 0

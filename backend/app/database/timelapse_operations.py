@@ -9,6 +9,7 @@ This module handles all timelapse-related database operations including:
 """
 
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 from pydantic import ValidationError
 from loguru import logger
 
@@ -25,9 +26,159 @@ from ..models.shared_models import (
     TimelapseForCleanup,
     TimelapseVideoSettings,
 )
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_composite_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.time_utils import utc_now
+
+
+class TimelapseQueryBuilder:
+    """Centralized query builder for timelapse operations."""
+
+    @staticmethod
+    def build_timelapses_query(camera_id: Optional[int] = None):
+        """Build optimized query for retrieving timelapses with details."""
+        base_query = """
+        SELECT
+            t.*,
+            c.name as camera_name,
+            COUNT(i.id) as image_count,
+            COUNT(v.id) as video_count,
+            MIN(i.captured_at) as first_capture_at,
+            MAX(i.captured_at) as last_capture_at,
+            AVG(CASE WHEN i.corruption_score IS NOT NULL THEN i.corruption_score ELSE 100 END) as avg_quality_score,
+            COUNT(CASE WHEN i.is_flagged = true THEN 1 END) as flagged_images,
+            COALESCE(t.glitch_count, 0) as glitch_count
+        FROM timelapses t
+        JOIN cameras c ON t.camera_id = c.id
+        LEFT JOIN images i ON t.id = i.timelapse_id
+        LEFT JOIN videos v ON t.id = v.timelapse_id
+        """
+
+        if camera_id:
+            where_clause = " WHERE t.camera_id = %s"
+            group_by = " GROUP BY t.id, c.name ORDER BY t.created_at DESC"
+            return base_query + where_clause + group_by
+        else:
+            group_by = " GROUP BY t.id, c.name ORDER BY t.created_at DESC"
+            return base_query + group_by
+
+    @staticmethod
+    def build_timelapse_statistics_query():
+        """Build optimized query for timelapse statistics using CTEs."""
+        return """
+        WITH image_stats AS NOT MATERIALIZED (
+            SELECT
+                COUNT(*) as total_images,
+                MIN(captured_at) as first_capture_at,
+                MAX(captured_at) as last_capture_at,
+                AVG(CASE WHEN corruption_score IS NOT NULL THEN corruption_score ELSE 100 END) as avg_quality_score,
+                COUNT(CASE WHEN is_flagged = true THEN 1 END) as flagged_images,
+                COALESCE(SUM(file_size), 0) as total_storage_bytes
+            FROM images
+            WHERE timelapse_id = %s
+        ),
+        video_stats AS NOT MATERIALIZED (
+            SELECT
+                COUNT(*) as total_videos,
+                COALESCE(SUM(file_size), 0) as total_video_storage_bytes
+            FROM videos
+            WHERE timelapse_id = %s
+        )
+        SELECT
+            is.total_images,
+            vs.total_videos,
+            is.first_capture_at,
+            is.last_capture_at,
+            is.avg_quality_score,
+            is.flagged_images,
+            is.total_storage_bytes,
+            vs.total_video_storage_bytes
+        FROM image_stats is
+        CROSS JOIN video_stats vs
+        """
+
+    @staticmethod
+    def build_library_statistics_query():
+        """Build optimized query for library statistics using CTEs."""
+        return """
+        WITH timelapse_stats AS NOT MATERIALIZED (
+            SELECT
+                COUNT(*) as total_timelapses,
+                COUNT(CASE WHEN starred = true THEN 1 END) as starred_count,
+                COUNT(CASE WHEN status IN ('running', 'paused') THEN 1 END) as active_count,
+                COALESCE(SUM(image_count), 0) as total_images,
+                MIN(created_at) as oldest_timelapse_date
+            FROM timelapses
+        ),
+        storage_stats AS NOT MATERIALIZED (
+            SELECT 
+                COALESCE(SUM(file_size), 0) as total_storage_bytes
+            FROM images
+        )
+        SELECT
+            ts.*,
+            ss.total_storage_bytes
+        FROM timelapse_stats ts
+        CROSS JOIN storage_stats ss
+        """
 
 
 class TimelapseOperations:
+    """Async timelapse database operations for FastAPI endpoints."""
+
+    def __init__(self, db: AsyncDatabase) -> None:
+        """Initialize with async database instance."""
+        self.db = db
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_timelapse_caches(
+        self,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        updated_at: Optional[datetime] = None,
+    ) -> None:
+        """Clear caches related to timelapses using sophisticated cache system."""
+        # Clear timelapse caches using advanced cache manager
+        cache_patterns = [
+            "timelapse:get_timelapses",
+            "timelapse:get_library_statistics",
+            "timelapse:get_timelapse_statistics",
+        ]
+
+        if timelapse_id:
+            cache_patterns.extend(
+                [
+                    f"timelapse:by_id:{timelapse_id}",
+                    f"timelapse:settings:{timelapse_id}",
+                    f"timelapse:statistics:{timelapse_id}",
+                    f"timelapse:metadata:{timelapse_id}",
+                ]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(timelapse_id, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"timelapse:metadata:{timelapse_id}", etag
+                )
+
+        if camera_id:
+            cache_patterns.extend(
+                [
+                    f"timelapse:by_camera:{camera_id}",
+                    f"timelapse:active_for_camera:{camera_id}",
+                ]
+            )
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
+
+    @cached_response(ttl_seconds=60, key_prefix="timelapse")
     async def get_timelapse_settings(
         self, timelapse_id: int
     ) -> Optional[TimelapseVideoSettings]:
@@ -67,12 +218,6 @@ class TimelapseOperations:
                         return None
                 return None
 
-    """Async timelapse database operations for FastAPI endpoints."""
-
-    def __init__(self, db: AsyncDatabase) -> None:
-        """Initialize with async database instance."""
-        self.db = db
-
     def _row_to_timelapse(self, row: Dict[str, Any]) -> Timelapse:
         """Convert database row to Timelapse model."""
         # Filter fields that belong to Timelapse model
@@ -93,6 +238,7 @@ class TimelapseOperations:
 
         return TimelapseWithDetails(**details_fields)
 
+    @cached_response(ttl_seconds=120, key_prefix="timelapse")
     async def get_timelapses(
         self, camera_id: Optional[int] = None
     ) -> List[TimelapseWithDetails]:
@@ -105,32 +251,9 @@ class TimelapseOperations:
         Returns:
             List of TimelapseWithDetails model instances
         """
-        base_query = """
-        SELECT
-            t.*,
-            c.name as camera_name,
-            COUNT(i.id) as image_count,
-            COUNT(v.id) as video_count,
-            MIN(i.captured_at) as first_capture_at,
-            MAX(i.captured_at) as last_capture_at,
-            AVG(CASE WHEN i.corruption_score IS NOT NULL THEN i.corruption_score ELSE 100 END) as avg_quality_score,
-            COUNT(CASE WHEN i.is_flagged = true THEN 1 END) as flagged_images,
-            COALESCE(t.glitch_count, 0) as glitch_count
-        FROM timelapses t
-        JOIN cameras c ON t.camera_id = c.id
-        LEFT JOIN images i ON t.id = i.timelapse_id
-        LEFT JOIN videos v ON t.id = v.timelapse_id
-        """
-
-        if camera_id:
-            query = (
-                base_query
-                + " WHERE t.camera_id = %s GROUP BY t.id, c.name ORDER BY t.created_at DESC"
-            )
-            params = (camera_id,)
-        else:
-            query = base_query + " GROUP BY t.id, c.name ORDER BY t.created_at DESC"
-            params = ()
+        # Use optimized query builder
+        query = TimelapseQueryBuilder.build_timelapses_query(camera_id)
+        params = (camera_id,) if camera_id else ()
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -138,6 +261,7 @@ class TimelapseOperations:
                 results = await cur.fetchall()
                 return [self._row_to_timelapse_with_details(row) for row in results]
 
+    @cached_response(ttl_seconds=180, key_prefix="timelapse")
     async def get_timelapse_by_id(
         self, timelapse_id: int
     ) -> Optional[TimelapseWithDetails]:
@@ -150,6 +274,7 @@ class TimelapseOperations:
         Returns:
             TimelapseWithDetails model instance, or None if not found
         """
+        # Use dedicated query for single timelapse lookup
         query = """
         SELECT
             t.*,
@@ -232,6 +357,11 @@ class TimelapseOperations:
                             (row["id"], camera_id),
                         )
 
+                    # Clear related caches after successful creation
+                    await self._clear_timelapse_caches(
+                        row["id"], camera_id, updated_at=utc_now()
+                    )
+
                     return new_timelapse
 
                 raise Exception("Failed to create timelapse")
@@ -266,20 +396,27 @@ class TimelapseOperations:
                 }
             )
 
-        # Build dynamic update query
+        # Build dynamic update query safely
         update_fields = []
-        params = {"timelapse_id": timelapse_id}
+        params: Dict[str, Any] = {"timelapse_id": timelapse_id}
 
+        # Validate field names against model to prevent SQL injection
+        valid_fields = set(Timelapse.model_fields.keys())
         for field, value in update_data.items():
+            if field not in valid_fields:
+                raise ValueError(f"Invalid field name: {field}")
             update_fields.append(f"{field} = %({field})s")
             params[field] = value
 
-        update_fields.append("updated_at = NOW()")
+        update_fields.append("updated_at = %(updated_at)s")
+        params["updated_at"] = utc_now()
 
+        # Use parameterized query construction
+        set_clause = ", ".join(update_fields)
         query = f"""
-        UPDATE timelapses 
-        SET {', '.join(update_fields)}
-        WHERE id = %(timelapse_id)s 
+        UPDATE timelapses
+        SET {set_clause}
+        WHERE id = %(timelapse_id)s
         RETURNING *
         """
 
@@ -305,6 +442,13 @@ class TimelapseOperations:
                                 (row["camera_id"],),
                             )
 
+                    # Clear related caches after successful update
+                    await self._clear_timelapse_caches(
+                        timelapse_id,
+                        row["camera_id"],
+                        updated_at=params.get("updated_at", utc_now()),
+                    )
+
                     return updated_timelapse
 
                 raise Exception(f"Failed to update timelapse {timelapse_id}")
@@ -327,9 +471,12 @@ class TimelapseOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
+                    # Clear related caches after successful deletion
+                    await self._clear_timelapse_caches(timelapse_id)
                     return True
                 return False
 
+    @cached_response(ttl_seconds=180, key_prefix="timelapse")
     async def get_timelapse_statistics(
         self, timelapse_id: int
     ) -> Optional[TimelapseStatistics]:
@@ -342,26 +489,12 @@ class TimelapseOperations:
         Returns:
             TimelapseStatistics model instance or None if timelapse not found
         """
-        query = """
-        SELECT
-            COUNT(i.id) as total_images,
-            COUNT(v.id) as total_videos,
-            MIN(i.captured_at) as first_capture_at,
-            MAX(i.captured_at) as last_capture_at,
-            AVG(CASE WHEN i.corruption_score IS NOT NULL THEN i.corruption_score ELSE 100 END) as avg_quality_score,
-            COUNT(CASE WHEN i.is_flagged = true THEN 1 END) as flagged_images,
-            SUM(i.file_size) as total_storage_bytes,
-            SUM(v.file_size) as total_video_storage_bytes
-        FROM timelapses t
-        LEFT JOIN images i ON t.id = i.timelapse_id
-        LEFT JOIN videos v ON t.id = v.timelapse_id
-        WHERE t.id = %s
-        GROUP BY t.id
-        """
+        # Use optimized CTE-based query
+        query = TimelapseQueryBuilder.build_timelapse_statistics_query()
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
+                await cur.execute(query, (timelapse_id, timelapse_id))
                 results = await cur.fetchall()
                 if results:
                     try:
@@ -371,45 +504,34 @@ class TimelapseOperations:
                         return None
                 return None
 
+    @cached_response(ttl_seconds=240, key_prefix="timelapse")
     async def get_library_statistics(self) -> TimelapseLibraryStatistics:
         """
         Get global statistics for the timelapse library.
-        
+
         Returns comprehensive statistics across all timelapses including
         total counts, activity metrics, storage usage, and date ranges.
         """
-        query = """
-        SELECT
-            COUNT(t.id) as total_timelapses,
-            COUNT(CASE WHEN t.starred = true THEN 1 END) as starred_count,
-            COUNT(CASE WHEN t.status IN ('running', 'paused') THEN 1 END) as active_count,
-            COALESCE(SUM(t.image_count), 0) as total_images,
-            COALESCE(SUM(i.total_storage), 0) as total_storage_bytes,
-            MIN(t.created_at) as oldest_timelapse_date
-        FROM timelapses t
-        LEFT JOIN (
-            SELECT 
-                timelapse_id,
-                SUM(COALESCE(file_size, 0)) as total_storage
-            FROM images 
-            GROUP BY timelapse_id
-        ) i ON t.id = i.timelapse_id
-        """
-        
+        # Use optimized CTE-based query
+        query = TimelapseQueryBuilder.build_library_statistics_query()
+
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query)
                 result = await cur.fetchone()
-                
+
                 if result:
                     try:
                         return TimelapseLibraryStatistics.model_validate(dict(result))
                     except ValidationError as e:
-                        logger.error(f"Error creating TimelapseLibraryStatistics model: {e}")
+                        logger.error(
+                            f"Error creating TimelapseLibraryStatistics model: {e}"
+                        )
                         return TimelapseLibraryStatistics()
-                
+
                 return TimelapseLibraryStatistics()
 
+    @cached_response(ttl_seconds=60, key_prefix="timelapse")
     async def get_active_timelapse_for_camera(
         self, camera_id: int
     ) -> Optional[Timelapse]:
@@ -448,14 +570,16 @@ class TimelapseOperations:
         query = """
         UPDATE timelapses
         SET status = 'completed',
-            updated_at = NOW()
+            updated_at = %s
         WHERE id = %s
         RETURNING *
         """
 
+        now = utc_now()
+
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
+                await cur.execute(query, (now, timelapse_id))
                 results = await cur.fetchall()
 
                 if results:
@@ -468,8 +592,11 @@ class TimelapseOperations:
                         (timelapse_id,),
                     )
 
-                    # Note: SSE events should be handled by the service layer, not database layer
-                    # This will be removed once all SSE events are properly centralized
+                    # Clear related caches after successful completion
+                    await self._clear_timelapse_caches(
+                        timelapse_id, row["camera_id"], updated_at=now
+                    )
+
                     return completed_timelapse
 
                 raise ValueError(
@@ -489,16 +616,22 @@ class TimelapseOperations:
         query = """
         DELETE FROM timelapses
         WHERE status = 'completed'
-        AND updated_at < NOW() - INTERVAL '%s days'
+        AND updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
         """
 
+        current_time = utc_now()
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (retention_days,))
+                await cur.execute(
+                    query,
+                    {"current_time": current_time, "retention_days": retention_days},
+                )
                 affected = cur.rowcount
 
                 if affected and affected > 0:
                     logger.info(f"Cleaned up {affected} completed timelapses")
+                    # Clear related caches after cleanup
+                    await self._clear_timelapse_caches()
 
                 return affected or 0
 
@@ -524,26 +657,37 @@ class TimelapseOperations:
             True if successful, False otherwise
         """
         try:
-            # Build the SET clause dynamically
-            set_clauses = []
-            if increment_thumbnail:
-                set_clauses.append("thumbnail_count = thumbnail_count + 1")
-            if increment_small:
-                set_clauses.append("small_count = small_count + 1")
-
-            if not set_clauses:
+            # Build the SET clause safely with predefined options
+            if increment_thumbnail and increment_small:
+                query = """
+                    UPDATE timelapses
+                    SET thumbnail_count = thumbnail_count + 1,
+                        small_count = small_count + 1
+                    WHERE id = %s
+                """
+            elif increment_thumbnail:
+                query = """
+                    UPDATE timelapses
+                    SET thumbnail_count = thumbnail_count + 1
+                    WHERE id = %s
+                """
+            elif increment_small:
+                query = """
+                    UPDATE timelapses
+                    SET small_count = small_count + 1
+                    WHERE id = %s
+                """
+            else:
                 return True  # Nothing to update
-
-            query = f"""
-                UPDATE timelapses
-                SET {', '.join(set_clauses)}
-                WHERE id = %s
-            """
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, (timelapse_id,))
-                    return cur.rowcount > 0
+                    if cur.rowcount > 0:
+                        # Clear related caches after successful increment
+                        await self._clear_timelapse_caches(timelapse_id)
+                        return True
+                    return False
 
         except Exception as e:
             logger.error(
@@ -582,7 +726,11 @@ class TimelapseOperations:
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, (timelapse_id, timelapse_id))
-                    return cur.rowcount > 0
+                    if cur.rowcount > 0:
+                        # Clear related caches after successful recalculation
+                        await self._clear_timelapse_caches(timelapse_id)
+                        return True
+                    return False
 
         except Exception as e:
             logger.error(
@@ -658,13 +806,13 @@ class SyncTimelapseOperations:
         """
         query = """
         UPDATE timelapses
-        SET status = %s, updated_at = NOW()
+        SET status = %s, updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (status, timelapse_id))
+                cur.execute(query, (status, utc_now(), timelapse_id))
                 affected = cur.rowcount
                 return affected and affected > 0
 
@@ -681,13 +829,13 @@ class SyncTimelapseOperations:
         query = """
         UPDATE timelapses
         SET glitch_count = glitch_count + 1,
-            updated_at = NOW()
+            updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (timelapse_id,))
+                cur.execute(query, (utc_now(), timelapse_id))
                 affected = cur.rowcount
                 return affected and affected > 0
 
@@ -701,16 +849,17 @@ class SyncTimelapseOperations:
         Returns:
             True if update was successful
         """
+        now = utc_now()
         query = """
         UPDATE timelapses
-        SET last_activity_at = NOW(),
-            updated_at = NOW()
+        SET last_activity_at = %s,
+            updated_at = %s
         WHERE id = %s
         """
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (timelapse_id,))
+                cur.execute(query, (now, now, timelapse_id))
                 affected = cur.rowcount
                 return affected and affected > 0
 
@@ -731,13 +880,17 @@ class SyncTimelapseOperations:
         FROM timelapses t
         JOIN cameras c ON t.camera_id = c.id
         WHERE t.status = 'completed'
-        AND t.updated_at < NOW() - INTERVAL '%s days'
+        AND t.updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
         ORDER BY t.updated_at ASC
         """
 
+        current_time = utc_now()
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (retention_days,))
+                cur.execute(
+                    query,
+                    {"current_time": current_time, "retention_days": retention_days},
+                )
                 results = cur.fetchall()
 
                 timelapses = []
@@ -764,12 +917,16 @@ class SyncTimelapseOperations:
         query = """
         DELETE FROM timelapses
         WHERE status = 'completed'
-        AND updated_at < NOW() - INTERVAL '%s days'
+        AND updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
         """
 
+        current_time = utc_now()
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (retention_days,))
+                cur.execute(
+                    query,
+                    {"current_time": current_time, "retention_days": retention_days},
+                )
                 affected = cur.rowcount
 
                 if affected and affected > 0:
@@ -910,21 +1067,28 @@ class SyncTimelapseOperations:
             True if successful, False otherwise
         """
         try:
-            # Build the SET clause dynamically
-            set_clauses = []
-            if increment_thumbnail:
-                set_clauses.append("thumbnail_count = thumbnail_count + 1")
-            if increment_small:
-                set_clauses.append("small_count = small_count + 1")
-
-            if not set_clauses:
+            # Build the SET clause safely with predefined options
+            if increment_thumbnail and increment_small:
+                query = """
+                    UPDATE timelapses
+                    SET thumbnail_count = thumbnail_count + 1,
+                        small_count = small_count + 1
+                    WHERE id = %s
+                """
+            elif increment_thumbnail:
+                query = """
+                    UPDATE timelapses
+                    SET thumbnail_count = thumbnail_count + 1
+                    WHERE id = %s
+                """
+            elif increment_small:
+                query = """
+                    UPDATE timelapses
+                    SET small_count = small_count + 1
+                    WHERE id = %s
+                """
+            else:
                 return True  # Nothing to update
-
-            query = f"""
-                UPDATE timelapses
-                SET {', '.join(set_clauses)}
-                WHERE id = %s
-            """
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -967,13 +1131,13 @@ class SyncTimelapseOperations:
     def get_active_timelapses_with_milestone_automation(self) -> List[Timelapse]:
         """
         Get all active timelapses that have milestone automation enabled.
-        
+
         Returns:
             List of Timelapse objects with milestone automation enabled
         """
         try:
             query = """
-            SELECT * FROM timelapses 
+            SELECT * FROM timelapses
             WHERE status IN ('running', 'paused')
             AND video_automation_mode = 'milestone'
             AND milestone_config IS NOT NULL
@@ -985,13 +1149,15 @@ class SyncTimelapseOperations:
                     results = cur.fetchall()
                     return [self._row_to_timelapse(dict(row)) for row in results]
         except Exception as e:
-            logger.error(f"Error getting active timelapses with milestone automation: {e}")
+            logger.error(
+                f"Error getting active timelapses with milestone automation: {e}"
+            )
             return []
 
     def get_active_timelapses_with_scheduled_automation(self) -> List[Timelapse]:
         """
         Get all active timelapses that have scheduled automation enabled.
-        
+
         Returns:
             List of Timelapse objects with scheduled automation enabled
         """
@@ -1009,7 +1175,9 @@ class SyncTimelapseOperations:
                     results = cur.fetchall()
                     return [self._row_to_timelapse(dict(row)) for row in results]
         except Exception as e:
-            logger.error(f"Error getting active timelapses with scheduled automation: {e}")
+            logger.error(
+                f"Error getting active timelapses with scheduled automation: {e}"
+            )
             return []
 
     # ===================================================================

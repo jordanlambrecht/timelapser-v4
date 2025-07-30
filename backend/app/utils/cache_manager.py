@@ -761,7 +761,7 @@ async def get_setting_cached(
     """
     try:
         # Handle both async and sync settings services
-        if hasattr(settings_service, "get_setting"):
+        if settings_service.get_setting:
             get_setting_method = getattr(settings_service, "get_setting")
             if asyncio.iscoroutinefunction(get_setting_method):
                 # Async service

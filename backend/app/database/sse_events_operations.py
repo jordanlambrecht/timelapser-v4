@@ -14,6 +14,56 @@ import psycopg
 
 from .core import AsyncDatabase, SyncDatabase
 from ..enums import SSEPriority
+from ..utils.time_utils import utc_now
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.cache_invalidation import CacheInvalidationService
+
+
+class SSEEventQueryBuilder:
+    """Centralized query builder for SSE events operations."""
+
+    @staticmethod
+    def get_base_select_fields():
+        """Get standard fields for SSE event queries."""
+        return "id, event_type, event_data, created_at, priority, source"
+
+    @staticmethod
+    def build_pending_events_query():
+        """Build optimized query for pending events with priority ordering."""
+        fields = SSEEventQueryBuilder.get_base_select_fields()
+        return f"""
+            SELECT {fields}
+            FROM sse_events
+            WHERE processed_at IS NULL
+                AND created_at > %s
+            ORDER BY
+                CASE priority
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'normal' THEN 3
+                    WHEN 'low' THEN 4
+                END,
+                created_at ASC
+            LIMIT %s
+        """
+
+    @staticmethod
+    def build_event_stats_query():
+        """Build optimized statistics query using CTEs for better performance."""
+        return """
+            WITH event_counts AS (
+                SELECT
+                    COUNT(*) as total_events,
+                    COUNT(*) FILTER (WHERE processed_at IS NULL) as pending_events,
+                    COUNT(*) FILTER (WHERE processed_at IS NOT NULL) as processed_events,
+                    COUNT(*) FILTER (
+                        WHERE created_at > NOW() - INTERVAL '1 hour'
+                    ) as recent_events,
+                    COUNT(DISTINCT event_type) as unique_event_types
+                FROM sse_events
+            )
+            SELECT * FROM event_counts
+        """
 
 
 class SSEEventsOperations:
@@ -24,7 +74,7 @@ class SSEEventsOperations:
     stored in the database for reliable real-time event streaming.
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """
         Initialize SSEEventsOperations with async database instance.
 
@@ -32,6 +82,42 @@ class SSEEventsOperations:
             db: AsyncDatabase instance
         """
         self.db = db
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_sse_event_caches(
+        self,
+        event_id: Optional[int] = None,
+        event_type: Optional[str] = None,
+        updated_at: Optional[datetime] = None,
+    ) -> None:
+        """Clear caches related to SSE events using sophisticated cache system."""
+        # Clear SSE event caches using advanced cache manager
+        cache_patterns = [
+            "sse_events:get_pending_events",
+            "sse_events:get_event_stats",
+        ]
+
+        if event_id:
+            cache_patterns.extend(
+                [
+                    f"sse_events:event_by_id:{event_id}",
+                    f"sse_events:metadata:{event_id}",
+                ]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(event_id, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"sse_events:metadata:{event_id}", etag
+                )
+
+        if event_type:
+            cache_patterns.append(f"sse_events:by_type:{event_type}")
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     async def create_event(
         self,
@@ -76,6 +162,12 @@ class SSEEventsOperations:
                         logger.debug(
                             f"Created SSE event: {event_type} with ID {event_id}"
                         )
+
+                        # Clear related caches after successful creation
+                        await self._clear_sse_event_caches(
+                            event_id, event_type, updated_at=utc_now()
+                        )
+
                         return event_id
                     else:
                         raise psycopg.DatabaseError("Failed to create SSE event")
@@ -84,6 +176,68 @@ class SSEEventsOperations:
             logger.error(f"Failed to create SSE event {event_type}: {e}")
             raise
 
+    async def create_events_batch(self, events: List[Dict[str, Any]]) -> List[int]:
+        """
+        Create multiple SSE events in a single transaction for optimal performance.
+
+        Args:
+            events: List of event dictionaries with keys: event_type, event_data, priority, source
+
+        Returns:
+            List of created event IDs
+
+        Raises:
+            Exception: If batch creation fails
+        """
+        if not events:
+            return []
+
+        try:
+            query = """
+                INSERT INTO sse_events (event_type, event_data, priority, source, retry_count)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """
+
+            # Prepare parameters for batch execution
+            params = []
+            for event in events:
+                params.append(
+                    (
+                        event["event_type"],
+                        json.dumps(event["event_data"]),
+                        event.get("priority", SSEPriority.NORMAL),
+                        event.get("source", "system"),
+                        0,
+                    )
+                )
+
+            event_ids = []
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Use executemany with returning=True for efficient batch insert
+                    await cur.executemany(query, params, returning=True)
+
+                    # Collect all returned IDs
+                    for result in cur.results():
+                        row = await result.fetchone()
+                        if row:
+                            event_id = row["id"] if isinstance(row, dict) else row[0]
+                            event_ids.append(event_id)
+
+                    if event_ids:
+                        # Clear related caches after successful batch creation
+                        await self._clear_sse_event_caches()
+                        logger.debug(f"Created {len(event_ids)} SSE events in batch")
+
+                    return event_ids
+
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to create SSE events batch: {e}")
+            raise
+
+    @cached_response(ttl_seconds=15, key_prefix="sse_events")
     async def get_pending_events(
         self, limit: int = 100, max_age_minutes: int = 60
     ) -> List[Dict[str, Any]]:
@@ -101,16 +255,9 @@ class SSEEventsOperations:
             Exception: If retrieval fails
         """
         try:
-            query = """
-                SELECT id, event_type, event_data, created_at, priority, source
-                FROM sse_events
-                WHERE processed_at IS NULL
-                    AND created_at > %s
-                ORDER BY priority DESC, created_at ASC
-                LIMIT %s
-            """
-
-            cutoff_time = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+            # Use optimized query builder for consistent query construction
+            query = SSEEventQueryBuilder.build_pending_events_query()
+            cutoff_time = utc_now() - timedelta(minutes=max_age_minutes)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -168,6 +315,11 @@ class SSEEventsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(query, (event_ids,))
                     updated_count = cur.rowcount
+
+                    if updated_count > 0:
+                        # Clear related caches after successful processing
+                        await self._clear_sse_event_caches()
+
                     logger.debug(f"Marked {updated_count} SSE events as processed")
                     return updated_count
 
@@ -201,16 +353,25 @@ class SSEEventsOperations:
                 async with conn.cursor() as cur:
                     await cur.execute(query, (max_age_hours,))
                     deleted_count = cur.rowcount
+
                     if deleted_count > 0:
-                        logger.info(f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)")
+                        # Clear related caches after successful cleanup
+                        await self._clear_sse_event_caches()
+                        logger.info(
+                            f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)"
+                        )
                     else:
-                        logger.debug(f"No old SSE events found for cleanup (older than {max_age_hours}h)")
+                        logger.debug(
+                            f"No old SSE events found for cleanup (older than {max_age_hours}h)"
+                        )
+
                     return deleted_count
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to cleanup old SSE events: {e}")
             raise
 
+    @cached_response(ttl_seconds=60, key_prefix="sse_events")
     async def get_event_stats(self) -> Dict[str, Any]:
         """
         Get statistics about SSE events for monitoring.
@@ -222,15 +383,8 @@ class SSEEventsOperations:
             Exception: If stats retrieval fails
         """
         try:
-            query = """
-                SELECT
-                    COUNT(*) as total_events,
-                    COUNT(*) FILTER (WHERE processed_at IS NULL) as pending_events,
-                    COUNT(*) FILTER (WHERE processed_at IS NOT NULL) as processed_events,
-                    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as recent_events,
-                    COUNT(DISTINCT event_type) as unique_event_types
-                FROM sse_events
-            """
+            # Use optimized CTE-based query for better performance
+            query = SSEEventQueryBuilder.build_event_stats_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -268,7 +422,7 @@ class SyncSSEEventsOperations:
     used by worker processes that need to create events.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """
         Initialize SyncSSEEventsOperations with sync database instance.
 
@@ -326,100 +480,11 @@ class SyncSSEEventsOperations:
             logger.error(f"Failed to create SSE event {event_type}: {e}")
             raise
 
-    def create_image_captured_event(
-        self,
-        camera_id: int,
-        timelapse_id: int,
-        image_count: int,
-        day_number: int,
-    ) -> int:
-        """
-        Helper method to create an image captured event.
-
-        Args:
-            camera_id: ID of the camera
-            timelapse_id: ID of the timelapse
-            image_count: Current image count
-            day_number: Day number of the capture
-
-        Returns:
-            ID of the created event
-        """
-        event_data = {
-            "camera_id": camera_id,
-            "timelapse_id": timelapse_id,
-            "image_count": image_count,
-            "day_number": day_number,
-        }
-
-        return self.create_event(
-            event_type="image_captured",
-            event_data=event_data,
-            priority=SSEPriority.NORMAL,
-            source="worker",
-        )
-
-    def create_camera_status_event(
-        self,
-        camera_id: int,
-        status: str,
-        health_status: Optional[str] = None,
-    ) -> int:
-        """
-        Helper method to create a camera status changed event.
-
-        Args:
-            camera_id: ID of the camera
-            status: New camera status
-            health_status: Optional health status
-
-        Returns:
-            ID of the created event
-        """
-        event_data = {
-            "camera_id": camera_id,
-            "status": status,
-        }
-
-        if health_status:
-            event_data["health_status"] = health_status
-
-        return self.create_event(
-            event_type="camera_status_changed",
-            event_data=event_data,
-            priority=SSEPriority.HIGH,
-            source="worker",
-        )
-
-    def create_timelapse_status_event(
-        self,
-        camera_id: int,
-        timelapse_id: int,
-        status: str,
-    ) -> int:
-        """
-        Helper method to create a timelapse status changed event.
-
-        Args:
-            camera_id: ID of the camera
-            timelapse_id: ID of the timelapse
-            status: New timelapse status
-
-        Returns:
-            ID of the created event
-        """
-        event_data = {
-            "camera_id": camera_id,
-            "timelapse_id": timelapse_id,
-            "status": status,
-        }
-
-        return self.create_event(
-            event_type="timelapse_status_changed",
-            event_data=event_data,
-            priority=SSEPriority.HIGH,
-            source="worker",
-        )
+    # Removed business logic helper methods:
+    # - create_image_captured_event()
+    # - create_camera_status_event()
+    # - create_timelapse_status_event()
+    # These should be in service layer, not database layer
 
     def cleanup_old_events(self, max_age_hours: int = 24) -> int:
         """

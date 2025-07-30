@@ -9,14 +9,23 @@ This module handles all settings-related database operations including:
 """
 
 from typing import List, Optional, Dict, Any, Tuple
+from datetime import datetime
 from loguru import logger
 
-# Import database core for composition
 import psycopg
 
 from .core import AsyncDatabase, SyncDatabase
 from ..models.settings_model import Setting
 from ..models.shared_models import CorruptionSettings
+from ..utils.database_helpers import DatabaseBusinessLogic
+from ..utils.time_utils import utc_now
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    get_setting_cached,
+    generate_composite_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
 from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
@@ -90,16 +99,54 @@ class SettingsOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with database instance."""
         self.db = db
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_settings_caches(
+        self, setting_key: Optional[str] = None, updated_at: Optional[datetime] = None
+    ) -> None:
+        """Clear caches related to settings using sophisticated cache system."""
+        # Clear settings-related caches using advanced cache manager
+        cache_patterns = [
+            "settings:get_all_settings",
+            "settings:get_all_setting_records",
+            "settings:get_setting",
+            "settings:get_setting_record",
+            "settings:get_corruption_settings",
+            "settings:get_settings",
+        ]
+
+        if setting_key:
+            cache_patterns.extend(
+                [
+                    f"settings:get_setting:{setting_key}",
+                    f"settings:get_setting_record:{setting_key}",
+                    f"settings:metadata:{setting_key}",
+                ]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(setting_key, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"settings:metadata:{setting_key}", etag
+                )
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     def _row_to_setting(self, row: Dict[str, Any]) -> Setting:
         """Convert database row to Setting model."""
         # Filter fields that belong to Setting model
-        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields.keys()}
+        setting_fields = {
+            k: v for k, v in row.items() if k in Setting.model_fields.keys()
+        }
         return Setting(**setting_fields)
 
+    @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_all_settings(self) -> Dict[str, Any]:
         """
-        Retrieve all settings as a dictionary.
+        Retrieve all settings as a dictionary with sophisticated caching.
 
         Returns:
             Dictionary containing all settings key-value pairs
@@ -116,9 +163,10 @@ class SettingsOperations:
             logger.error(f"Failed to get all settings: {e}")
             raise
 
+    @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_all_setting_records(self) -> List[Setting]:
         """
-        Retrieve all settings as Setting model instances.
+        Retrieve all settings as Setting model instances with sophisticated caching.
 
         Returns:
             List of Setting model instances with full metadata
@@ -133,9 +181,10 @@ class SettingsOperations:
             logger.error(f"Failed to get all setting records: {e}")
             raise
 
+    @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_setting(self, key: str) -> Optional[str]:
         """
-        Retrieve a specific setting value by key.
+        Retrieve a specific setting value by key using sophisticated caching.
 
         Args:
             key: Setting key to retrieve
@@ -143,23 +192,14 @@ class SettingsOperations:
         Returns:
             Setting value, or None if not found
 
-        Note: Returns str for simple value lookup (follows guidelines)
+        Note: Uses the sophisticated cache manager's get_setting_cached function
         """
-        try:
-            async with self.db.get_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT value FROM settings WHERE key = %s", (key,)
-                    )
-                    results = await cur.fetchall()
-                    return results[0]["value"] if results else None
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get setting {key}: {e}")
-            raise
+        return await get_setting_cached(self, key)
 
+    @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_setting_record(self, key: str) -> Optional[Setting]:
         """
-        Retrieve a specific setting record by key.
+        Retrieve a specific setting record by key with sophisticated caching.
 
         Args:
             key: Setting key to retrieve
@@ -195,6 +235,7 @@ class SettingsOperations:
             raise ValueError(error_msg)
 
         try:
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -202,10 +243,13 @@ class SettingsOperations:
                         INSERT INTO settings (key, value)
                         VALUES (%s, %s)
                         ON CONFLICT (key)
-                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = %s
                     """,
-                        (key, value),
+                        (key, value, current_time),
                     )
+
+                    # Clear related caches after successful setting update
+                    await self._clear_settings_caches(key, updated_at=current_time)
 
                     return True
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -226,16 +270,20 @@ class SettingsOperations:
             return True
 
         try:
+            current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    for key, value in settings_dict.items():
-                        query = """
+                    query = """
                         INSERT INTO settings (key, value)
                         VALUES (%s, %s)
                         ON CONFLICT (key)
-                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-                        """
-                        await cur.execute(query, (key, value))
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = %s
+                    """
+                    params = [(key, value, current_time) for key, value in settings_dict.items()]
+                    await cur.executemany(query, params)
+
+                    # Clear related caches after successful bulk settings update
+                    await self._clear_settings_caches(updated_at=current_time)
 
                     return True
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -259,15 +307,18 @@ class SettingsOperations:
                     affected = cur.rowcount
 
                     if affected and affected > 0:
+                        # Clear related caches after successful deletion
+                        await self._clear_settings_caches(key)
                         return True
                     return False
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Failed to delete setting {key}: {e}")
             raise
 
+    @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_corruption_settings(self) -> CorruptionSettings:
         """
-        Get all corruption detection related settings.
+        Get all corruption detection related settings with sophisticated caching.
 
         Returns:
             CorruptionSettings model instance with proper types
@@ -278,7 +329,7 @@ class SettingsOperations:
                     await cur.execute(
                         """
                         SELECT key, value FROM settings
-                        WHERE key LIKE 'corruption_%'
+                        WHERE key ~ '^corruption_'
                         ORDER BY key
                     """
                     )
@@ -290,76 +341,37 @@ class SettingsOperations:
             logger.error(f"Failed to get corruption settings: {e}")
             raise
 
-    async def get_settings(self) -> List[Setting]:
-        """
-        Retrieve all settings as a list of Setting model instances.
+    # Removed get_settings() - redundant duplicate of get_all_setting_records()
+    # Use get_all_setting_records() directly for better performance
 
-        Returns:
-            List of Setting model instances with id, key, value, timestamps
-        """
-        try:
-            async with self.db.get_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT * FROM settings ORDER BY key")
-                    results = await cur.fetchall()
-                    return [self._row_to_setting(row) for row in results]
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get settings list: {e}")
-            raise
-
-    async def get_settings_dict(self) -> Dict[str, Any]:
-        """
-        Retrieve all settings as a dictionary (backward compatibility alias).
-
-        Returns:
-            Dictionary containing all settings key-value pairs
-        """
-        return await self.get_all_settings()
+    # Removed get_settings_dict() - redundant alias for get_all_settings()
+    # Use get_all_settings() directly for better performance
 
     @staticmethod
     def validate_setting_data(key: str, value: str) -> Tuple[bool, Optional[str]]:
         """
         Validate setting data before database operations.
 
-        Args:
-            key: Setting key
-            value: Setting value
-
-        Returns:
-            Tuple of (is_valid, error_message)
+        Delegates to business logic utility for better separation of concerns.
         """
-        if not key or not key.strip():
-            return False, "Setting key cannot be empty"
-
-        if len(key) > MAX_SETTING_KEY_LENGTH:
-            return (
-                False,
-                f"Setting key cannot exceed {MAX_SETTING_KEY_LENGTH} characters",
-            )
-
-        if value is None:
-            return False, "Setting value cannot be None"
-
-        if len(value) > MAX_SETTING_VALUE_LENGTH:
-            return (
-                False,
-                f"Setting value too long (max {MAX_SETTING_VALUE_LENGTH} characters)",
-            )
-
-        return True, None
+        return DatabaseBusinessLogic.validate_setting_data(
+            key, value, MAX_SETTING_KEY_LENGTH, MAX_SETTING_VALUE_LENGTH
+        )
 
 
 class SyncSettingsOperations:
     """Sync settings database operations for worker processes."""
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
 
     def _row_to_setting(self, row: Dict[str, Any]) -> Setting:
         """Convert database row to Setting model."""
         # Filter fields that belong to Setting model
-        setting_fields = {k: v for k, v in row.items() if k in Setting.model_fields.keys()}
+        setting_fields = {
+            k: v for k, v in row.items() if k in Setting.model_fields.keys()
+        }
         return Setting(**setting_fields)
 
     def get_all_settings(self) -> Dict[str, Any]:
@@ -413,7 +425,7 @@ class SyncSettingsOperations:
                     cur.execute(
                         """
                         SELECT key, value FROM settings
-                        WHERE key LIKE 'corruption_%'
+                        WHERE key ~ '^corruption_'
                         ORDER BY key
                     """
                     )
@@ -443,6 +455,7 @@ class SyncSettingsOperations:
             raise ValueError(error_msg)
 
         try:
+            current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -450,9 +463,9 @@ class SyncSettingsOperations:
                         INSERT INTO settings (key, value)
                         VALUES (%s, %s)
                         ON CONFLICT (key)
-                        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = %s
                     """,
-                        (key, value),
+                        (key, value, current_time),
                     )
 
                     return True
@@ -460,11 +473,5 @@ class SyncSettingsOperations:
             logger.error(f"Failed to set setting {key}: {e}")
             raise
 
-    def get_settings_dict(self) -> Dict[str, Any]:
-        """
-        Retrieve all settings as a dictionary (backward compatibility alias).
-
-        Returns:
-            Dictionary containing all settings key-value pairs
-        """
-        return self.get_all_settings()
+    # Removed get_settings_dict() - redundant alias for get_all_settings()
+    # Use get_all_settings() directly for better performance

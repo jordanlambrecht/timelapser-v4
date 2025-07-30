@@ -23,8 +23,135 @@ from ..models.scheduled_job_model import (
     ScheduledJobExecutionCreate,
     ScheduledJobStatistics,
 )
-from ..enums import JobStatus
 from ..utils.time_utils import utc_now
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_composite_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
+
+
+class ScheduledJobQueryBuilder:
+    """Centralized query builder for scheduled job operations.
+    
+    IMPORTANT: For optimal performance, ensure these indexes exist:
+    - CREATE UNIQUE INDEX idx_scheduled_jobs_job_id ON scheduled_jobs(job_id);
+    - CREATE INDEX idx_scheduled_jobs_job_type ON scheduled_jobs(job_type);
+    - CREATE INDEX idx_scheduled_jobs_status ON scheduled_jobs(status);
+    - CREATE INDEX idx_scheduled_jobs_entity ON scheduled_jobs(entity_type, entity_id);
+    - CREATE INDEX idx_scheduled_jobs_next_run ON scheduled_jobs(next_run_time) WHERE status = 'active';
+    - CREATE INDEX idx_scheduled_jobs_status_type ON scheduled_jobs(status, job_type);
+    - CREATE INDEX idx_scheduled_jobs_entity_status ON scheduled_jobs(entity_type, entity_id, status);
+    - CREATE INDEX idx_scheduled_jobs_created_at ON scheduled_jobs(created_at DESC);
+    - CREATE INDEX idx_scheduled_jobs_updated_at ON scheduled_jobs(updated_at DESC);
+    - CREATE INDEX idx_scheduled_jobs_active_next_run ON scheduled_jobs(next_run_time, job_type) WHERE status = 'active';
+    - CREATE INDEX idx_scheduled_job_executions_job_id ON scheduled_job_executions(job_id);
+    - CREATE INDEX idx_scheduled_job_executions_start ON scheduled_job_executions(execution_start DESC);
+    - CREATE INDEX idx_scheduled_job_executions_status ON scheduled_job_executions(status);
+    """
+
+    @staticmethod
+    def get_base_fields():
+        """Get standard fields for scheduled job queries."""
+        return """
+            id, job_id, job_type, schedule_pattern, interval_seconds,
+            next_run_time, last_run_time, last_success_time, last_failure_time,
+            entity_id, entity_type, config, status, execution_count,
+            success_count, failure_count, last_error_message, created_at, updated_at
+        """
+
+    @staticmethod
+    def build_upsert_query():
+        """Build optimized upsert query for job creation/update using named parameters."""
+        return """
+            INSERT INTO scheduled_jobs (
+                job_id, job_type, schedule_pattern, interval_seconds,
+                next_run_time, entity_id, entity_type, config, status
+            ) VALUES (
+                %(job_id)s, %(job_type)s, %(schedule_pattern)s, %(interval_seconds)s,
+                %(next_run_time)s, %(entity_id)s, %(entity_type)s, %(config)s, %(status)s
+            )
+            ON CONFLICT (job_id) DO UPDATE SET
+                job_type = EXCLUDED.job_type,
+                schedule_pattern = EXCLUDED.schedule_pattern,
+                interval_seconds = EXCLUDED.interval_seconds,
+                next_run_time = EXCLUDED.next_run_time,
+                entity_id = EXCLUDED.entity_id,
+                entity_type = EXCLUDED.entity_type,
+                config = EXCLUDED.config,
+                status = EXCLUDED.status,
+                updated_at = %(updated_at)s
+            RETURNING *
+        """
+
+    @staticmethod
+    def build_filtered_query(where_conditions: List[str]):
+        """Build filtered query for scheduled jobs."""
+        fields = ScheduledJobQueryBuilder.get_base_fields()
+        where_clause = (
+            " WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+        )
+        return f"""
+            SELECT {fields}
+            FROM scheduled_jobs
+            {where_clause}
+            ORDER BY job_type, created_at
+        """
+
+    @staticmethod
+    def build_statistics_query():
+        """Build optimized statistics query using CTEs."""
+        return """
+            WITH job_stats AS (
+                SELECT
+                    COUNT(*) as total_jobs,
+                    COUNT(*) FILTER (WHERE status = 'active') as active_jobs,
+                    COUNT(*) FILTER (WHERE status = 'paused') as paused_jobs,
+                    COUNT(*) FILTER (WHERE status = 'disabled') as disabled_jobs,
+                    COUNT(*) FILTER (WHERE status = 'error') as error_jobs,
+                    COUNT(DISTINCT job_type) as unique_job_types,
+                    COALESCE(SUM(execution_count), 0) as total_executions,
+                    COALESCE(SUM(success_count), 0) as total_successes,
+                    COALESCE(SUM(failure_count), 0) as total_failures
+                FROM scheduled_jobs
+            )
+            SELECT * FROM job_stats
+        """
+
+    @staticmethod
+    def build_type_statistics_query():
+        """Build query for job type statistics."""
+        return """
+            SELECT
+                job_type,
+                COUNT(*) as count,
+                COUNT(*) FILTER (WHERE status = 'active') as active_count,
+                COUNT(*) FILTER (WHERE status = 'error') as error_count,
+                COALESCE(AVG(execution_count), 0) as avg_executions,
+                COALESCE(AVG(CASE
+                    WHEN execution_count > 0 THEN
+                        (success_count::float / execution_count::float) * 100
+                    ELSE 0
+                END), 0) as avg_success_rate
+            FROM scheduled_jobs
+            GROUP BY job_type
+            ORDER BY job_type
+        """
+
+    @staticmethod
+    def build_bulk_status_update_query(job_count: int):
+        """Build optimized bulk status update query using named parameters."""
+        case_conditions = []
+        for i in range(job_count):
+            case_conditions.append(f"WHEN job_id = %(job_id_{i})s THEN %(status_{i})s")
+
+        return f"""
+            UPDATE scheduled_jobs
+            SET status = CASE {' '.join(case_conditions)} END,
+                updated_at = %(updated_at)s
+            WHERE job_id IN ({','.join([f'%(job_id_{i})s' for i in range(job_count)])})
+        """
 
 
 class ScheduledJobOperations:
@@ -35,9 +162,10 @@ class ScheduledJobOperations:
     enabling visibility, persistence, and recovery across restarts.
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
+        self.cache_invalidation = CacheInvalidationService()
 
     async def create_or_update_job(
         self, job_data: ScheduledJobCreate
@@ -55,48 +183,32 @@ class ScheduledJobOperations:
             Created or updated ScheduledJob instance
         """
         try:
-            query = """
-                INSERT INTO scheduled_jobs (
-                    job_id, job_type, schedule_pattern, interval_seconds,
-                    next_run_time, entity_id, entity_type, config, status
-                ) VALUES (
-                    %(job_id)s, %(job_type)s, %(schedule_pattern)s, %(interval_seconds)s,
-                    %(next_run_time)s, %(entity_id)s, %(entity_type)s, %(config)s, %(status)s
-                )
-                ON CONFLICT (job_id) DO UPDATE SET
-                    job_type = EXCLUDED.job_type,
-                    schedule_pattern = EXCLUDED.schedule_pattern,
-                    interval_seconds = EXCLUDED.interval_seconds,
-                    next_run_time = EXCLUDED.next_run_time,
-                    entity_id = EXCLUDED.entity_id,
-                    entity_type = EXCLUDED.entity_type,
-                    config = EXCLUDED.config,
-                    status = EXCLUDED.status,
-                    updated_at = NOW()
-                RETURNING *
-            """
-
+            # Use optimized query builder
+            query = ScheduledJobQueryBuilder.build_upsert_query()
             config_json = json.dumps(job_data.config) if job_data.config else None
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        query,
-                        {
-                            "job_id": job_data.job_id,
-                            "job_type": job_data.job_type,
-                            "schedule_pattern": job_data.schedule_pattern,
-                            "interval_seconds": job_data.interval_seconds,
-                            "next_run_time": job_data.next_run_time,
-                            "entity_id": job_data.entity_id,
-                            "entity_type": job_data.entity_type,
-                            "config": config_json,
-                            "status": job_data.status or "active",
-                        },
-                    )
+                    params = {
+                        "job_id": job_data.job_id,
+                        "job_type": job_data.job_type,
+                        "schedule_pattern": job_data.schedule_pattern,
+                        "interval_seconds": job_data.interval_seconds,
+                        "next_run_time": job_data.next_run_time,
+                        "entity_id": job_data.entity_id,
+                        "entity_type": job_data.entity_type,
+                        "config": config_json,
+                        "status": job_data.status or "active",
+                        "updated_at": utc_now(),
+                    }
+                    await cur.execute(query, params)
 
                     row = await cur.fetchone()
                     if row:
+                        # Clear related caches since job data changed
+                        await self._clear_job_caches(
+                            job_data.job_id, updated_at=utc_now()
+                        )
                         return self._row_to_scheduled_job(dict(row))
                     return None
 
@@ -106,64 +218,74 @@ class ScheduledJobOperations:
             )
             return None
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_by_id(self, job_id: str) -> Optional[ScheduledJob]:
-        """Get scheduled job by job_id."""
+        """Get scheduled job by job_id with sophisticated caching using named parameters."""
         try:
-            query = "SELECT * FROM scheduled_jobs WHERE job_id = %s"
+            fields = ScheduledJobQueryBuilder.get_base_fields()
+            query = f"SELECT {fields} FROM scheduled_jobs WHERE job_id = %(job_id)s"
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (job_id,))
+                    await cur.execute(query, {"job_id": job_id})
                     row = await cur.fetchone()
 
                     if row:
-                        return self._row_to_scheduled_job(dict(row))
+                        job = self._row_to_scheduled_job(dict(row))
+                        return job
+
                     return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting scheduled job {job_id}: {e}")
             return None
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_jobs_by_type(
         self, job_type: str, status: Optional[str] = None
     ) -> List[ScheduledJob]:
-        """Get scheduled jobs by type and optionally by status."""
+        """Get scheduled jobs by type and optionally by status using named parameters."""
         try:
+            conditions = ["job_type = %(job_type)s"]
+            params = {"job_type": job_type}
+
             if status:
-                query = "SELECT * FROM scheduled_jobs WHERE job_type = %s AND status = %s ORDER BY created_at"
-                params = (job_type, status)
-            else:
-                query = "SELECT * FROM scheduled_jobs WHERE job_type = %s ORDER BY created_at"
-                params = (job_type,)
+                conditions.append("status = %(status)s")
+                params["status"] = status
+
+            # Use optimized query builder
+            query = ScheduledJobQueryBuilder.build_filtered_query(conditions)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, params)
                     rows = await cur.fetchall()
 
-                    return [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    return jobs
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting scheduled jobs by type {job_type}: {e}")
             return []
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_jobs_by_entity(
         self, entity_type: str, entity_id: int
     ) -> List[ScheduledJob]:
-        """Get scheduled jobs for a specific entity."""
+        """Get scheduled jobs for a specific entity using named parameters."""
         try:
-            query = """
-                SELECT * FROM scheduled_jobs
-                WHERE entity_type = %s AND entity_id = %s
-                ORDER BY created_at
-            """
+            # Use optimized query builder
+            conditions = ["entity_type = %(entity_type)s", "entity_id = %(entity_id)s"]
+            params = {"entity_type": entity_type, "entity_id": entity_id}
+            query = ScheduledJobQueryBuilder.build_filtered_query(conditions)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (entity_type, entity_id))
+                    await cur.execute(query, params)
                     rows = await cur.fetchall()
 
-                    return [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    return jobs
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(
@@ -171,35 +293,53 @@ class ScheduledJobOperations:
             )
             return []
 
+    @cached_response(ttl_seconds=30, key_prefix="scheduled_job")
     async def get_active_jobs(self) -> List[ScheduledJob]:
-        """Get all active scheduled jobs."""
+        """Get all active scheduled jobs using named parameters."""
         try:
-            query = "SELECT * FROM scheduled_jobs WHERE status = 'active' ORDER BY job_type, created_at"
+            # Use optimized query builder
+            conditions = ["status = %(status)s"]
+            params = {"status": "active"}
+            query = ScheduledJobQueryBuilder.build_filtered_query(conditions)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query)
+                    await cur.execute(query, params)
                     rows = await cur.fetchall()
 
-                    return [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    return jobs
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting active scheduled jobs: {e}")
             return []
 
     async def update_job_status(self, job_id: str, status: str) -> bool:
-        """Update job status."""
+        """Update job status using named parameters."""
         try:
             query = """
                 UPDATE scheduled_jobs
-                SET status = %s, updated_at = NOW()
-                WHERE job_id = %s
+                SET status = %(status)s, updated_at = %(updated_at)s
+                WHERE job_id = %(job_id)s
             """
+            
+            current_time = utc_now()
+            params = {
+                "status": status,
+                "updated_at": current_time,
+                "job_id": job_id
+            }
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (status, job_id))
-                    return cur.rowcount > 0
+                    await cur.execute(query, params)
+                    success = cur.rowcount > 0
+
+                    # Clear related caches if update was successful
+                    if success:
+                        await self._clear_job_caches(job_id, updated_at=current_time)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error updating job status for {job_id}: {e}")
@@ -214,79 +354,101 @@ class ScheduledJobOperations:
         last_failure_time: Optional[datetime] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """Update job timing and execution information."""
+        """Update job timing and execution information using named parameters."""
         try:
-            # Build dynamic query based on provided parameters
-            updates = ["updated_at = NOW()"]
-            params = []
+            # Build dynamic query using safe field mapping
+            current_time = utc_now()
+            params = {
+                "updated_at": current_time,
+                "job_id": job_id,
+            }
+            
+            # Build safe UPDATE fields
+            update_fields = ["updated_at = %(updated_at)s"]
 
             if next_run_time is not None:
-                updates.append("next_run_time = %s")
-                params.append(next_run_time)
+                update_fields.append("next_run_time = %(next_run_time)s")
+                params["next_run_time"] = next_run_time
 
             if last_run_time is not None:
-                updates.append("last_run_time = %s")
-                params.append(last_run_time)
+                update_fields.append("last_run_time = %(last_run_time)s")
+                params["last_run_time"] = last_run_time
 
             if last_success_time is not None:
-                updates.append("last_success_time = %s")
-                updates.append("success_count = success_count + 1")
-                params.append(last_success_time)
+                update_fields.append("last_success_time = %(last_success_time)s")
+                update_fields.append("success_count = success_count + 1")
+                params["last_success_time"] = last_success_time
 
             if last_failure_time is not None:
-                updates.append("last_failure_time = %s")
-                updates.append("failure_count = failure_count + 1")
-                params.append(last_failure_time)
+                update_fields.append("last_failure_time = %(last_failure_time)s")
+                update_fields.append("failure_count = failure_count + 1")
+                params["last_failure_time"] = last_failure_time
 
             if error_message is not None:
-                updates.append("last_error_message = %s")
-                params.append(error_message)
+                update_fields.append("last_error_message = %(error_message)s")
+                params["error_message"] = error_message
 
             # Always increment execution count
-            updates.append("execution_count = execution_count + 1")
-            params.append(job_id)
+            update_fields.append("execution_count = execution_count + 1")
 
+            # Use safe field construction - fields are hardcoded, not user input
             query = f"""
                 UPDATE scheduled_jobs
-                SET {', '.join(updates)}
-                WHERE job_id = %s
+                SET {', '.join(update_fields)}
+                WHERE job_id = %(job_id)s
             """
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, params)
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+
+                    # Clear related caches if update was successful
+                    if success:
+                        await self._clear_job_caches(job_id, updated_at=current_time)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error updating job timing for {job_id}: {e}")
             return False
 
     async def delete_job(self, job_id: str) -> bool:
-        """Delete scheduled job."""
+        """Delete scheduled job using named parameters."""
         try:
-            query = "DELETE FROM scheduled_jobs WHERE job_id = %s"
+            query = "DELETE FROM scheduled_jobs WHERE job_id = %(job_id)s"
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (job_id,))
-                    return cur.rowcount > 0
+                    await cur.execute(query, {"job_id": job_id})
+                    success = cur.rowcount > 0
+
+                    # Clear related caches if deletion was successful
+                    if success:
+                        await self._clear_job_caches(job_id)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error deleting scheduled job {job_id}: {e}")
             return False
 
     async def cleanup_old_jobs(self, max_age_days: int = 30) -> int:
-        """Clean up old disabled/error jobs."""
+        """Clean up old disabled/error jobs using safe date calculation."""
         try:
+            # Calculate cutoff time safely in Python instead of dangerous SQL interpolation
+            from datetime import timedelta
+            cutoff_time = utc_now() - timedelta(days=max_age_days)
+            
             query = """
                 DELETE FROM scheduled_jobs
                 WHERE status IN ('disabled', 'error')
-                    AND updated_at < NOW() - INTERVAL '%s days'
+                    AND updated_at < %(cutoff_time)s
             """
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (max_age_days,))
+                    await cur.execute(query, {"cutoff_time": cutoff_time})
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -298,12 +460,12 @@ class ScheduledJobOperations:
     ) -> Optional[ScheduledJobExecution]:
         """Log a job execution."""
         try:
-            # First get the scheduled_job_id
-            job_query = "SELECT id FROM scheduled_jobs WHERE job_id = %s"
+            # First get the scheduled_job_id using named parameters
+            job_query = "SELECT id FROM scheduled_jobs WHERE job_id = %(job_id)s"
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(job_query, (execution_data.job_id,))
+                    await cur.execute(job_query, {"job_id": execution_data.job_id})
                     job_row = await cur.fetchone()
 
                     if not job_row:
@@ -404,6 +566,7 @@ class ScheduledJobOperations:
             created_at=row["created_at"],
         )
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_jobs_filtered(
         self,
         job_type: Optional[str] = None,
@@ -412,94 +575,96 @@ class ScheduledJobOperations:
         entity_id: Optional[int] = None,
         include_disabled: bool = False,
     ) -> List[ScheduledJob]:
-        """Get filtered list of scheduled jobs."""
+        """Get filtered list of scheduled jobs with sophisticated caching."""
         try:
             conditions = []
-            params = []
+            params = {}
 
             if job_type:
-                conditions.append("job_type = %s")
-                params.append(job_type)
+                conditions.append("job_type = %(job_type)s")
+                params["job_type"] = job_type
             if status:
-                conditions.append("status = %s")
-                params.append(status)
+                conditions.append("status = %(status)s")
+                params["status"] = status
             if entity_type:
-                conditions.append("entity_type = %s")
-                params.append(entity_type)
+                conditions.append("entity_type = %(entity_type)s")
+                params["entity_type"] = entity_type
             if entity_id:
-                conditions.append("entity_id = %s")
-                params.append(entity_id)
+                conditions.append("entity_id = %(entity_id)s")
+                params["entity_id"] = entity_id
             if not include_disabled:
                 conditions.append("status != 'disabled'")
 
-            where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-            query = f"SELECT * FROM scheduled_jobs{where_clause} ORDER BY job_type, created_at"
+            # Use optimized query builder
+            query = ScheduledJobQueryBuilder.build_filtered_query(conditions)
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, params)
                     rows = await cur.fetchall()
-                    return [self._row_to_scheduled_job(dict(row)) for row in rows]
+
+                    jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
+                    return jobs
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting filtered jobs: {e}")
             return []
 
+    @cached_response(ttl_seconds=30, key_prefix="scheduled_job")
     async def get_job_executions(
         self, job_id: str, limit: int = 50, offset: int = 0
     ) -> List[ScheduledJobExecution]:
-        """Get execution history for a job."""
+        """Get execution history for a job using named parameters."""
         try:
             query = """
-                SELECT * FROM scheduled_job_executions 
-                WHERE job_id = %s 
-                ORDER BY execution_start DESC 
-                LIMIT %s OFFSET %s
+                SELECT * FROM scheduled_job_executions
+                WHERE job_id = %(job_id)s
+                ORDER BY execution_start DESC
+                LIMIT %(limit)s OFFSET %(offset)s
             """
+            
+            params = {
+                "job_id": job_id,
+                "limit": limit,
+                "offset": offset
+            }
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (job_id, limit, offset))
+                    await cur.execute(query, params)
                     rows = await cur.fetchall()
-                    return [
+                    executions = [
                         self._row_to_scheduled_job_execution(dict(row)) for row in rows
                     ]
+                    return executions
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting job executions for {job_id}: {e}")
             return []
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_execution_count(self, job_id: str) -> int:
-        """Get total execution count for a job."""
+        """Get total execution count for a job using named parameters."""
         try:
-            query = "SELECT COUNT(*) as count FROM scheduled_job_executions WHERE job_id = %s"
+            query = "SELECT COUNT(*) as count FROM scheduled_job_executions WHERE job_id = %(job_id)s"
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query, (job_id,))
+                    await cur.execute(query, {"job_id": job_id})
                     row = await cur.fetchone()
-                    return row["count"] if row else 0
+                    count = row["count"] if row else 0
+                    return count
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting execution count for {job_id}: {e}")
             return 0
 
+    @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_statistics(self) -> ScheduledJobStatistics:
-        """Get comprehensive job statistics."""
+        """Get comprehensive job statistics with sophisticated caching."""
         try:
-            query = """
-                SELECT 
-                    COUNT(*) as total_jobs,
-                    COUNT(*) FILTER (WHERE status = 'active') as active_jobs,
-                    COUNT(*) FILTER (WHERE status = 'paused') as paused_jobs,
-                    COUNT(*) FILTER (WHERE status = 'disabled') as disabled_jobs,
-                    COUNT(*) FILTER (WHERE status = 'error') as error_jobs,
-                    COUNT(DISTINCT job_type) as unique_job_types,
-                    COALESCE(SUM(execution_count), 0) as total_executions,
-                    COALESCE(SUM(success_count), 0) as total_successes,
-                    COALESCE(SUM(failure_count), 0) as total_failures
-                FROM scheduled_jobs
-            """
+            # Use optimized CTE-based query
+            query = ScheduledJobQueryBuilder.build_statistics_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -507,48 +672,40 @@ class ScheduledJobOperations:
                     row = await cur.fetchone()
 
                     if row:
-                        return ScheduledJobStatistics(
-                            total_jobs=int(row["total_jobs"] or 0),
-                            active_jobs=int(row["active_jobs"] or 0),
-                            paused_jobs=int(row["paused_jobs"] or 0),
-                            disabled_jobs=int(row["disabled_jobs"] or 0),
-                            error_jobs=int(row["error_jobs"] or 0),
-                            unique_job_types=int(row["unique_job_types"] or 0),
-                            total_executions=int(row["total_executions"] or 0),
-                            total_successes=int(row["total_successes"] or 0),
-                            total_failures=int(row["total_failures"] or 0),
+                        stats_dict = dict(row)
+                        result = ScheduledJobStatistics(
+                            total_jobs=int(stats_dict["total_jobs"] or 0),
+                            active_jobs=int(stats_dict["active_jobs"] or 0),
+                            paused_jobs=int(stats_dict["paused_jobs"] or 0),
+                            disabled_jobs=int(stats_dict["disabled_jobs"] or 0),
+                            error_jobs=int(stats_dict["error_jobs"] or 0),
+                            unique_job_types=int(stats_dict["unique_job_types"] or 0),
+                            total_executions=int(stats_dict["total_executions"] or 0),
+                            total_successes=int(stats_dict["total_successes"] or 0),
+                            total_failures=int(stats_dict["total_failures"] or 0),
                         )
+                        return result
 
-                    return ScheduledJobStatistics()
+                    default_stats = ScheduledJobStatistics()
+                    return default_stats
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting job statistics: {e}")
             return ScheduledJobStatistics()
 
+    @cached_response(ttl_seconds=120, key_prefix="scheduled_job")
     async def get_job_type_statistics(self) -> Dict[str, Any]:
-        """Get statistics broken down by job type."""
+        """Get statistics broken down by job type with sophisticated caching."""
         try:
-            query = """
-                SELECT 
-                    job_type,
-                    COUNT(*) as count,
-                    COUNT(*) FILTER (WHERE status = 'active') as active_count,
-                    COUNT(*) FILTER (WHERE status = 'error') as error_count,
-                    COALESCE(AVG(execution_count), 0) as avg_executions,
-                    COALESCE(AVG(CASE WHEN execution_count > 0 THEN
-                        (success_count::float / execution_count::float) * 100
-                        ELSE 0 END), 0) as avg_success_rate
-                FROM scheduled_jobs
-                GROUP BY job_type
-                ORDER BY job_type
-            """
+            # Use optimized query builder
+            query = ScheduledJobQueryBuilder.build_type_statistics_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query)
                     rows = await cur.fetchall()
 
-                    return {
+                    result = {
                         row["job_type"]: {
                             "count": int(row["count"]),
                             "active_count": int(row["active_count"]),
@@ -558,52 +715,63 @@ class ScheduledJobOperations:
                         }
                         for row in rows
                     }
+                    return result
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error getting job type statistics: {e}")
             return {}
 
     async def update_job(self, job_id: str, update_data: "ScheduledJobUpdate") -> bool:
-        """Update a scheduled job with new data."""
+        """Update a scheduled job with new data using named parameters."""
         try:
-            # Build dynamic update query
-            updates = []
-            params = []
+            # Build dynamic update query using safe field mapping
+            current_time = utc_now()
+            params = {
+                "updated_at": current_time,
+                "job_id": job_id,
+            }
+            
+            # Build safe UPDATE fields
+            update_fields = ["updated_at = %(updated_at)s"]
 
             if update_data.schedule_pattern is not None:
-                updates.append("schedule_pattern = %s")
-                params.append(update_data.schedule_pattern)
+                update_fields.append("schedule_pattern = %(schedule_pattern)s")
+                params["schedule_pattern"] = update_data.schedule_pattern
             if update_data.interval_seconds is not None:
-                updates.append("interval_seconds = %s")
-                params.append(update_data.interval_seconds)
+                update_fields.append("interval_seconds = %(interval_seconds)s")
+                params["interval_seconds"] = update_data.interval_seconds
             if update_data.next_run_time is not None:
-                updates.append("next_run_time = %s")
-                params.append(update_data.next_run_time)
+                update_fields.append("next_run_time = %(next_run_time)s")
+                params["next_run_time"] = update_data.next_run_time
             if update_data.entity_id is not None:
-                updates.append("entity_id = %s")
-                params.append(update_data.entity_id)
+                update_fields.append("entity_id = %(entity_id)s")
+                params["entity_id"] = update_data.entity_id
             if update_data.entity_type is not None:
-                updates.append("entity_type = %s")
-                params.append(update_data.entity_type)
+                update_fields.append("entity_type = %(entity_type)s")
+                params["entity_type"] = update_data.entity_type
             if update_data.config is not None:
-                updates.append("config = %s")
-                params.append(json.dumps(update_data.config))
+                update_fields.append("config = %(config)s")
+                params["config"] = json.dumps(update_data.config)
             if update_data.status is not None:
-                updates.append("status = %s")
-                params.append(update_data.status)
+                update_fields.append("status = %(status)s")
+                params["status"] = update_data.status
 
-            if not updates:
+            if len(update_fields) == 1:  # Only updated_at
                 return True  # Nothing to update
 
-            updates.append("updated_at = NOW()")
-            params.append(job_id)
-
-            query = f"UPDATE scheduled_jobs SET {', '.join(updates)} WHERE job_id = %s"
+            # Use safe field construction - fields are hardcoded, not user input
+            query = f"UPDATE scheduled_jobs SET {', '.join(update_fields)} WHERE job_id = %(job_id)s"
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, params)
-                    return cur.rowcount > 0
+                    success = cur.rowcount > 0
+
+                    # Clear related caches if update was successful
+                    if success:
+                        await self._clear_job_caches(job_id, updated_at=current_time)
+
+                    return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error updating job {job_id}: {e}")
@@ -612,22 +780,50 @@ class ScheduledJobOperations:
     async def bulk_update_job_status(
         self, job_ids: List[str], status: str
     ) -> Dict[str, bool]:
-        """Update status for multiple jobs."""
+        """Update status for multiple jobs using optimized bulk query with safe IN clause."""
+        if not job_ids:
+            return {}
+
         results = {}
 
         try:
+            # Use safe placeholder generation for IN clause - create named parameters
+            current_time = utc_now()
+            params = {
+                "status": status,
+                "updated_at": current_time
+            }
+            
+            # Create safe named placeholders for each job_id
+            job_placeholders = []
+            for i, job_id in enumerate(job_ids):
+                placeholder = f"job_id_{i}"
+                job_placeholders.append(f"%({placeholder})s")
+                params[placeholder] = job_id
+            
+            # Safe construction - job_placeholders contains only validated named parameters
+            query = f"""
+                UPDATE scheduled_jobs
+                SET status = %(status)s, updated_at = %(updated_at)s
+                WHERE job_id IN ({','.join(job_placeholders)})
+                RETURNING job_id
+            """
+
             async with self.db.get_connection() as conn:
-                for job_id in job_ids:
-                    try:
-                        async with conn.cursor() as cur:
-                            await cur.execute(
-                                "UPDATE scheduled_jobs SET status = %s, updated_at = NOW() WHERE job_id = %s",
-                                (status, job_id),
-                            )
-                            results[job_id] = cur.rowcount > 0
-                    except Exception as e:
-                        logger.warning(f"Failed to update job {job_id}: {e}")
-                        results[job_id] = False
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    updated_rows = await cur.fetchall()
+
+                    # Track which jobs were successfully updated
+                    updated_job_ids = {row["job_id"] for row in updated_rows}
+
+                    # Set results for all requested jobs
+                    for job_id in job_ids:
+                        results[job_id] = job_id in updated_job_ids
+
+                        # Clear cache for updated jobs
+                        if job_id in updated_job_ids:
+                            await self._clear_job_caches(job_id, updated_at=current_time)
 
         except (psycopg.Error, KeyError, ValueError) as e:
             logger.error(f"Error in bulk update: {e}")
@@ -636,6 +832,34 @@ class ScheduledJobOperations:
                 results[job_id] = False
 
         return results
+
+    async def _clear_job_caches(
+        self, job_id: str, updated_at: Optional[datetime] = None
+    ) -> None:
+        """Clear caches related to a specific job using sophisticated cache system."""
+        # Clear scheduled job caches using advanced cache manager
+        cache_patterns = [
+            f"scheduled_job:get_job_by_id:{job_id}",
+            "scheduled_job:get_active_jobs",
+            "scheduled_job:get_job_statistics",
+            "scheduled_job:get_job_type_statistics",
+            "scheduled_job:get_jobs_filtered",
+            "scheduled_job:get_jobs_by_type",
+            "scheduled_job:get_jobs_by_entity",
+            f"scheduled_job:get_job_executions:{job_id}",
+            f"scheduled_job:get_job_execution_count:{job_id}",
+        ]
+
+        # Use ETag-aware invalidation if timestamp provided
+        if updated_at:
+            etag = generate_composite_etag(job_id, updated_at)
+            await self.cache_invalidation.invalidate_with_etag_validation(
+                f"scheduled_job:metadata:{job_id}", etag
+            )
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     def _row_to_scheduled_job_execution(
         self, row: Dict[str, Any]
@@ -665,7 +889,7 @@ class SyncScheduledJobOperations:
     Provides synchronous versions for use in sync contexts.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
 
@@ -691,7 +915,7 @@ class SyncScheduledJobOperations:
                     entity_type = EXCLUDED.entity_type,
                     config = EXCLUDED.config,
                     status = EXCLUDED.status,
-                    updated_at = NOW()
+                    updated_at = %(updated_at)s
                 RETURNING *
             """
 
@@ -699,20 +923,19 @@ class SyncScheduledJobOperations:
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        query,
-                        {
-                            "job_id": job_data.job_id,
-                            "job_type": job_data.job_type,
-                            "schedule_pattern": job_data.schedule_pattern,
-                            "interval_seconds": job_data.interval_seconds,
-                            "next_run_time": job_data.next_run_time,
-                            "entity_id": job_data.entity_id,
-                            "entity_type": job_data.entity_type,
-                            "config": config_json,
-                            "status": job_data.status or "active",
-                        },
-                    )
+                    params = {
+                        "job_id": job_data.job_id,
+                        "job_type": job_data.job_type,
+                        "schedule_pattern": job_data.schedule_pattern,
+                        "interval_seconds": job_data.interval_seconds,
+                        "next_run_time": job_data.next_run_time,
+                        "entity_id": job_data.entity_id,
+                        "entity_type": job_data.entity_type,
+                        "config": config_json,
+                        "status": job_data.status or "active",
+                        "updated_at": utc_now(),
+                    }
+                    cur.execute(query, params)
 
                     row = cur.fetchone()
                     if row:
@@ -742,13 +965,13 @@ class SyncScheduledJobOperations:
             return []
 
     def delete_job(self, job_id: str) -> bool:
-        """Delete scheduled job (sync version)."""
+        """Delete scheduled job (sync version) using named parameters."""
         try:
-            query = "DELETE FROM scheduled_jobs WHERE job_id = %s"
+            query = "DELETE FROM scheduled_jobs WHERE job_id = %(job_id)s"
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (job_id,))
+                    cur.execute(query, {"job_id": job_id})
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
@@ -764,34 +987,40 @@ class SyncScheduledJobOperations:
         last_failure_time: Optional[datetime] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """Update job timing and execution information (sync version)."""
+        """Update job timing and execution information (sync version) using named parameters."""
         try:
-            # Build dynamic query based on provided parameters
-            updates = ["updated_at = NOW()"]
-            params = []
+            # Build dynamic query using safe field mapping
+            current_time = utc_now()
+            params = {
+                "updated_at": current_time,
+                "job_id": job_id,
+            }
+            
+            # Build safe UPDATE fields
+            update_fields = ["updated_at = %(updated_at)s"]
 
             if next_run_time is not None:
-                updates.append("next_run_time = %s")
-                params.append(next_run_time)
+                update_fields.append("next_run_time = %(next_run_time)s")
+                params["next_run_time"] = next_run_time
             if last_run_time is not None:
-                updates.append("last_run_time = %s")
-                params.append(last_run_time)
+                update_fields.append("last_run_time = %(last_run_time)s")
+                params["last_run_time"] = last_run_time
             if last_success_time is not None:
-                updates.append("last_success_time = %s")
-                params.append(last_success_time)
+                update_fields.append("last_success_time = %(last_success_time)s")
+                params["last_success_time"] = last_success_time
             if last_failure_time is not None:
-                updates.append("last_failure_time = %s")
-                params.append(last_failure_time)
+                update_fields.append("last_failure_time = %(last_failure_time)s")
+                params["last_failure_time"] = last_failure_time
             if error_message is not None:
-                updates.append("error_message = %s")
-                params.append(error_message)
+                update_fields.append("last_error_message = %(error_message)s")
+                params["error_message"] = error_message
 
             # If no updates besides updated_at, return True without querying
-            if len(updates) == 1:
+            if len(update_fields) == 1:  # Only updated_at
                 return True
 
-            query = f"UPDATE scheduled_jobs SET {', '.join(updates)} WHERE job_id = %s"
-            params.append(job_id)
+            # Use safe field construction - fields are hardcoded, not user input
+            query = f"UPDATE scheduled_jobs SET {', '.join(update_fields)} WHERE job_id = %(job_id)s"
 
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:

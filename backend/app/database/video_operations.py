@@ -20,6 +20,83 @@ from ..models.shared_models import (
     VideoStatistics,
 )
 from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_composite_etag,
+)
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.time_utils import utc_now
+
+
+class VideoQueryBuilder:
+    """Centralized query builder for video operations."""
+
+    @staticmethod
+    def build_videos_query(
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        status: Optional[str] = None,
+    ):
+        """Build optimized query for retrieving videos with details."""
+        base_query = """
+        SELECT
+            v.*,
+            t.name as timelapse_name,
+            c.name as camera_name
+        FROM videos v
+        LEFT JOIN timelapses t ON v.timelapse_id = t.id
+        LEFT JOIN cameras c ON v.camera_id = c.id
+        """
+
+        conditions = []
+        if timelapse_id is not None:
+            conditions.append("v.timelapse_id = %s")
+        if camera_id is not None:
+            conditions.append("v.camera_id = %s")
+        if status is not None:
+            conditions.append("v.status = %s")
+
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+        query_parts = [base_query]
+        if where_clause:
+            query_parts.append(where_clause)
+        query_parts.append("ORDER BY v.created_at DESC")
+        query_parts.append("LIMIT %s OFFSET %s")
+        return "\n        ".join(query_parts)
+
+    @staticmethod
+    def build_video_statistics_query():
+        """Build optimized query for video statistics using aggregations."""
+        return """
+        SELECT
+            COUNT(*) as total_videos,
+            COALESCE(SUM(file_size), 0) as total_size_bytes,
+            COALESCE(AVG(duration_seconds), 0) as avg_duration_seconds,
+            COALESCE(AVG(calculated_fps), 0) as avg_fps,
+            MAX(created_at) as latest_video_at
+        FROM videos
+        """
+
+    @staticmethod
+    def build_video_generation_jobs_query(status: Optional[str] = None):
+        """Build optimized query for video generation jobs with details."""
+        base_query = """
+        SELECT
+            vgj.*,
+            t.name as timelapse_name,
+            c.name as camera_name,
+            c.id as camera_id
+        FROM video_generation_jobs vgj
+        JOIN timelapses t ON vgj.timelapse_id = t.id
+        JOIN cameras c ON t.camera_id = c.id
+        """
+
+        if status:
+            return base_query + " WHERE vgj.status = %s ORDER BY vgj.created_at DESC"
+        else:
+            return base_query + " ORDER BY vgj.created_at DESC"
 
 
 class VideoOperations:
@@ -39,6 +116,44 @@ class VideoOperations:
         """
         self.db = db
         self.recovery_ops = RecoveryOperations(db)
+        self.cache_invalidation = CacheInvalidationService()
+
+    async def _clear_video_caches(
+        self,
+        video_id: Optional[int] = None,
+        timelapse_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+        updated_at: Optional[datetime] = None,
+    ) -> None:
+        """Clear caches related to videos using sophisticated cache system."""
+        # Clear video caches using advanced cache manager
+        cache_patterns = [
+            "video:get_videos",
+            "video:get_video_statistics",
+            "video:get_video_generation_jobs",
+        ]
+
+        if video_id:
+            cache_patterns.extend(
+                [f"video:by_id:{video_id}", f"video:metadata:{video_id}"]
+            )
+
+            # Use ETag-aware invalidation if timestamp provided
+            if updated_at:
+                etag = generate_composite_etag(video_id, updated_at)
+                await self.cache_invalidation.invalidate_with_etag_validation(
+                    f"video:metadata:{video_id}", etag
+                )
+
+        if timelapse_id:
+            cache_patterns.append(f"video:by_timelapse:{timelapse_id}")
+
+        if camera_id:
+            cache_patterns.append(f"video:by_camera:{camera_id}")
+
+        # Clear cache patterns using advanced cache manager
+        for pattern in cache_patterns:
+            await cache.delete(pattern)
 
     def _row_to_video(self, row: Dict[str, Any]) -> Video:
         """Convert database row to Video model."""
@@ -93,6 +208,7 @@ class VideoOperations:
             logger.error(f"Error creating VideoGenerationJobWithDetails model: {e}")
             raise
 
+    @cached_response(ttl_seconds=120, key_prefix="video")
     async def get_videos(
         self,
         timelapse_id: Optional[int] = None,
@@ -120,42 +236,23 @@ class VideoOperations:
             camera_videos = await video_ops.get_videos(camera_id=1, limit=50)
         """
         try:
+            # Use optimized query builder
+            query = VideoQueryBuilder.build_videos_query(
+                timelapse_id, camera_id, status
+            )
+
+            # Build parameters dynamically
+            params = []
+            if timelapse_id is not None:
+                params.append(timelapse_id)
+            if camera_id is not None:
+                params.append(camera_id)
+            if status is not None:
+                params.append(status)
+            params.extend([limit, offset])
+
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
-                    # Build dynamic query based on filters
-                    conditions = []
-                    params = []
-
-                    if timelapse_id is not None:
-                        conditions.append("v.timelapse_id = %s")
-                        params.append(timelapse_id)
-
-                    if camera_id is not None:
-                        conditions.append("v.camera_id = %s")
-                        params.append(camera_id)
-
-                    if status is not None:
-                        conditions.append("v.status = %s")
-                        params.append(status)
-
-                    where_clause = (
-                        "WHERE " + " AND ".join(conditions) if conditions else ""
-                    )
-
-                    query = f"""
-                        SELECT
-                            v.*,
-                            t.name as timelapse_name,
-                            c.name as camera_name
-                        FROM videos v
-                        LEFT JOIN timelapses t ON v.timelapse_id = t.id
-                        LEFT JOIN cameras c ON v.camera_id = c.id
-                        {where_clause}
-                        ORDER BY v.created_at DESC
-                        LIMIT %s OFFSET %s
-                    """
-                    params.extend([limit, offset])
-
                     await cur.execute(query, params)
                     results = await cur.fetchall()
                     return [
@@ -165,6 +262,7 @@ class VideoOperations:
             logger.error(f"Error getting videos: {e}")
             return []
 
+    @cached_response(ttl_seconds=180, key_prefix="video")
     async def get_video_by_id(self, video_id: int) -> Optional[VideoWithDetails]:
         """
         Retrieve a specific video by ID.
@@ -231,6 +329,14 @@ class VideoOperations:
                 if results:
                     row = results[0]
                     created_video = self._row_to_video(row)
+
+                    # Clear related caches after successful creation
+                    await self._clear_video_caches(
+                        video_id=row.get("id"),
+                        timelapse_id=video_data.get("timelapse_id"),
+                        updated_at=utc_now(),
+                    )
+
                     return created_video
                 raise Exception("Failed to create video record")
 
@@ -248,9 +354,9 @@ class VideoOperations:
         Usage:
             video = await video_ops.update_video(1, {'title': 'Updated Title'})
         """
-        # Build dynamic update query
+        # Build dynamic update query safely
         update_fields = []
-        params = {"video_id": video_id}
+        params: Dict[str, Any] = {"video_id": video_id}
 
         # Dynamically determine updateable fields from Video model, excluding immutable fields
         updateable_fields = [
@@ -259,6 +365,7 @@ class VideoOperations:
             if field not in {"id", "timelapse_id", "created_at", "updated_at"}
         ]
 
+        # Validate field names against model to prevent SQL injection
         for field in updateable_fields:
             if field in video_data:
                 update_fields.append(f"{field} = %({field})s")
@@ -277,12 +384,15 @@ class VideoOperations:
                 }
             )
 
-        update_fields.append("updated_at = NOW()")
+        update_fields.append("updated_at = %(updated_at)s")
+        params["updated_at"] = utc_now()
 
+        # Use safe parameterized query construction
+        set_clause = ', '.join(update_fields)
         query = f"""
-        UPDATE videos 
-        SET {', '.join(update_fields)}
-        WHERE id = %(video_id)s 
+        UPDATE videos
+        SET {set_clause}
+        WHERE id = %(video_id)s
         RETURNING *
         """
 
@@ -293,6 +403,14 @@ class VideoOperations:
                 if results:
                     row = results[0]
                     updated_video = self._row_to_video(row)
+
+                    # Clear related caches after successful update
+                    await self._clear_video_caches(
+                        video_id=video_id,
+                        timelapse_id=row.get("timelapse_id"),
+                        updated_at=params.get("updated_at", utc_now()),
+                    )
+
                     return updated_video
                 raise Exception(f"Failed to update video {video_id}")
 
@@ -316,9 +434,12 @@ class VideoOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
+                    # Clear related caches after successful deletion
+                    await self._clear_video_caches(video_id=video_id)
                     return True
                 return False
 
+    @cached_response(ttl_seconds=60, key_prefix="video")
     async def get_video_generation_jobs(
         self, status: Optional[str] = None
     ) -> List[VideoGenerationJobWithDetails]:
@@ -335,28 +456,13 @@ class VideoOperations:
             jobs = await video_ops.get_video_generation_jobs()
             pending_jobs = await video_ops.get_video_generation_jobs('pending')
         """
-        base_query = """
-        SELECT 
-            vgj.*,
-            t.name as timelapse_name,
-            c.name as camera_name
-        FROM video_generation_jobs vgj
-        JOIN timelapses t ON vgj.timelapse_id = t.id
-        JOIN cameras c ON t.camera_id = c.id
-        """
+        # Use optimized query builder
+        query = VideoQueryBuilder.build_video_generation_jobs_query(status)
+        params = (status,) if status else ()
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                if status:
-                    query = (
-                        base_query
-                        + " WHERE vgj.status = %s ORDER BY vgj.created_at DESC"
-                    )
-                    await cur.execute(query, (status,))
-                else:
-                    query = base_query + " ORDER BY vgj.created_at DESC"
-                    await cur.execute(query)
-
+                await cur.execute(query, params)
                 results = await cur.fetchall()
                 return [
                     self._row_to_video_generation_job_with_details(row)
@@ -396,6 +502,12 @@ class VideoOperations:
                 results = await cur.fetchall()
                 if results:
                     job = self._row_to_video_generation_job(results[0])
+
+                    # Clear related caches after successful job creation
+                    await self._clear_video_caches(
+                        timelapse_id=job_data.get("timelapse_id"), updated_at=utc_now()
+                    )
+
                     return job
                 raise Exception("Failed to create video generation job")
 
@@ -422,28 +534,45 @@ class VideoOperations:
             job = await video_ops.update_video_generation_job_status(1, 'completed', video_path='/path/to/video.mp4')
         """
         query = """
-        UPDATE video_generation_jobs 
+        UPDATE video_generation_jobs
         SET status = %s,
             error_message = %s,
             video_path = %s,
-            started_at = CASE WHEN %s = 'processing' THEN NOW() ELSE started_at END,
-            completed_at = CASE WHEN %s IN ('completed', 'failed') THEN NOW() ELSE completed_at END,
-            updated_at = NOW()
-        WHERE id = %s 
+            started_at = CASE WHEN %s = 'processing' THEN %s ELSE started_at END,
+            completed_at = CASE WHEN %s IN ('completed', 'failed') THEN %s ELSE completed_at END,
+            updated_at = %s
+        WHERE id = %s
         RETURNING *
         """
 
+        now = utc_now()
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    query, (status, error_message, video_path, status, status, job_id)
+                    query,
+                    (
+                        status,
+                        error_message,
+                        video_path,
+                        status,
+                        now,
+                        status,
+                        now,
+                        now,
+                        job_id,
+                    ),
                 )
                 results = await cur.fetchall()
                 if results:
                     job = self._row_to_video_generation_job(results[0])
+
+                    # Clear related caches after successful job update
+                    await self._clear_video_caches(updated_at=now)
+
                     return job
                 raise Exception(f"Failed to update video generation job {job_id}")
 
+    @cached_response(ttl_seconds=240, key_prefix="video")
     async def get_video_statistics(
         self,
         timelapse_id: Optional[int] = None,
@@ -486,16 +615,19 @@ class VideoOperations:
 
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-            query = f"""
-                SELECT 
+            # Build safe query without string replacement
+            if where_clause:
+                query = """
+                SELECT
                     COUNT(*) as total_videos,
-                    SUM(file_size) as total_size_bytes,
-                    AVG(duration_seconds) as avg_duration_seconds,
-                    AVG(calculated_fps) as avg_fps,
+                    COALESCE(SUM(file_size), 0) as total_size_bytes,
+                    COALESCE(AVG(duration_seconds), 0) as avg_duration_seconds,
+                    COALESCE(AVG(calculated_fps), 0) as avg_fps,
                     MAX(created_at) as latest_video_at
                 FROM videos
-                {where_clause}
-            """
+                """ + f"\n        {where_clause}"
+            else:
+                query = VideoQueryBuilder.build_video_statistics_query()
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -512,6 +644,7 @@ class VideoOperations:
             logger.error(f"Error getting video statistics: {e}")
             return VideoStatistics()  # Return empty stats
 
+    @cached_response(ttl_seconds=300, key_prefix="video")
     async def search_videos(self, search_term: str, limit: int = 50) -> List[Video]:
         """
         Search videos by name.
@@ -542,20 +675,20 @@ class VideoOperations:
             return []
 
     async def recover_stuck_jobs(
-        self, 
+        self,
         max_processing_age_minutes: int = 30,
-        sse_broadcaster: Optional[Any] = None
+        sse_broadcaster: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Recover jobs stuck in 'processing' status by resetting them to 'pending'.
-        
+
         Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
-        
+
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status
-                                       before being considered stuck (default: 30 minutes)
+                                        before being considered stuck (default: 30 minutes)
             sse_broadcaster: Optional SSE broadcaster for real-time updates
-        
+
         Returns:
             Dictionary with comprehensive recovery statistics
         """
@@ -563,7 +696,7 @@ class VideoOperations:
             table_name="video_generation_jobs",
             max_processing_age_minutes=max_processing_age_minutes,
             job_type_name="video generation jobs",
-            sse_broadcaster=sse_broadcaster
+            sse_broadcaster=sse_broadcaster,
         )
 
 
@@ -651,16 +784,17 @@ class SyncVideoOperations:
         Usage:
             claimed = video_ops.claim_video_generation_job(1)
         """
+        now = utc_now()
         query = """
-        UPDATE video_generation_jobs 
+        UPDATE video_generation_jobs
         SET status = 'processing',
-            started_at = NOW(),
-            updated_at = NOW()
+            started_at = %s,
+            updated_at = %s
         WHERE id = %s AND status = 'pending'
         """
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (job_id,))
+                cur.execute(query, (now, now, job_id))
                 return cur.rowcount > 0
 
     def get_videos(
@@ -707,13 +841,12 @@ class SyncVideoOperations:
                         "WHERE " + " AND ".join(conditions) if conditions else ""
                     )
 
-                    query = f"""
-                        SELECT v.*
-                        FROM videos v
-                        {where_clause}
-                        ORDER BY v.created_at DESC
-                        LIMIT %s OFFSET %s
-                    """
+                    # Build safe query without f-string
+                    query_parts = ["SELECT v.* FROM videos v"]
+                    if where_clause:
+                        query_parts.append(where_clause)
+                    query_parts.extend(["ORDER BY v.created_at DESC", "LIMIT %s OFFSET %s"])
+                    query = "\n                        ".join(query_parts)
                     params.extend([limit, offset])
 
                     cur.execute(query, params)
@@ -825,11 +958,12 @@ class SyncVideoOperations:
         query = """
         DELETE FROM video_generation_jobs
         WHERE status IN ('completed', 'failed')
-        AND completed_at < NOW() - INTERVAL '%s days'
+        AND completed_at < %(current_time)s - %(days_to_keep)s * INTERVAL '1 day'
         """
+        current_time = utc_now()
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (days_to_keep,))
+                cur.execute(query, {"current_time": current_time, "days_to_keep": days_to_keep})
                 affected = cur.rowcount
 
                 if affected and affected > 0:
@@ -838,14 +972,13 @@ class SyncVideoOperations:
                 return affected or 0
 
     def create_video_generation_job(
-        self, job_data: Dict[str, Any], event_timestamp: Optional[str] = None
+        self, job_data: Dict[str, Any]
     ) -> Optional[int]:
         """
         Create a new video generation job (sync version).
 
         Args:
             job_data: Dictionary containing job configuration
-            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
 
         Returns:
             Job ID if successful, None if failed
@@ -882,14 +1015,13 @@ class SyncVideoOperations:
             return None
 
     def start_video_generation_job(
-        self, job_id: int, event_timestamp: Optional[str] = None
+        self, job_id: int
     ) -> bool:
         """
         Mark a video generation job as started.
 
         Args:
             job_id: ID of the job to start
-            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
 
         Returns:
             True if successful, False otherwise
@@ -897,16 +1029,17 @@ class SyncVideoOperations:
         Usage:
             success = video_ops.start_video_generation_job(123)
         """
+        now = utc_now()
         query = """
-        UPDATE video_generation_jobs 
-        SET status = 'processing', started_at = NOW()
+        UPDATE video_generation_jobs
+        SET status = 'processing', started_at = %s
         WHERE id = %s AND status = 'pending'
         """
 
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (job_id,))
+                    cur.execute(query, (now, job_id))
                     success = cur.rowcount > 0
                     if success:
                         conn.commit()
@@ -922,7 +1055,6 @@ class SyncVideoOperations:
         success: bool,
         error_message: Optional[str] = None,
         video_path: Optional[str] = None,
-        event_timestamp: Optional[str] = None,
     ) -> bool:
         """
         Mark a video generation job as completed.
@@ -932,7 +1064,6 @@ class SyncVideoOperations:
             success: Whether the job completed successfully
             error_message: Error message if job failed
             video_path: Path to generated video if successful
-            event_timestamp: ISO formatted timestamp for SSE events (provided by service layer)
 
         Returns:
             True if update successful, False otherwise
@@ -941,16 +1072,17 @@ class SyncVideoOperations:
             video_ops.complete_video_generation_job(123, True, video_path="/path/to/video.mp4")
         """
         status = "completed" if success else "failed"
+        now = utc_now()
         query = """
         UPDATE video_generation_jobs
-        SET status = %s, completed_at = NOW(), error_message = %s, video_path = %s
+        SET status = %s, completed_at = %s, error_message = %s, video_path = %s
         WHERE id = %s
         """
 
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (status, error_message, video_path, job_id))
+                    cur.execute(query, (status, now, error_message, video_path, job_id))
                     update_success = cur.rowcount > 0
                     if update_success:
                         conn.commit()
@@ -1103,12 +1235,12 @@ class SyncVideoOperations:
         try:
             query = """
                 UPDATE video_generation_jobs
-                SET status = 'cancelled', completed_at = NOW()
+                SET status = 'cancelled', completed_at = %s
                 WHERE timelapse_id = %s AND status = 'pending'
             """
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (timelapse_id,))
+                    cur.execute(query, (utc_now(), timelapse_id))
                     return cur.rowcount or 0
         except Exception as e:
             logger.error(
@@ -1121,13 +1253,13 @@ class SyncVideoOperations:
         try:
             query = """
                 UPDATE video_generation_jobs j
-                SET status = 'cancelled', completed_at = NOW()
+                SET status = 'cancelled', completed_at = %s
                 FROM timelapses t
                 WHERE j.timelapse_id = t.id AND t.camera_id = %s AND j.status = 'pending'
             """
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (camera_id,))
+                    cur.execute(query, (utc_now(), camera_id))
                     return cur.rowcount or 0
         except Exception as e:
             logger.error(f"Error cancelling video jobs for camera {camera_id}: {e}")
@@ -1136,10 +1268,10 @@ class SyncVideoOperations:
     def cancel_pending_jobs(self) -> int:
         """Cancel all pending video jobs."""
         try:
-            query = "UPDATE video_generation_jobs SET status = 'cancelled', completed_at = NOW() WHERE status = 'pending'"
+            query = "UPDATE video_generation_jobs SET status = 'cancelled', completed_at = %s WHERE status = 'pending'"
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query)
+                    cur.execute(query, (utc_now(),))
                     return cur.rowcount or 0
         except Exception as e:
             logger.error(f"Error cancelling all pending video jobs: {e}")
@@ -1151,12 +1283,12 @@ class SyncVideoOperations:
             query = """
                 SELECT status, COUNT(*) as count
                 FROM video_generation_jobs
-                WHERE created_at > NOW() - INTERVAL '24 hours'
+                WHERE created_at > %s - INTERVAL '24 hours'
                 GROUP BY status
             """
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query)
+                    cur.execute(query, (utc_now(),))
                     results = cur.fetchall()
 
             stats = {
@@ -1255,12 +1387,12 @@ class SyncVideoOperations:
         try:
             query = """
             UPDATE video_generation_jobs
-            SET status = %s, updated_at = NOW()
+            SET status = %s, updated_at = %s
             WHERE id = %s
             """
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, (status, job_id))
+                    cur.execute(query, (status, utc_now(), job_id))
                     return cur.rowcount > 0
         except Exception as e:
             logger.error(f"Error updating video generation job status: {e}")
@@ -1278,10 +1410,10 @@ class SyncVideoOperations:
         """
         try:
             query = """
-            SELECT * FROM videos 
-            WHERE timelapse_id = %s 
+            SELECT * FROM videos
+            WHERE timelapse_id = %s
             AND trigger_type = 'scheduled'
-            ORDER BY created_at DESC 
+            ORDER BY created_at DESC
             LIMIT 1
             """
             with self.db.get_connection() as conn:
@@ -1309,10 +1441,10 @@ class SyncVideoOperations:
         """
         try:
             query = """
-            SELECT * FROM videos 
-            WHERE timelapse_id = %s 
+            SELECT * FROM videos
+            WHERE timelapse_id = %s
             AND trigger_type = 'milestone'
-            ORDER BY created_at DESC 
+            ORDER BY created_at DESC
             LIMIT 1
             """
             with self.db.get_connection() as conn:
@@ -1329,20 +1461,20 @@ class SyncVideoOperations:
             return None
 
     def recover_stuck_jobs(
-        self, 
+        self,
         max_processing_age_minutes: int = 30,
-        sse_broadcaster: Optional[Any] = None
+        sse_broadcaster: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Recover video generation jobs stuck in 'processing' status by resetting them to 'pending' (sync version).
-        
+
         Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
-        
+
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status
-                                       before being considered stuck (default: 30 minutes)
+                                        before being considered stuck (default: 30 minutes)
             sse_broadcaster: Optional SSE broadcaster for real-time updates
-        
+
         Returns:
             Dictionary with comprehensive recovery statistics
         """
@@ -1350,31 +1482,31 @@ class SyncVideoOperations:
             table_name="video_generation_jobs",
             max_processing_age_minutes=max_processing_age_minutes,
             job_type_name="video generation jobs",
-            sse_broadcaster=sse_broadcaster
+            sse_broadcaster=sse_broadcaster,
         )
 
     def get_all_video_file_paths(self) -> set:
         """
         Get all video file paths referenced in the videos table.
-        
+
         Returns:
             Set of all video file paths
         """
         try:
             file_paths = set()
             query = "SELECT file_path FROM videos WHERE file_path IS NOT NULL"
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     rows = cur.fetchall()
-                    
+
                     for row in rows:
                         if row.get("file_path"):
                             file_paths.add(row["file_path"])
-                            
+
             return file_paths
-            
+
         except Exception as e:
             logger.error(f"Error getting video file paths: {e}")
             return set()
