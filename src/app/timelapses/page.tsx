@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useTimelapseLibrary } from "@/hooks/use-timelapse-library"
 import { useMultiselect } from "@/hooks/use-multiselect"
+import { useBatchOverlayOperations } from "@/hooks/use-batch-overlay-operations"
 import { Card } from "@/components/ui/card"
 import { StatsDashboard } from "@/components/timelapse-library/stats-dashboard"
 import { LibraryHeader } from "@/components/timelapse-library/library-header"
@@ -46,6 +47,9 @@ export default function TimelapsesLibraryPage() {
     hasSelection
   } = useMultiselect<number>()
 
+  // Batch overlay operations
+  const { isProcessing: isProcessingOverlays, reprocessOverlays } = useBatchOverlayOperations()
+
   const handleViewModeChange = (mode: ViewMode) => {
     setViewMode(mode)
   }
@@ -57,6 +61,32 @@ export default function TimelapsesLibraryPage() {
 
   const handleStarredFilter = (starred: boolean) => {
     setStarredOnly(starred)
+  }
+
+  const handleBulkAction = async (action: string, selectedIds?: number[]) => {
+    if (!selectedIds || selectedIds.length === 0) {
+      return
+    }
+
+    switch (action) {
+      case 'regenerate-overlays':
+        await reprocessOverlays(selectedIds)
+        break
+      case 'delete':
+        // TODO: Implement bulk delete
+        console.log('Bulk delete:', selectedIds)
+        break
+      case 'star':
+        // TODO: Implement bulk star
+        console.log('Bulk star:', selectedIds)
+        break
+      case 'download':
+        // TODO: Implement bulk download
+        console.log('Bulk download:', selectedIds)
+        break
+      default:
+        console.log(`Unknown bulk action: ${action}`, selectedIds)
+    }
   }
 
   if (loading) {
@@ -186,10 +216,8 @@ export default function TimelapsesLibraryPage() {
         selectedIds={selectedIds}
         selectedCount={selectedIds.length}
         onClearSelection={clearSelection}
-        onBulkAction={(action) => {
-          // TODO: Implement bulk actions
-          console.log(`Bulk action: ${action} on`, selectedIds)
-        }}
+        onBulkAction={handleBulkAction}
+        isProcessingOverlays={isProcessingOverlays}
       />
     </div>
   )

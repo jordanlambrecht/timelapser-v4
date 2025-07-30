@@ -8,12 +8,12 @@ instead of custom generators.
 
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from datetime import datetime
 from loguru import logger
 
 from ....database.core import SyncDatabase, AsyncDatabase
 from ....database.overlay_operations import SyncOverlayOperations, OverlayOperations
 from ....database.image_operations import SyncImageOperations, AsyncImageOperations
+from ....database.overlay_job_operations import SyncOverlayJobOperations
 from ....models.overlay_model import (
     OverlayConfiguration,
     OverlayPreset,
@@ -21,11 +21,11 @@ from ....models.overlay_model import (
     OverlayPreviewRequest,
     OverlayPreviewResponse,
     GlobalOverlayOptions,
+    OverlayJobStatistics,
 )
 from ....models.image_model import Image as ImageModel
 from ....utils.time_utils import (
     utc_now,
-    get_timezone_aware_timestamp_sync,
     utc_timestamp,
 )
 from ....utils.file_helpers import (
@@ -35,7 +35,6 @@ from ....utils.file_helpers import (
 )
 from ..utils.overlay_utils import (
     OverlayRenderer,
-    create_overlay_context,
     validate_overlay_configuration,
 )
 from ..utils.overlay_helpers import OverlaySettingsResolver
@@ -68,6 +67,7 @@ class SyncOverlayIntegrationService:
         self.db = db
         self.overlay_ops = SyncOverlayOperations(db)
         self.image_ops = SyncImageOperations(db)
+        self.overlay_job_ops = SyncOverlayJobOperations(db)
         self.settings_service = settings_service
         self.weather_manager = weather_manager
         self.sse_ops = sse_ops
@@ -88,8 +88,8 @@ class SyncOverlayIntegrationService:
         try:
             logger.info(f"🎨 Starting overlay generation for image {image_id}")
 
-            # Create SSE event for overlay generation start
-            if self.sse_ops:
+            # Create SSE event for overlay generation start (only for manual/priority jobs)
+            if self.sse_ops and force_regenerate:
                 try:
                     self.sse_ops.create_event(
                         event_type="overlay_generation_started",
@@ -127,44 +127,20 @@ class SyncOverlayIntegrationService:
                 logger.debug(
                     f"✅ Overlay already exists for image {image_id}, skipping"
                 )
-                # Create SSE event for skipped
-                if self.sse_ops:
-                    try:
-                        self.sse_ops.create_event(
-                            event_type="overlay_generation_skipped",
-                            event_data={
-                                "image_id": image_id,
-                                "timelapse_id": image.timelapse_id,
-                                "reason": "overlay_exists",
-                                "timestamp": utc_timestamp(),
-                            },
-                        )
-                    except Exception:
-                        pass
+                # Skip SSE event for routine skips to reduce noise
                 return True
 
             # Get timelapse overlay configuration
-            timelapse_overlay = self.overlay_ops.get_timelapse_overlay(
-                image.timelapse_id
+            timelapse_overlay = (
+                self.overlay_ops.get_timelapse_overlay(image.timelapse_id)
+                if image.timelapse_id
+                else None
             )
             if not timelapse_overlay or not timelapse_overlay.enabled:
                 logger.debug(
                     f"⚪ No overlay configuration found for timelapse {image.timelapse_id}"
                 )
-                # Create SSE event for skipped (no config)
-                if self.sse_ops:
-                    try:
-                        self.sse_ops.create_event(
-                            event_type="overlay_generation_skipped",
-                            event_data={
-                                "image_id": image_id,
-                                "timelapse_id": image.timelapse_id,
-                                "reason": "no_configuration",
-                                "timestamp": utc_timestamp(),
-                            },
-                        )
-                    except Exception:
-                        pass
+                # Skip SSE event for configuration issues to reduce noise
                 return False
 
             # Resolve effective configuration
@@ -174,7 +150,9 @@ class SyncOverlayIntegrationService:
             )
 
             # Validate configuration
-            if not validate_overlay_configuration(effective_config):
+            if not effective_config or not validate_overlay_configuration(
+                effective_config
+            ):
                 logger.warning(f"⚠️ Invalid overlay configuration for image {image_id}")
                 # Create SSE event for validation error
                 if self.sse_ops:
@@ -194,16 +172,16 @@ class SyncOverlayIntegrationService:
 
             # Generate overlay
             logger.debug("🎨 Rendering overlay for image")
-            success = self._render_overlay_for_image(image, effective_config)
+            success = (
+                self._render_overlay_for_image(image, effective_config)
+                if effective_config
+                else False
+            )
 
             if success:
                 # Update image record with overlay path
                 overlay_path = self._get_overlay_path(image)
-                overlay_updated_at = (
-                    get_timezone_aware_timestamp_sync(self.settings_service)
-                    if self.settings_service
-                    else utc_now()
-                )
+                overlay_updated_at = utc_now()
 
                 self.image_ops.update_image_overlay_status(
                     image_id=image_id,
@@ -222,7 +200,7 @@ class SyncOverlayIntegrationService:
                                 "timelapse_id": image.timelapse_id,
                                 "camera_id": image.camera_id,
                                 "overlay_path": str(overlay_path),
-                                "timestamp": overlay_updated_at.isoformat(),
+                                "timestamp": utc_timestamp(),
                                 "force_regenerate": force_regenerate,
                             },
                         )
@@ -429,6 +407,143 @@ class SyncOverlayIntegrationService:
                 error_message=error_msg,
             )
 
+    def generate_overlay_for_multiple_images(
+        self, image_ids: List[int], force_regenerate: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Generate overlays for multiple images.
+
+        Args:
+            image_ids: List of image IDs to generate overlays for
+            force_regenerate: Whether to regenerate even if overlay already exists
+
+        Returns:
+            Dictionary with success/failure counts and details
+        """
+        try:
+            logger.info(
+                f"🎨 Starting batch overlay generation for {len(image_ids)} images"
+            )
+
+            results = {
+                "total_images": len(image_ids),
+                "successful": 0,
+                "failed": 0,
+                "skipped": 0,
+                "errors": [],
+            }
+
+            for image_id in image_ids:
+                try:
+                    success = self.generate_overlay_for_image(
+                        image_id, force_regenerate
+                    )
+                    if success:
+                        results["successful"] += 1
+                    else:
+                        results["failed"] += 1
+                        results["errors"].append(
+                            f"Failed to generate overlay for image {image_id}"
+                        )
+
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append(
+                        f"Error processing image {image_id}: {str(e)}"
+                    )
+                    logger.error(
+                        f"Error in batch overlay generation for image {image_id}: {e}"
+                    )
+
+            logger.info(
+                f"✅ Batch overlay generation completed: "
+                f"{results['successful']} successful, {results['failed']} failed"
+            )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Failed batch overlay generation: {e}")
+            return {
+                "total_images": len(image_ids),
+                "successful": 0,
+                "failed": len(image_ids),
+                "skipped": 0,
+                "errors": [f"Batch operation failed: {str(e)}"],
+            }
+
+    def queue_overlay_jobs_for_images(
+        self, image_ids: List[int], priority: str = "medium"
+    ) -> Dict[str, Any]:
+        """
+        Queue overlay generation jobs for multiple images.
+
+        Args:
+            image_ids: List of image IDs to queue jobs for
+            priority: Job priority ("high", "medium", "low")
+
+        Returns:
+            Dictionary with job creation results
+        """
+        try:
+            from ....models.overlay_model import OverlayGenerationJobCreate
+            from ....enums import OverlayJobPriority, OverlayJobStatus, OverlayJobType
+
+            logger.info(f"📋 Queuing overlay jobs for {len(image_ids)} images")
+
+            results = {
+                "total_images": len(image_ids),
+                "jobs_created": 0,
+                "failed": 0,
+                "job_ids": [],
+                "errors": [],
+            }
+
+            for image_id in image_ids:
+                try:
+                    # Create job data
+                    job_data = OverlayGenerationJobCreate(
+                        image_id=image_id,
+                        priority=OverlayJobPriority(priority),
+                        status=OverlayJobStatus.PENDING,
+                        job_type=OverlayJobType.SINGLE,
+                    )
+
+                    # Create job using overlay job operations
+                    job = self.overlay_job_ops.create_job(job_data)
+                    if job:
+                        results["jobs_created"] += 1
+                        results["job_ids"].append(job.id)
+                    else:
+                        results["failed"] += 1
+                        results["errors"].append(
+                            f"Failed to create job for image {image_id}"
+                        )
+
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append(
+                        f"Error creating job for image {image_id}: {str(e)}"
+                    )
+                    logger.error(f"Error queuing job for image {image_id}: {e}")
+
+            logger.info(
+                f"✅ Job queuing completed: "
+                f"{results['jobs_created']} jobs created, {results['failed']} failed"
+            )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Failed to queue overlay jobs: {e}")
+            return {
+                "total_images": len(image_ids),
+                "jobs_created": 0,
+                "failed": len(image_ids),
+                "job_ids": [],
+                "errors": [f"Job queuing failed: {str(e)}"],
+            }
+
     def get_effective_overlay_config(
         self, timelapse_id: int
     ) -> Optional[OverlayConfiguration]:
@@ -470,7 +585,7 @@ class SyncOverlayIntegrationService:
 
             # Get overlay output path
             overlay_path = self._get_overlay_path(image)
-            ensure_directory_exists(overlay_path.parent)
+            ensure_directory_exists(str(overlay_path.parent))
 
             # Create overlay context
             context_data = self._create_image_context(image)
@@ -496,15 +611,11 @@ class SyncOverlayIntegrationService:
 
         try:
             # Create mock context for preview
-            preview_timestamp = (
-                get_timezone_aware_timestamp_sync(self.settings_service)
-                if self.settings_service
-                else utc_now()
-            )
+            preview_timestamp = utc_now()
 
             # Create preview output path
             preview_dir = test_image_path.parent / "previews"
-            ensure_directory_exists(preview_dir)
+            ensure_directory_exists(str(preview_dir))
 
             preview_filename = (
                 f"preview_{preview_timestamp.strftime('%Y%m%d_%H%M%S')}.png"
@@ -578,7 +689,7 @@ class SyncOverlayIntegrationService:
         return get_overlay_path_for_image(
             image_path=image.file_path,
             camera_id=image.camera_id,
-            timelapse_id=image.timelapse_id,
+            timelapse_id=image.timelapse_id or 0,
             base_directory=base_dir,
         )
 
@@ -586,45 +697,53 @@ class SyncOverlayIntegrationService:
         """Create context data for overlay rendering from image metadata."""
 
         try:
-            # Base context from image
-            image_data = {
-                "captured_at": image.captured_at,
+            # Create context with actual model objects and complete data
+            context_data = {
+                # Pass actual image model object
+                "image": image,
+                "image_id": image.id,
+                "camera_id": image.camera_id,
+                "timelapse_id": image.timelapse_id,
+                "file_path": image.file_path,
+                "timestamp": image.captured_at,
                 "frame_number": getattr(image, "frame_number", 0),
-            }
-
-            # Timelapse context (simplified for now)
-            timelapse_data = {
-                "name": f"Timelapse {image.timelapse_id}",
+                # Timelapse info (will be populated by renderer if timelapse object available)
+                "timelapse_name": f"Timelapse {image.timelapse_id}",
                 "day_number": 1,  # This would be calculated from timelapse start date
+                # Settings service for timezone handling in generators
+                "settings_service": self.settings_service,
             }
 
-            # Weather context - use historical data if available, otherwise current weather
-            weather_data = None
+            # Add weather data if available from image's historical weather
             if (
                 hasattr(image, "weather_temperature")
                 and image.weather_temperature is not None
             ):
                 # Use historical weather data stored with the image
-                weather_data = {
-                    "temperature": image.weather_temperature,
-                    "conditions": image.weather_conditions or "",
-                    "icon": image.weather_icon or "",
-                    "fetched_at": image.weather_fetched_at,
-                }
+                context_data.update(
+                    {
+                        "temperature": image.weather_temperature,
+                        "weather_conditions": image.weather_conditions or "",
+                        "temperature_unit": "F",  # Default, could be from settings
+                    }
+                )
                 logger.debug(
-                    f"Using historical weather data for image {image.id}: {weather_data}"
+                    f"Using historical weather data for image {image.id}: temp={image.weather_temperature}"
                 )
             elif self.weather_manager:
                 # Fallback to current weather data
                 try:
                     current_weather = self.weather_manager.get_current_weather()
                     if current_weather:
-                        weather_data = {
-                            "temperature": current_weather.get("temperature"),
-                            "conditions": current_weather.get("conditions", ""),
-                            "icon": current_weather.get("icon", ""),
-                            "fetched_at": utc_now(),
-                        }
+                        context_data.update(
+                            {
+                                "temperature": current_weather.get("temperature"),
+                                "weather_conditions": current_weather.get(
+                                    "conditions", ""
+                                ),
+                                "temperature_unit": "F",  # Default, could be from settings
+                            }
+                        )
                         logger.debug(
                             f"Using current weather data for image {image.id} (no historical data)"
                         )
@@ -633,7 +752,7 @@ class SyncOverlayIntegrationService:
                         f"Failed to get current weather data for overlay: {e}"
                     )
 
-            return create_overlay_context(image_data, timelapse_data, weather_data)
+            return context_data
 
         except Exception as e:
             logger.error(f"Failed to create image context for overlay: {e}")
@@ -727,7 +846,8 @@ class SyncOverlayIntegrationService:
             db_error = None
             try:
                 # Test database connection with a simple query
-                test_result = self.overlay_ops.get_preset_count() is not None
+                all_presets = self.overlay_ops.get_all_presets()
+                test_result = len(all_presets) is not None if all_presets else False
                 db_healthy = test_result
                 logger.debug(
                     f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}"
@@ -868,12 +988,11 @@ class SyncOverlayIntegrationService:
 
             # Get basic job queue statistics
             job_stats = None
-            if hasattr(self, "overlay_job_ops"):
-                try:
-                    # Use job operations directly for sync context
-                    job_stats = self.overlay_job_ops.get_job_statistics()
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to get job statistics: {e}")
+            try:
+                # Use job operations directly for sync context
+                job_stats = self.overlay_job_ops.get_job_statistics()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to get job statistics: {e}")
 
             # Get image overlay statistics from database
             overlay_image_stats = self._get_image_overlay_stats()
@@ -1040,7 +1159,7 @@ class SyncOverlayIntegrationService:
             return {"error": str(e)}
 
     def _calculate_performance_metrics(
-        self, job_stats: Optional["OverlayJobStatistics"], image_stats: Dict[str, Any]
+        self, job_stats: Optional[OverlayJobStatistics], image_stats: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Calculate derived performance metrics from collected statistics."""
         try:
@@ -1192,14 +1311,60 @@ class OverlayIntegrationService:
         self, timelapse_overlay: TimelapseOverlay
     ) -> Optional[OverlayConfiguration]:
         """Async version of effective config resolution."""
-        # For now, delegate to sync version since the logic is complex
-        # TODO: Implement fully async version when needed
-        sync_service = SyncOverlayIntegrationService(
-            None, self.settings_service, self.weather_manager, self.sse_ops
-        )
-        return sync_service._get_effective_overlay_config_for_timelapse(
-            timelapse_overlay
-        )
+        try:
+            # Start with the timelapse's own overlay configuration
+            base_config = timelapse_overlay.overlay_config
+
+            # If a preset is specified, use preset as base and apply timelapse overrides
+            if timelapse_overlay.preset_id:
+                preset = await self.overlay_ops.get_preset_by_id(
+                    timelapse_overlay.preset_id
+                )
+                if preset and preset.overlay_config:
+                    # Use preset configuration as base
+                    preset_config = preset.overlay_config
+
+                    # Create merged configuration
+                    merged_positions = preset_config.overlayPositions.copy()
+
+                    # Apply timelapse-specific position overrides
+                    if base_config and base_config.overlayPositions:
+                        merged_positions.update(base_config.overlayPositions)
+
+                    # Apply timelapse-specific global option overrides
+                    merged_global_options = preset_config.globalOptions
+                    if base_config and base_config.globalOptions:
+                        # Override global options with timelapse-specific values
+                        global_options_dict = merged_global_options.model_dump()
+                        timelapse_global_dict = base_config.globalOptions.model_dump()
+
+                        # Only override non-default values from timelapse config
+                        for key, value in timelapse_global_dict.items():
+                            if value is not None:
+                                global_options_dict[key] = value
+
+                        from ....models.overlay_model import GlobalOverlayOptions
+
+                        merged_global_options = GlobalOverlayOptions(
+                            **global_options_dict
+                        )
+
+                    # Create final merged configuration
+                    return OverlayConfiguration(
+                        overlayPositions=merged_positions,
+                        globalOptions=merged_global_options,
+                    )
+                else:
+                    logger.warning(
+                        f"Preset {timelapse_overlay.preset_id} not found, using timelapse config only"
+                    )
+
+            # Return timelapse configuration if no preset or preset not found
+            return base_config if base_config else None
+
+        except Exception as e:
+            logger.error(f"Failed to resolve effective overlay configuration: {e}")
+            return None
 
     # ================================================================
     # PRESET MANAGEMENT METHODS (Required by Router)
@@ -1282,25 +1447,265 @@ class OverlayIntegrationService:
     # ================================================================
 
     async def validate_overlay_configuration(self, config_dict: Dict[str, Any]) -> bool:
-        """Validate overlay configuration."""
+        """Validate overlay configuration by converting dict to OverlayConfiguration."""
         try:
-            from ..utils.overlay_utils import validate_overlay_configuration
+            # Convert dict to OverlayConfiguration model for proper validation
+            config = OverlayConfiguration(**config_dict)
 
-            return validate_overlay_configuration(config_dict)
+            # Use the overlay utils validation function
+            return validate_overlay_configuration(config)
+
+        except (ValueError, TypeError, KeyError) as e:
+            logger.warning(f"Invalid overlay configuration format: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to validate overlay configuration: {e}")
             return False
 
-    async def generate_overlay_preview(self, preview_request) -> Optional:
-        """Generate overlay preview."""
-        # TODO: Implement async preview generation
-        # For now, return placeholder
-        logger.warning("🚧 Async overlay preview generation not yet implemented")
-        return None
+    async def generate_overlay_preview(
+        self, preview_request: OverlayPreviewRequest
+    ) -> Optional[OverlayPreviewResponse]:
+        """
+        Generate overlay preview for UI display (async version).
+
+        Args:
+            preview_request: Preview generation request with camera and configuration
+
+        Returns:
+            Preview response with generated image paths
+        """
+        try:
+            logger.info(
+                f"🎨 Starting async overlay preview generation for camera {preview_request.camera_id}"
+            )
+
+            # Create SSE event for preview generation start
+            if self.sse_ops:
+                try:
+                    self.sse_ops.create_event(
+                        event_type="overlay_preview_started",
+                        event_data={
+                            "camera_id": preview_request.camera_id,
+                            "timestamp": utc_timestamp(),
+                        },
+                    )
+                    logger.debug("📡 SSE event: overlay_preview_started")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to create SSE preview start event: {e}")
+
+            # Capture test image from camera (async version)
+            test_image_path = await self._capture_test_image_async(
+                preview_request.camera_id
+            )
+            if not test_image_path:
+                error_msg = "Failed to capture test image from camera"
+                logger.error(f"❌ {error_msg} for camera {preview_request.camera_id}")
+                # Create SSE event for error
+                if self.sse_ops:
+                    try:
+                        self.sse_ops.create_event(
+                            event_type="overlay_preview_failed",
+                            event_data={
+                                "camera_id": preview_request.camera_id,
+                                "error": error_msg,
+                                "timestamp": utc_timestamp(),
+                            },
+                        )
+                    except Exception:
+                        pass
+                return OverlayPreviewResponse(
+                    image_path="",
+                    test_image_path="",
+                    success=False,
+                    error_message=error_msg,
+                )
+
+            # Validate configuration
+            if not validate_overlay_configuration(preview_request.overlay_config):
+                error_msg = "Invalid overlay configuration"
+                logger.warning(f"⚠️ {error_msg} for camera {preview_request.camera_id}")
+                # Create SSE event for validation error
+                if self.sse_ops:
+                    try:
+                        self.sse_ops.create_event(
+                            event_type="overlay_preview_failed",
+                            event_data={
+                                "camera_id": preview_request.camera_id,
+                                "error": error_msg,
+                                "test_image_path": str(test_image_path),
+                                "timestamp": utc_timestamp(),
+                            },
+                        )
+                    except Exception:
+                        pass
+                return OverlayPreviewResponse(
+                    image_path="",
+                    test_image_path=str(test_image_path),
+                    success=False,
+                    error_message=error_msg,
+                )
+
+            # Generate preview overlay (using async rendering)
+            logger.debug("🎨 Rendering preview overlay")
+            preview_path = await self._generate_preview_overlay_async(
+                test_image_path, preview_request.overlay_config
+            )
+
+            if preview_path:
+                # Create SSE event for successful preview generation
+                if self.sse_ops:
+                    try:
+                        self.sse_ops.create_event(
+                            event_type="overlay_preview_generated",
+                            event_data={
+                                "camera_id": preview_request.camera_id,
+                                "preview_path": str(preview_path),
+                                "test_image_path": str(test_image_path),
+                                "timestamp": utc_timestamp(),
+                            },
+                        )
+                        logger.debug("📡 SSE event: overlay_preview_generated")
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Failed to create SSE preview success event: {e}"
+                        )
+
+                logger.info(
+                    f"✅ Successfully generated async overlay preview for camera {preview_request.camera_id}"
+                )
+                return OverlayPreviewResponse(
+                    image_path=str(preview_path),
+                    test_image_path=str(test_image_path),
+                    success=True,
+                    error_message=None,
+                )
+            else:
+                error_msg = "Failed to generate overlay preview"
+                logger.error(f"❌ {error_msg} for camera {preview_request.camera_id}")
+                # Create SSE event for generation failure
+                if self.sse_ops:
+                    try:
+                        self.sse_ops.create_event(
+                            event_type="overlay_preview_failed",
+                            event_data={
+                                "camera_id": preview_request.camera_id,
+                                "error": error_msg,
+                                "test_image_path": str(test_image_path),
+                                "timestamp": utc_timestamp(),
+                            },
+                        )
+                    except Exception:
+                        pass
+                return OverlayPreviewResponse(
+                    image_path="",
+                    test_image_path=str(test_image_path),
+                    success=False,
+                    error_message=error_msg,
+                )
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ Failed to generate async overlay preview: {error_msg}")
+            # Create SSE event for unexpected error
+            if self.sse_ops:
+                try:
+                    self.sse_ops.create_event(
+                        event_type="overlay_preview_failed",
+                        event_data={
+                            "camera_id": preview_request.camera_id,
+                            "error": error_msg,
+                            "timestamp": utc_timestamp(),
+                        },
+                    )
+                except Exception:
+                    pass
+            return OverlayPreviewResponse(
+                image_path="",
+                test_image_path="",
+                success=False,
+                error_message=error_msg,
+            )
 
     async def capture_fresh_photo_for_preview(self, camera_id: int) -> Optional[str]:
         """Capture fresh photo for overlay preview."""
-        # TODO: Implement async fresh photo capture
-        # For now, return placeholder
-        logger.warning("🚧 Async fresh photo capture not yet implemented")
-        return None
+        # TODO: Implement async fresh photo capture using camera service
+        # For now, delegate to async test image capture
+        logger.info(f"📸 Capturing fresh photo for preview from camera {camera_id}")
+        test_image_path = await self._capture_test_image_async(camera_id)
+        return str(test_image_path) if test_image_path else None
+
+    async def _capture_test_image_async(self, camera_id: int) -> Optional[Path]:
+        """Capture a test image from the camera for preview generation (async version)."""
+
+        try:
+            # For async overlay service, use the most recent image from the camera
+            # This avoids the need for complex async RTSP capture in preview context
+
+            # Get images for this camera and use the most recent one
+            camera_images = await self.image_ops.get_images_by_camera(camera_id)
+            recent_image = camera_images[0] if camera_images else None
+
+            if recent_image and recent_image.file_path:
+                # Use the most recent captured image as test image
+                image_path = validate_file_path(
+                    recent_image.file_path,
+                    base_directory=None,  # Use default data directory
+                    must_exist=True,
+                )
+                logger.info(
+                    f"Using recent image as test image for camera {camera_id}: {image_path}"
+                )
+                return image_path
+            else:
+                # If no recent image available, create a placeholder for overlay preview
+                # This can happen when camera hasn't captured any images yet
+                logger.warning(
+                    f"No recent images found for camera {camera_id}, cannot generate overlay preview"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to capture test image for camera {camera_id}: {e}")
+            return None
+
+    async def _generate_preview_overlay_async(
+        self, test_image_path: Path, config: OverlayConfiguration
+    ) -> Optional[Path]:
+        """Generate preview overlay on test image (async version)."""
+
+        try:
+            # Create mock context for preview
+            preview_timestamp = utc_now()
+
+            # Create preview output path
+            preview_dir = test_image_path.parent / "previews"
+            ensure_directory_exists(str(preview_dir))
+
+            preview_filename = (
+                f"preview_{preview_timestamp.strftime('%Y%m%d_%H%M%S')}.png"
+            )
+            preview_path = preview_dir / preview_filename
+            context_data = {
+                "timestamp": preview_timestamp,
+                "frame_number": 123,
+                "day_number": 5,
+                "timelapse_name": "Preview Timelapse",
+                "temperature": 72,
+                "weather_conditions": "Partly Cloudy",
+            }
+
+            # Use async overlay rendering with template caching
+            from ..utils.overlay_utils import render_overlay_with_caching
+
+            success = await render_overlay_with_caching(
+                config=config,
+                base_image_path=str(test_image_path),
+                output_path=str(preview_path),
+                context_data=context_data,
+            )
+
+            return preview_path if success else None
+
+        except Exception as e:
+            logger.error(f"Failed to generate async preview overlay: {e}")
+            return None

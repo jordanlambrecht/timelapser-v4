@@ -3,13 +3,15 @@
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Camera, Calendar, ImageIcon, Video, Star, Settings, Download, Trash2, Play, Clock } from "lucide-react"
+import { ArrowLeft, Camera, Calendar, ImageIcon, Video, Star, Settings, Download, Trash2, Play, Clock, Layers, Info } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useTimelapseDetails } from "@/hooks/use-timelapse-details"
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/time-utils"
 import { toast } from "@/lib/toast"
+import { TimelapseOverlaySettings } from "@/components/timelapse-overlay-settings"
 
 export default function TimelapseDetailPage() {
   const params = useParams()
@@ -27,6 +29,7 @@ export default function TimelapseDetailPage() {
   } = useTimelapseDetails(timelapseId)
 
   const [isStarred, setIsStarred] = useState(false)
+  const [activeTab, setActiveTab] = useState("overview")
 
   useEffect(() => {
     if (timelapse) {
@@ -316,97 +319,143 @@ export default function TimelapseDetailPage() {
         </div>
       </div>
 
-      {/* Content Sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Images */}
-        <div className="glass p-6 rounded-xl border border-purple-muted/30">
-          <div className="flex items-center mb-4">
-            <ImageIcon className="h-5 w-5 mr-2 text-cyan" />
-            <h3 className="text-lg font-semibold text-white">Recent Images</h3>
-          </div>
-          {images && images.length > 0 ? (
-            <div className="grid grid-cols-3 gap-3">
-              {images.slice(0, 6).map((image) => (
-                <div key={image.id} className="aspect-video bg-black/40 rounded-lg border border-purple-muted/20 overflow-hidden hover:border-cyan/40 transition-colors">
-                  {/* TODO: Add image thumbnail component */}
-                  <div className="w-full h-full flex items-center justify-center text-grey-light/40">
-                    <ImageIcon className="h-8 w-8" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <ImageIcon className="h-12 w-12 mx-auto text-grey-light/40 mb-3" />
-              <p className="text-grey-light/60">No images captured yet</p>
-            </div>
-          )}
-        </div>
+      {/* Tabbed Content */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="grid w-full grid-cols-3 bg-gray-900/50 border border-gray-700">
+          <TabsTrigger 
+            value="overview" 
+            className="data-[state=active]:bg-purple/20 data-[state=active]:text-purple-light"
+          >
+            <Info className="w-4 h-4 mr-2" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger 
+            value="overlays"
+            className="data-[state=active]:bg-purple/20 data-[state=active]:text-purple-light"
+          >
+            <Layers className="w-4 h-4 mr-2" />
+            Overlays
+          </TabsTrigger>
+          <TabsTrigger 
+            value="settings"
+            className="data-[state=active]:bg-purple/20 data-[state=active]:text-purple-light"
+          >
+            <Settings className="w-4 h-4 mr-2" />
+            Settings
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Generated Videos */}
-        <div className="glass p-6 rounded-xl border border-purple-muted/30">
-          <div className="flex items-center mb-4">
-            <Video className="h-5 w-5 mr-2 text-pink" />
-            <h3 className="text-lg font-semibold text-white">Generated Videos</h3>
-          </div>
-          {videos && videos.length > 0 ? (
-            <div className="space-y-3">
-              {videos.slice(0, 5).map((video) => (
-                <div key={video.id} className="flex items-center justify-between p-3 bg-black/30 rounded-lg border border-purple-muted/20">
-                  <div>
-                    <div className="font-medium text-white">{video.name}</div>
-                    <div className="text-sm text-grey-light/60">
-                      {video.duration_seconds ? `${Math.round(video.duration_seconds)}s` : "Unknown duration"} • 
-                      {video.calculated_fps ? ` ${Math.round(video.calculated_fps)} FPS` : ""}
+        <TabsContent value="overview" className="space-y-6">
+          {/* Content Sections */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Recent Images */}
+            <div className="glass p-6 rounded-xl border border-purple-muted/30">
+              <div className="flex items-center mb-4">
+                <ImageIcon className="h-5 w-5 mr-2 text-cyan" />
+                <h3 className="text-lg font-semibold text-white">Recent Images</h3>
+              </div>
+              {images && images.length > 0 ? (
+                <div className="grid grid-cols-3 gap-3">
+                  {images.slice(0, 6).map((image) => (
+                    <div key={image.id} className="aspect-video bg-black/40 rounded-lg border border-purple-muted/20 overflow-hidden hover:border-cyan/40 transition-colors">
+                      {/* TODO: Add image thumbnail component */}
+                      <div className="w-full h-full flex items-center justify-center text-grey-light/40">
+                        <ImageIcon className="h-8 w-8" />
+                      </div>
                     </div>
-                  </div>
-                  <Badge 
-                    className={
-                      video.status === "completed" 
-                        ? "bg-success/20 text-success border-success/40" 
-                        : "bg-warn/20 text-warn border-warn/40"
-                    }
-                  >
-                    {video.status}
-                  </Badge>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <div className="text-center py-8">
+                  <ImageIcon className="h-12 w-12 mx-auto text-grey-light/40 mb-3" />
+                  <p className="text-grey-light/60">No images captured yet</p>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="text-center py-8">
-              <Video className="h-12 w-12 mx-auto text-grey-light/40 mb-3" />
-              <p className="text-grey-light/60">No videos generated yet</p>
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* Timelapse Information */}
-      <div className="glass p-6 rounded-xl border border-purple-muted/30">
-        <h3 className="text-lg font-semibold text-white mb-4">Timelapse Information</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="text-sm font-medium text-grey-light/70">Created</label>
-            <p className="text-white mt-1">{formatAbsoluteTime(timelapse.created_at)}</p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-grey-light/70">Status</label>
-            <div className="mt-1">{getStatusBadge(timelapse.status)}</div>
-          </div>
-          {timelapse.start_date && (
-            <div>
-              <label className="text-sm font-medium text-grey-light/70">Start Date</label>
-              <p className="text-white mt-1">{formatAbsoluteTime(timelapse.start_date)}</p>
+            {/* Generated Videos */}
+            <div className="glass p-6 rounded-xl border border-purple-muted/30">
+              <div className="flex items-center mb-4">
+                <Video className="h-5 w-5 mr-2 text-pink" />
+                <h3 className="text-lg font-semibold text-white">Generated Videos</h3>
+              </div>
+              {videos && videos.length > 0 ? (
+                <div className="space-y-3">
+                  {videos.slice(0, 5).map((video) => (
+                    <div key={video.id} className="flex items-center justify-between p-3 bg-black/30 rounded-lg border border-purple-muted/20">
+                      <div>
+                        <div className="font-medium text-white">{video.name}</div>
+                        <div className="text-sm text-grey-light/60">
+                          {video.duration_seconds ? `${Math.round(video.duration_seconds)}s` : "Unknown duration"} • 
+                          {video.calculated_fps ? ` ${Math.round(video.calculated_fps)} FPS` : ""}
+                        </div>
+                      </div>
+                      <Badge 
+                        className={
+                          video.status === "completed" 
+                            ? "bg-success/20 text-success border-success/40" 
+                            : "bg-warn/20 text-warn border-warn/40"
+                        }
+                      >
+                        {video.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Video className="h-12 w-12 mx-auto text-grey-light/40 mb-3" />
+                  <p className="text-grey-light/60">No videos generated yet</p>
+                </div>
+              )}
             </div>
-          )}
-          {timelapse.auto_stop_at && (
-            <div>
-              <label className="text-sm font-medium text-grey-light/70">Auto Stop</label>
-              <p className="text-white mt-1">{formatAbsoluteTime(timelapse.auto_stop_at)}</p>
+          </div>
+
+          {/* Timelapse Information */}
+          <div className="glass p-6 rounded-xl border border-purple-muted/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Timelapse Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="text-sm font-medium text-grey-light/70">Created</label>
+                <p className="text-white mt-1">{formatAbsoluteTime(timelapse.created_at)}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-grey-light/70">Status</label>
+                <div className="mt-1">{getStatusBadge(timelapse.status)}</div>
+              </div>
+              {timelapse.start_date && (
+                <div>
+                  <label className="text-sm font-medium text-grey-light/70">Start Date</label>
+                  <p className="text-white mt-1">{formatAbsoluteTime(timelapse.start_date)}</p>
+                </div>
+              )}
+              {timelapse.auto_stop_at && (
+                <div>
+                  <label className="text-sm font-medium text-grey-light/70">Auto Stop</label>
+                  <p className="text-white mt-1">{formatAbsoluteTime(timelapse.auto_stop_at)}</p>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="overlays">
+          <TimelapseOverlaySettings 
+            timelapseId={timelapseId} 
+            timelapseName={timelapse.name}
+          />
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-6">
+          <div className="glass p-6 rounded-xl border border-purple-muted/30">
+            <h3 className="text-lg font-semibold text-white mb-4">Timelapse Settings</h3>
+            <div className="text-center py-8">
+              <Settings className="w-12 h-12 mx-auto text-gray-500 mb-3" />
+              <p className="text-muted-foreground">Settings panel coming soon</p>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

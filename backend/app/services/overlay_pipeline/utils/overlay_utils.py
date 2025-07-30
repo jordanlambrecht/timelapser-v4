@@ -24,19 +24,7 @@ from .overlay_template_cache import get_overlay_template
 from ....models.overlay_model import OverlayConfiguration, OverlayItem, GridPosition
 from ....models.image_model import Image as ImageModel
 from ....models.timelapse_model import Timelapse as TimelapseModel
-from ....constants import (
-    OVERLAY_TYPE_DATE,
-    OVERLAY_TYPE_DATE_TIME,
-    OVERLAY_TYPE_TIME,
-    OVERLAY_TYPE_FRAME_NUMBER,
-    OVERLAY_TYPE_DAY_NUMBER,
-    OVERLAY_TYPE_CUSTOM_TEXT,
-    OVERLAY_TYPE_TIMELAPSE_NAME,
-    OVERLAY_TYPE_TEMPERATURE,
-    OVERLAY_TYPE_WEATHER_CONDITIONS,
-    OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
-    OVERLAY_TYPE_WATERMARK,
-)
+from ....constants import OVERLAY_TYPE_WATERMARK
 from ..generators import overlay_generator_registry, OverlayGenerationContext
 
 
@@ -79,16 +67,30 @@ class OverlayRenderer:
                 if base_image.mode != "RGBA":
                     base_image = base_image.convert("RGBA")
 
-                # Use async rendering with event loop handling
+                # Try template caching, fallback to standard rendering if needed
                 try:
-                    loop = asyncio.get_event_loop()
-                    result_image = loop.run_until_complete(
-                        self.render_overlay_fast(base_image, context_data)
+                    # Check if we can safely use async template caching
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # We're already in an async context - this shouldn't happen in sync render_overlay
+                        logger.warning(
+                            "render_overlay called from async context - this may cause issues"
+                        )
+                        result_image = self._render_overlay_fallback(
+                            base_image, context_data
+                        )
+                    except RuntimeError:
+                        # No running event loop, safe to create one for template caching
+                        result_image = asyncio.run(
+                            self.render_overlay_fast(base_image, context_data)
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Template caching failed, using fallback rendering: {e}"
                     )
-                except RuntimeError:
-                    # No event loop running, create one
-                    result_image = asyncio.run(
-                        self.render_overlay_fast(base_image, context_data)
+                    # Fallback to standard rendering without template caching
+                    result_image = self._render_overlay_fallback(
+                        base_image, context_data
                     )
 
                 # Save as PNG to preserve transparency
@@ -189,17 +191,19 @@ class OverlayRenderer:
         try:
             # Create generation context from context_data
             context = self._create_generation_context(context_data)
-            
+
             # Get appropriate generator for this overlay type
             if not overlay_generator_registry.has_generator(overlay_item.type):
-                logger.warning(f"No generator found for overlay type: {overlay_item.type}")
+                logger.warning(
+                    f"No generator found for overlay type: {overlay_item.type}"
+                )
                 return ""
-            
+
             generator = overlay_generator_registry.get_generator(overlay_item.type)
-            
+
             # Generate content using the appropriate generator
             content = generator.generate_content(overlay_item, context)
-            
+
             # Handle both text and image content
             if isinstance(content, str):
                 return content
@@ -208,46 +212,69 @@ class OverlayRenderer:
                 # Store the image in context_data for later use
                 context_data["_generated_image"] = content
                 return ""  # Return empty string to indicate image content
-                
+
         except Exception as e:
-            logger.error(f"Failed to generate overlay content for type {overlay_item.type}: {e}")
+            logger.error(
+                f"Failed to generate overlay content for type {overlay_item.type}: {e}"
+            )
             return ""  # Graceful fallback
-    
-    def _create_generation_context(self, context_data: Dict[str, Any]) -> OverlayGenerationContext:
-        """Create OverlayGenerationContext from context_data dict."""
-        
-        # Extract or create required objects
-        # Note: In a real implementation, these would come from the service layer
-        # For now, create mock objects with the available data
-        
-        # Create mock image model
-        image_data = context_data.get("image", {})
-        mock_image = type('MockImage', (), {
-            'id': image_data.get('id', 0),
-            'file_path': image_data.get('file_path', ''),
-            'captured_at': context_data.get("timestamp", utc_now()),
-        })()
-        
-        # Create mock timelapse model
-        timelapse_data = context_data.get("timelapse", {})
-        mock_timelapse = type('MockTimelapse', (), {
-            'id': timelapse_data.get('id', 0),
-            'name': context_data.get("timelapse_name", "Timelapse"),
-            'started_at': timelapse_data.get('started_at', utc_now()),
-        })()
-        
+
+    def _create_generation_context(
+        self, context_data: Dict[str, Any]
+    ) -> OverlayGenerationContext:
+        """Create OverlayGenerationContext from context_data dict using proper model objects."""
+
+        # Use actual model objects when available, or create minimal model instances
+        image_obj = context_data.get("image")
+        if image_obj is None:
+            # Create ImageModel instance with available data
+            image_obj = ImageModel(
+                id=context_data.get("image_id", 0),
+                camera_id=context_data.get("camera_id", 0),
+                timelapse_id=context_data.get("timelapse_id"),
+                file_path=context_data.get("file_path", ""),
+                day_number=context_data.get("day_number", 1),
+                file_size=context_data.get("file_size"),
+                corruption_details=context_data.get("corruption_details"),
+                weather_temperature=context_data.get("weather_temperature"),
+                weather_conditions=context_data.get("weather_conditions"),
+                weather_icon=context_data.get("weather_icon"),
+                weather_fetched_at=context_data.get("weather_fetched_at"),
+                overlay_path=context_data.get("overlay_path"),
+                overlay_updated_at=context_data.get("overlay_updated_at"),
+                captured_at=context_data.get("timestamp", utc_now()),
+                created_at=context_data.get("created_at", utc_now()),
+            )
+
+        timelapse_obj = context_data.get("timelapse")
+        if timelapse_obj is None:
+            # Create TimelapseModel instance with available data
+            timelapse_obj = TimelapseModel(
+                id=context_data.get("timelapse_id", 0),
+                camera_id=context_data.get("camera_id", 0),
+                name=context_data.get("timelapse_name", "Timelapse"),
+                capture_interval_seconds=context_data.get("interval_seconds", 300),
+                created_at=context_data.get("created_at", utc_now()),
+                updated_at=context_data.get("updated_at", utc_now()),
+            )
+
         return OverlayGenerationContext(
-            image=mock_image,
+            image=image_obj,
             image_timestamp=context_data.get("timestamp", utc_now()),
-            timelapse=mock_timelapse,
+            timelapse=timelapse_obj,
             frame_number=context_data.get("frame_number", 0),
-            day_number=context_data.get("day_number", 0),
+            day_number=context_data.get("day_number", 1),
             temperature=context_data.get("temperature"),
             weather_conditions=context_data.get("weather_conditions"),
             temperature_unit=context_data.get("temperature_unit", "F"),
+            settings_service=context_data.get("settings_service"),
             global_font=self.config.globalOptions.font,
-            global_fill_color=getattr(self.config.globalOptions, 'fillColor', '#FFFFFF'),
-            global_background_color=getattr(self.config.globalOptions, 'backgroundColor', '#000000'),
+            global_fill_color=getattr(
+                self.config.globalOptions, "fillColor", "#FFFFFF"
+            ),
+            global_background_color=getattr(
+                self.config.globalOptions, "backgroundColor", "#000000"
+            ),
         )
 
     def _render_text_overlay(

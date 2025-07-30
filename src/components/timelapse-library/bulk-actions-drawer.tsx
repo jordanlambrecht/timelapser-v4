@@ -1,4 +1,4 @@
-import { FolderOpen, Trash2, Star, Download, X } from "lucide-react"
+import { FolderOpen, Trash2, Star, Download, X, Layers } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 
@@ -7,7 +7,8 @@ interface BulkActionsDrawerProps {
   selectedIds: number[]
   selectedCount: number
   onClearSelection: () => void
-  onBulkAction: (action: string) => void
+  onBulkAction: (action: string, selectedIds?: number[]) => void
+  isProcessingOverlays?: boolean
 }
 
 export function BulkActionsDrawer({
@@ -16,11 +17,12 @@ export function BulkActionsDrawer({
   selectedCount,
   onClearSelection,
   onBulkAction,
+  isProcessingOverlays = false,
 }: BulkActionsDrawerProps) {
   if (!show) return null
 
   const handleAction = (action: string) => {
-    onBulkAction(action)
+    onBulkAction(action, selectedIds)
   }
 
   return (
@@ -50,6 +52,19 @@ export function BulkActionsDrawer({
 
             {/* Center - Actions */}
             <div className="flex items-center space-x-2">
+              {/* Regenerate Overlays */}
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isProcessingOverlays}
+                className="text-white hover:bg-purple-800 hover:text-purple-100 disabled:opacity-50"
+                onClick={() => handleAction("regenerate-overlays")}
+                title="Regenerate overlays for selected timelapses"
+              >
+                <Layers className="h-4 w-4 mr-2" />
+                {isProcessingOverlays ? "Processing..." : "Regenerate Overlays"}
+              </Button>
+
               {/* Move to Folder - Future Feature */}
               <Button
                 variant="ghost"

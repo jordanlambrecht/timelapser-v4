@@ -30,10 +30,13 @@ import {
 import { OverlayPresetEditor } from "./overlay-preset-editor"
 import { PresetListItem } from "./preset-list-item"
 import { useOverlayPresets, type OverlayPreset } from "@/hooks/use-overlay-presets"
+import { OverlayPreviewModal } from "@/components/overlay-preview-modal"
 
 export function OverlayPresetsCard() {
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [showEditor, setShowEditor] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewPreset, setPreviewPreset] = useState<OverlayPreset | null>(null)
   const { presets, loading, error, createPreset, updatePreset, deletePreset } = useOverlayPresets()
 
   const handleCreateNew = () => {
@@ -59,8 +62,11 @@ export function OverlayPresetsCard() {
   }
 
   const handlePreviewPreset = (presetId: number) => {
-    // TODO: Implement preview modal
-    console.log("Preview preset:", presetId)
+    const preset = presets.find(p => p.id === presetId)
+    if (preset) {
+      setPreviewPreset(preset)
+      setShowPreview(true)
+    }
   }
 
   const handleSavePreset = async (name: string, description: string, config: any) => {
@@ -217,6 +223,16 @@ export function OverlayPresetsCard() {
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Preview Modal */}
+    {previewPreset && (
+      <OverlayPreviewModal
+        open={showPreview}
+        onOpenChange={setShowPreview}
+        overlayConfig={previewPreset.overlay_config}
+        presetName={previewPreset.name}
+      />
+    )}
     </>
   )
 }
