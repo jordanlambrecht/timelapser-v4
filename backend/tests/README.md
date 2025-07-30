@@ -7,172 +7,183 @@ This directory contains comprehensive tests for the Timelapser v4 backend.
 ### Install Test Dependencies
 
 ```bash
-# Install pytest and related packages
-python run_tests.py install
+# Activate virtual environment first
+source backend/venv/bin/activate
 
-# Or install manually
+# Install test dependencies using pip
 pip install pytest pytest-asyncio pytest-cov
 ```
 
 ### Running Tests
 
 ```bash
-# Run cache-related tests (good starting point)
-python run_tests.py cache
+# Run database operation tests (our latest optimized tests)
+pytest tests/database/ -v
 
-# Run all tests
-python run_tests.py all
+# Run all unit tests
+pytest tests/unit/ -v
 
 # Run with coverage report
-python run_tests.py coverage
-```
-
-### Direct pytest commands
-
-```bash
-# Run specific test file
-pytest tests/test_cache_manager.py -v
-
-# Run specific test class
-pytest tests/test_cache_manager.py::TestMemoryCache -v
-
-# Run specific test method
-pytest tests/test_cache_manager.py::TestMemoryCache::test_basic_set_and_get -v
-
-# Run with pattern matching
-pytest -k "test_cache" -v
+pytest tests/ --cov=app --cov-report=html
 ```
 
 ## Test Structure
 
-### Core Test Files
+### Directory Organization
 
-- `test_cache_manager.py` - Tests for the core caching infrastructure
+```
+tests/
+├── database/              # Database operation tests (latest, most comprehensive)
+│   ├── test_corruption_query_builder.py
+│   ├── test_camera_operations.py
+│   ├── test_image_operations.py
+│   └── conftest.py        # Database test fixtures
+├── unit/                  # Unit tests organized by component type
+│   ├── database/          # Database operation unit tests
+│   ├── services/          # Service layer unit tests
+│   └── utils/             # Utility function unit tests
+├── integration/           # Integration tests
+├── frontend_integration/  # Frontend integration tests
+├── fixtures/              # Shared test fixtures and data
+└── conftest.py           # Global test configuration
+```
 
-  - MemoryCache class functionality
-  - TTL expiration behavior
-  - ETag generation and validation utilities
-  - Caching decorators
-  - Global cache operations
+### Core Test Categories
 
-- `test_cache_invalidation.py` - Tests for cache invalidation service
+#### Database Tests (`tests/database/`)
+**Latest and most comprehensive** - These tests use sophisticated patterns:
+- **Caching behavior**: Tests for @cached_response decorators
+- **ETag generation**: Collection and timestamp ETags
+- **Query optimization**: Parameterized queries, no NOW() calls
+- **SQL patterns**: Query builders, efficient JOINs, batch operations
 
-  - SSE event-driven invalidation
-  - ETag-aware smart invalidation
-  - Utility methods for cache management
-  - Error handling
+#### Unit Tests (`tests/unit/`)
+Organized by component type:
+- **database/**: Database operation unit tests
+- **services/**: Service layer tests (workers, weather, overlays)
+- **utils/**: Utility function tests (caching, thumbnails, generators)
 
-- `conftest.py` - Shared pytest fixtures and configuration
-  - Cache instances for testing
-  - Mock services and data generators
-  - Helper functions for testing scenarios
+#### Integration Tests (`tests/integration/`)
+- End-to-end workflow tests
+- Component interaction tests
 
-### Test Categories
+## Key Test Files
 
-Tests are organized by functionality and marked with categories:
+### Database Operations (Recommended Starting Point)
+- `tests/database/test_corruption_query_builder.py` - SQL generation tests (14 tests)
+- `tests/database/test_camera_operations.py` - Camera operations tests (13 tests)  
+- `tests/database/test_image_operations.py` - Image operations tests (19 tests)
 
-- **Unit Tests**: Test individual functions and methods in isolation
-- **Integration Tests**: Test interaction between components
-- **Cache Tests**: Specifically test caching functionality (good starting point)
+### Unit Tests by Category
+- `tests/unit/database/` - Database operation unit tests
+- `tests/unit/services/` - Service layer unit tests
+- `tests/unit/utils/` - Utility and helper function tests
 
 ## Test Fixtures
 
-The test suite provides several fixtures for common testing scenarios:
-
-### Cache Fixtures
-
-- `fresh_cache` - Clean MemoryCache instance for each test
-- `populated_cache` - Pre-populated cache with test data
-- `cache_invalidation_service` - Service instance for invalidation testing
-
-### Mock Services
-
-- `mock_settings_service` - Mock settings service for dependency injection
-- `sample_cache_data` - Sample data for testing cache scenarios
-- `etag_test_objects` - Objects with timestamps for ETag testing
+### Database Test Fixtures (`tests/database/conftest.py`)
+- `mock_async_db` - Mock async database connections
+- `mock_sync_db` - Mock sync database connections  
+- `test_data` - Test data factory for consistent mock data
+- `mock_current_time` - Consistent timestamps for testing
 
 ### Helper Functions
+- `assert_sql_contains_patterns()` - Verify SQL contains required patterns
+- `assert_sql_not_contains()` - Verify SQL avoids forbidden patterns
+- `create_test_*_data()` - Data factories for different model types
 
-- `verify_cache_hit(cache, key, expected_value)` - Verify cache contains
-  expected data
-- `verify_cache_miss(cache, key)` - Verify cache does not contain key
-- `verify_cache_expiration(cache, key, ttl_seconds)` - Test TTL behavior
-- `generate_test_data(count, prefix)` - Generate test data sets
+## Testing Patterns
+
+### Database Operation Testing
+```python
+def test_query_pattern(self):
+    \"\"\"Test that queries follow optimization patterns.\"\"\"
+    query = build_some_query()
+    
+    # Should use parameterization
+    assert \"%s\" in query
+    # Should avoid NOW() calls
+    assert \"NOW()\" not in query
+    # Should use proper JOINs
+    assert \"LEFT JOIN\" in query
+```
+
+### Caching Pattern Testing
+```python
+@pytest.mark.caching
+def test_collection_etag_generation(self):
+    \"\"\"Test collection ETag generation.\"\"\"
+    items = [MockItem(id=1), MockItem(id=2)]
+    etag = generate_collection_etag(items)
+    assert etag.startswith('\"2-')  # Count + timestamp
+```
+
+### Mock Database Testing
+```python
+def test_async_operation(mock_async_db):
+    db, conn, cursor = mock_async_db
+    # Test async database operations with proper mocking
+```
+
+## Running Specific Test Categories
+
+```bash
+# Run the latest comprehensive database tests
+pytest tests/database/ -v
+
+# Run caching-specific tests
+pytest -m caching -v
+
+# Run integration tests only
+pytest -m integration -v
+
+# Run query builder tests
+pytest -m query_builder -v
+
+# Run specific test file
+pytest tests/database/test_camera_operations.py -v
+
+# Run specific test method
+pytest tests/database/test_camera_operations.py::TestCameraQueryPatterns::test_active_cameras_query_pattern -v
+```
 
 ## Best Practices
 
-### Writing Tests
+### Database Testing
+1. **Use query builders** for centralized SQL construction
+2. **Test SQL patterns** rather than actual database calls
+3. **Mock database connections** to avoid external dependencies
+4. **Verify parameterization** to prevent SQL injection
+5. **Test caching decorators** and ETag generation
 
-1. **Use descriptive test names** that explain what is being tested
-2. **Follow the AAA pattern**: Arrange, Act, Assert
+### General Testing
+1. **Use descriptive test names** that explain the behavior being tested
+2. **Follow AAA pattern**: Arrange, Act, Assert
 3. **Test both success and failure scenarios**
-4. **Use appropriate fixtures** to avoid test data setup duplication
+4. **Use appropriate fixtures** for consistent test data
 5. **Mock external dependencies** (databases, APIs, file systems)
-
-### Cache Testing Patterns
-
-```python
-@pytest.mark.asyncio
-async def test_cache_operation(fresh_cache):
-    # Arrange
-    key = "test_key"
-    value = "test_value"
-
-    # Act
-    await fresh_cache.set(key, value)
-    result = await fresh_cache.get(key)
-
-    # Assert
-    assert result == value
-```
-
-### ETag Testing Patterns
-
-```python
-def test_etag_generation(etag_test_objects):
-    # Use pre-generated test objects with timestamps
-    camera = etag_test_objects["camera"]
-    etag = generate_timestamp_etag(camera)
-
-    expected_timestamp = camera["updated_at"].timestamp()
-    expected_etag = f'"{expected_timestamp}"'
-
-    assert etag == expected_etag
-```
 
 ## Coverage Goals
 
-The test suite aims for high coverage of critical components:
-
-- **Cache Manager**: >90% coverage of core caching functionality
-- **Cache Invalidation**: >85% coverage of invalidation logic
-- **ETag Utilities**: >95% coverage of ETag generation and validation
+- **Database Operations**: >90% coverage of query patterns and caching
+- **Service Layer**: >85% coverage of business logic
+- **Utility Functions**: >95% coverage of helper functions
 - **Error Handling**: All error paths should be tested
-
-## Continuous Integration
-
-These tests are designed to be run in CI/CD pipelines:
-
-```bash
-# CI-friendly command with JUnit XML output
-pytest tests/ --junitxml=test-results.xml --cov=app --cov-report=xml
-```
 
 ## Troubleshooting
 
 ### Common Issues
-
-1. **Import Errors**: Ensure the backend directory is in PYTHONPATH
+1. **Import Errors**: Ensure you're in the backend directory and virtual environment is activated
 2. **Async Test Failures**: Verify `pytest-asyncio` is installed
-3. **Cache State Issues**: Use `fresh_cache` fixture for clean state
-4. **Mock Issues**: Check that patches target the correct module path
+3. **Mock Issues**: Check that patches target the correct module path
+4. **Circular Import Issues**: Tests avoid importing from app.database to prevent circular imports
 
 ### Debug Mode
-
-Run tests with additional debugging:
-
 ```bash
 pytest tests/ -v -s --tb=long --log-cli-level=DEBUG
 ```
 
-This will show all print statements and detailed error traces.
+### Running with Coverage
+```bash
+pytest tests/ --cov=app --cov-report=html --cov-report=term-missing
+```
