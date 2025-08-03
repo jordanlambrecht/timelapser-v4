@@ -14,7 +14,12 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
-from loguru import logger
+
+from ....utils.time_utils import utc_now
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
 from ....models.overlay_model import OverlayConfiguration, OverlayItem
 from ....utils.cache_manager import cached_response
@@ -388,7 +393,6 @@ class OverlayTemplate:
             OVERLAY_TYPE_WEATHER_CONDITIONS,
             OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
         )
-        from .time_utils import utc_now
 
         overlay_type = overlay_item.type
 

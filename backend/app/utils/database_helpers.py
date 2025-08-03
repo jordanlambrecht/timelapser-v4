@@ -11,7 +11,10 @@ from datetime import date, datetime
 import json
 import time
 import asyncio
-from loguru import logger
+from ..services.logger.logger_service import get_service_logger, LogEmoji
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SYSTEM)
 
 
 class DatabaseQueryBuilder:
@@ -451,19 +454,19 @@ class CommonQueries:
 
     # Camera queries
     CAMERA_WITH_TIMELAPSE = """
-        SELECT 
-            c.*, 
-            t.status as timelapse_status, 
+        SELECT
+            c.*,
+            t.status as timelapse_status,
             t.id as timelapse_id,
             t.name as timelapse_name
-        FROM cameras c 
-        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
+        FROM cameras c
+        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
         WHERE c.id = %(camera_id)s
     """
 
     # Optimized query that replaces LATERAL JOIN with window function for better performance
     CAMERAS_WITH_LAST_IMAGE = """
-        SELECT 
+        SELECT
             c.*,
             t.status as timelapse_status,
             t.id as timelapse_id,
@@ -477,13 +480,13 @@ class CommonQueries:
             li.thumbnail_size as last_image_thumbnail_size,
             li.small_path as last_image_small_path,
             li.small_size as last_image_small_size
-        FROM cameras c 
-        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id 
+        FROM cameras c
+        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
         LEFT JOIN (
             SELECT DISTINCT ON (camera_id)
                 camera_id, id, captured_at, file_path, file_size, day_number,
                 thumbnail_path, thumbnail_size, small_path, small_size
-            FROM images 
+            FROM images
             ORDER BY camera_id, captured_at DESC
         ) li ON li.camera_id = c.id
         ORDER BY c.id
@@ -491,14 +494,14 @@ class CommonQueries:
 
     # Timelapse queries
     TIMELAPSE_WITH_CAMERA = """
-        SELECT t.*, c.name as camera_name 
+        SELECT t.*, c.name as camera_name
         FROM timelapses t
         JOIN cameras c ON t.camera_id = c.id
         WHERE t.id = %(timelapse_id)s
     """
 
     RUNNING_TIMELAPSES = """
-        SELECT 
+        SELECT
             c.*,
             t.id as timelapse_id,
             t.status as timelapse_status,
@@ -506,25 +509,25 @@ class CommonQueries:
             t.use_custom_time_window,
             t.time_window_start as custom_time_window_start,
             t.time_window_end as custom_time_window_end
-        FROM cameras c 
-        INNER JOIN timelapses t ON c.active_timelapse_id = t.id 
+        FROM cameras c
+        INNER JOIN timelapses t ON c.active_timelapse_id = t.id
         WHERE c.status = 'active' AND t.status = 'running'
         ORDER BY c.id
     """
 
     # Statistics queries
     CAMERA_STATS = """
-        SELECT 
+        SELECT
             COUNT(*) as total_images,
             COUNT(CASE WHEN captured_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours' THEN 1 END) as last_24h_images,
             SUM(COALESCE(file_size, 0)) as total_file_size,
             AVG(EXTRACT(EPOCH FROM (captured_at - LAG(captured_at) OVER (ORDER BY captured_at)))/60) as avg_interval_minutes
-        FROM images 
+        FROM images
         WHERE camera_id = %(camera_id)s
     """
 
     SYSTEM_HEALTH_CAMERAS = """
-        SELECT 
+        SELECT
             COUNT(*) as total_cameras,
             COUNT(CASE WHEN health_status = 'online' THEN 1 END) as online_cameras,
             COUNT(CASE WHEN health_status = 'offline' THEN 1 END) as offline_cameras,
@@ -533,7 +536,7 @@ class CommonQueries:
     """
 
     SYSTEM_HEALTH_TIMELAPSES = """
-        SELECT 
+        SELECT
             COUNT(CASE WHEN status = 'running' THEN 1 END) as running_timelapses,
             COUNT(CASE WHEN status = 'paused' THEN 1 END) as paused_timelapses
         FROM timelapses
@@ -541,16 +544,16 @@ class CommonQueries:
 
     # Optimized image queries - replaced LATERAL JOIN with window function
     LATEST_IMAGE_FOR_CAMERA = """
-        SELECT 
+        SELECT
             i.*,
             c.name as camera_name
         FROM (
-            SELECT 
+            SELECT
                 id, captured_at, file_path, file_size, day_number,
                 thumbnail_path, thumbnail_size, small_path, small_size,
                 camera_id, timelapse_id, created_at,
                 ROW_NUMBER() OVER (PARTITION BY camera_id ORDER BY captured_at DESC) as rn
-            FROM images 
+            FROM images
             WHERE camera_id = %(camera_id)s
         ) i
         JOIN cameras c ON i.camera_id = c.id
@@ -1292,6 +1295,8 @@ class AsyncDatabaseOperationBase(DatabaseOperationBase):
         Returns:
             Query result
         """
+        global database_cache
+
         # Check cache first if key provided
         if cache_key:
             cached_result = database_cache.get(
@@ -1344,6 +1349,8 @@ class SyncDatabaseOperationBase(DatabaseOperationBase):
         Returns:
             Query result
         """
+        global database_cache
+
         # Check cache first if key provided
         if cache_key:
             cached_result = database_cache.get(
@@ -2446,7 +2453,7 @@ class ConnectionPoolHealthAggregator:
                 "system_status": system_health.get("system_status"),
             }
             self.system_alerts.append(alert)
-            logger.critical(alert["message"])
+            logger.warning(alert["message"])
         elif healthy_percentage < 80:
             alert = {
                 "timestamp": time.time(),

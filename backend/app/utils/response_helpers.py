@@ -8,7 +8,9 @@ Provides consistent response structures across all API endpoints.
 
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
-from loguru import logger
+from ..services.logger import Log
+from ..enums import LogLevel, LogSource, LoggerName
+from ..database.core import AsyncDatabase, SyncDatabase
 
 
 class ResponseFormatter:
@@ -544,18 +546,27 @@ class MetricsHelper:
 
 class LoggingHelper:
     """
-    Helper class for consistent logging patterns.
+    Helper class for consistent logging patterns using the new centralized Log system.
     """
 
-    @staticmethod
-    def log_operation_start(
-        operation: str, entity_type: str, entity_id: Union[int, str]
+    def __init__(self, async_db: AsyncDatabase, sync_db: SyncDatabase):
+        """Initialize with database connections for logging."""
+        self.log = Log(async_db, sync_db)
+
+    async def log_operation_start(
+        self, operation: str, entity_type: str, entity_id: Union[int, str]
     ):
         """Log the start of an operation."""
-        logger.info(f"Starting {operation} operation for {entity_type} {entity_id}")
+        await self.log.log_system(
+            f"Starting {operation} operation for {entity_type} {entity_id}",
+            level=LogLevel.INFO,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM,
+            system_context={"operation": operation, "entity_type": entity_type, "entity_id": str(entity_id)}
+        )
 
-    @staticmethod
-    def log_operation_success(
+    async def log_operation_success(
+        self,
         operation: str,
         entity_type: str,
         entity_id: Union[int, str],
@@ -565,16 +576,118 @@ class LoggingHelper:
         message = f"Successfully {operation}d {entity_type} {entity_id}"
         if details:
             message += f": {details}"
-        logger.info(message)
+        
+        await self.log.log_system(
+            message,
+            level=LogLevel.INFO,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM,
+            system_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id),
+                "details": details
+            }
+        )
 
-    @staticmethod
-    def log_operation_error(
-        operation: str, entity_type: str, entity_id: Union[int, str], error: Exception
+    async def log_operation_error(
+        self, operation: str, entity_type: str, entity_id: Union[int, str], error: Exception
     ):
         """Log operation error."""
-        logger.error(f"Failed to {operation} {entity_type} {entity_id}: {error}")
+        await self.log.log_error(
+            f"Failed to {operation} {entity_type} {entity_id}",
+            error_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id)
+            },
+            exception=error,
+            level=LogLevel.ERROR,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.ERROR_HANDLER
+        )
 
-    @staticmethod
-    def log_validation_error(field_name: str, value: Any, reason: str):
+    async def log_validation_error(self, field_name: str, value: Any, reason: str):
         """Log validation error."""
-        logger.warning(f"Validation failed for {field_name}='{value}': {reason}")
+        await self.log.log_error(
+            f"Validation failed for {field_name}='{value}': {reason}",
+            error_context={
+                "field_name": field_name,
+                "value": str(value),
+                "reason": reason,
+                "validation_type": "field_validation"
+            },
+            level=LogLevel.WARNING,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM
+        )
+
+    # Sync versions for compatibility
+    def log_operation_start_sync(
+        self, operation: str, entity_type: str, entity_id: Union[int, str]
+    ):
+        """Sync version of log_operation_start."""
+        self.log.log_system_sync(
+            f"Starting {operation} operation for {entity_type} {entity_id}",
+            level=LogLevel.INFO,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM,
+            system_context={"operation": operation, "entity_type": entity_type, "entity_id": str(entity_id)}
+        )
+
+    def log_operation_success_sync(
+        self,
+        operation: str,
+        entity_type: str,
+        entity_id: Union[int, str],
+        details: Optional[str] = None,
+    ):
+        """Sync version of log_operation_success."""
+        message = f"Successfully {operation}d {entity_type} {entity_id}"
+        if details:
+            message += f": {details}"
+        
+        self.log.log_system_sync(
+            message,
+            level=LogLevel.INFO,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM,
+            system_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id),
+                "details": details
+            }
+        )
+
+    def log_operation_error_sync(
+        self, operation: str, entity_type: str, entity_id: Union[int, str], error: Exception
+    ):
+        """Sync version of log_operation_error."""
+        self.log.log_error_sync(
+            f"Failed to {operation} {entity_type} {entity_id}",
+            error_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id)
+            },
+            exception=error,
+            level=LogLevel.ERROR,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.ERROR_HANDLER
+        )
+
+    def log_validation_error_sync(self, field_name: str, value: Any, reason: str):
+        """Sync version of log_validation_error."""
+        self.log.log_error_sync(
+            f"Validation failed for {field_name}='{value}': {reason}",
+            error_context={
+                "field_name": field_name,
+                "value": str(value),
+                "reason": reason,
+                "validation_type": "field_validation"
+            },
+            level=LogLevel.WARNING,
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.SYSTEM
+        )

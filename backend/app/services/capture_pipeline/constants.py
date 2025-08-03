@@ -116,6 +116,17 @@ WORKFLOW_TOTAL_TIMEOUT_SECONDS = 300
 WORKFLOW_CLEANUP_ON_FAILURE = True
 
 # =============================================================================
+# JOB QUEUE HEALTH STATUS
+# =============================================================================
+
+HEALTH_STATUS_HEALTHY = "healthy"
+HEALTH_STATUS_DEGRADED = "degraded"
+HEALTH_STATUS_UNHEALTHY = "unhealthy"
+HEALTH_STATUS_OVERLOADED = "overloaded"
+HEALTH_STATUS_UNKNOWN = "unknown"
+HEALTH_STATUS_ERROR = "error"
+
+# =============================================================================
 # JOB VALIDATION
 # =============================================================================
 

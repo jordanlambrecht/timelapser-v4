@@ -9,13 +9,15 @@ Identifies bottlenecks, provides optimization recommendations, and tracks perfor
 import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SYSTEM)
 
 from .database_helpers import DatabaseBenchmark
 from ..database.core import AsyncDatabase
 from ..database.camera_operations import AsyncCameraOperations
 from ..database.image_operations import AsyncImageOperations
-from ..database.settings_operations import SettingsOperations
 
 
 class DatabasePerformanceProfiler:
@@ -29,12 +31,14 @@ class DatabasePerformanceProfiler:
     - Micro-optimization opportunities identification
     """
 
-    def __init__(self, db: AsyncDatabase):
-        """Initialize profiler with database instance."""
+    def __init__(self, db: AsyncDatabase, settings_service=None):
+        """Initialize profiler with database instance and optional settings service."""
         self.db = db
+        self.settings_service = settings_service
         self.benchmark = DatabaseBenchmark()
         self.profiles = {}
         self.baseline_metrics = {}
+        self._settings_ops = None
 
     async def profile_camera_operations(self) -> Dict[str, Any]:
         """
@@ -117,12 +121,18 @@ class DatabasePerformanceProfiler:
         Returns:
             Dictionary containing performance metrics and recommendations
         """
-        settings_ops = SettingsOperations(self.db)
+        # For profiling, we need direct access to SettingsOperations to benchmark it
+        # This is one of the few legitimate uses of direct instantiation
+        if self._settings_ops is None:
+            from ..database.settings_operations import SettingsOperations
+
+            self._settings_ops = SettingsOperations(self.db)
+
         results = {}
 
         # Profile get_all_settings
         result, metrics = await self.benchmark.benchmark_operation(
-            "get_all_settings", settings_ops.get_all_settings
+            "get_all_settings", self._settings_ops.get_all_settings
         )
         results["get_all_settings"] = {
             "metrics": metrics,

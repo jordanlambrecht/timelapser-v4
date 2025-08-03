@@ -8,32 +8,31 @@ This module handles all settings-related database operations including:
 - Configuration loading
 """
 
-from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.settings_model import Setting
-from ..models.shared_models import CorruptionSettings
-from ..utils.database_helpers import DatabaseBusinessLogic
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    get_setting_cached,
-    generate_composite_etag,
-)
-from ..utils.cache_invalidation import CacheInvalidationService
 from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
     DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
-    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
     MAX_SETTING_KEY_LENGTH,
     MAX_SETTING_VALUE_LENGTH,
 )
+from ..models.settings_model import Setting
+from ..models.shared_models import CorruptionSettings
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import (
+    cache,
+    cached_response,
+    generate_composite_etag,
+    get_setting_cached,
+)
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import SettingsOperationError
 
 
 def _process_corruption_settings_shared(
@@ -160,8 +159,9 @@ class SettingsOperations:
                     results = await cur.fetchall()
                     return {row["key"]: row["value"] for row in results}
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get all settings: {e}")
-            raise
+            raise SettingsOperationError(
+                "Failed to retrieve all settings", operation="get_all_settings"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_all_setting_records(self) -> List[Setting]:
@@ -178,8 +178,10 @@ class SettingsOperations:
                     results = await cur.fetchall()
                     return [self._row_to_setting(row) for row in results]
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get all setting records: {e}")
-            raise
+            raise SettingsOperationError(
+                "Failed to retrieve all setting records",
+                operation="get_all_setting_records",
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_setting(self, key: str) -> Optional[str]:
@@ -214,8 +216,9 @@ class SettingsOperations:
                     results = await cur.fetchall()
                     return self._row_to_setting(results[0]) if results else None
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get setting record {key}: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     async def set_setting(self, key: str, value: str) -> bool:
         """
@@ -231,8 +234,9 @@ class SettingsOperations:
         # Validate input data
         is_valid, error_msg = self.validate_setting_data(key, value)
         if not is_valid:
-            logger.error(f"Invalid setting data: {error_msg}")
-            raise ValueError(error_msg)
+            raise SettingsOperationError(
+                f"Invalid setting data: {error_msg}", operation="set_setting"
+            )
 
         try:
             current_time = utc_now()
@@ -253,8 +257,11 @@ class SettingsOperations:
 
                     return True
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to set setting {key}: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Failed to set setting '{key}' = '{value}'",
+                operation="set_setting",
+                details={"key": key, "value": value},
+            ) from e
 
     async def set_multiple_settings(self, settings_dict: Dict[str, str]) -> bool:
         """
@@ -279,7 +286,10 @@ class SettingsOperations:
                         ON CONFLICT (key)
                         DO UPDATE SET value = EXCLUDED.value, updated_at = %s
                     """
-                    params = [(key, value, current_time) for key, value in settings_dict.items()]
+                    params = [
+                        (key, value, current_time)
+                        for key, value in settings_dict.items()
+                    ]
                     await cur.executemany(query, params)
 
                     # Clear related caches after successful bulk settings update
@@ -287,8 +297,9 @@ class SettingsOperations:
 
                     return True
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to set multiple settings: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     async def delete_setting(self, key: str) -> bool:
         """
@@ -312,8 +323,9 @@ class SettingsOperations:
                         return True
                     return False
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to delete setting {key}: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_corruption_settings(self) -> CorruptionSettings:
@@ -338,8 +350,9 @@ class SettingsOperations:
 
                     return _process_corruption_settings_shared(settings_dict)
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get corruption settings: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     # Removed get_settings() - redundant duplicate of get_all_setting_records()
     # Use get_all_setting_records() directly for better performance
@@ -354,9 +367,16 @@ class SettingsOperations:
 
         Delegates to business logic utility for better separation of concerns.
         """
-        return DatabaseBusinessLogic.validate_setting_data(
-            key, value, MAX_SETTING_KEY_LENGTH, MAX_SETTING_VALUE_LENGTH
-        )
+        # Simple validation inline to avoid circular import
+        if not key or len(key) > MAX_SETTING_KEY_LENGTH:
+            raise ValueError(
+                f"Setting key must be 1-{MAX_SETTING_KEY_LENGTH} characters"
+            )
+        if value and len(value) > MAX_SETTING_VALUE_LENGTH:
+            raise ValueError(
+                f"Setting value must be max {MAX_SETTING_VALUE_LENGTH} characters"
+            )
+        return True, None
 
 
 class SyncSettingsOperations:
@@ -388,8 +408,9 @@ class SyncSettingsOperations:
                     results = cur.fetchall()
                     return {row["key"]: row["value"] for row in results}
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get all settings: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """
@@ -409,8 +430,9 @@ class SyncSettingsOperations:
                     results = cur.fetchall()
                     return results[0]["value"] if results else default
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get setting {key}: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     def get_corruption_settings(self) -> CorruptionSettings:
         """
@@ -434,8 +456,9 @@ class SyncSettingsOperations:
 
                     return _process_corruption_settings_shared(settings_dict)
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get corruption settings: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     def set_setting(self, key: str, value: str) -> bool:
         """
@@ -451,8 +474,9 @@ class SyncSettingsOperations:
         # Validate input data
         is_valid, error_msg = SettingsOperations.validate_setting_data(key, value)
         if not is_valid:
-            logger.error(f"Invalid setting data: {error_msg}")
-            raise ValueError(error_msg)
+            raise SettingsOperationError(
+                f"Invalid setting data: {error_msg}", operation="sync_set_setting"
+            )
 
         try:
             current_time = utc_now()
@@ -470,8 +494,9 @@ class SyncSettingsOperations:
 
                     return True
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to set setting {key}: {e}")
-            raise
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="database_operation"
+            ) from e
 
     # Removed get_settings_dict() - redundant alias for get_all_settings()
     # Use get_all_settings() directly for better performance

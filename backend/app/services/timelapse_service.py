@@ -16,9 +16,11 @@ ARCHITECTURAL COMPLIANCE:
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 
-from loguru import logger
+from ..enums import LogEmoji, SSEEvent, SSEEventSource, SSEPriority, TimelapseStatus
+from ..services.logger import get_service_logger
+from ..enums import LoggerName, LogSource
 
-from ..enums import SSEPriority
+logger = get_service_logger(LoggerName.TIMELAPSE_SERVICE, LogSource.SYSTEM)
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.timelapse_operations import TimelapseOperations, SyncTimelapseOperations
@@ -36,15 +38,6 @@ from ..models.shared_models import (
     TimelapseVideoSettings,
 )
 from ..constants import (
-    JOB_STATUS_LIST,
-    TIMELAPSE_STATUSES,
-    TimelapseStatus,
-    EVENT_TIMELAPSE_CREATED,
-    EVENT_TIMELAPSE_UPDATED,
-    EVENT_TIMELAPSE_COMPLETED,
-    EVENT_TIMELAPSE_HEALTH_MONITORED,
-    EVENT_TIMELAPSE_STATISTICS_UPDATED,
-    EVENT_HEALTH_CHECK_COMPLETED,
     SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
 )
 from ..utils.time_utils import (
@@ -53,7 +46,6 @@ from ..utils.time_utils import (
 )
 from ..utils.response_helpers import (
     ResponseFormatter,
-    LoggingHelper,
     ValidationHelper,
     MetricsHelper,
 )
@@ -83,6 +75,7 @@ class TimelapseService:
         video_automation_service=None,
         image_service=None,
         settings_service=None,
+        thumbnail_pipeline=None,
     ):
         """
         Initialize TimelapseService with async database instance and service dependencies.
@@ -93,6 +86,7 @@ class TimelapseService:
             video_automation_service: Optional VideoAutomationService for automation triggers
             image_service: Optional ImageService for image operations
             settings_service: Optional SettingsService for configuration access
+            thumbnail_pipeline: Optional ThumbnailPipeline for thumbnail operations
         """
         self.db = db
         self.timelapse_ops = TimelapseOperations(db)
@@ -101,6 +95,7 @@ class TimelapseService:
         self.video_automation_service = video_automation_service
         self.image_service = image_service
         self.settings_service = settings_service
+        self.thumbnail_pipeline = thumbnail_pipeline
 
     async def get_timelapses(
         self, camera_id: Optional[int] = None
@@ -117,8 +112,9 @@ class TimelapseService:
         try:
             return await self.timelapse_ops.get_timelapses(camera_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "retrieve", "timelapses", camera_id or "all", e
+            logger.error(
+                f"Error retrieving timelapses for camera {camera_id or 'all'}: {e}",
+                extra_context={"camera_id": camera_id, "error": str(e)},
             )
             raise
 
@@ -153,7 +149,10 @@ class TimelapseService:
         try:
             return await self.timelapse_ops.get_timelapse_by_id(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error("retrieve", "timelapse", timelapse_id, e)
+            logger.error(
+                f"Couldn't retrieve timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             raise
 
     async def create_new_timelapse(
@@ -170,7 +169,11 @@ class TimelapseService:
             Created Timelapse model instance
         """
         ValidationHelper.validate_id_parameter(camera_id, "camera")
-        LoggingHelper.log_operation_start("create", "timelapse", f"camera_{camera_id}")
+        logger.info(
+            f"Creating timelapse for camera {camera_id}",
+            emoji=LogEmoji.INFO,
+            extra_context={"camera_id": camera_id},
+        )
 
         try:
             # Create timelapse in database
@@ -180,7 +183,7 @@ class TimelapseService:
 
             # Create SSE event for real-time updates
             await self.sse_ops.create_event(
-                event_type="timelapse_created",
+                event_type=SSEEvent.TIMELAPSE_CREATED,
                 event_data={
                     "timelapse_id": new_timelapse.id,
                     "camera_id": camera_id,
@@ -188,20 +191,22 @@ class TimelapseService:
                     "name": new_timelapse.name,
                 },
                 priority=SSEPriority.NORMAL,
-                source="api",
+                source=SSEEventSource.API,
             )
 
             # Enhanced health monitoring integration
             await self._monitor_timelapse_health(new_timelapse.id, "creation")
 
-            LoggingHelper.log_operation_success(
-                "create", "timelapse", new_timelapse.id, f"for camera {camera_id}"
+            logger.info(
+                f"Successfully created timelapse {new_timelapse.id} for camera {camera_id}",
+                emoji=LogEmoji.SUCCESS,
             )
             return new_timelapse
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "create", "timelapse", f"camera_{camera_id}", e
+            logger.error(
+                f"Error creating timelapse for camera {camera_id}: {e}",
+                extra_context={"camera_id": camera_id, "error": str(e)},
             )
             raise
 
@@ -219,7 +224,11 @@ class TimelapseService:
             Updated Timelapse model instance
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        LoggingHelper.log_operation_start("update", "timelapse", timelapse_id)
+        logger.info(
+            f"Update timelapse {timelapse_id} with data: {timelapse_data}",
+            emoji=LogEmoji.INFO,
+            extra_context={"timelapse_id": timelapse_id},
+        )
 
         try:
             # Update timelapse in database
@@ -229,7 +238,7 @@ class TimelapseService:
 
             # Create SSE event for real-time updates
             await self.sse_ops.create_event(
-                event_type="timelapse_updated",
+                event_type=SSEEvent.TIMELAPSE_UPDATED,
                 event_data={
                     "timelapse_id": timelapse_id,
                     "camera_id": updated_timelapse.camera_id,
@@ -237,17 +246,24 @@ class TimelapseService:
                     "name": updated_timelapse.name,
                 },
                 priority=SSEPriority.NORMAL,
-                source="api",
+                source=SSEEventSource.API,
             )
 
             # Invalidate statistics cache since updates may affect statistics
-            self._invalidate_statistics_cache(timelapse_id)
+            await self._invalidate_statistics_cache(timelapse_id)
 
-            LoggingHelper.log_operation_success("update", "timelapse", timelapse_id)
+            logger.info(
+                f"Successfully updated timelapse {timelapse_id}",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={"timelapse_id": timelapse_id},
+            )
             return updated_timelapse
 
         except Exception as e:
-            LoggingHelper.log_operation_error("update", "timelapse", timelapse_id, e)
+            logger.error(
+                f"Error updating timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             raise
 
     async def delete_timelapse(self, timelapse_id: int) -> bool:
@@ -261,7 +277,10 @@ class TimelapseService:
             True if timelapse was deleted successfully
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        LoggingHelper.log_operation_start("delete", "timelapse", timelapse_id)
+        logger.debug(
+            f"Deleting timelapse {timelapse_id}",
+            extra_context={"timelapse_id": timelapse_id},
+        )
 
         try:
             # Get timelapse info before deletion for SSE event
@@ -269,22 +288,29 @@ class TimelapseService:
 
             result = await self.timelapse_ops.delete_timelapse(timelapse_id)
             if result:
-                LoggingHelper.log_operation_success("delete", "timelapse", timelapse_id)
+                logger.info(
+                    f"Successfully deleted timelapse {timelapse_id}",
+                    emoji=LogEmoji.SUCCESS,
+                    extra_context={"timelapse_id": timelapse_id},
+                )
                 # Create SSE event for real-time updates
                 if timelapse_to_delete:
                     await self.sse_ops.create_event(
-                        event_type="timelapse_deleted",
+                        event_type=SSEEvent.TIMELAPSE_DELETED,
                         event_data={
                             "timelapse_id": timelapse_id,
                             "camera_id": timelapse_to_delete.camera_id,
                             "name": timelapse_to_delete.name,
                         },
                         priority=SSEPriority.NORMAL,
-                        source="api",
+                        source=SSEEventSource.API,
                     )
             return result
         except Exception as e:
-            LoggingHelper.log_operation_error("delete", "timelapse", timelapse_id, e)
+            logger.error(
+                f"Error deleting timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             raise
 
     async def get_timelapse_statistics(
@@ -313,7 +339,15 @@ class TimelapseService:
                     and cached_result.get("expires_at", 0) > utc_now().timestamp()
                 ):
                     logger.debug(
-                        f"Using cached statistics for timelapse {timelapse_id}"
+                        f"Using cached statistics for timelapse {timelapse_id}",
+                        extra_context={
+                            "timelapse_id": timelapse_id,
+                            "operation": "get_statistics",
+                            "cache_hit": True,
+                            "expires_at": cached_result.get("expires_at"),
+                        },
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.TIMELAPSE_SERVICE,
                     )
                     return cached_result.get("data")
 
@@ -328,17 +362,27 @@ class TimelapseService:
                     "data": statistics,
                     "expires_at": utc_now().timestamp() + 300,  # 5 minutes cache
                 }
-                logger.debug(f"Cached statistics for timelapse {timelapse_id}")
+                logger.debug(
+                    f"Cached statistics for timelapse {timelapse_id}",
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.TIMELAPSE_SERVICE,
+                    extra_context={
+                        "timelapse_id": timelapse_id,
+                        "operation": "cache_statistics",
+                        "cache_duration_seconds": 300,
+                    },
+                )
 
             return statistics
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_statistics", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error getting statistics for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             raise
 
-    def _invalidate_statistics_cache(self, timelapse_id: int) -> None:
+    async def _invalidate_statistics_cache(self, timelapse_id: int) -> None:
         """
         Invalidate cached statistics for a timelapse.
 
@@ -348,7 +392,15 @@ class TimelapseService:
         if hasattr(self, "_stats_cache"):
             cache_key = f"timelapse_stats_{timelapse_id}"
             self._stats_cache.pop(cache_key, None)
-            logger.debug(f"Invalidated statistics cache for timelapse {timelapse_id}")
+            logger.debug(
+                f"Invalidated statistics cache for timelapse {timelapse_id}",
+                source=LogSource.SYSTEM,
+                logger_name=LoggerName.TIMELAPSE_SERVICE,
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "operation": "invalidate_statistics_cache",
+                },
+            )
 
     async def get_library_statistics(self) -> TimelapseLibraryStatistics:
         """
@@ -362,8 +414,9 @@ class TimelapseService:
             return stats
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_library_statistics", "timelapse", None, e
+            logger.error(
+                f"Error getting library statistics: {e}",
+                extra_context={"error": str(e)},
             )
             # Return empty statistics on error
             return TimelapseLibraryStatistics()
@@ -384,8 +437,9 @@ class TimelapseService:
         try:
             return await self.timelapse_ops.get_active_timelapse_for_camera(camera_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_active", "timelapse", f"camera_{camera_id}", e
+            logger.error(
+                f"Error getting active timelapse for camera {camera_id}: {e}",
+                extra_context={"camera_id": camera_id, "error": str(e)},
             )
             raise
 
@@ -407,18 +461,18 @@ class TimelapseService:
             Updated Timelapse model instance
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        ValidationHelper.validate_enum_value(status, set(TIMELAPSE_STATUSES), "status")
+        # Validate that status is a valid TimelapseStatus enum value
+        if not isinstance(status, TimelapseStatus):
+            raise ValueError(
+                f"Status must be a TimelapseStatus enum value, got: {type(status)}"
+            )
 
         # Get current timelapse to preserve existing settings
         current_timelapse = await self.get_timelapse_by_id(timelapse_id)
         if not current_timelapse:
             raise ValueError(f"Timelapse {timelapse_id} not found")
 
-        # Ensure only allowed status values are passed to TimelapseUpdate
-        if status not in TIMELAPSE_STATUSES:
-            raise ValueError(
-                f"Invalid status '{status}' for TimelapseUpdate. Allowed: {TIMELAPSE_STATUSES}"
-            )
+        # Create TimelapseUpdate with enum value
         timelapse_update = TimelapseUpdate(status=status)
 
         # Update timelapse
@@ -426,7 +480,7 @@ class TimelapseService:
 
         # Create SSE event for status changes
         await self.sse_ops.create_event(
-            event_type="timelapse_status_changed",
+            event_type=SSEEvent.TIMELAPSE_STATUS_UPDATED,
             event_data={
                 "timelapse_id": timelapse_id,
                 "camera_id": updated_timelapse.camera_id,
@@ -434,10 +488,14 @@ class TimelapseService:
                 "action": action_name,
             },
             priority=SSEPriority.HIGH,
-            source="api",
+            source=SSEEventSource.API,
         )
 
-        LoggingHelper.log_operation_success(action_name, "timelapse", timelapse_id)
+        logger.info(
+            f"{action_name.capitalize()} timelapse {timelapse_id}",
+            emoji=LogEmoji.INFO,
+            extra_context={"timelapse_id": timelapse_id},
+        )
         return updated_timelapse
 
     async def start_timelapse(self, timelapse_id: int) -> Timelapse:
@@ -451,7 +509,7 @@ class TimelapseService:
             Updated Timelapse model instance
         """
         updated_timelapse = await self._update_timelapse_status(
-            timelapse_id, "running", "start"
+            timelapse_id, TimelapseStatus.RUNNING, "start"
         )
 
         # SSE broadcasting handled by higher-level service layer
@@ -469,7 +527,7 @@ class TimelapseService:
             Updated Timelapse model instance
         """
         updated_timelapse = await self._update_timelapse_status(
-            timelapse_id, "paused", "pause"
+            timelapse_id, TimelapseStatus.PAUSED, "pause"
         )
 
         # SSE broadcasting handled by higher-level service layer
@@ -505,7 +563,11 @@ class TimelapseService:
             Completed Timelapse model instance
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        LoggingHelper.log_operation_start("complete", "timelapse", timelapse_id)
+        logger.info(
+            f"Completing timelapse {timelapse_id}",
+            emoji=LogEmoji.INFO,
+            extra_context={"timelapse_id": timelapse_id},
+        )
 
         try:
             completed_timelapse = await self.timelapse_ops.complete_timelapse(
@@ -513,26 +575,61 @@ class TimelapseService:
             )
 
             # Check if we should purge small images on completion
-            if self.settings_service:
+            if self.settings_service and self.thumbnail_pipeline:
                 purge_setting = await self.settings_service.get_setting(
                     SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION, "false"
                 )
                 if purge_setting.lower() == "true":
-                    # TODO: Call ThumbnailService.purge_small_images_for_timelapse(timelapse_id)
-                    # This should be moved to ThumbnailService for proper separation of concerns
+                    # Purge small images using the thumbnail pipeline
                     logger.info(
-                        f"Small image purge requested for timelapse {timelapse_id} but not yet implemented in ThumbnailService"
+                        f"Purging small images for completed timelapse {timelapse_id}",
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.TIMELAPSE_SERVICE,
+                        extra_context={
+                            "timelapse_id": timelapse_id,
+                            "operation": "complete_timelapse",
+                            "action": "purge_small_images",
+                        },
                     )
 
+                    purge_result = (
+                        await self.thumbnail_pipeline.purge_small_images_for_timelapse(
+                            timelapse_id
+                        )
+                    )
+
+                    if purge_result.success:
+                        logger.info(
+                            f"Successfully purged small images: {purge_result.message}",
+                            source=LogSource.SYSTEM,
+                            logger_name=LoggerName.TIMELAPSE_SERVICE,
+                            extra_context={
+                                "timelapse_id": timelapse_id,
+                                "operation": "complete_timelapse",
+                                "purge_result": purge_result.data,
+                            },
+                        )
+                    else:
+                        logger.warning(
+                            f"Failed to purge small images: {purge_result.message}",
+                            source=LogSource.SYSTEM,
+                            logger_name=LoggerName.TIMELAPSE_SERVICE,
+                            extra_context={
+                                "timelapse_id": timelapse_id,
+                                "operation": "complete_timelapse",
+                                "error": purge_result.data,
+                            },
+                        )
+
             # Invalidate statistics cache since completion changes statistics
-            self._invalidate_statistics_cache(timelapse_id)
+            await self._invalidate_statistics_cache(timelapse_id)
 
             # Enhanced statistics coordination (gets fresh data)
             await self._coordinate_statistics_update(timelapse_id, "completion")
 
             # Create SSE event for completion
             await self.sse_ops.create_event(
-                event_type=EVENT_TIMELAPSE_COMPLETED,
+                event_type=SSEEvent.TIMELAPSE_COMPLETED,
                 event_data={
                     "timelapse_id": timelapse_id,
                     "camera_id": completed_timelapse.camera_id,
@@ -540,17 +637,22 @@ class TimelapseService:
                     "name": completed_timelapse.name,
                 },
                 priority=SSEPriority.HIGH,
-                source="api",
+                source=SSEEventSource.API,
             )
 
-            LoggingHelper.log_operation_success("complete", "timelapse", timelapse_id)
+            logger.info(
+                f"Timelapse {timelapse_id} completed",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={"timelapse_id": timelapse_id},
+            )
             return completed_timelapse
 
         except Exception as e:
-            LoggingHelper.log_operation_error("complete", "timelapse", timelapse_id, e)
+            logger.error(
+                f"Error completing timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             raise
-
-    # TODO: Move thumbnail purge functionality to ThumbnailService for proper separation of concerns
 
     async def get_timelapse_images(
         self, timelapse_id: int, page: int = 1, per_page: int = 50
@@ -579,8 +681,9 @@ class TimelapseService:
                 timelapse_id=timelapse_id, page=page, page_size=per_page
             )
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_images", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error getting images for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return ResponseFormatter.error(
                 f"Failed to retrieve images for timelapse {timelapse_id}",
@@ -599,8 +702,10 @@ class TimelapseService:
         Returns:
             Cleanup operation results
         """
-        LoggingHelper.log_operation_start(
-            "cleanup", "completed timelapses", f"{retention_days} days"
+        logger.info(
+            f"Cleanup completed timelapses older than {retention_days} days",
+            emoji=LogEmoji.INFO,
+            extra_context={"retention_days": retention_days},
         )
 
         try:
@@ -608,11 +713,13 @@ class TimelapseService:
                 retention_days
             )
 
-            LoggingHelper.log_operation_success(
-                "cleanup",
-                "completed timelapses",
-                f"{deleted_count} items",
-                f"older than {retention_days} days",
+            logger.info(
+                f"Cleanup deleted {deleted_count} completed timelapses older than {retention_days} days",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={
+                    "deleted_count": deleted_count,
+                    "retention_days": retention_days,
+                },
             )
 
             return ResponseFormatter.success(
@@ -620,8 +727,9 @@ class TimelapseService:
                 data={"deleted_count": deleted_count, "retention_days": retention_days},
             )
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "cleanup", "completed timelapses", retention_days, e
+            logger.error(
+                f"Error cleaning up completed timelapses older than {retention_days} days: {e}",
+                extra_context={"retention_days": retention_days, "error": str(e)},
             )
             return ResponseFormatter.error(
                 "Failed to cleanup completed timelapses", error_code="cleanup_failed"
@@ -643,8 +751,9 @@ class TimelapseService:
         try:
             return await self.timelapse_ops.get_timelapse_settings(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_video_settings", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error getting video settings for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             raise
 
@@ -662,8 +771,10 @@ class TimelapseService:
             Creation coordination results
         """
         ValidationHelper.validate_id_parameter(camera_id, "camera")
-        LoggingHelper.log_operation_start(
-            "coordinate_creation", "timelapse", f"camera_{camera_id}"
+        logger.info(
+            f"Coordinating timelapse creation for camera {camera_id}",
+            emoji=LogEmoji.INFO,
+            extra_context={"camera_id": camera_id},
         )
 
         try:
@@ -678,7 +789,7 @@ class TimelapseService:
 
                 # Create SSE event for entity coordination
                 await self.sse_ops.create_event(
-                    event_type="timelapse_entity_created",
+                    event_type=SSEEvent.TIMELAPSE_CREATED,
                     event_data={
                         "timelapse_id": timelapse.id,
                         "camera_id": camera_id,
@@ -686,14 +797,13 @@ class TimelapseService:
                         "name": timelapse.name,
                     },
                     priority=SSEPriority.NORMAL,
-                    source="api",
+                    source=SSEEventSource.API,
                 )
 
-            LoggingHelper.log_operation_success(
-                "coordinate_creation",
-                "timelapse",
-                timelapse.id,
-                f"for camera {camera_id}",
+            logger.info(
+                f"Timelapse {timelapse.id} coordinated for camera {camera_id}",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={"timelapse_id": timelapse.id, "camera_id": camera_id},
             )
 
             return ResponseFormatter.success(
@@ -702,8 +812,9 @@ class TimelapseService:
             )
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "coordinate_creation", "timelapse", f"camera_{camera_id}", e
+            logger.error(
+                f"Error coordinating creation for camera {camera_id}: {e}",
+                extra_context={"camera_id": camera_id, "error": str(e)},
             )
             return ResponseFormatter.error(
                 "Entity creation coordination failed",
@@ -722,8 +833,10 @@ class TimelapseService:
             Completion coordination results
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        LoggingHelper.log_operation_start(
-            "coordinate_completion", "timelapse", timelapse_id
+        logger.info(
+            f"Coordinating timelapse completion for timelapse {timelapse_id}",
+            emoji=LogEmoji.INFO,
+            extra_context={"timelapse_id": timelapse_id},
         )
 
         try:
@@ -755,8 +868,10 @@ class TimelapseService:
             # Calculate final statistics
             final_stats = await self.calculate_statistics_aggregation(timelapse_id)
 
-            LoggingHelper.log_operation_success(
-                "coordinate_completion", "timelapse", timelapse_id
+            logger.info(
+                f"Timelapse {timelapse_id} coordinated for completion",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={"timelapse_id": timelapse_id},
             )
 
             return ResponseFormatter.success(
@@ -768,8 +883,9 @@ class TimelapseService:
             )
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "coordinate_completion", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error coordinating completion for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return ResponseFormatter.error(
                 "Entity completion coordination failed",
@@ -806,7 +922,7 @@ class TimelapseService:
                     end_date = None
                     if timelapse.last_capture_at:
                         end_date = timelapse.last_capture_at.date()
-                    elif timelapse.status == "completed":
+                    elif timelapse.status == TimelapseStatus.COMPLETED:
                         # Use current date for completed timelapses
                         current_time = await get_timezone_aware_timestamp_async(self.db)
                         end_date = current_time.date()
@@ -820,7 +936,9 @@ class TimelapseService:
                     images_per_day = stats.total_images / duration_days
 
                 # Calculate completion percentage
-                completion_rate = 100.0 if timelapse.status == "completed" else 0.0
+                completion_rate = (
+                    100.0 if timelapse.status == TimelapseStatus.COMPLETED else 0.0
+                )
 
                 # Calculate data quality score using helper
                 data_quality_score = MetricsHelper.calculate_percentage(
@@ -840,8 +958,9 @@ class TimelapseService:
             return {"basic_statistics": stats.model_dump()}
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "calculate_statistics", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error calculating statistics for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return {"error": str(e)}
 
@@ -898,8 +1017,9 @@ class TimelapseService:
             )
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "calculate_day_numbers", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error calculating day numbers for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return ResponseFormatter.error(
                 "Day number calculation failed", error_code="day_calculation_failed"
@@ -968,8 +1088,9 @@ class TimelapseService:
                 )
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "manage_auto_stop", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error managing auto-stop for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return ResponseFormatter.error(
                 "Auto-stop management failed", error_code="auto_stop_failed"
@@ -1058,8 +1179,14 @@ class TimelapseService:
             )
 
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "track_progress", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error tracking progress for timelapse {timelapse_id}",
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "operation": "track_progress",
+                    "error": str(e),
+                },
+                exception=e,
             )
             return ResponseFormatter.error(
                 "Progress tracking failed", error_code="progress_tracking_failed"
@@ -1082,7 +1209,12 @@ class TimelapseService:
             timelapse = await self.timelapse_ops.get_timelapse_by_id(timelapse_id)
             if not timelapse:
                 logger.warning(
-                    f"Cannot monitor health for non-existent timelapse {timelapse_id}"
+                    f"Cannot monitor health for non-existent timelapse {timelapse_id}",
+                    extra_context={
+                        "timelapse_id": timelapse_id,
+                        "operation": "monitor_timelapse_health",
+                        "error_type": "timelapse_not_found",
+                    },
                 )
                 return
 
@@ -1100,19 +1232,33 @@ class TimelapseService:
 
             # Create SSE event for health monitoring
             await self.sse_ops.create_event(
-                event_type="timelapse_health_monitored",
+                event_type=SSEEvent.TIMELAPSE_HEALTH_MONITORED,
                 event_data=health_data,
                 priority=SSEPriority.LOW,
-                source="system",
+                source=SSEEventSource.SYSTEM,
             )
 
             logger.info(
-                f"Timelapse health monitoring completed for {timelapse_id} during {operation}"
+                f"Timelapse health monitoring completed for {timelapse_id} during {operation}",
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "operation": "monitor_timelapse_health",
+                    "trigger_operation": operation,
+                    "status": timelapse.status,
+                    "camera_id": timelapse.camera_id,
+                },
             )
 
         except Exception as e:
             logger.warning(
-                f"Failed to monitor timelapse health for {timelapse_id}: {e}"
+                f"Failed to monitor timelapse health for {timelapse_id}",
+                exception=e,
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "operation": "monitor_timelapse_health",
+                    "error_type": type(e).__name__,
+                    "trigger_operation": operation,
+                },
             )
 
     async def _coordinate_statistics_update(
@@ -1143,22 +1289,93 @@ class TimelapseService:
 
                 # Create SSE event for statistics coordination
                 await self.sse_ops.create_event(
-                    event_type="timelapse_statistics_updated",
+                    event_type=SSEEvent.TIMELAPSE_STATISTICS_UPDATED,
                     event_data=stats_data,
                     priority=SSEPriority.LOW,
-                    source="system",
+                    source=SSEEventSource.SYSTEM,
                 )
 
                 logger.info(
-                    f"Statistics coordination completed for timelapse {timelapse_id} via {trigger}"
+                    f"Statistics coordination completed for timelapse {timelapse_id} via {trigger}",
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.TIMELAPSE_SERVICE,
+                    extra_context={
+                        "timelapse_id": timelapse_id,
+                        "operation": "coordinate_statistics_update",
+                        "trigger": trigger,
+                        "statistics_available": True,
+                        "statistics": statistics.model_dump(),
+                    },
                 )
             else:
-                logger.warning(f"No statistics available for timelapse {timelapse_id}")
+                logger.warning(
+                    f"No statistics available for timelapse {timelapse_id}",
+                    extra_context={
+                        "timelapse_id": timelapse_id,
+                        "operation": "coordinate_statistics_update",
+                        "trigger": trigger,
+                        "statistics_available": False,
+                    },
+                )
 
         except Exception as e:
             logger.warning(
-                f"Failed to coordinate statistics update for timelapse {timelapse_id}: {e}"
+                f"Failed to coordinate statistics update for timelapse {timelapse_id}",
+                exception=e,
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "operation": "coordinate_statistics_update",
+                    "trigger": trigger,
+                    "error_type": type(e).__name__,
+                },
             )
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get TimelapseService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            return {
+                "service_name": "TimelapseService",
+                "service_type": "timelapse_data_management",
+                "database_status": "healthy" if self.db else "unavailable",
+                "timelapse_ops_status": (
+                    "healthy" if self.timelapse_ops else "unavailable"
+                ),
+                "sse_ops_status": "healthy" if self.sse_ops else "unavailable",
+                "camera_service_status": (
+                    "healthy" if self.camera_service else "unavailable"
+                ),
+                "video_automation_service_status": (
+                    "healthy" if self.video_automation_service else "unavailable"
+                ),
+                "image_service_status": (
+                    "healthy" if self.image_service else "unavailable"
+                ),
+                "settings_service_status": (
+                    "healthy" if self.settings_service else "unavailable"
+                ),
+                "thumbnail_pipeline_status": (
+                    "healthy" if self.thumbnail_pipeline else "unavailable"
+                ),
+                "service_healthy": all(
+                    [
+                        self.db is not None,
+                        self.timelapse_ops is not None,
+                        self.sse_ops is not None,
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "service_name": "TimelapseService",
+                "service_type": "timelapse_data_management",
+                "service_healthy": False,
+                "status_error": str(e),
+            }
 
     # SSE broadcasting methods removed per architectural guidelines
     # Real-time event broadcasting is handled at a higher service layer
@@ -1196,8 +1413,9 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.get_active_timelapse_for_camera(camera_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_active", "timelapse", f"camera_{camera_id}", e
+            logger.error(
+                f"Error getting active timelapse for camera {camera_id}: {e}",
+                extra_context={"camera_id": camera_id, "error": str(e)},
             )
             raise
 
@@ -1215,32 +1433,44 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.get_timelapse_by_id(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error("retrieve", "timelapse", timelapse_id, e)
+            logger.error(
+                f"Error retrieving timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             raise
 
     def update_timelapse_status(
         self,
         timelapse_id: int,
-        status: Literal["running", "paused", "completed"],
+        status: TimelapseStatus,
     ) -> bool:
         """
         Update timelapse status.
 
         Args:
             timelapse_id: ID of the timelapse
-            status: New status ('running', 'paused', 'completed')
+            status: New TimelapseStatus enum value
 
         Returns:
             True if update was successful
         """
         ValidationHelper.validate_id_parameter(timelapse_id, "timelapse")
-        ValidationHelper.validate_enum_value(status, set(TIMELAPSE_STATUSES), "status")
+        # Validate that status is a valid TimelapseStatus enum value
+        if not isinstance(status, TimelapseStatus):
+            raise ValueError(
+                f"Status must be a TimelapseStatus enum value, got: {type(status)}"
+            )
 
         try:
             return self.timelapse_ops.update_timelapse_status(timelapse_id, status)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "update_status", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error updating status for timelapse {timelapse_id}: {e}",
+                extra_context={
+                    "timelapse_id": timelapse_id,
+                    "status": status,
+                    "error": str(e),
+                },
             )
             return False
 
@@ -1258,8 +1488,9 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.increment_glitch_count(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "increment_glitch", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error incrementing glitch count for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return False
 
@@ -1277,15 +1508,16 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.update_timelapse_last_activity(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "update_last_activity", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error updating last activity for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return False
 
     def _update_timelapse_status_with_logging(
         self,
         timelapse_id: int,
-        status: Literal["running", "paused", "completed"],
+        status: TimelapseStatus,
         action_name: str,
     ) -> bool:
         """
@@ -1302,12 +1534,17 @@ class SyncTimelapseService:
         try:
             success = self.update_timelapse_status(timelapse_id, status)
             if success:
-                LoggingHelper.log_operation_success(
-                    action_name, "timelapse", timelapse_id
+                logger.info(
+                    f"{action_name.capitalize()} timelapse {timelapse_id}",
+                    emoji=LogEmoji.INFO,
+                    extra_context={"timelapse_id": timelapse_id},
                 )
             return success
         except Exception as e:
-            LoggingHelper.log_operation_error(action_name, "timelapse", timelapse_id, e)
+            logger.error(
+                f"Error during {action_name} for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
+            )
             return False
 
     def start_timelapse(self, timelapse_id: int) -> bool:
@@ -1321,7 +1558,7 @@ class SyncTimelapseService:
             True if update was successful
         """
         return self._update_timelapse_status_with_logging(
-            timelapse_id, "running", "start"
+            timelapse_id, TimelapseStatus.RUNNING, "start"
         )
 
     def pause_timelapse(self, timelapse_id: int) -> bool:
@@ -1335,7 +1572,7 @@ class SyncTimelapseService:
             True if update was successful
         """
         return self._update_timelapse_status_with_logging(
-            timelapse_id, "paused", "pause"
+            timelapse_id, TimelapseStatus.PAUSED, "pause"
         )
 
     def stop_timelapse(self, timelapse_id: int) -> bool:
@@ -1349,7 +1586,7 @@ class SyncTimelapseService:
             True if update was successful
         """
         return self._update_timelapse_status_with_logging(
-            timelapse_id, "completed", "stop"
+            timelapse_id, TimelapseStatus.COMPLETED, "stop"
         )
 
     def get_timelapses_for_cleanup(
@@ -1367,8 +1604,9 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.get_timelapses_for_cleanup(retention_days)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_cleanup_candidates", "timelapses", retention_days, e
+            logger.error(
+                f"Error retrieving timelapses for cleanup older than {retention_days} days: {e}",
+                exception=e,
             )
             raise
 
@@ -1382,24 +1620,29 @@ class SyncTimelapseService:
         Returns:
             Number of timelapses deleted
         """
-        LoggingHelper.log_operation_start(
-            "cleanup", "completed timelapses", f"{retention_days} days"
+        logger.info(
+            f"Cleanup completed timelapses older than {retention_days} days",
+            emoji=LogEmoji.CLEANUP,
+            extra_context={"retention_days": retention_days},
         )
 
         try:
             deleted_count = self.timelapse_ops.cleanup_completed_timelapses(
                 retention_days
             )
-            LoggingHelper.log_operation_success(
-                "cleanup",
-                "completed timelapses",
-                f"{deleted_count} items",
-                f"older than {retention_days} days",
+            logger.info(
+                f"Cleanup deleted {deleted_count} completed timelapses older than {retention_days} days",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={
+                    "deleted_count": deleted_count,
+                    "retention_days": retention_days,
+                },
             )
             return deleted_count
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "cleanup", "completed timelapses", retention_days, e
+            logger.error(
+                f"Error cleaning up completed timelapses older than {retention_days} days: {e}",
+                extra_context={"retention_days": retention_days, "error": str(e)},
             )
             return 0
 
@@ -1417,8 +1660,9 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.get_timelapse_image_count(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_image_count", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error getting image count for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             return 0
 
@@ -1438,8 +1682,9 @@ class SyncTimelapseService:
         try:
             return self.timelapse_ops.get_timelapse_settings(timelapse_id)
         except Exception as e:
-            LoggingHelper.log_operation_error(
-                "get_video_settings", "timelapse", timelapse_id, e
+            logger.error(
+                f"Error getting video settings for timelapse {timelapse_id}: {e}",
+                extra_context={"timelapse_id": timelapse_id, "error": str(e)},
             )
             raise
 
@@ -1453,14 +1698,56 @@ class SyncTimelapseService:
         Returns:
             Created Timelapse model instance
         """
-        LoggingHelper.log_operation_start("create", "timelapse", "sync_worker")
+        logger.info(
+            "Creating timelapse (sync worker)",
+            emoji=LogEmoji.INFO,
+            extra_context={"worker_type": "sync_worker"},
+        )
 
         try:
             created_timelapse = self.timelapse_ops.create_timelapse(timelapse_data)
-            LoggingHelper.log_operation_success(
-                "create", "timelapse", created_timelapse.id
+            logger.info(
+                f"Created timelapse {created_timelapse.id} (sync worker)",
+                emoji=LogEmoji.SUCCESS,
+                extra_context={
+                    "timelapse_id": created_timelapse.id,
+                    "worker_type": "sync_worker",
+                },
             )
             return created_timelapse
         except Exception as e:
-            LoggingHelper.log_operation_error("create", "timelapse", "sync_worker", e)
+            logger.error(
+                f"Error creating timelapse (sync worker): {e}",
+                extra_context={"worker_type": "sync_worker", "error": str(e)},
+            )
             raise
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get SyncTimelapseService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            return {
+                "service_name": "SyncTimelapseService",
+                "service_type": "sync_timelapse_data_management",
+                "database_status": "healthy" if self.db else "unavailable",
+                "timelapse_ops_status": (
+                    "healthy" if self.timelapse_ops else "unavailable"
+                ),
+                "service_healthy": all(
+                    [
+                        self.db is not None,
+                        self.timelapse_ops is not None,
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "service_name": "SyncTimelapseService",
+                "service_type": "sync_timelapse_data_management",
+                "service_healthy": False,
+                "status_error": str(e),
+            }

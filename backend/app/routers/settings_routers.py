@@ -10,7 +10,10 @@ Interactions: Uses SettingsService for business logic, handles settings validati
 from typing import List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Response
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..dependencies import SettingsServiceDep, WeatherManagerDep
 from ..models import (

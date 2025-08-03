@@ -9,30 +9,43 @@ This module handles all log-related database operations including:
 - Analytics and reporting
 """
 
-from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
-import json
-from loguru import logger
 
-from .core import AsyncDatabase, SyncDatabase
+import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, cast
+
+import psycopg
+
+from ..constants import DEFAULT_CORRUPTION_HISTORY_HOURS, DEFAULT_LOG_RETENTION_DAYS
 from ..models.log_model import Log, LogCreate
-from ..constants import (
-    DEFAULT_LOG_RETENTION_DAYS,
-    DEFAULT_CORRUPTION_HISTORY_HOURS,
-)
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
-    generate_collection_etag,
-)
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import LogOperationError
+
+
+class PaginationInfo(TypedDict):
+    """Pagination metadata structure."""
+
+    current_page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
+
+class LogsWithPagination(TypedDict):
+    """Type definition for paginated logs response."""
+
+    logs: List[Log]
+    pagination: PaginationInfo
 
 
 class LogQueryBuilder:
     """Centralized query builder for log operations.
-    
+
     IMPORTANT: For optimal performance, ensure these indexes exist:
     - CREATE INDEX idx_logs_timestamp ON logs(timestamp DESC);
     - CREATE INDEX idx_logs_camera_id ON logs(camera_id) WHERE camera_id IS NOT NULL;
@@ -161,7 +174,7 @@ class LogOperations:
         end_date: Optional[datetime] = None,
         page: int = 1,
         page_size: int = 25,
-    ) -> Dict[str, Any]:
+    ) -> LogsWithPagination:
         """
         Get logs with pagination and filtering.
 
@@ -215,7 +228,9 @@ class LogOperations:
 
         if search_query:
             # Use full-text search for better performance on large datasets
-            where_conditions.append("to_tsvector('english', l.message) @@ plainto_tsquery('english', %(search)s)")
+            where_conditions.append(
+                "to_tsvector('english', l.message) @@ plainto_tsquery('english', %(search)s)"
+            )
             params["search"] = search_query
 
         # Remove manual caching - now handled by @cached_response decorator
@@ -227,43 +242,49 @@ class LogOperations:
             where_conditions, with_count=True
         )
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
 
-                if not results:
-                    # Return empty result set
-                    result = {
-                        "logs": [],
-                        "pagination": {
-                            "current_page": page,
-                            "page_size": page_size,
-                            "total_count": 0,
-                            "total_pages": 0,
-                            "has_next": False,
-                            "has_prev": page > 1,
-                        },
-                    }
-                else:
-                    # Extract total count from first row (all rows have same total_count)
-                    total_count = results[0]["total_count"]
-                    logs = [self._row_to_log_with_count(row) for row in results]
-                    total_pages = (total_count + page_size - 1) // page_size
+                    if not results:
+                        # Return empty result set
+                        result = {
+                            "logs": [],
+                            "pagination": {
+                                "current_page": page,
+                                "page_size": page_size,
+                                "total_count": 0,
+                                "total_pages": 0,
+                                "has_next": False,
+                                "has_prev": page > 1,
+                            },
+                        }
+                    else:
+                        # Extract total count from first row (all rows have same total_count)
+                        total_count = results[0]["total_count"]
+                        logs = [self._row_to_log_with_count(row) for row in results]
+                        total_pages = (total_count + page_size - 1) // page_size
 
-                    result = {
-                        "logs": logs,
-                        "pagination": {
-                            "current_page": page,
-                            "page_size": page_size,
-                            "total_count": total_count,
-                            "total_pages": total_pages,
-                            "has_next": page < total_pages,
-                            "has_prev": page > 1,
-                        },
-                    }
+                        result = {
+                            "logs": logs,
+                            "pagination": {
+                                "current_page": page,
+                                "page_size": page_size,
+                                "total_count": total_count,
+                                "total_pages": total_pages,
+                                "has_next": page < total_pages,
+                                "has_prev": page > 1,
+                            },
+                        }
 
-                return result
+                    return cast(LogsWithPagination, result)
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                "Failed to retrieve logs",
+                operation="get_logs",
+            )
 
     async def add_log_entry(
         self,
@@ -304,16 +325,21 @@ class LogOperations:
             "timestamp": utc_now(),
         }
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                result = await cur.fetchone()
-                log = self._row_to_log(result)
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    result = await cur.fetchone()
+                    log = self._row_to_log(result)
 
-                # Clear related caches after successful creation
-                await self._clear_log_caches()
+                    # Clear related caches after successful creation
+                    await self._clear_log_caches()
 
-                return log
+                    return log
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                "Failed to add log entry", operation="add_log_entry"
+            )
 
     async def create_log(self, log_entry: LogCreate) -> Log:
         """
@@ -371,16 +397,21 @@ class LogOperations:
                 }
             )
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
-                logs = [self._row_to_log(row) for row in results]
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
+                    logs = [self._row_to_log(row) for row in results]
 
-                # Clear related caches after successful bulk creation
-                await self._clear_log_caches()
+                    # Clear related caches after successful bulk creation
+                    await self._clear_log_caches()
 
-                return logs
+                    return logs
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                "Failed to bulk create log entries", operation="bulk_create_logs"
+            )
 
     @cached_response(ttl_seconds=30, key_prefix="log")
     async def get_camera_logs(
@@ -407,11 +438,16 @@ class LogOperations:
             "now": now,
         }
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
-                return [self._row_to_log(row) for row in results]
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
+                    return [self._row_to_log(row) for row in results]
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                "Failed to retrieve camera logs", operation="get_camera_logs"
+            )
 
     async def delete_old_logs(
         self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS
@@ -425,29 +461,39 @@ class LogOperations:
         Returns:
             Number of logs deleted
         """
-        if days_to_keep == 0:
-            query = "DELETE FROM logs"
-            params = None
-        else:
-            query = """
-                DELETE FROM logs
-                WHERE timestamp < %(now)s - INTERVAL '%(days)s days'
-            """
-            params = {"now": utc_now(), "days": days_to_keep}
+        try:
+            if days_to_keep == 0:
+                query = "DELETE FROM logs"
+                params = None
+            else:
+                query = """
+                    DELETE FROM logs
+                    WHERE timestamp < %(now)s - INTERVAL '%(days)s days'
+                """
+                params = {"now": utc_now(), "days": days_to_keep}
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                if params:
-                    await cur.execute(query, params)
-                else:
-                    await cur.execute(query)
-                deleted_count = cur.rowcount or 0
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    if params:
+                        await cur.execute(query, params)
+                    else:
+                        await cur.execute(query)
+                    deleted_count = cur.rowcount or 0
 
-                # Clear related caches after successful deletion
-                if deleted_count > 0:
-                    await self._clear_log_caches()
+                    # Clear related caches after successful deletion
+                    if deleted_count > 0:
+                        await self._clear_log_caches()
 
-                return deleted_count
+                    return deleted_count
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise LogOperationError(
+                f"Failed to delete old logs (keeping {days_to_keep} days)",
+                details={
+                    "operation": "delete_old_logs",
+                    "days_to_keep": days_to_keep,
+                    "error": str(e),
+                },
+            )
 
     def _row_to_log(self, row: Tuple) -> Log:
         """Convert database row to Log model."""
@@ -507,26 +553,37 @@ class SyncLogOperations:
         Returns:
             Created Log model
         """
-        query = """
-            INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
-            VALUES (%(level)s, %(message)s, %(camera_id)s, %(source)s, %(logger_name)s, %(extra_data)s, %s)
-            RETURNING *
-        """
+        try:
+            query = """
+                INSERT INTO logs (level, message, camera_id, source, logger_name, extra_data, timestamp)
+                VALUES (%(level)s, %(message)s, %(camera_id)s, %(source)s, %(logger_name)s, %(extra_data)s, %s)
+                RETURNING *
+            """
 
-        params = {
-            "level": level.upper(),
-            "message": message,
-            "camera_id": camera_id,
-            "source": source,
-            "logger_name": logger_name,
-            "extra_data": json.dumps(extra_data) if extra_data else None,
-        }
+            params = {
+                "level": level.upper(),
+                "message": message,
+                "camera_id": camera_id,
+                "source": source,
+                "logger_name": logger_name,
+                "extra_data": json.dumps(extra_data) if extra_data else None,
+            }
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, list(params.values()) + [utc_now()])
-                result = cur.fetchone()
-                return self._row_to_log(result)
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, list(params.values()) + [utc_now()])
+                    result = cur.fetchone()
+                    return self._row_to_log(result)
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                f"Failed to write log entry (level: {level})",
+                details={
+                    "operation": "write_log_entry",
+                    "level": level,
+                    "message": message[:100] + "..." if len(message) > 100 else message,
+                    "camera_id": camera_id,
+                },
+            )
 
     def create_log(self, log_entry: LogCreate) -> Log:
         """
@@ -557,38 +614,48 @@ class SyncLogOperations:
         Returns:
             List of created Log model instances
         """
-        if not log_entries:
-            return []
+        try:
+            if not log_entries:
+                return []
 
-        # Use centralized query builder
-        batch_size = len(log_entries)
-        now = utc_now()
-        query = LogQueryBuilder.build_bulk_insert_query(batch_size)
-        
-        # Build parameters for bulk insert
-        params = {}
-        for i, log_entry in enumerate(log_entries):
-            params.update(
-                {
-                    f"level_{i}": log_entry.level.upper(),
-                    f"message_{i}": log_entry.message,
-                    f"logger_name_{i}": log_entry.logger_name or "system",
-                    f"source_{i}": log_entry.source or "system",
-                    f"camera_id_{i}": log_entry.camera_id,
-                    f"extra_data_{i}": (
-                        json.dumps(log_entry.extra_data)
-                        if log_entry.extra_data
-                        else None
-                    ),
-                    f"timestamp_{i}": now,
-                }
+            # Use centralized query builder
+            batch_size = len(log_entries)
+            now = utc_now()
+            query = LogQueryBuilder.build_bulk_insert_query(batch_size)
+
+            # Build parameters for bulk insert
+            params = {}
+            for i, log_entry in enumerate(log_entries):
+                params.update(
+                    {
+                        f"level_{i}": log_entry.level.upper(),
+                        f"message_{i}": log_entry.message,
+                        f"logger_name_{i}": log_entry.logger_name or "system",
+                        f"source_{i}": log_entry.source or "system",
+                        f"camera_id_{i}": log_entry.camera_id,
+                        f"extra_data_{i}": (
+                            json.dumps(log_entry.extra_data)
+                            if log_entry.extra_data
+                            else None
+                        ),
+                        f"timestamp_{i}": now,
+                    }
+                )
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    results = cur.fetchall()
+                    return [self._row_to_log(row) for row in results]
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise LogOperationError(
+                f"Failed to bulk create {len(log_entries)} log entries",
+                details={
+                    "operation": "bulk_create_logs",
+                    "batch_size": len(log_entries),
+                    "error": "An error occurred",
+                },
             )
-
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                results = cur.fetchall()
-                return [self._row_to_log(row) for row in results]
 
     def cleanup_old_logs(self, days_to_keep: int = DEFAULT_LOG_RETENTION_DAYS) -> int:
         """
@@ -600,28 +667,45 @@ class SyncLogOperations:
         Returns:
             Number of logs deleted
         """
-        if days_to_keep == 0:
-            query = "DELETE FROM logs"
-            params = ()
-        else:
-            query = """
-                DELETE FROM logs
-                WHERE timestamp < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
-            """
-            params = {"now": utc_now(), "days": days_to_keep}
+        try:
+            if days_to_keep == 0:
+                query = "DELETE FROM logs"
+                params = ()
+            else:
+                query = """
+                    DELETE FROM logs
+                    WHERE timestamp < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
+                """
+                params = {"now": utc_now(), "days": days_to_keep}
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                affected = cur.rowcount or 0
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    affected = cur.rowcount or 0
 
-                if affected > 0:
-                    if days_to_keep == 0:
-                        logger.info(f"Cleaned up ALL {affected} log entries")
-                    else:
-                        logger.info(f"Cleaned up {affected} old log entries")
+                    if affected > 0:
+                        pass
+                        # if days_to_keep == 0:
+                        #     logger.info(
+                        #         f"Cleaned up ALL {affected} log entries",
+                        #         emoji=LogEmoji.CLEANUP,
+                        #     )
+                        # else:
+                        #     logger.info(
+                        #         f"Cleaned up {affected} old log entries",
+                        #         emoji=LogEmoji.CLEANUP,
+                        #     )
 
-                return affected
+                    return affected
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise LogOperationError(
+                f"Failed to cleanup old logs (keeping {days_to_keep} days)",
+                details={
+                    "operation": "cleanup_old_logs",
+                    "days_to_keep": days_to_keep,
+                    "error": str(e),
+                },
+            )
 
     def _row_to_log(self, row: Tuple) -> Log:
         """Convert database row to Log model."""

@@ -31,19 +31,22 @@ Subdirectory Services:
 
 # Core business logic services
 from .camera_service import CameraService, SyncCameraService
+
 # from .video_service import VideoService, SyncVideoService  # REMOVED: Use video_pipeline instead
 # from .video_automation_service import VideoAutomationService  # REMOVED: Use video_pipeline instead
 from .video_pipeline import create_video_pipeline  # NEW: Unified video pipeline
 from .timelapse_service import TimelapseService
 from .image_service import ImageService
 from .capture_pipeline import RTSPService, AsyncRTSPService, WorkflowOrchestratorService
+
 # from .corruption_service import CorruptionService  # Replaced by corruption_pipeline
 from .settings_service import SettingsService, SyncSettingsService
 from .statistics_service import StatisticsService, SyncStatisticsService
 from .health_service import HealthService
-from .log_service import LogService
+
+# LogService removed - use LoggerService from logger.logger_service instead
 from .scheduling import SchedulingService, SyncSchedulingService
-from .scheduling import TimeWindowService, SyncTimeWindowService  
+from .scheduling import TimeWindowService, SyncTimeWindowService
 from .scheduling import SchedulerService
 from .scheduling import JobQueueService, SyncJobQueueService
 
@@ -64,7 +67,7 @@ __all__ = [
     "TimelapseService",
     "ImageService",
     "RTSPService",
-    "AsyncRTSPService", 
+    "AsyncRTSPService",
     "WorkflowOrchestratorService",
     # "CorruptionService",  # Replaced by corruption_pipeline
     "SettingsService",
@@ -72,9 +75,9 @@ __all__ = [
     "StatisticsService",
     "SyncStatisticsService",
     "HealthService",
-    "LogService",
+    # "LogService",  # REMOVED: Use LoggerService from logger.logger_service instead
     "SchedulingService",
-    "SyncSchedulingService", 
+    "SyncSchedulingService",
     "TimeWindowService",
     "SyncTimeWindowService",
     "SchedulerService",

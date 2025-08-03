@@ -21,4 +21,6 @@ muddy-math-60649735)
 - **CRITICAL**: Never start the backend server or the nextjs server individually. Always use `./start-service.sh`. 
 - **CRITICAL**: Always run `kill-port 3000 3001 3002 3003 8000 8001 8002 8003` prior to starting services
 
-(rest of the existing content remains unchanged)
+## Code Principles
+
+- Enums ALWAYS take precedence over constants

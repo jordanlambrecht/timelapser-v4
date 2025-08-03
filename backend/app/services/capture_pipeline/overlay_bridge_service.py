@@ -34,11 +34,17 @@ while preparing for future architectural evolution.
 
 
 from datetime import datetime, timedelta
-from ...utils.time_utils import utc_now, format_date_string  # Using timezone-aware system
+from ...utils.time_utils import (
+    utc_now,
+    format_date_string,
+)  # Using timezone-aware system
 from PIL import Image
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LogSource, LoggerName
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 # Core dependencies
 from ...database.core import SyncDatabase
@@ -90,7 +96,7 @@ class OverlayBridgeService:
     - Fallback overlay creation when generation fails
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """
         Initialize overlay bridge service.
 
@@ -357,7 +363,11 @@ class OverlayBridgeService:
             # Delegate to overlay service for actual rendering
             # This bridge method coordinates the call but doesn't implement rendering
 
-            renderer = OverlayRenderer(overlay_settings)
+            # Convert overlay_settings dict to OverlayConfiguration if needed
+            config = overlay_settings
+            if isinstance(overlay_settings, dict):
+                config = OverlayConfiguration(**overlay_settings)
+            renderer = OverlayRenderer(config)
             success = renderer.render_overlay(
                 base_image_path=base_image_path,
                 context_data=overlay_content,
@@ -548,13 +558,13 @@ class OverlayBridgeService:
             # Parse timestamp string to datetime if needed
             if isinstance(timestamp, str):
                 try:
-                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                 except ValueError:
                     # Fallback to current time if parsing fails
                     dt = utc_now()
             else:
                 dt = timestamp if timestamp else utc_now()
-            
+
             formatted_time = format_date_string(
                 dt=dt,
                 format_str=timezone_info.get("format", "%Y-%m-%d %H:%M:%S"),
@@ -647,7 +657,9 @@ class OverlayBridgeService:
                     for overlay_file in timelapse_dir.glob("*.png"):
                         try:
                             file_stat = overlay_file.stat()
-                            file_modified = datetime.fromtimestamp(file_stat.st_mtime, tz=cutoff_date.tzinfo)
+                            file_modified = datetime.fromtimestamp(
+                                file_stat.st_mtime, tz=cutoff_date.tzinfo
+                            )
 
                             if file_modified < cutoff_date:
                                 file_size = file_stat.st_size

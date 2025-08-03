@@ -490,7 +490,7 @@ DEFAULT_TARGET_DURATION = 30
 
 
 # Video generation limits
-MAX_CONCURRENT_VIDEO_JOBS = 3
+MAX_CONCURRENT_VIDEO_JOBS = 4  # Increased from 3 for better video generation throughput
 VIDEO_QUEUE_WARNING_THRESHOLD = 50
 VIDEO_QUEUE_ERROR_THRESHOLD = 100
 MAX_VIDEO_JOB_TIMEOUT_MINUTES = 30
@@ -691,6 +691,8 @@ DEFAULT_WEATHER_ENABLED = "false"
 DEFAULT_TEMPERATURE_UNIT = "celsius"
 DEFAULT_GENERATE_THUMBNAILS = "true"
 DEFAULT_GENERATE_OVERLAYS = "true"
+DEFAULT_THUMBNAIL_SMALL_GENERATION_MODE = "all"  # Options: "all", "latest", "disabled"
+DEFAULT_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = "false"
 BOOLEAN_TRUE_STRING = "true"
 
 # Temperature unit constants
@@ -746,26 +748,23 @@ CAMERA_CAPTURE_SUCCESS = "Capture successful"
 
 # Thumbnail job statuses - MOVED TO enums.py, use JobStatus enum instead
 
-# Thumbnail job types
-# TODO: delete these
-THUMBNAIL_JOB_TYPE_SINGLE = "single"
-THUMBNAIL_JOB_TYPE_BULK = "bulk"
+# Thumbnail job types - MOVED TO enums.py, use ThumbnailJobType enum instead
 
-# Thumbnail job processing constants
-DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 5
-DEFAULT_THUMBNAIL_WORKER_INTERVAL = 10
+# Thumbnail job processing constants (optimized for performance)
+DEFAULT_THUMBNAIL_JOB_BATCH_SIZE = 10  # Increased from 5 for better throughput
+DEFAULT_THUMBNAIL_WORKER_INTERVAL = 8  # Slightly reduced for faster processing
 DEFAULT_THUMBNAIL_MAX_RETRIES = 3
 DEFAULT_THUMBNAIL_CLEANUP_HOURS = 24
 
 # Thumbnail job retry and performance constants
 THUMBNAIL_JOB_RETRY_DELAYS = [30, 120, 300]  # Minutes: 30s, 2min, 5min
-HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 15
-HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 3
-THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 50
-THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 10
+HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE = 25  # Increased from 15 for better throughput
+HIGH_LOAD_THUMBNAIL_WORKER_INTERVAL = 2  # Reduced for faster high-load processing
+THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD = 40  # Reduced to activate high-load mode earlier
+THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD = 8  # Reduced threshold for better responsiveness
 THUMBNAIL_PROCESSING_TIME_WARNING_MS = 5000
 THUMBNAIL_MEMORY_WARNING_THRESHOLD = 100  # MB
-THUMBNAIL_CONCURRENT_JOBS = 3
+THUMBNAIL_CONCURRENT_JOBS = 4  # Increased from 3 for better concurrency
 
 # Overlay job priorities - MOVED TO enums.py, use OVERLAY_JOB_PRIORITY enum instead
 
@@ -775,21 +774,21 @@ THUMBNAIL_CONCURRENT_JOBS = 3
 OVERLAY_JOB_TYPE_SINGLE = "single"
 OVERLAY_JOB_TYPE_BATCH = "batch"
 
-# Overlay job processing constants
-DEFAULT_OVERLAY_JOB_BATCH_SIZE = 5
-DEFAULT_OVERLAY_WORKER_INTERVAL = 10
+# Overlay job processing constants (optimized for performance)
+DEFAULT_OVERLAY_JOB_BATCH_SIZE = 8  # Increased from 5 for better throughput
+DEFAULT_OVERLAY_WORKER_INTERVAL = 8  # Slightly reduced for faster processing
 DEFAULT_OVERLAY_MAX_RETRIES = 3
 DEFAULT_OVERLAY_CLEANUP_HOURS = 24
 
 # Overlay job retry and performance constants
 OVERLAY_JOB_RETRY_DELAYS = [30, 120, 300]  # Minutes: 30s, 2min, 5min
-HIGH_LOAD_OVERLAY_JOB_BATCH_SIZE = 15
-HIGH_LOAD_OVERLAY_WORKER_INTERVAL = 3
-OVERLAY_QUEUE_SIZE_HIGH_THRESHOLD = 50
-OVERLAY_QUEUE_SIZE_LOW_THRESHOLD = 10
+HIGH_LOAD_OVERLAY_JOB_BATCH_SIZE = 20  # Increased from 15 for better throughput
+HIGH_LOAD_OVERLAY_WORKER_INTERVAL = 2  # Reduced for faster high-load processing
+OVERLAY_QUEUE_SIZE_HIGH_THRESHOLD = 35  # Reduced to activate high-load mode earlier
+OVERLAY_QUEUE_SIZE_LOW_THRESHOLD = 8  # Reduced threshold for better responsiveness
 OVERLAY_PROCESSING_TIME_WARNING_MS = 5000
 OVERLAY_MEMORY_WARNING_THRESHOLD = 100  # MB
-OVERLAY_CONCURRENT_JOBS = 3
+OVERLAY_CONCURRENT_JOBS = 4  # Increased from 3 for better concurrency
 
 # Overlay types
 OVERLAY_TYPE_DATE = "date"
@@ -904,6 +903,7 @@ THUMBNAIL_JOB_PRIORITY_LOW = ThumbnailJobPriority.LOW
 JOB_PRIORITY_HIGH = JobPriority.HIGH
 JOB_PRIORITY_MEDIUM = JobPriority.MEDIUM
 JOB_PRIORITY_LOW = JobPriority.LOW
+
 
 # =============================================================================
 # SSE (SERVER-SENT EVENTS) CONSTANTS

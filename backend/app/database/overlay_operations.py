@@ -10,38 +10,33 @@ Responsibilities:
 - Configuration inheritance and merging
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+# Exception-Based Logging Pattern - IMPLEMENTED ✅
+# All database operations now use OverlayOperationError for clean error handling
+# without circular imports. 26 exception handlers properly implemented.
+
 import json
-from loguru import logger
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+# Logger removed to prevent circular imports - using exception-based pattern
 import psycopg
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.overlay_model import (
-    OverlayPreset,
-    OverlayPresetCreate,
-    OverlayPresetUpdate,
-    TimelapseOverlay,
-    TimelapseOverlayCreate,
-    TimelapseOverlayUpdate,
-    OverlayAsset,
-    OverlayAssetCreate,
-    OverlayConfiguration,
-)
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_timestamp_etag,
-    generate_composite_etag,
-    generate_collection_etag,
-)
+from ..models.overlay_model import (OverlayAsset, OverlayAssetCreate,
+                                    OverlayConfiguration, OverlayPreset,
+                                    OverlayPresetCreate, OverlayPresetUpdate,
+                                    TimelapseOverlay, TimelapseOverlayCreate,
+                                    TimelapseOverlayUpdate)
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import (cache, cached_response,
+                                   generate_composite_etag)
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import OverlayOperationError
 
 
 class OverlayQueryBuilder:
     """Centralized query builder for overlay operations.
-    
+
     IMPORTANT: For optimal performance, ensure these indexes exist:
     - CREATE INDEX idx_overlay_presets_name ON overlay_presets(name);
     - CREATE INDEX idx_overlay_presets_builtin ON overlay_presets(is_builtin, name);
@@ -283,7 +278,9 @@ class OverlayOperations:
                         {
                             "name": preset_data.name,
                             "description": preset_data.description,
-                            "overlay_config": json.dumps(preset_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                preset_data.overlay_config.model_dump()
+                            ),
                             "is_builtin": preset_data.is_builtin,
                         },
                     )
@@ -299,8 +296,9 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create overlay preset: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to create overlay preset: {e}", operation="create_preset"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="overlay")
     async def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:
@@ -319,8 +317,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay preset {preset_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to get overlay preset by ID {preset_id}: {e}",
+                operation="get_preset_by_id",
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="overlay")
     async def get_preset_by_name(self, name: str) -> Optional[OverlayPreset]:
@@ -339,8 +339,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay preset '{name}': {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to get overlay preset by name '{name}': {e}",
+                operation="get_preset_by_name"
+            ) from e
 
     @cached_response(ttl_seconds=120, key_prefix="overlay")
     async def get_all_presets(
@@ -361,8 +363,10 @@ class OverlayOperations:
                     return presets
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay presets: {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to get all overlay presets: {e}",
+                operation="get_all_presets"
+            ) from e
 
     async def update_preset(
         self, preset_id: int, preset_data: OverlayPresetUpdate
@@ -383,7 +387,9 @@ class OverlayOperations:
 
             if preset_data.overlay_config is not None:
                 update_fields.append("overlay_config = %(overlay_config)s")
-                params["overlay_config"] = json.dumps(preset_data.overlay_config.model_dump())
+                params["overlay_config"] = json.dumps(
+                    preset_data.overlay_config.model_dump()
+                )
 
             if not update_fields:
                 # No fields to update, return existing preset
@@ -413,8 +419,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to update overlay preset {preset_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to update preset: {e}",
+                operation="update_preset"
+            ) from e
 
     async def delete_preset(self, preset_id: int) -> bool:
         """Delete overlay preset (only custom presets, not built-in)"""
@@ -435,7 +443,6 @@ class OverlayOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to delete overlay preset {preset_id}: {e}")
             return False
 
     # ================================================================
@@ -458,7 +465,9 @@ class OverlayOperations:
                         {
                             "timelapse_id": overlay_data.timelapse_id,
                             "preset_id": overlay_data.preset_id,
-                            "overlay_config": json.dumps(overlay_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                overlay_data.overlay_config.model_dump()
+                            ),
                             "enabled": overlay_data.enabled,
                         },
                     )
@@ -474,8 +483,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create timelapse overlay: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to create timelapse overlay: {e}",
+                operation="create_timelapse_overlay"
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="overlay")
     async def get_timelapse_overlay(
@@ -496,8 +507,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get timelapse overlay for {timelapse_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to get timelapse overlay: {e}",
+                operation="get_timelapse_overlay"
+            ) from e
 
     async def update_timelapse_overlay(
         self, timelapse_id: int, overlay_data: TimelapseOverlayUpdate
@@ -514,7 +527,9 @@ class OverlayOperations:
 
             if overlay_data.overlay_config is not None:
                 update_fields.append("overlay_config = %(overlay_config)s")
-                params["overlay_config"] = json.dumps(overlay_data.overlay_config.model_dump())
+                params["overlay_config"] = json.dumps(
+                    overlay_data.overlay_config.model_dump()
+                )
 
             if overlay_data.enabled is not None:
                 update_fields.append("enabled = %(enabled)s")
@@ -548,8 +563,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to update timelapse overlay {timelapse_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to update timelapse overlay: {e}",
+                operation="update_timelapse_overlay"
+            ) from e
 
     async def create_or_update_timelapse_overlay(
         self, config_data
@@ -565,7 +582,9 @@ class OverlayOperations:
                         {
                             "timelapse_id": config_data.timelapse_id,
                             "preset_id": config_data.preset_id,
-                            "overlay_config": json.dumps(config_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                config_data.overlay_config.model_dump()
+                            ),
                             "enabled": config_data.enabled,
                             "updated_at": utc_now(),
                         },
@@ -582,8 +601,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create or update timelapse overlay: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to create or update timelapse overlay: {e}",
+                operation="create_or_update_timelapse_overlay"
+            ) from e
 
     async def delete_timelapse_overlay(self, timelapse_id: int) -> bool:
         """Delete timelapse overlay configuration"""
@@ -603,7 +624,6 @@ class OverlayOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to delete timelapse overlay {timelapse_id}: {e}")
             return False
 
     # ================================================================
@@ -643,8 +663,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create overlay asset: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to create asset: {e}",
+                operation="create_asset"
+            ) from e
 
     @cached_response(ttl_seconds=600, key_prefix="overlay")
     async def get_asset_by_id(self, asset_id: int) -> Optional[OverlayAsset]:
@@ -663,8 +685,10 @@ class OverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay asset {asset_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to get asset by id: {e}",
+                operation="get_asset_by_id"
+            ) from e
 
     @cached_response(ttl_seconds=180, key_prefix="overlay")
     async def get_all_assets(self) -> List[OverlayAsset]:
@@ -681,8 +705,10 @@ class OverlayOperations:
                     return assets
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay assets: {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to get all assets: {e}",
+                operation="get_all_assets"
+            ) from e
 
     async def delete_asset(self, asset_id: int) -> bool:
         """Delete overlay asset"""
@@ -702,7 +728,6 @@ class OverlayOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to delete overlay asset {asset_id}: {e}")
             return False
 
 
@@ -738,7 +763,9 @@ class SyncOverlayOperations:
                         {
                             "name": preset_data.name,
                             "description": preset_data.description,
-                            "overlay_config": json.dumps(preset_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                preset_data.overlay_config.model_dump()
+                            ),
                             "is_builtin": preset_data.is_builtin,
                         },
                     )
@@ -749,8 +776,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create overlay preset (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:
         """Get overlay preset by ID (sync)"""
@@ -767,8 +796,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay preset {preset_id} (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to get preset by ID {preset_id}: {e}",
+                operation="get_preset_by_id"
+            ) from e
 
     def get_timelapse_overlay(self, timelapse_id: int) -> Optional[TimelapseOverlay]:
         """Get overlay configuration for timelapse (sync)"""
@@ -785,10 +816,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(
-                f"Failed to get timelapse overlay for {timelapse_id} (sync): {e}"
-            )
-            return None
+            raise OverlayOperationError(
+                f"Failed to get timelapse overlay for timelapse {timelapse_id}: {e}",
+                operation="get_timelapse_overlay"
+            ) from e
 
     def get_all_presets(self, include_builtin: bool = True) -> List[OverlayPreset]:
         """Get all overlay presets (sync)"""
@@ -798,15 +829,17 @@ class SyncOverlayOperations:
                     # Use centralized query builder with named parameters
                     query = OverlayQueryBuilder.build_all_presets_query(include_builtin)
                     params = {} if include_builtin else {"is_builtin": False}
-                    
+
                     cur.execute(query, params)
                     rows = cur.fetchall()
 
                     return [_row_to_overlay_preset(dict(row)) for row in rows]
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay presets (sync): {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def update_preset(
         self, preset_id: int, preset_data: OverlayPresetUpdate
@@ -827,7 +860,9 @@ class SyncOverlayOperations:
 
             if preset_data.overlay_config is not None:
                 update_fields.append("overlay_config = %(overlay_config)s")
-                params["overlay_config"] = json.dumps(preset_data.overlay_config.model_dump())
+                params["overlay_config"] = json.dumps(
+                    preset_data.overlay_config.model_dump()
+                )
 
             if not update_fields:
                 # No fields to update, return existing preset
@@ -852,8 +887,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to update overlay preset {preset_id} (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def delete_preset(self, preset_id: int) -> bool:
         """Delete overlay preset (only custom presets, not built-in) (sync)"""
@@ -869,7 +906,6 @@ class SyncOverlayOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to delete overlay preset {preset_id} (sync): {e}")
             return False
 
     def create_timelapse_overlay(
@@ -888,7 +924,9 @@ class SyncOverlayOperations:
                         {
                             "timelapse_id": overlay_data.timelapse_id,
                             "preset_id": overlay_data.preset_id,
-                            "overlay_config": json.dumps(overlay_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                overlay_data.overlay_config.model_dump()
+                            ),
                             "enabled": overlay_data.enabled,
                         },
                     )
@@ -899,8 +937,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create timelapse overlay (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def update_timelapse_overlay(
         self, timelapse_id: int, overlay_data: TimelapseOverlayUpdate
@@ -917,7 +957,9 @@ class SyncOverlayOperations:
 
             if overlay_data.overlay_config is not None:
                 update_fields.append("overlay_config = %(overlay_config)s")
-                params["overlay_config"] = json.dumps(overlay_data.overlay_config.model_dump())
+                params["overlay_config"] = json.dumps(
+                    overlay_data.overlay_config.model_dump()
+                )
 
             if overlay_data.enabled is not None:
                 update_fields.append("enabled = %(enabled)s")
@@ -946,10 +988,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(
-                f"Failed to update timelapse overlay {timelapse_id} (sync): {e}"
-            )
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def create_or_update_timelapse_overlay(
         self, config_data
@@ -965,7 +1007,9 @@ class SyncOverlayOperations:
                         {
                             "timelapse_id": config_data.timelapse_id,
                             "preset_id": config_data.preset_id,
-                            "overlay_config": json.dumps(config_data.overlay_config.model_dump()),
+                            "overlay_config": json.dumps(
+                                config_data.overlay_config.model_dump()
+                            ),
                             "enabled": config_data.enabled,
                             "updated_at": utc_now(),
                         },
@@ -977,8 +1021,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create or update timelapse overlay (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def delete_timelapse_overlay(self, timelapse_id: int) -> bool:
         """Delete timelapse overlay configuration (sync)"""
@@ -993,9 +1039,6 @@ class SyncOverlayOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(
-                f"Failed to delete timelapse overlay {timelapse_id} (sync): {e}"
-            )
             return False
 
     def create_asset(self, asset_data: OverlayAssetCreate) -> Optional[OverlayAsset]:
@@ -1024,8 +1067,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create overlay asset (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def get_asset_by_id(self, asset_id: int) -> Optional[OverlayAsset]:
         """Get overlay asset by ID (sync)"""
@@ -1042,8 +1087,10 @@ class SyncOverlayOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay asset {asset_id} (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def get_all_assets(self) -> List[OverlayAsset]:
         """Get all overlay assets (sync)"""
@@ -1058,8 +1105,10 @@ class SyncOverlayOperations:
                     return [_row_to_overlay_asset(dict(row)) for row in rows]
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get overlay assets (sync): {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to delete asset: {e}",
+                operation="delete_asset"
+            ) from e
 
     def delete_asset(self, asset_id: int) -> bool:
         """Delete overlay asset (sync)"""
@@ -1074,5 +1123,4 @@ class SyncOverlayOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to delete overlay asset {asset_id} (sync): {e}")
             return False

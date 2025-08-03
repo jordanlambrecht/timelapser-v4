@@ -17,7 +17,10 @@ if TYPE_CHECKING:
 from .base_worker import BaseWorker
 from ..database import SyncDatabase
 from ..services.settings_service import SyncSettingsService
-from ..services.log_service import SyncLogService
+from ..services.logger.services.cleanup_service import LogCleanupService
+from ..services.logger import get_service_logger
+from ..database.log_operations import LogOperations, SyncLogOperations
+from ..enums import LoggerName, LogSource, LogEmoji
 
 # from ..services.corruption_service import SyncCorruptionService  # Replaced by corruption_pipeline
 from ..database.corruption_operations import SyncCorruptionOperations
@@ -35,10 +38,18 @@ from ..constants import (
 )
 from ..utils.temp_file_manager import cleanup_temporary_files
 
+logger = get_service_logger(LoggerName.SYSTEM, LogSource.WORKER)
+
 
 class CleanupWorker(BaseWorker):
     """
     Worker responsible for scheduled cleanup operations.
+
+    Follows standardized worker patterns with:
+    - Dependency injection for all services
+    - Proper error handling with structured logging
+    - Configurable retention policies from settings
+    - Comprehensive cleanup coverage for all data types
 
     Responsibilities:
     - Database log cleanup based on retention settings
@@ -48,6 +59,7 @@ class CleanupWorker(BaseWorker):
     - SSE events cleanup
     - Statistics cleanup
     - Rate limiter data cleanup
+    - Temporary file cleanup
     """
 
     def __init__(
@@ -73,7 +85,7 @@ class CleanupWorker(BaseWorker):
         self.cleanup_interval_hours = cleanup_interval_hours
 
         # Initialize service dependencies
-        self.log_service: Optional[SyncLogService] = None
+        self.log_service: Optional[LogCleanupService] = None
         # self.corruption_service: Optional[SyncCorruptionService] = None  # Replaced by corruption_pipeline
         self.corruption_ops: Optional[SyncCorruptionOperations] = None
         self.video_pipeline = None
@@ -89,7 +101,17 @@ class CleanupWorker(BaseWorker):
         """Initialize worker dependencies."""
         try:
             # Initialize service layer dependencies
-            self.log_service = SyncLogService(self.sync_db)
+            # Initialize log operations
+            async_log_ops = LogOperations(self.async_db) if self.async_db else None
+            sync_log_ops = SyncLogOperations(self.sync_db)
+
+            self.log_service = (
+                LogCleanupService(
+                    async_log_ops=async_log_ops, sync_log_ops=sync_log_ops
+                )
+                if async_log_ops
+                else None
+            )
             # self.corruption_service = SyncCorruptionService(self.sync_db)  # Replaced by corruption_pipeline
             self.corruption_ops = SyncCorruptionOperations(self.sync_db)
             self.video_pipeline = create_video_pipeline(self.sync_db)
@@ -99,20 +121,23 @@ class CleanupWorker(BaseWorker):
             self.image_ops = SyncImageOperations(self.sync_db)
             self.statistics_ops = SyncStatisticsOperations(self.sync_db)
 
-            self.log_info("🧹 Cleanup worker initialized successfully")
+            logger.info(
+                "🧹 Cleanup worker initialized successfully", emoji=LogEmoji.SUCCESS
+            )
 
         except Exception as e:
-            self.log_error(f"Failed to initialize cleanup worker: {e}")
+            logger.error(f"Failed to initialize cleanup worker: {e}", exception=e)
             raise
 
     async def cleanup(self) -> None:
         """Cleanup worker resources."""
-        self.log_info("🧹 Cleanup worker stopped")
+        logger.info("🧹 Cleanup worker stopped", emoji=LogEmoji.SUCCESS)
 
     async def run(self) -> None:
         """Main worker loop - runs cleanup operations on schedule."""
-        self.log_info(
-            f"🧹 Cleanup worker started (interval: {self.cleanup_interval_hours}h)"
+        logger.info(
+            f"🧹 Cleanup worker started (interval: {self.cleanup_interval_hours}h)",
+            emoji=LogEmoji.STARTUP,
         )
 
         while self.running:
@@ -126,17 +151,17 @@ class CleanupWorker(BaseWorker):
                 )  # Convert hours to seconds
 
             except asyncio.CancelledError:
-                self.log_info("🧹 Cleanup worker cancelled")
+                logger.info("🧹 Cleanup worker cancelled", emoji=LogEmoji.STOPPED)
                 break
             except Exception as e:
-                self.log_error(f"🧹 Error in cleanup worker cycle: {e}")
+                logger.error(f"🧹 Error in cleanup worker cycle: {e}", exception=e)
                 # Wait a bit before retrying to avoid rapid error loops
                 await asyncio.sleep(300)  # 5 minutes
 
     async def _run_cleanup_cycle(self) -> None:
         """Run a complete cleanup cycle for all data types."""
         start_time = datetime.now()
-        self.log_info("🧹 Starting cleanup cycle...")
+        logger.info("🧹 Starting cleanup cycle...", emoji=LogEmoji.CLEANUP)
 
         # Get retention settings from user configuration
         retention_settings = await self._get_retention_settings()
@@ -213,7 +238,7 @@ class CleanupWorker(BaseWorker):
             total_cleaned = sum(cleanup_results.values())
             duration = (datetime.now() - start_time).total_seconds()
 
-            self.log_info(
+            logger.info(
                 f"🧹 Cleanup cycle completed in {duration:.1f}s - "
                 f"Total items cleaned: {total_cleaned} "
                 f"(logs: {cleanup_results.get('logs', 0)}, "
@@ -223,14 +248,15 @@ class CleanupWorker(BaseWorker):
                 f"corruption_logs: {cleanup_results.get('corruption_logs', 0)}, "
                 f"sse_events: {cleanup_results.get('sse_events', 0)}, "
                 f"statistics: {cleanup_results.get('statistics', 0)}, "
-                f"rate_limiter: {cleanup_results.get('rate_limiter', 0)})"
+                f"rate_limiter: {cleanup_results.get('rate_limiter', 0)})",
+                emoji=LogEmoji.SUCCESS,
             )
 
             # Note: SyncDatabase doesn't support broadcast_event (async only feature)
             # Frontend will need to poll for cleanup status or use async endpoints
 
         except Exception as e:
-            self.log_error(f"🧹 Error during cleanup cycle: {e}")
+            logger.error(f"🧹 Error during cleanup cycle: {e}", exception=e)
             raise
 
     async def _get_retention_settings(self) -> Dict[str, int]:
@@ -245,14 +271,15 @@ class CleanupWorker(BaseWorker):
                 try:
                     return int(value)
                 except (ValueError, TypeError):
-                    self.log_warning(
-                        f"Invalid {key} setting '{value}', using default: {default}"
+                    logger.warning(
+                        f"Invalid {key} setting '{value}', using default: {default}",
+                        emoji=LogEmoji.WARNING,
                     )
                     return default
 
             return {
                 "log_retention_days": get_int_setting(
-                    "log_retention_days", DEFAULT_LOG_RETENTION_DAYS
+                    "db_log_retention_days", DEFAULT_LOG_RETENTION_DAYS
                 ),
                 "image_retention_days": get_int_setting(
                     "image_retention_days", DEFAULT_IMAGE_RETENTION_DAYS
@@ -272,7 +299,10 @@ class CleanupWorker(BaseWorker):
                 ),
             }
         except Exception as e:
-            self.log_warning(f"Failed to get retention settings, using defaults: {e}")
+            logger.warning(
+                f"Failed to get retention settings, using defaults: {e}",
+                emoji=LogEmoji.WARNING,
+            )
             return {
                 "log_retention_days": DEFAULT_LOG_RETENTION_DAYS,
                 "image_retention_days": DEFAULT_IMAGE_RETENTION_DAYS,
@@ -283,14 +313,27 @@ class CleanupWorker(BaseWorker):
             }
 
     async def _cleanup_logs(self, days_to_keep: int) -> int:
-        """Clean up old log entries."""
+        """Clean up old log entries using the enhanced logger service."""
         try:
-            if self.log_service:
-                # Use cleanup_old_logs method which exists on SyncLogService
-                return self.log_service.cleanup_old_logs(days_to_keep)
-            return 0
+            if not self.log_service:
+                logger.warning(
+                    "Log cleanup service not available", emoji=LogEmoji.WARNING
+                )
+                return 0
+
+            # Use sync cleanup method for worker context
+            result = self.log_service.cleanup_old_logs_sync(days_to_keep)
+            if result.get("success", False):
+                return result.get("logs_deleted", 0)
+            else:
+                logger.error(
+                    f"Logger cleanup failed: {result.get('error', 'Unknown error')}",
+                    emoji=LogEmoji.ERROR,
+                )
+                return 0
+
         except Exception as e:
-            self.log_error(f"Failed to cleanup logs: {e}")
+            logger.error(f"Failed to cleanup logs: {e}", exception=e)
             return 0
 
     async def _cleanup_images(self, days_to_keep: int) -> int:
@@ -300,7 +343,7 @@ class CleanupWorker(BaseWorker):
                 return self.image_ops.cleanup_old_images(days_to_keep)
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup images: {e}")
+            logger.error(f"Failed to cleanup images: {e}", exception=e)
             return 0
 
     async def _cleanup_video_jobs(self, days_to_keep: int) -> int:
@@ -310,7 +353,7 @@ class CleanupWorker(BaseWorker):
                 return self.video_pipeline.job_service.cleanup_old_jobs(days_to_keep)
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup video jobs: {e}")
+            logger.error(f"Failed to cleanup video jobs: {e}", exception=e)
             return 0
 
     async def _cleanup_timelapses(self, retention_days: int) -> int:
@@ -322,7 +365,7 @@ class CleanupWorker(BaseWorker):
                 )
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup timelapses: {e}")
+            logger.error(f"Failed to cleanup timelapses: {e}", exception=e)
             return 0
 
     async def _cleanup_corruption_logs(self, days_to_keep: int) -> int:
@@ -332,7 +375,7 @@ class CleanupWorker(BaseWorker):
                 return self.corruption_ops.cleanup_old_corruption_logs(days_to_keep)
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup corruption logs: {e}")
+            logger.error(f"Failed to cleanup corruption logs: {e}", exception=e)
             return 0
 
     def _cleanup_sse_events(self, max_age_hours: int) -> int:
@@ -342,7 +385,7 @@ class CleanupWorker(BaseWorker):
             sse_ops = SyncSSEEventsOperations(self.sync_db)
             return sse_ops.cleanup_old_events(max_age_hours)
         except Exception as e:
-            self.log_error(f"Failed to cleanup SSE events: {e}")
+            logger.error(f"Failed to cleanup SSE events: {e}", exception=e)
             return 0
 
     async def _cleanup_statistics(self, days_to_keep: int) -> int:
@@ -352,7 +395,7 @@ class CleanupWorker(BaseWorker):
                 return self.statistics_ops.cleanup_old_statistics(days_to_keep)
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup statistics: {e}")
+            logger.error(f"Failed to cleanup statistics: {e}", exception=e)
             return 0
 
     async def _cleanup_rate_limiter_data(self) -> int:
@@ -362,7 +405,7 @@ class CleanupWorker(BaseWorker):
             # For now, just return 0 as rate limiter cleanup happens automatically
             return 0
         except Exception as e:
-            self.log_error(f"Failed to cleanup rate limiter data: {e}")
+            logger.error(f"Failed to cleanup rate limiter data: {e}", exception=e)
             return 0
 
     async def _cleanup_temporary_files(self) -> int:
@@ -372,13 +415,16 @@ class CleanupWorker(BaseWorker):
             cleaned_count = cleanup_temporary_files(max_age_hours=2)
 
             if cleaned_count > 0:
-                self.log_info(f"🧹 Cleaned up {cleaned_count} temporary files")
+                logger.info(
+                    f"🧹 Cleaned up {cleaned_count} temporary files",
+                    emoji=LogEmoji.SUCCESS,
+                )
             else:
-                self.log_debug("🧹 No temporary files to clean up")
+                logger.debug("🧹 No temporary files to clean up", emoji=LogEmoji.DEBUG)
 
             return cleaned_count
         except Exception as e:
-            self.log_error(f"Error cleaning up temporary files: {e}")
+            logger.error(f"Error cleaning up temporary files: {e}", exception=e)
             return 0
 
     def get_status(self) -> Dict[str, Any]:
@@ -442,7 +488,7 @@ class CleanupWorker(BaseWorker):
         Returns:
             Cleanup results
         """
-        self.log_info("🧹 Triggering immediate cleanup cycle...")
+        logger.info("🧹 Triggering immediate cleanup cycle...", emoji=LogEmoji.CLEANUP)
 
         if cleanup_types is None:
             # Run full cleanup cycle

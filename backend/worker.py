@@ -23,7 +23,7 @@ Worker Architecture (CEO Pattern):
 IMPORTANT ARCHITECTURAL CLARIFICATION:
 Some workers have run() methods for autonomous background processing:
 - ThumbnailWorker.run() - Processes thumbnail generation job queues continuously
-- OverlayWorker.run() - Processes overlay generation job queues continuously  
+- OverlayWorker.run() - Processes overlay generation job queues continuously
 - CleanupWorker.run() - Runs scheduled maintenance operations
 
 These run() methods are LEGITIMATE and follow CEO architecture:
@@ -47,15 +47,15 @@ This implementation maintains full backward compatibility with the original
 monolithic worker while providing a foundation for future architectural evolution.
 """
 
-import os
+
 import signal
 import asyncio
-from pathlib import Path
-from typing import Optional
-from loguru import logger
+
 
 # Import from the same backend directory
 from app.database import async_db, sync_db
+from app.services.logger import Log
+from app.enums import LogEmoji, LogLevel, LogSource, LoggerName
 from app.config import settings
 from app.database.sse_events_operations import SyncSSEEventsOperations
 from app.dependencies import set_scheduler_worker
@@ -77,9 +77,20 @@ from app.workers import (
 # from app.services.video_service import SyncVideoService  # REMOVED: Using video pipeline now
 from app.services.settings_service import SyncSettingsService
 from app.services.camera_service import SyncCameraService
+from app.services.timelapse_service import SyncTimelapseService
 from app.services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
 from app.services.overlay_pipeline.overlay_pipeline import OverlayPipeline
 from app.services.weather.service import WeatherManager
+from app.services.logger.logger_service import get_service_logger
+from app.services.overlay_pipeline.services.job_service import (
+    SyncOverlayJobService,
+)
+from app.services.overlay_pipeline.utils.font_cache import preload_overlay_fonts
+from app.services.thumbnail_pipeline.services.job_service import (
+    SyncThumbnailJobService,
+)
+
+logger = get_service_logger(LoggerName.SYSTEM, LogSource.SYSTEM)
 
 
 class AsyncTimelapseWorker:
@@ -121,7 +132,10 @@ class AsyncTimelapseWorker:
 
         # Initialize sync database for worker FIRST
         sync_db.initialize()
-        logger.info("Sync database initialized for worker")
+
+        logger.info(
+            "Sync database initialized for worker",
+        )
 
         # Initialize composition-based services (only for non-capture workers)
         from app.database.weather_operations import SyncWeatherOperations
@@ -155,56 +169,83 @@ class AsyncTimelapseWorker:
         # Worker state
         self.running = False
 
-        logger.info("✅ Modular worker architecture initialized successfully")
+        logger.info(
+            " Modular worker architecture initialized successfully",
+            emoji=LogEmoji.STARTUP,
+        )
 
     def _initialize_workers(self):
         """Initialize all specialized worker instances."""
         try:
             # Initialize CaptureWorker using the new factory pattern
-            from app.services.capture_pipeline import create_capture_pipeline, WorkflowOrchestratorService
-            
-            logger.info("🏭 Creating capture pipeline with factory function...")
-            workflow_orchestrator: WorkflowOrchestratorService = create_capture_pipeline(settings_service=self.settings_service)
-            
+            from app.services.capture_pipeline import (
+                create_capture_pipeline,
+                WorkflowOrchestratorService,
+            )
+
+            logger.info(
+                "Creating capture pipeline with factory function...",
+                emoji=LogEmoji.FACTORY,
+            )
+            workflow_orchestrator: WorkflowOrchestratorService = (
+                create_capture_pipeline(settings_service=self.settings_service)
+            )
+
             self.capture_worker = CaptureWorker(
                 workflow_orchestrator=workflow_orchestrator,
                 weather_manager=self.weather_manager,
             )
 
-            # Initialize HealthWorker
+            # Initialize HealthWorker with proper dependency injection
+            health_camera_service = SyncCameraService(
+                sync_db, 
+                async_db,
+                rtsp_service=workflow_orchestrator.rtsp_service,
+                settings_service=self.settings_service
+            )
+            
             self.health_worker = HealthWorker(
-                camera_service=SyncCameraService(db=sync_db),
+                camera_service=health_camera_service,
                 rtsp_service=workflow_orchestrator.rtsp_service,
             )
 
             # Initialize WeatherWorker
             self.weather_worker = WeatherWorker(
-                weather_manager=self.weather_manager,
-                settings_service=self.settings_service,
-                sse_ops=self.sse_ops,
+                self.weather_manager,
+                self.settings_service,
+                self.sse_ops,
             )
 
             # Initialize VideoWorker with simplified pipeline
-            self.video_worker = VideoWorker(db=sync_db)
+            self.video_worker = VideoWorker(sync_db)
 
             # Initialize SchedulerWorker with scheduling service from workflow orchestrator
             # The scheduling_service might be None, so we need to handle that case
-            from app.services.scheduling import SyncTimeWindowService, SyncSchedulingService, SyncCaptureTimingService
-            
+            from app.services.scheduling import (
+                SyncTimeWindowService,
+                SyncSchedulingService,
+                SyncCaptureTimingService,
+            )
+
             scheduling_service: SyncCaptureTimingService
             if workflow_orchestrator.scheduling_service is None:
                 # Create scheduling service if not provided
                 time_window_service = SyncTimeWindowService(sync_db)
-                scheduling_service = SyncSchedulingService(sync_db, time_window_service)
+                scheduling_service = SyncSchedulingService(
+                    sync_db, 
+                    async_db,
+                    time_window_service, 
+                    self.settings_service
+                )
             else:
                 scheduling_service = workflow_orchestrator.scheduling_service
-                
+
             self.scheduler_worker = SchedulerWorker(
-                settings_service=self.settings_service,
-                db=sync_db,
-                scheduling_service=scheduling_service,
+                self.settings_service,
+                sync_db,
+                scheduling_service,
             )
-            
+
             # 🎯 SCHEDULER-CENTRIC: Set global scheduler worker instance for dependency injection
             set_scheduler_worker(self.scheduler_worker)
 
@@ -213,17 +254,14 @@ class AsyncTimelapseWorker:
 
             # Initialize CleanupWorker
             self.cleanup_worker = CleanupWorker(
-                sync_db=sync_db,
-                async_db=async_db,
-                settings_service=self.settings_service,
+                sync_db,
+                async_db,
+                self.settings_service,
                 cleanup_interval_hours=6,  # Run cleanup every 6 hours
             )
 
-            # Initialize ThumbnailJobService
-            from app.services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
-
             self.thumbnail_job_service = SyncThumbnailJobService(
-                db=sync_db, settings_service=self.settings_service
+                sync_db, self.settings_service
             )
 
             self.thumbnail_worker = ThumbnailWorker(
@@ -233,15 +271,15 @@ class AsyncTimelapseWorker:
             )
 
             # Initialize OverlayJobService
-            from app.services.overlay_pipeline.services.job_service import SyncOverlayJobService
-
             self.overlay_job_service = SyncOverlayJobService(
-                db=sync_db, settings_service=self.settings_service
+                sync_db, self.settings_service
             )
 
+            self.timelapse_service = SyncTimelapseService(sync_db)
+
             self.overlay_worker = OverlayWorker(
-                db=sync_db,
-                settings_service=self.settings_service,
+                sync_db,
+                self.settings_service,
                 weather_manager=self.weather_manager,
             )
 
@@ -249,36 +287,54 @@ class AsyncTimelapseWorker:
             self.capture_worker.thumbnail_job_service = self.thumbnail_job_service
             self.capture_worker.overlay_job_service = self.overlay_job_service
 
-            logger.info("All specialized workers initialized successfully")
+            logger.info(
+                "All specialized workers initialized successfully",
+                emoji=LogEmoji.SUCCESS,
+            )
 
         except Exception as e:
-            logger.error(f"Failed to initialize workers: {e}")
+            logger.error(
+                "Failed to initialize workers",
+                exception=e,
+            )
             raise
 
     def _initialize_font_cache(self):
         """Initialize global font cache for overlay performance optimization."""
         try:
-            from app.services.overlay_pipeline.utils.font_cache import preload_overlay_fonts
 
-            logger.info("Preloading overlay fonts for performance optimization...")
+            logger.info(
+                "Preloading overlay fonts for performance optimization...",
+                emoji=LogEmoji.SYSTEM,
+            )
             preload_overlay_fonts()
-            logger.info("✅ Overlay font cache initialized successfully")
+            logger.info(
+                "Overlay font cache initialized successfully",
+                emoji=LogEmoji.SUCCESS,
+            )
 
         except Exception as e:
             logger.warning(
-                f"Failed to initialize font cache (overlay performance may be reduced): {e}"
+                "Failed to initialize font cache (overlay performance may be reduced)",
+                error_context={"operation": "font_cache_initialization"},
+                exception=e,
             )
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        logger.info(
+            f"Received signal {signum}, shutting down gracefully...",
+            system_context={"signal": signum},
+        )
         self.running = False
         # Don't shut down scheduler here - let the main loop handle it
 
     async def _async_shutdown(self):
         """Async shutdown cleanup."""
         try:
-            logger.info("Starting async shutdown...")
+            logger.info(
+                "Starting async shutdown...",
+            )
 
             # Stop all workers
             await self._stop_all_workers()
@@ -292,10 +348,15 @@ class AsyncTimelapseWorker:
 
             # Close sync database connections
             sync_db.close()
-            logger.info("Database connections closed")
+            logger.info(
+                "Database connections closed",
+            )
 
         except Exception as e:
-            logger.error(f"Error during async shutdown: {e}")
+            logger.error(
+                "Error during async shutdown",
+                exception=e,
+            )
 
     async def _stop_all_workers(self):
         """Stop all specialized workers."""
@@ -316,10 +377,16 @@ class AsyncTimelapseWorker:
                 *[worker.stop() for worker in workers], return_exceptions=True
             )
 
-            logger.info("All workers stopped successfully")
+            logger.info(
+                "All workers stopped successfully",
+                emoji=LogEmoji.SUCCESS,
+            )
 
         except Exception as e:
-            logger.error(f"Error stopping workers: {e}")
+            logger.error(
+                "Error stopping workers",
+                exception=e,
+            )
 
     async def _start_all_workers(self):
         """Start all specialized workers."""
@@ -340,10 +407,17 @@ class AsyncTimelapseWorker:
                 *[worker.start() for worker in workers], return_exceptions=True
             )
 
-            logger.info("All workers started successfully")
+            logger.info(
+                "All workers started successfully",
+                emoji=LogEmoji.SUCCESS,
+            )
 
         except Exception as e:
-            logger.error(f"Error starting workers: {e}")
+            logger.error(
+                "Error starting workers",
+                error_context={"operation": "start_workers"},
+                exception=e,
+            )
             raise
 
     # Wrapper methods to maintain backward compatibility
@@ -368,7 +442,7 @@ class AsyncTimelapseWorker:
     async def process_video_automation(self):
         """
         🎯 SCHEDULER-CENTRIC: Process video execution queue (delegates to VideoWorker).
-        
+
         TRANSFORMATION: This now calls execution-only processing instead of autonomous automation.
         The VideoWorker no longer makes timing decisions - it only executes pending jobs.
         """
@@ -399,7 +473,9 @@ class AsyncTimelapseWorker:
         and enables future architectural evolution while maintaining full
         backward compatibility.
         """
-        logger.info("Starting Modular Async Timelapse Worker")
+        logger.info(
+            "Starting Modular Async Timelapse Worker",
+        )
 
         try:
             # Start all specialized workers
@@ -407,9 +483,11 @@ class AsyncTimelapseWorker:
 
             # Start the scheduler
             self.scheduler_worker.start_scheduler()
-            
+
             # Set the timelapse capture function for scheduler to call
-            self.scheduler_worker.set_timelapse_capture_function(self.capture_single_timelapse)
+            self.scheduler_worker.set_timelapse_capture_function(
+                self.capture_single_timelapse
+            )
 
             # Add standard jobs to scheduler
             success = self.scheduler_worker.add_standard_jobs(
@@ -420,21 +498,34 @@ class AsyncTimelapseWorker:
             )
 
             if not success:
-                logger.warning("Some standard jobs failed to be added")
+                logger.warning(
+                    "Some standard jobs failed to be added",
+                )
 
             self.running = True
-            logger.info("Modular worker started successfully")
+            logger.info(
+                "Modular worker started successfully",
+                emoji=LogEmoji.SUCCESS,
+            )
 
             # Keep the event loop running
             while self.running:
                 await asyncio.sleep(1)
 
         except KeyboardInterrupt:
-            logger.info("Worker stopped by user")
+            logger.info(
+                "Worker stopped by user",
+            )
         except Exception as e:
-            logger.error(f"Worker error: {e}")
+            logger.error(
+                "Worker error",
+                error_context={"operation": "worker_main_loop"},
+                exception=e,
+            )
         finally:
-            logger.info("Worker shutting down...")
+            logger.info(
+                "Worker shutting down...",
+            )
             await self._async_shutdown()
 
 
@@ -457,25 +548,7 @@ async def main():
     data_path = settings.data_path
     data_path.mkdir(parents=True, exist_ok=True)
 
-    # Setup logging (AI-CONTEXT compliant)
-    log_path = data_path / "worker.log"
-    logger.add(
-        str(log_path),
-        rotation="10 MB",
-        retention="30 days",
-        level=settings.log_level,
-    )
-
-    # Add database logging handler
-    try:
-        from app.logging.database_handler import setup_database_logging
-
-        setup_database_logging(sync_db)
-        logger.info("Database logging enabled for modular worker")
-    except Exception as e:
-        logger.error(f"Failed to enable database logging: {e}")
-
-    # Create and start modular async worker
+    # Create and start modular async worker with integrated logging
     worker = AsyncTimelapseWorker()
     try:
         await worker.start()
@@ -493,6 +566,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Application interrupted by user")
     except Exception as e:
-        logger.error(f"Application error: {e}")
+        logger.error(f"Application error: {e}", exception=e)
     finally:
-        logger.info("Application exiting")
+        logger.info(
+            "Application exiting",
+            error_context={"operation": "main_application"},
+        )

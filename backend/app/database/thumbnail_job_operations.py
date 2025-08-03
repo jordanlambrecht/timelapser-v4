@@ -9,23 +9,20 @@ Responsibilities:
 - Cleanup of completed jobs
 """
 
-from typing import List, Optional, Dict, Any
+
 from datetime import datetime, timedelta
-from loguru import logger
+from typing import Any, Dict, List, Optional
+
 import psycopg
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJobCreate
 from ..enums import JobStatus
-
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
-)
+from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJobCreate
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
 from ..utils.database_helpers import DatabaseQueryBuilder
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import ThumbnailOperationError
 from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
@@ -188,8 +185,9 @@ class ThumbnailJobOperations:
             return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error creating thumbnail job: {e}")
-            return None
+            raise ThumbnailOperationError(
+                f"Failed to create thumbnail job: {e}", operation="create_job"
+            ) from e
 
     @cached_response(ttl_seconds=15, key_prefix="thumbnail_job")
     async def get_pending_jobs(
@@ -215,8 +213,9 @@ class ThumbnailJobOperations:
                     return [ThumbnailGenerationJob(**dict(row)) for row in results]
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting pending jobs: {e}")
-            return []
+            raise ThumbnailOperationError(
+                f"Failed to get pending jobs: {e}", operation="get_pending_jobs"
+            ) from e
 
     async def mark_job_started(self, job_id: int) -> bool:
         """
@@ -254,8 +253,9 @@ class ThumbnailJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as started: {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to mark job as started: {e}", operation="mark_job_started"
+            ) from e
 
     async def mark_job_completed(
         self, job_id: int, processing_time_ms: Optional[int] = None
@@ -297,8 +297,9 @@ class ThumbnailJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as completed: {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to mark job as completed: {e}", operation="mark_job_completed"
+            ) from e
 
     async def mark_job_failed(
         self, job_id: int, error_message: str, retry_count: int = 0
@@ -342,8 +343,9 @@ class ThumbnailJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as failed: {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to mark job as failed: {e}", operation="mark_job_failed"
+            ) from e
 
     async def schedule_retry(
         self, job_id: int, retry_count: int, delay_minutes: int = 1
@@ -389,8 +391,9 @@ class ThumbnailJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error scheduling retry for job {job_id}: {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to schedule retry: {e}", operation="schedule_retry"
+            ) from e
 
     async def cancel_jobs_for_image(self, image_id: int) -> int:
         """
@@ -428,8 +431,10 @@ class ThumbnailJobOperations:
                     return cancelled_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling jobs for image {image_id}: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to cancel jobs for image: {e}",
+                operation="cancel_jobs_for_image",
+            ) from e
 
     async def cleanup_completed_jobs(self, older_than_hours: int = 24) -> int:
         """
@@ -468,8 +473,10 @@ class ThumbnailJobOperations:
                     return deleted_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cleaning up completed jobs: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to cleanup completed jobs: {e}",
+                operation="cleanup_completed_jobs",
+            ) from e
 
     @cached_response(ttl_seconds=30, key_prefix="thumbnail_job")
     async def get_active_job_counts(self) -> Dict[str, int]:
@@ -508,9 +515,9 @@ class ThumbnailJobOperations:
             return counts
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-            logger.error(f"Error getting active job counts: {error_msg}")
-            return {"pending_jobs": 0, "processing_jobs": 0}
+            raise ThumbnailOperationError(
+                f"Failed to get job counts: {e}", operation="get_job_counts"
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="thumbnail_job")
     async def get_job_statistics(self) -> Dict[str, Any]:
@@ -563,9 +570,9 @@ class ThumbnailJobOperations:
             return stats
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-            logger.error(f"Error getting job statistics: {error_msg}")
-            return {}
+            raise ThumbnailOperationError(
+                f"Failed to get job statistics: {e}", operation="get_job_statistics"
+            ) from e
 
     async def get_job_by_id(self, job_id: int) -> Optional[ThumbnailGenerationJob]:
         """
@@ -595,8 +602,9 @@ class ThumbnailJobOperations:
             return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting job {job_id}: {e}")
-            return None
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     async def cancel_jobs_by_status(self, status: str) -> int:
         """
@@ -616,7 +624,7 @@ class ThumbnailJobOperations:
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
             """
-            
+
             current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -624,8 +632,9 @@ class ThumbnailJobOperations:
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling jobs with status {status}: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     async def cancel_active_jobs(self) -> int:
         """
@@ -643,7 +652,7 @@ class ThumbnailJobOperations:
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
             """
-            
+
             current_time = utc_now()
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -651,8 +660,9 @@ class ThumbnailJobOperations:
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling active jobs: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     async def recover_stuck_jobs(
         self,
@@ -749,8 +759,9 @@ class SyncThumbnailJobOperations:
             return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error creating thumbnail job (sync): {e}")
-            return None
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def get_pending_jobs(self, batch_size: int = 5) -> List[ThumbnailGenerationJob]:
         """Synchronous version of get_pending_jobs."""
@@ -778,8 +789,9 @@ class SyncThumbnailJobOperations:
                     return [ThumbnailGenerationJob(**row) for row in results]
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting pending jobs (sync): {e}")
-            return []
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def mark_job_completed(
         self, job_id: int, processing_time_ms: Optional[int] = None
@@ -808,8 +820,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as completed (sync): {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def mark_job_started(self, job_id: int) -> bool:
         """Synchronous version of mark_job_started."""
@@ -835,8 +848,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as started (sync): {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def mark_job_failed(
         self, job_id: int, error_message: str, retry_count: int = 0
@@ -866,8 +880,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error marking job {job_id} as failed (sync): {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def schedule_retry(self, job_id: int, retry_count: int, delay_minutes: int) -> bool:
         """
@@ -908,8 +923,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error scheduling retry for job {job_id}: {e}")
-            return False
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def cleanup_completed_jobs(self, hours_old: int) -> int:
         """
@@ -942,8 +958,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cleaning up completed jobs: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def cancel_jobs_by_status(self, status: str) -> int:
         """
@@ -963,7 +980,7 @@ class SyncThumbnailJobOperations:
                     error_message = 'Cancelled by user request'
                 WHERE status = %s
             """
-            
+
             current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -971,8 +988,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling jobs with status {status}: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def get_recovered_jobs(self, max_age_hours: int = 24) -> List[Dict[str, Any]]:
         """
@@ -1010,8 +1028,9 @@ class SyncThumbnailJobOperations:
                     return [dict(row) for row in rows] if rows else []
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting recovered jobs: {e}")
-            return []
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def cancel_active_jobs(self) -> int:
         """
@@ -1029,7 +1048,7 @@ class SyncThumbnailJobOperations:
                     error_message = 'Cancelled by user request'
                 WHERE status NOT IN ('completed', 'failed', 'cancelled')
             """
-            
+
             current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -1037,8 +1056,9 @@ class SyncThumbnailJobOperations:
                     return cur.rowcount or 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling active jobs: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def get_job_by_id(self, job_id: int) -> Optional[ThumbnailGenerationJob]:
         """
@@ -1068,8 +1088,9 @@ class SyncThumbnailJobOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting job by ID {job_id}: {e}")
-            return None
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def get_job_statistics(self) -> dict:
         """
@@ -1140,16 +1161,9 @@ class SyncThumbnailJobOperations:
             return stats
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-            logger.error(f"Error getting job statistics: {error_msg}")
-            return {
-                "pending_count": 0,
-                "processing_count": 0,
-                "completed_today": 0,
-                "failed_today": 0,
-                "avg_processing_time": 0,
-                "oldest_pending_age": 0,
-            }
+            raise ThumbnailOperationError(
+                f"Failed to get queue statistics: {e}", operation="get_queue_statistics"
+            ) from e
 
     def cancel_jobs_by_camera(self, camera_id: int) -> int:
         """Cancel pending thumbnail jobs associated with a specific camera."""
@@ -1166,8 +1180,9 @@ class SyncThumbnailJobOperations:
                     cur.execute(query, (current_time, camera_id))
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cancelling thumbnail jobs for camera {camera_id}: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def cancel_jobs_by_timelapse(self, timelapse_id: int) -> int:
         """Cancel pending thumbnail jobs associated with a specific timelapse."""
@@ -1184,10 +1199,9 @@ class SyncThumbnailJobOperations:
                     cur.execute(query, (current_time, timelapse_id))
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Error cancelling thumbnail jobs for timelapse {timelapse_id}: {e}"
-            )
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def promote_old_jobs(self, age_threshold_minutes: int) -> int:
         """Promote old pending jobs to a higher priority."""
@@ -1206,11 +1220,18 @@ class SyncThumbnailJobOperations:
             current_time = utc_now()
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, {"current_time": current_time, "minutes": age_threshold_minutes})
+                    cur.execute(
+                        query,
+                        {
+                            "current_time": current_time,
+                            "minutes": age_threshold_minutes,
+                        },
+                    )
                     return cur.rowcount or 0
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error promoting old thumbnail jobs: {e}")
-            return 0
+            raise ThumbnailOperationError(
+                f"Failed to perform operation: {e}", operation="thumbnail_operation"
+            ) from e
 
     def recover_stuck_jobs(
         self,

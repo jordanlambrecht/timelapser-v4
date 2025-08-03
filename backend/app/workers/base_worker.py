@@ -7,16 +7,16 @@ IMPORTANT ARCHITECTURAL NOTE:
 This base class provides TWO distinct lifecycle methods:
 
 1. start()/stop() - Worker lifecycle management
-   - Called by worker.py to initialize/cleanup workers
-   - Sets self.running flag and calls initialize()/cleanup()
-   - DOES NOT start autonomous processing loops
+    - Called by worker.py to initialize/cleanup workers
+    - Sets self.running flag and calls initialize()/cleanup()
+    - DOES NOT start autonomous processing loops
 
 2. run() - Optional autonomous background processing (NOT DEFINED HERE)
-   - Implemented by workers that need continuous background processing
-   - Examples: ThumbnailWorker, OverlayWorker, CleanupWorker
-   - These run() methods are LEGITIMATE and follow the CEO architecture
-   - They process job queues or run scheduled tasks autonomously
-   - They do NOT make timing decisions (that's the SchedulerWorker's job)
+    - Implemented by workers that need continuous background processing
+    - Examples: ThumbnailWorker, OverlayWorker, CleanupWorker
+    - These run() methods are LEGITIMATE and follow the CEO architecture
+    - They process job queues or run scheduled tasks autonomously
+    - They do NOT make timing decisions (that's the SchedulerWorker's job)
 
 CEO ARCHITECTURE COMPLIANCE:
 - SchedulerWorker = CEO (makes all timing decisions)
@@ -31,7 +31,11 @@ while respecting the scheduler's timing authority.
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Optional, TypedDict, Dict
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+# Worker logger initialized at module level
+worker_logger = get_service_logger(LoggerName.SYSTEM)
 
 
 class WorkerErrorResponse(TypedDict):
@@ -70,13 +74,13 @@ class BaseWorker(ABC):
 
     async def start(self) -> None:
         """Start the worker."""
-        logger.info(f"Starting {self.name} worker")
+        worker_logger.info(f"Starting {self.name} worker")
         self.running = True
         await self.initialize()
 
     async def stop(self) -> None:
         """Stop the worker."""
-        logger.info(f"Stopping {self.name} worker")
+        worker_logger.info(f"Stopping {self.name} worker")
         self.running = False
         await self.cleanup()
 
@@ -92,22 +96,35 @@ class BaseWorker(ABC):
 
     def log_info(self, message: str) -> None:
         """Log info message with worker name prefix."""
-        logger.info(f"[{self.name}] {message}")
+        worker_logger.info(
+            f"[{self.name}] {message}",
+        )
 
     def log_error(self, message: str, error: Optional[Exception] = None) -> None:
         """Log error message with worker name prefix."""
         if error:
-            logger.error(f"[{self.name}] {message}: {error}")
+            worker_logger.error(
+                f"[{self.name}] {message}",
+                exception=error,
+                extra_context={"worker": self.name, "error": str(error)},
+            )
         else:
-            logger.error(f"[{self.name}] {message}")
+            worker_logger.error(
+                f"[{self.name}] {message}",
+                extra_context={"worker": self.name},
+            )
 
     def log_warning(self, message: str) -> None:
         """Log warning message with worker name prefix."""
-        logger.warning(f"[{self.name}] {message}")
+        worker_logger.warning(
+            f"[{self.name}] {message}",
+        )
 
     def log_debug(self, message: str) -> None:
         """Log debug message with worker name prefix."""
-        logger.debug(f"[{self.name}] {message}")
+        worker_logger.debug(
+            f"[{self.name}] {message}",
+        )
 
     async def run_in_executor(self, func, *args, **kwargs) -> Any:
         """Run a sync function in executor to maintain async compatibility."""
@@ -142,7 +159,9 @@ class BaseWorker(ABC):
             operation: Name of the operation being measured
             duration_ms: Duration in milliseconds
         """
-        logger.info(f"[{self.name}] 📊 {operation} completed in {duration_ms:.2f}ms")
+        worker_logger.info(
+            f"[{self.name}] 📊 {operation} completed in {duration_ms:.2f}ms",
+        )
 
     def log_job_metrics(self, processed: int, failed: int, success_rate: float) -> None:
         """
@@ -153,9 +172,9 @@ class BaseWorker(ABC):
             failed: Number of jobs that failed
             success_rate: Success rate as a percentage
         """
-        logger.info(
+        worker_logger.info(
             f"[{self.name}] 📈 Jobs processed: {processed}, failed: {failed}, "
-            f"success rate: {success_rate:.1f}%"
+            f"success rate: {success_rate:.1f}%",
         )
 
     def log_queue_metrics(self, pending: int, processing: int, total: int) -> None:
@@ -167,9 +186,9 @@ class BaseWorker(ABC):
             processing: Number of jobs currently processing
             total: Total number of jobs in queue
         """
-        logger.info(
+        worker_logger.info(
             f"[{self.name}] 📋 Queue status: {pending} pending, {processing} processing, "
-            f"{total} total"
+            f"{total} total",
         )
 
     # Worker health monitoring utilities

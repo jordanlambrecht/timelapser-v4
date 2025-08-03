@@ -15,17 +15,18 @@ Responsibilities:
 - Audit trail management
 """
 
-from typing import Dict, Any, Optional, Tuple
-from pathlib import Path
-from loguru import logger
+from typing import Dict, Any, Optional
+
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....models.corruption_model import (
     CorruptionEvaluationResult,
-    CorruptionLogEntry,
 )
 from ....constants import (
-    DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
     DEFAULT_CORRUPTION_FALLBACK_SCORE,
     DEFAULT_CORRUPTION_RETRY_ENABLED,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
@@ -134,13 +135,17 @@ class CorruptionEvaluationService:
 
             # TODO: Create SSE event for corruption detection result
             # Should use SSEEventsOperations.create_event() with EVENT_CORRUPTION_DETECTED
-            
+
             # Create evaluation result
             evaluation_result = CorruptionEvaluationResult(
                 is_valid=is_valid,
                 corruption_score=int(score_result.final_score),
                 fast_score=int(fast_result.get("corruption_score", 100.0)),
-                heavy_score=int(heavy_result.get("corruption_score", 0)) if heavy_result and heavy_result.get("corruption_score") is not None else None,
+                heavy_score=(
+                    int(heavy_result.get("corruption_score", 0))
+                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    else None
+                ),
                 action_taken=action_taken,
                 detection_disabled=False,
                 processing_time_ms=fast_result.get("detection_time_ms", 0.0)
@@ -152,7 +157,11 @@ class CorruptionEvaluationService:
             return evaluation_result
 
         except Exception as e:
-            logger.error(f"Error evaluating image quality for {image_path}: {e}")
+            logger.error(
+                f"Error evaluating image quality for {image_path}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             # Return safe fallback result
             return CorruptionEvaluationResult(
                 is_valid=False,
@@ -232,7 +241,11 @@ class CorruptionEvaluationService:
             }
 
         except Exception as e:
-            logger.error(f"Error determining retry for camera {camera_id}: {e}")
+            logger.error(
+                f"Error determining retry for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             return {"should_retry": False, "reason": f"Error in retry logic: {str(e)}"}
 
     async def assess_camera_health(self, camera_id: int) -> Dict[str, Any]:
@@ -319,7 +332,11 @@ class CorruptionEvaluationService:
             }
 
         except Exception as e:
-            logger.error(f"Error assessing camera {camera_id} health: {e}")
+            logger.error(
+                f"Error assessing camera {camera_id} health: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def check_degraded_mode_trigger(self, camera_id: int) -> bool:
@@ -348,7 +365,8 @@ class CorruptionEvaluationService:
 
             if consecutive_failures >= consecutive_threshold:
                 logger.warning(
-                    f"Camera {camera_id} should enter degraded mode: {consecutive_failures} consecutive failures"
+                    f"Camera {camera_id} should enter degraded mode: {consecutive_failures} consecutive failures",
+                    emoji=LogEmoji.WARNING,
                 )
                 return True
 
@@ -359,7 +377,9 @@ class CorruptionEvaluationService:
 
         except Exception as e:
             logger.error(
-                f"Error checking degraded mode trigger for camera {camera_id}: {e}"
+                f"Error checking degraded mode trigger for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
             )
             return False
 
@@ -446,7 +466,11 @@ class SyncCorruptionEvaluationService:
                 image_id=None,  # Will be set by caller if needed
                 corruption_score=int(score_result.final_score),
                 fast_score=int(fast_result.get("corruption_score", 100.0)),
-                heavy_score=int(heavy_result.get("corruption_score", 0)) if heavy_result and heavy_result.get("corruption_score") is not None else None,
+                heavy_score=(
+                    int(heavy_result.get("corruption_score", 0))
+                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    else None
+                ),
                 detection_details={
                     "fast_detection": fast_result,
                     "heavy_detection": heavy_result,
@@ -468,7 +492,7 @@ class SyncCorruptionEvaluationService:
             # Update camera corruption statistics
             self.db_ops.update_camera_corruption_stats(
                 camera_id=camera_id,
-                corruption_score=int(score_result.final_score),
+                _corruption_score=int(score_result.final_score),
                 is_valid=is_valid,
             )
 
@@ -476,7 +500,11 @@ class SyncCorruptionEvaluationService:
                 is_valid=is_valid,
                 corruption_score=int(score_result.final_score),
                 fast_score=int(fast_result.get("corruption_score", 100.0)),
-                heavy_score=int(heavy_result.get("corruption_score", 0)) if heavy_result and heavy_result.get("corruption_score") is not None else None,
+                heavy_score=(
+                    int(heavy_result.get("corruption_score", 0))
+                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    else None
+                ),
                 action_taken=action_taken,
                 detection_disabled=False,
                 processing_time_ms=fast_result.get("detection_time_ms", 0.0)
@@ -486,7 +514,11 @@ class SyncCorruptionEvaluationService:
             )
 
         except Exception as e:
-            logger.error(f"Error evaluating captured image {file_path}: {e}")
+            logger.error(
+                f"Error evaluating captured image {file_path}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             # Return safe fallback result
             return CorruptionEvaluationResult(
                 is_valid=False,
@@ -505,13 +537,13 @@ class SyncCorruptionEvaluationService:
     ) -> CorruptionEvaluationResult:
         """
         Evaluate image quality (sync version matching async interface).
-        
+
         Args:
             image_path: Path to the image file
             camera_id: ID of the camera that captured the image
             image_id: Optional image ID for logging
             capture_attempt: Capture attempt number for retry logic
-            
+
         Returns:
             CorruptionEvaluationResult with evaluation details
         """
@@ -562,7 +594,8 @@ class SyncCorruptionEvaluationService:
 
             last_result = result
             logger.info(
-                f"Retrying capture for camera {camera_id}, attempt {attempt + 1}/{max_attempts}"
+                f"Retrying capture for camera {camera_id}, attempt {attempt + 1}/{max_attempts}",
+                emoji=LogEmoji.TASK,
             )
 
         return last_result or CorruptionEvaluationResult(

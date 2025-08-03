@@ -20,7 +20,11 @@ from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.ERROR_HANDLER)
+
 import psycopg
 from pydantic import ValidationError
 
@@ -82,7 +86,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             # Log with structured data
             logger.error(
                 f"🚨 Unhandled exception in {request.method} {request.url.path}",
-                extra={
+                extra_context={
                     "correlation_id": correlation_id,
                     "exception_type": type(exc).__name__,
                     "exception_message": str(exc),
@@ -93,8 +97,15 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
 
         except Exception as log_error:
             # Fallback logging if structured logging fails
-            logger.error(f"Error logging failed: {log_error}")
-            logger.error(f"Original error: {exc}")
+            logger.error(
+                "Error logging failed during exception handling",
+                extra_context={
+                    "correlation_id": correlation_id,
+                    "log_error": str(log_error),
+                    "original_exception": str(exc),
+                    "original_exception_type": type(exc).__name__,
+                }
+            )
 
     async def _create_error_response(
         self, exc: Exception, correlation_id: str

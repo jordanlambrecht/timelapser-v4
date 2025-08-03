@@ -4,23 +4,35 @@ Corruption detection management HTTP endpoints.
 
 Role: Corruption detection management HTTP endpoints
 Responsibilities: Corruption statistics, degraded mode management,
-                 corruption settings configuration
+                corruption settings configuration
 Interactions: Uses corruption pipeline services for business logic, provides quality metrics
-             and audit trail access
+            and audit trail access
 """
 
 from typing import Optional
 from fastapi import APIRouter, Query, UploadFile, File, HTTPException, Response
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..dependencies import (
     CameraServiceDep,
     SettingsServiceDep,
     AsyncDatabaseDep,
 )
-from ..services.corruption_pipeline.services.evaluation_service import CorruptionEvaluationService
-from ..services.corruption_pipeline.services.statistics_service import CorruptionStatisticsService
-from ..services.corruption_pipeline.services.health_service import CorruptionHealthService
+from ..services.corruption_pipeline.services.evaluation_service import (
+    CorruptionEvaluationService,
+)
+from ..services.corruption_pipeline.services.statistics_service import (
+    CorruptionStatisticsService,
+)
+from ..services.corruption_pipeline.services.health_service import (
+    CorruptionHealthService,
+)
+
+# NOTE: Some operations still use database operations directly until
+# they are moved into the corruption pipeline services
 from ..database.corruption_operations import CorruptionOperations
 from ..utils.cache_manager import (
     generate_content_hash_etag,
@@ -47,9 +59,7 @@ router = APIRouter()
 # ETag based on latest corruption log timestamp + total count
 @router.get("/corruption/stats")
 @handle_exceptions("get corruption system stats")
-async def get_corruption_system_stats(
-    response: Response, db: AsyncDatabaseDep
-):
+async def get_corruption_system_stats(response: Response, db: AsyncDatabaseDep):
     """Get system-wide corruption detection statistics"""
     statistics_service = CorruptionStatisticsService(db)
     stats = await statistics_service.get_system_statistics()
@@ -121,7 +131,9 @@ async def get_camera_corruption_history(
 
     hours_int = hours if hours is not None else DEFAULT_CORRUPTION_HISTORY_HOURS
     corruption_ops = CorruptionOperations(db)
-    history = await corruption_ops.get_camera_corruption_history(camera_id, hours=hours_int)
+    history = await corruption_ops.get_camera_corruption_history(
+        camera_id, hours=hours_int
+    )
 
     # Generate ETag based on camera ID, hours, and history content
     etag = generate_content_hash_etag(
@@ -148,7 +160,9 @@ async def get_corruption_settings(
     settings = await settings_service.get_corruption_settings()
 
     # Generate ETag based on settings content for cache validation
-    etag = generate_content_hash_etag(settings)
+    etag = generate_content_hash_etag(
+        settings.model_dump() if hasattr(settings, "model_dump") else settings.__dict__
+    )
 
     # Add long cache for settings (change infrequently)
     response.headers["Cache-Control"] = (
@@ -157,7 +171,12 @@ async def get_corruption_settings(
     response.headers["ETag"] = etag
 
     return ResponseFormatter.success(
-        "Corruption detection settings retrieved successfully", data=settings
+        "Corruption detection settings retrieved successfully",
+        data=(
+            settings.model_dump()
+            if hasattr(settings, "model_dump")
+            else settings.__dict__
+        ),
     )
 
 
@@ -169,9 +188,13 @@ async def update_corruption_settings(
     """Update corruption detection settings"""
     # Extract global settings from the request
     global_settings = settings_data.get("global_settings", {})
-    
-    # Update settings through settings service
-    updated_settings = await settings_service.update_corruption_settings(global_settings)
+
+    # Update individual settings through settings service
+    updated_settings = {}
+    for key, value in global_settings.items():
+        success = await settings_service.set_setting(key, value)
+        if success:
+            updated_settings[key] = value
 
     return ResponseFormatter.success(
         "Corruption detection settings updated successfully", data=updated_settings
@@ -219,7 +242,10 @@ async def get_corruption_logs(
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"  # 5 minutes
     response.headers["ETag"] = etag
 
-    return ResponseFormatter.success("Corruption logs retrieved successfully", data=logs)
+    return ResponseFormatter.success(
+        "Corruption logs retrieved successfully",
+        data=logs.model_dump() if hasattr(logs, "model_dump") else logs.__dict__,
+    )
 
 
 # No HTTP caching needed for POST operations
@@ -258,11 +284,16 @@ async def test_image_corruption(
     try:
         # Delegate file processing to validation helpers
         result_data = await process_uploaded_image_for_corruption_test(image, db)
-        
+
         test_result = CorruptionTestResponse(**result_data)
 
         return ResponseFormatter.success(
-            "Image corruption test completed successfully", data=test_result
+            "Image corruption test completed successfully",
+            data=(
+                test_result.model_dump()
+                if hasattr(test_result, "model_dump")
+                else test_result.__dict__
+            ),
         )
 
     except Exception as e:
@@ -270,25 +301,13 @@ async def test_image_corruption(
         raise HTTPException(status_code=400, detail=f"Image test failed: {str(e)}")
 
 
-# TODO: Replace with SSE in services layer - corruption health changes with each detection
 # Use very short cache (1-2 minutes max) or preferably SSE events via services layer
-@router.get("/corruption/health")
-@handle_exceptions("get corruption system health")
-async def get_corruption_system_health(
-    settings_service: SettingsServiceDep,
-    db: AsyncDatabaseDep,
-):
-    """Get corruption detection system health status"""
-    try:
-        health_service = CorruptionHealthService(db)
-        health_status = await health_service.get_system_health()
-
-        return ResponseFormatter.success(
-            "Corruption system health retrieved successfully", data=health_status
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting corruption system health: {e}")
-        return ResponseFormatter.error(
-            "Failed to retrieve corruption system health", error=str(e)
-        )
+@router.get("/system-health")
+@handle_exceptions("get system health")
+async def get_system_health(db: AsyncDatabaseDep):
+    """Get current system health overview."""
+    health_service = CorruptionHealthService(db)
+    health_data = await health_service.get_system_health_overview()
+    return ResponseFormatter.success(
+        "System health retrieved successfully", data=health_data
+    )

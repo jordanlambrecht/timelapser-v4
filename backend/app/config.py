@@ -1,8 +1,10 @@
 # backend/app/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 from typing import Optional, Union, List
 from pathlib import Path
-import os
+
+from .enums import LogLevel
 
 
 def get_project_root() -> Path:
@@ -13,21 +15,42 @@ def get_project_root() -> Path:
 class Settings(BaseSettings):
     environment: str = "development"
     # Database
-    database_url: str
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+    database_url: str = Field(..., description="PostgreSQL connection string")
+    db_pool_size: int = Field(
+        default=20,
+        ge=5,
+        le=100,
+        description="Database connection pool size (optimized for concurrent operations)",
+    )
+    db_max_overflow: int = Field(
+        default=30,
+        ge=5,
+        le=100,
+        description="Maximum overflow connections (optimized for peak load)",
+    )
+    db_pool_timeout: int = Field(
+        default=30, ge=5, le=300, description="Database connection timeout in seconds"
+    )
 
     # API
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    api_reload: bool = False
+    api_host: str = Field(default="0.0.0.0", description="API host to bind to")
+    api_port: int = Field(
+        default=8000, ge=1, le=65535, description="API port to bind to"
+    )
+    api_reload: bool = Field(
+        default=False, description="Enable auto-reload for development"
+    )
 
     # CORS - use Union to handle both string and list inputs
-    cors_origins: Union[str, List[str]] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-    ]
+    # Can be set via CORS_ORIGINS env var as comma-separated string
+    cors_origins: Union[str, List[str]] = Field(
+        default=[
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://localhost:3002",
+        ],
+        description="Allowed CORS origins. Can be comma-separated string or list.",
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -37,7 +60,11 @@ class Settings(BaseSettings):
         return self.cors_origins
 
     # Frontend URL for SSE events
-    frontend_url: str = "http://localhost:3000"
+    # Can be set via FRONTEND_URL env var
+    frontend_url: str = Field(
+        default="http://localhost:3000",
+        description="Frontend URL for SSE events and CORS configuration",
+    )
 
     # ============= PATH CONFIGURATION (AI-CONTEXT COMPLIANT) =============
     # CRITICAL: All file operations MUST use these settings
@@ -97,20 +124,64 @@ class Settings(BaseSettings):
             return str(full_path)
 
     # Worker settings
-    capture_interval: int = 300  # 5 minutes default
-    max_concurrent_captures: int = 4
-    health_check_interval: int = 120  # 2 minutes
+    capture_interval: int = Field(
+        default=300,
+        ge=10,
+        le=86400,
+        description="Capture interval in seconds (10s to 24h)",
+    )
+    max_concurrent_captures: int = Field(
+        default=4, ge=1, le=20, description="Maximum concurrent capture operations"
+    )
+    health_check_interval: int = Field(
+        default=120, ge=30, le=3600, description="Health check interval in seconds"
+    )
 
     # Video generation
-    video_generation_max_concurrent: int = 3
-    video_generation_timeout_minutes: int = 30
+    video_generation_max_concurrent: int = Field(
+        default=3, ge=1, le=10, description="Maximum concurrent video generation jobs"
+    )
+    video_generation_timeout_minutes: int = Field(
+        default=30, ge=5, le=180, description="Video generation timeout in minutes"
+    )
 
     # Logging
-    log_level: str = "INFO"
-    log_file: Optional[str] = None
+    log_level: LogLevel = Field(
+        default=LogLevel.INFO,
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    log_file: Optional[str] = Field(
+        default=None, description="Log file path (optional)"
+    )
 
     # Weather integration (optional)
-    openweather_api_key: str = ""
+    openweather_api_key: str = Field(
+        default="", description="OpenWeather API key (optional)"
+    )
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> LogLevel:
+        """Validate log level is one of the allowed values"""
+        allowed_levels = LogLevel.__members__.keys()
+        v_upper = v.upper()
+        if v_upper not in allowed_levels:
+            raise ValueError(
+                f"Invalid log level '{v}'. Must be one of: {', '.join(allowed_levels)}"
+            )
+        return LogLevel[v_upper]
+
+    @field_validator("environment")
+    @classmethod
+    def validate_environment(cls, v: str) -> str:
+        """Validate environment is one of the allowed values"""
+        allowed_envs = ["development", "staging", "production"]
+        v_lower = v.lower()
+        if v_lower not in allowed_envs:
+            raise ValueError(
+                f"Invalid environment '{v}'. Must be one of: {', '.join(allowed_envs)}"
+            )
+        return v_lower
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"

@@ -12,17 +12,20 @@ import glob
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName, VideoQuality
 
 from ...config import settings
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 from ...utils import file_helpers
 
 
 # Quality settings for different output levels
 QUALITY_SETTINGS = {
-    "low": {"crf": 28, "preset": "fast", "scale": "1280:720"},
-    "medium": {"crf": 23, "preset": "medium", "scale": "1920:1080"},
-    "high": {"crf": 18, "preset": "slow", "scale": None},
+    VideoQuality.LOW: {"crf": 28, "preset": "fast", "scale": "1280:720"},
+    VideoQuality.MEDIUM: {"crf": 23, "preset": "medium", "scale": "1920:1080"},
+    VideoQuality.HIGH: {"crf": 18, "preset": "slow", "scale": None},
 }
 
 # Supported image formats
@@ -63,35 +66,34 @@ def test_ffmpeg_available() -> Tuple[bool, str]:
         return False, f"Error checking FFmpeg: {str(e)}"
 
 
-def get_quality_settings(quality: str) -> Dict[str, Any]:
+def get_quality_settings(quality: VideoQuality) -> Dict[str, Any]:
     """Get FFmpeg quality settings based on quality level."""
-    return QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["medium"])
+    return QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS[VideoQuality.MEDIUM])
 
 
 # Deprecated ASS subtitle functions - kept for backward compatibility
-def get_overlay_alignment(position: str) -> int:
-    """Get FFmpeg alignment value for overlay position. (DEPRECATED - use overlay images instead)"""
-    alignments = {
-        "bottom-left": 1,
-        "bottom-center": 2,
-        "bottom-right": 3,
-        "center-left": 4,
-        "center": 5,
-        "center-right": 6,
-        "top-left": 7,
-        "top-center": 8,
-        "top-right": 9,
-    }
-    return alignments.get(position, 3)
+# def get_overlay_alignment(position: str) -> int:
+#     """Get FFmpeg alignment value for overlay position. (DEPRECATED - use overlay images instead)"""
+#     alignments = {
+#         "bottom-left": 1,
+#         "bottom-center": 2,
+#         "bottom-right": 3,
+#         "center-left": 4,
+#         "center": 5,
+#         "center-right": 6,
+#         "top-left": 7,
+#         "top-center": 8,
+#         "top-right": 9,
+#     }
+#     return alignments.get(position, 3)
 
 
-def seconds_to_ass_time(seconds: float) -> str:
-    """Convert seconds to ASS time format (H:MM:SS.cc). (DEPRECATED - use overlay images instead)"""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    return f"{hours}:{minutes:02d}:{secs:05.2f}"
-
+# def seconds_to_ass_time(seconds: float) -> str:
+#     """Convert seconds to ASS time format (H:MM:SS.cc). (DEPRECATED - use overlay images instead)"""
+#     hours = int(seconds // 3600)
+#     minutes = int((seconds % 3600) // 60)
+#     secs = seconds % 60
+#     return f"{hours}:{minutes:02d}:{secs:05.2f}"
 
 
 def find_overlay_images(camera_id: int, base_directory: Path) -> List[str]:
@@ -182,83 +184,83 @@ def find_image_files(images_directory: Path) -> List[str]:
     return image_files
 
 
-def create_ass_subtitle_content(
-    image_list: List[str],
-    total_duration: float,
-    overlay_settings: Dict[str, Any],
-    day_numbers: Optional[List[int]] = None,
-) -> str:
-    """
-    Create ASS subtitle content for day overlays. (DEPRECATED - use overlay images instead)
+# def create_ass_subtitle_content(
+#     image_list: List[str],
+#     total_duration: float,
+#     overlay_settings: Dict[str, Any],
+#     day_numbers: Optional[List[int]] = None,
+# ) -> str:
+#     """
+#     Create ASS subtitle content for day overlays. (DEPRECATED - use overlay images instead)
 
-    Args:
-        image_list: List of image file paths
-        total_duration: Total video duration in seconds
-        overlay_settings: Overlay configuration settings
-        day_numbers: Optional list of day numbers (extracted from database)
+#     Args:
+#         image_list: List of image file paths
+#         total_duration: Total video duration in seconds
+#         overlay_settings: Overlay configuration settings
+#         day_numbers: Optional list of day numbers (extracted from database)
 
-    Returns:
-        ASS subtitle content as string
-    """
-    if not overlay_settings.get("enabled", True):
-        return ""
+#     Returns:
+#         ASS subtitle content as string
+#     """
+#     if not overlay_settings.get("enabled", True):
+#         return ""
 
-    # ASS subtitle header
-    ass_content = """[Script Info]
-Title: Day Overlay
-ScriptType: v4.00+
+#     # ASS subtitle header
+#     ass_content = """[Script Info]
+# Title: Day Overlay
+# ScriptType: v4.00+
 
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,{font_size},&H00{font_color},&H000000FF,&H00000000,&H80{background_color},0,0,0,0,100,100,0,0,1,2,0,{alignment},10,10,10,1
+# [V4+ Styles]
+# Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+# Style: Default,Arial,{font_size},&H00{font_color},&H000000FF,&H00000000,&H80{background_color},0,0,0,0,100,100,0,0,1,2,0,{alignment},10,10,10,1
 
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""".format(
-        font_size=overlay_settings.get("font_size", 48),
-        font_color=overlay_settings.get("font_color", "white").replace("#", ""),
-        background_color=overlay_settings.get("background_color", "black@0.5").replace(
-            "@", "&H"
-        ),
-        alignment=get_overlay_alignment(
-            overlay_settings.get("position", "bottom-right")
-        ),
-    )
+# [Events]
+# Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+# """.format(
+#         font_size=overlay_settings.get("font_size", 48),
+#         font_color=overlay_settings.get("font_color", "white").replace("#", ""),
+#         background_color=overlay_settings.get("background_color", "black@0.5").replace(
+#             "@", "&H"
+#         ),
+#         alignment=get_overlay_alignment(
+#             overlay_settings.get("position", "bottom-right")
+#         ),
+#     )
 
-    # Calculate frame duration
-    if len(image_list) == 0:
-        return ass_content
+#     # Calculate frame duration
+#     if len(image_list) == 0:
+#         return ass_content
 
-    frame_duration = total_duration / len(image_list)
-    overlay_format = overlay_settings.get("format", "Day {day}")
+#     frame_duration = total_duration / len(image_list)
+#     overlay_format = overlay_settings.get("format", "Day {day}")
 
-    # Add dialogue lines for each frame
-    for i, image_path in enumerate(image_list):
-        start_time = i * frame_duration
-        end_time = (i + 1) * frame_duration
+#     # Add dialogue lines for each frame
+#     for i, image_path in enumerate(image_list):
+#         start_time = i * frame_duration
+#         end_time = (i + 1) * frame_duration
 
-        # Use provided day numbers or extract from filename
-        if day_numbers and i < len(day_numbers):
-            day_number = day_numbers[i]
-        else:
-            # Fallback: extract day number from filename
-            day_number = i + 1
+#         # Use provided day numbers or extract from filename
+#         if day_numbers and i < len(day_numbers):
+#             day_number = day_numbers[i]
+#         else:
+#             # Fallback: extract day number from filename
+#             day_number = i + 1
 
-        text = overlay_format.format(day=day_number)
+#         text = overlay_format.format(day=day_number)
 
-        dialogue_line = f"Dialogue: 0,{seconds_to_ass_time(start_time)},{seconds_to_ass_time(end_time)},Default,,0,0,0,,{text}"
-        ass_content += dialogue_line + "\n"
+#         dialogue_line = f"Dialogue: 0,{seconds_to_ass_time(start_time)},{seconds_to_ass_time(end_time)},Default,,0,0,0,,{text}"
+#         ass_content += dialogue_line + "\n"
 
-    return ass_content
+#     return ass_content
 
 
 def build_ffmpeg_command(
     image_list_file: str,
     output_path: str,
     framerate: float,
-    quality: str,
+    quality: VideoQuality,
     rotation: int = 0,
-    subtitle_file: Optional[str] = None,
+    # subtitle_file: Optional[str] = None,
     overlay_settings: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
@@ -270,8 +272,8 @@ def build_ffmpeg_command(
         framerate: Video framerate
         quality: Quality level (low/medium/high)
         rotation: Video rotation in degrees (0, 90, 180, 270)
-        subtitle_file: Optional ASS subtitle file for overlays (deprecated)
-        overlay_settings: Optional overlay configuration (deprecated)
+        # subtitle_file: Optional ASS subtitle file for overlays (deprecated)
+        # overlay_settings: Optional overlay configuration (deprecated)
 
     Returns:
         FFmpeg command as list of strings
@@ -297,7 +299,7 @@ def build_ffmpeg_command(
 
     # Build video filter chain
     video_filters = [f"fps={framerate}"]
-    
+
     # Add rotation filter if needed
     if rotation == 90:
         video_filters.append("transpose=1")
@@ -305,7 +307,7 @@ def build_ffmpeg_command(
         video_filters.append("transpose=2,transpose=2")
     elif rotation == 270:
         video_filters.append("transpose=2")
-    
+
     # Apply video filters
     cmd.extend(["-vf", ",".join(video_filters)])
 
@@ -314,10 +316,10 @@ def build_ffmpeg_command(
         cmd.extend(["-s", quality_opts["scale"]])
 
     # Add subtitle overlay if provided (deprecated - use overlay images instead)
-    if subtitle_file and overlay_settings and overlay_settings.get("enabled", True):
-        # Override the video filter to add subtitles (deprecated path)
-        cmd[-1] = f"fps={framerate},subtitles={subtitle_file}"
-        logger.warning("Using deprecated subtitle overlay system in FFmpeg command")
+    # if subtitle_file and overlay_settings and overlay_settings.get("enabled", True):
+    #     # Override the video filter to add subtitles (deprecated path)
+    #     cmd[-1] = f"fps={framerate},subtitles={subtitle_file}"
+    #     logger.warning("Using deprecated subtitle overlay system in FFmpeg command")
 
     cmd.extend(["-pix_fmt", "yuv420p", output_path])  # Ensure compatibility
 
@@ -405,11 +407,11 @@ def generate_video(
     images_directory: Path,
     output_path: str,
     framerate: float = 24.0,
-    quality: str = "medium",
+    quality: VideoQuality = VideoQuality.MEDIUM,
     rotation: int = 0,
     use_overlay_images: bool = False,
-    overlay_settings: Optional[Dict[str, Any]] = None,
-    day_numbers: Optional[List[int]] = None,
+    # overlay_settings: Optional[Dict[str, Any]] = None,
+    # day_numbers: Optional[List[int]] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Generate timelapse video from images directory.
@@ -421,8 +423,8 @@ def generate_video(
         quality: Quality level (low/medium/high)
         rotation: Video rotation in degrees (0, 90, 180, 270)
         use_overlay_images: Whether to use pre-rendered overlay images
-        overlay_settings: Optional overlay configuration (deprecated - use overlay images)
-        day_numbers: Optional list of day numbers for overlays (deprecated)
+        # overlay_settings: Optional overlay configuration (deprecated - use overlay images)
+        # day_numbers: Optional list of day numbers for overlays (deprecated)
 
     Returns:
         Tuple of (success, message, metadata_dict)
@@ -438,7 +440,7 @@ def generate_video(
                 camera_match = re.search(r"camera-(\d+)", str(images_directory))
                 if camera_match:
                     camera_id = int(camera_match.group(1))
-            
+
             # Try to find overlay images
             overlay_images = []
             if camera_id:
@@ -446,9 +448,11 @@ def generate_video(
                 # We need base_directory as: data/
                 base_directory = images_directory.parent.parent
                 overlay_images = find_overlay_images(camera_id, base_directory)
-            
+
             if overlay_images:
-                logger.info(f"Using {len(overlay_images)} overlay images for video generation")
+                logger.info(
+                    f"Using {len(overlay_images)} overlay images for video generation"
+                )
                 image_files = overlay_images
             else:
                 logger.info("No overlay images found, falling back to regular images")
@@ -456,7 +460,7 @@ def generate_video(
         else:
             # Use regular images
             image_files = find_image_files(images_directory)
-        
+
         if not image_files:
             return False, "No image files found in directory", {}
 
@@ -470,19 +474,25 @@ def generate_video(
         duration = len(image_files) / framerate
 
         # Create subtitle file if using deprecated overlay system
-        subtitle_file = None
-        if not use_overlay_images and overlay_settings and overlay_settings.get("enabled", True):
-            logger.warning("Using deprecated ASS subtitle overlay system. Consider using pre-rendered overlay images.")
-            ass_content = create_ass_subtitle_content(
-                image_files, duration, overlay_settings, day_numbers
-            )
+        # subtitle_file = None
+        # if (
+        #     not use_overlay_images
+        #     and overlay_settings
+        #     and overlay_settings.get("enabled", True)
+        # ):
+        #     logger.warning(
+        #         "Using deprecated ASS subtitle overlay system. Consider using pre-rendered overlay images."
+        #     )
+        # ass_content = create_ass_subtitle_content(
+        #     image_files, duration, overlay_settings, day_numbers
+        # )
 
-            subtitle_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".ass", delete=False
-            )
-            subtitle_file.write(ass_content)
-            subtitle_file.close()
-            temp_files.append(subtitle_file.name)
+        # subtitle_file = tempfile.NamedTemporaryFile(
+        #     mode="w", suffix=".ass", delete=False
+        # )
+        # subtitle_file.write(ass_content)
+        # subtitle_file.close()
+        # temp_files.append(subtitle_file.name)
 
         # Build FFmpeg command
         cmd = build_ffmpeg_command(
@@ -491,8 +501,8 @@ def generate_video(
             framerate,
             quality,
             rotation,
-            subtitle_file.name if subtitle_file else None,
-            overlay_settings,
+            # subtitle_file.name if subtitle_file else None,
+            # overlay_settings,
         )
 
         # Execute FFmpeg
@@ -512,9 +522,7 @@ def generate_video(
                 "quality": quality,
                 "rotation": rotation,
                 "file_size_bytes": output_size,
-                "overlay_enabled": bool(
-                    use_overlay_images or (overlay_settings and overlay_settings.get("enabled", True))
-                ),
+                "overlay_enabled": bool(use_overlay_images),
                 "overlay_images_used": use_overlay_images,
             }
 

@@ -113,7 +113,7 @@ export function ThumbnailManagementCard({}) {
     purgeSmalllsOnCompletion,
     setEnableThumbnailGeneration,
     setSmallGenerationMode,
-    setPurgeSmalllsOnCompletion,
+    setPurgeSmallsOnCompletion,
     saving,
   } = useSettings()
 
@@ -481,7 +481,7 @@ export function ThumbnailManagementCard({}) {
                 trueLabel='purge'
                 checked={purgeSmalllsOnCompletion}
                 onCheckedChange={(value: boolean) =>
-                  setPurgeSmalllsOnCompletion(value)
+                  setPurgeSmallsOnCompletion(value)
                 }
               />
             </div>

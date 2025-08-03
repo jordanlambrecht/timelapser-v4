@@ -15,7 +15,12 @@ import os
 import sys
 import uuid
 
-import psutil
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    psutil = None
 
 from ....utils.time_utils import utc_now, utc_timestamp
 from ..constants import (
@@ -189,6 +194,8 @@ class ContextExtractor:
     def _get_performance_context(self) -> Dict[str, Any]:
         """Get performance-related context information."""
         try:
+            if not PSUTIL_AVAILABLE:
+                return {"performance_unavailable": "psutil_not_installed"}
 
             # Memory usage
             process = psutil.Process()
@@ -200,9 +207,9 @@ class ContextExtractor:
                 "thread_count": process.num_threads(),
             }
 
-        except ImportError:
-            # psutil not available
-            return {"performance_unavailable": "psutil_not_installed"}
+        except Exception:
+            # psutil error
+            return {"performance_unavailable": "psutil_error"}
 
     # TODO: This needs to be globalized and cached
     def _get_environment_context(self) -> Dict[str, Any]:

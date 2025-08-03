@@ -19,19 +19,15 @@ from fastapi import APIRouter
 from typing import Dict, Any
 
 from app.dependencies import HealthServiceDep
-from app.models.health_model import (
-    BasicHealthCheck,
-    DetailedHealthCheck,
-    DatabaseHealth,
-    FilesystemHealth,
-    SystemMetrics,
-    ApplicationMetrics,
-)
+
 from app.utils.router_helpers import handle_exceptions, ResponseFormatter
-from app.utils.validation_helpers import create_health_response, create_kubernetes_readiness_response
+from app.utils.validation_helpers import (
+    create_health_response,
+    create_kubernetes_readiness_response,
+)
 from app.constants import APPLICATION_NAME, APPLICATION_VERSION
 
-# TODO: CACHING STRATEGY - MINIMAL/NO CACHE
+# NOTE: CACHING STRATEGY - MINIMAL/NO CACHE
 # Health endpoints are critical monitoring data that changes frequently:
 # - Basic health (/health, /readiness, /liveness): No cache - load balancers need real-time status
 # - Detailed health/metrics: Very short cache (30-60 seconds max) or SSE broadcasting
@@ -49,12 +45,11 @@ async def health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     Use /health/detailed for comprehensive health information.
     """
     basic_health = await health_service.get_basic_health()
-    
-    # Delegate status logic to validation helpers
+
     response, _ = create_health_response(
         basic_health,
         success_message="Service healthy",
-        degraded_message="Service degraded - some components need attention"
+        degraded_message="Service degraded - some components need attention",
     )
     return response
 
@@ -68,12 +63,11 @@ async def detailed_health_check(health_service: HealthServiceDep) -> Dict[str, A
     Checks database connectivity, service health, and system resources.
     """
     detailed_health = await health_service.get_detailed_health()
-    
-    # Delegate status logic to validation helpers
+
     response, _ = create_health_response(
         detailed_health,
         success_message="System health check completed successfully",
-        degraded_message="System health degraded - some components need attention"
+        degraded_message="System health degraded - some components need attention",
     )
     return response
 
@@ -83,12 +77,11 @@ async def detailed_health_check(health_service: HealthServiceDep) -> Dict[str, A
 async def database_health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     """Get detailed database health information."""
     db_health = await health_service.get_database_health()
-    
-    # Delegate status logic to validation helpers
+
     response, _ = create_health_response(
         db_health,
         success_message="Database health check completed",
-        degraded_message="Database health degraded - performance issues detected"
+        degraded_message="Database health degraded - performance issues detected",
     )
     return response
 
@@ -98,12 +91,11 @@ async def database_health_check(health_service: HealthServiceDep) -> Dict[str, A
 async def filesystem_health_check(health_service: HealthServiceDep) -> Dict[str, Any]:
     """Get detailed filesystem health information."""
     fs_health = await health_service.get_filesystem_health()
-    
-    # Delegate status logic to validation helpers
+
     response, _ = create_health_response(
         fs_health,
         success_message="Filesystem health check completed",
-        degraded_message="Filesystem health degraded - storage issues detected"
+        degraded_message="Filesystem health degraded - storage issues detected",
     )
     return response
 
@@ -114,10 +106,9 @@ async def system_metrics_check(health_service: HealthServiceDep) -> Dict[str, An
     """Get current system performance metrics."""
     metrics = await health_service.get_system_metrics()
     metrics_data = metrics.model_dump()
-    
+
     return ResponseFormatter.success(
-        data=metrics_data,
-        message="System metrics retrieved successfully"
+        data=metrics_data, message="System metrics retrieved successfully"
     )
 
 
@@ -127,10 +118,9 @@ async def application_metrics_check(health_service: HealthServiceDep) -> Dict[st
     """Get application-specific health metrics."""
     metrics = await health_service.get_application_metrics()
     metrics_data = metrics.model_dump()
-    
+
     return ResponseFormatter.success(
-        data=metrics_data,
-        message="Application metrics retrieved successfully"
+        data=metrics_data, message="Application metrics retrieved successfully"
     )
 
 
@@ -140,12 +130,11 @@ async def application_metrics_check(health_service: HealthServiceDep) -> Dict[st
 async def readiness_probe(health_service: HealthServiceDep) -> Dict[str, Any]:
     """
     Kubernetes readiness probe endpoint.
-    
+
     Checks if the service is ready to receive traffic.
     """
     basic_health = await health_service.get_basic_health()
-    
-    # Delegate status logic to validation helpers
+
     return create_kubernetes_readiness_response(basic_health)
 
 
@@ -154,11 +143,11 @@ async def readiness_probe(health_service: HealthServiceDep) -> Dict[str, Any]:
 async def liveness_probe() -> Dict[str, Any]:
     """
     Kubernetes liveness probe endpoint.
-    
+
     Simple endpoint to check if the service is alive.
     """
     return {
         "status": "alive",
         "service": APPLICATION_NAME,
-        "version": APPLICATION_VERSION
+        "version": APPLICATION_VERSION,
     }

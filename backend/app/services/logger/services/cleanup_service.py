@@ -13,6 +13,7 @@ import asyncio
 from ....database.log_operations import LogOperations, SyncLogOperations
 from ....constants import LOG_CLEANUP_BATCH_SIZE, LOG_CLEANUP_INTERVAL_HOURS
 from ....utils.time_utils import utc_now
+from ..utils.settings_cache import LoggerSettingsCache
 
 
 class LogCleanupService:
@@ -31,6 +32,7 @@ class LogCleanupService:
         self,
         async_log_ops: LogOperations,
         sync_log_ops: SyncLogOperations,
+        settings_cache: Optional[LoggerSettingsCache] = None,
         default_retention_days: int = 30,
         cleanup_batch_size: int = LOG_CLEANUP_BATCH_SIZE,
     ):
@@ -40,11 +42,13 @@ class LogCleanupService:
         Args:
             async_log_ops: Async log operations instance
             sync_log_ops: Sync log operations instance
-            default_retention_days: Default number of days to retain logs
+            settings_cache: Settings cache for dynamic retention configuration
+            default_retention_days: Default number of days to retain logs (fallback)
             cleanup_batch_size: Number of logs to delete per batch
         """
         self.async_log_ops = async_log_ops
         self.sync_log_ops = sync_log_ops
+        self.settings_cache = settings_cache
         self.default_retention_days = default_retention_days
         self.cleanup_batch_size = cleanup_batch_size
 
@@ -53,6 +57,48 @@ class LogCleanupService:
         self._last_cleanup_time = None
         self._total_logs_cleaned = 0
         self._last_cleanup_error = None
+
+    async def _get_retention_days_async(self, override_days: Optional[int] = None) -> int:
+        """
+        Get retention days from user settings or override.
+        
+        Args:
+            override_days: Explicit override (takes precedence)
+            
+        Returns:
+            Number of days to retain logs
+        """
+        if override_days is not None:
+            return override_days
+            
+        if self.settings_cache:
+            try:
+                return await self.settings_cache.get_setting_async("db_log_retention_days")
+            except Exception:
+                pass
+        
+        return self.default_retention_days
+
+    def _get_retention_days_sync(self, override_days: Optional[int] = None) -> int:
+        """
+        Get retention days from user settings or override (sync version).
+        
+        Args:
+            override_days: Explicit override (takes precedence)
+            
+        Returns:
+            Number of days to retain logs
+        """
+        if override_days is not None:
+            return override_days
+            
+        if self.settings_cache:
+            try:
+                return self.settings_cache.get_setting_sync("db_log_retention_days")
+            except Exception:
+                pass
+        
+        return self.default_retention_days
 
     async def cleanup_old_logs(
         self,
@@ -74,8 +120,8 @@ class LogCleanupService:
             Dictionary containing cleanup results and statistics
         """
         try:
-            if days_to_keep is None:
-                days_to_keep = self.default_retention_days
+            # Get retention days from user settings or override
+            days_to_keep = await self._get_retention_days_async(days_to_keep)
 
             # Use the existing delete_old_logs method
             deleted_count = await self.async_log_ops.delete_old_logs(days_to_keep)
@@ -265,8 +311,8 @@ class LogCleanupService:
             Dictionary containing cleanup results
         """
         try:
-            if days_to_keep is None:
-                days_to_keep = self.default_retention_days
+            # Get retention days from user settings or override
+            days_to_keep = self._get_retention_days_sync(days_to_keep)
 
             # Calculate cutoff date using timezone-aware timestamp
             cutoff_date = utc_now() - timedelta(days=days_to_keep)

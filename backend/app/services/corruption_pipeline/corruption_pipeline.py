@@ -7,7 +7,10 @@ with proper dependency injection and backward compatibility.
 """
 
 from typing import Optional, Dict, Any, Union
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 from ...database.core import AsyncDatabase, SyncDatabase
 from .services import (
@@ -91,7 +94,6 @@ class CorruptionPipeline:
                 "action_taken": "error",
                 "error": "No evaluation service available",
             }
-
 
     async def evaluate_image_async(
         self, camera_id: int, image_path: str, **kwargs

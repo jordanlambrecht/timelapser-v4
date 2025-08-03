@@ -4,7 +4,10 @@ Thumbnail Performance Service - Performance metrics and monitoring.
 """
 
 from typing import Dict, Any
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ....database.core import SyncDatabase, AsyncDatabase
 

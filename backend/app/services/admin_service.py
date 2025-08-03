@@ -16,10 +16,12 @@ Architecture: Service Layer - contains business logic separated from HTTP layer
 """
 
 from typing import Dict, Any, List, Optional
-from loguru import logger
 
 from ..utils.time_utils import utc_now
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
 
+logger = get_service_logger(LoggerName.ADMIN)
 from ..database.scheduled_job_operations import ScheduledJobOperations
 from ..models.scheduled_job_model import ScheduledJobUpdate, ScheduledJobSummary
 from ..models.health_model import HealthStatus
@@ -129,7 +131,15 @@ class AdminService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting paginated jobs: {e}")
+            logger.error(
+                f"Error getting paginated jobs",
+                exception=e,
+                extra_context={
+                    "operation": "get_paginated_jobs",
+                    "page": page,
+                    "limit": limit,
+                },
+            )
             raise
 
     async def execute_job_action(
@@ -211,7 +221,15 @@ class AdminService:
             }
 
         except Exception as e:
-            logger.error(f"Error executing job action {action} on {job_id}: {e}")
+            logger.error(
+                f"Error executing job action {action} on {job_id}",
+                exception=e,
+                extra_context={
+                    "operation": "execute_job_action",
+                    "job_id": job_id,
+                    "action": action,
+                },
+            )
             raise
 
     async def _handle_manual_trigger(self, job, scheduler_worker) -> str:
@@ -298,7 +316,15 @@ class AdminService:
             }
 
         except Exception as e:
-            logger.error(f"Error executing bulk action {action}: {e}")
+            logger.error(
+                f"Error executing bulk action {action}",
+                exception=e,
+                extra_context={
+                    "operation": "execute_bulk_job_action",
+                    "action": action,
+                    "job_ids": job_ids[:10],
+                },
+            )
             raise
 
     def calculate_job_health_score(self, stats) -> float:
@@ -323,7 +349,12 @@ class AdminService:
             return 0.0
 
         except Exception as e:
-            logger.warning(f"Error calculating job health score: {e}")
+            # Note: This is a sync method, so we use sync logging
+            logger.warning(
+                "Error calculating job health score",
+                exception=e,
+                extra_context={"operation": "calculate_job_health_score"},
+            )
             return 0.0
 
     async def get_admin_health_assessment(
@@ -350,7 +381,11 @@ class AdminService:
                 system_health = await health_service.get_detailed_health()
                 system_healthy = system_health.status == HealthStatus.HEALTHY
             except Exception as e:
-                logger.error(f"Failed to get system health: {e}")
+                logger.error(
+                    "Failed to get system health",
+                    exception=e,
+                    extra_context={"operation": "get_system_health"},
+                )
                 system_health = None
                 system_healthy = False
 
@@ -413,5 +448,9 @@ class AdminService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting admin health assessment: {e}")
+            logger.error(
+                "Error getting admin health assessment",
+                exception=e,
+                extra_context={"operation": "get_admin_health_assessment"},
+            )
             raise

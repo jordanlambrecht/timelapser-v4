@@ -60,7 +60,10 @@ PROBLEM SOLVED:
 
 import time
 from typing import Dict, Optional, List, Callable
-from loguru import logger
+from ..services.logger import get_service_logger, LogEmoji
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .utils import SchedulerTimeUtils
 from ..database.core import SyncDatabase

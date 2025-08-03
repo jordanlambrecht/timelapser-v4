@@ -11,7 +11,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Query, HTTPException
 
-from ..dependencies import LogServiceDep
+from ..dependencies import LoggerServiceDep
 from ..models.log_model import Log
 from ..models.log_summary_model import LogSourceModel, LogSummaryModel
 from ..utils.router_helpers import (
@@ -25,7 +25,6 @@ from ..utils.time_utils import (
     parse_iso_timestamp_safe,
 )
 from ..constants import (
-    LOG_LEVELS,
     DEFAULT_LOG_PAGE_SIZE,
     LOG_LEVELS_LIST,
     MAX_LOG_PAGE_SIZE,
@@ -43,7 +42,7 @@ router = APIRouter(tags=["logs"])
 @router.get("/logs/stats")
 @handle_exceptions("get log stats")
 async def get_log_stats(
-    log_service: LogServiceDep,
+    log_service: LoggerServiceDep,
     hours: int = Query(
         24,
         ge=1,
@@ -62,7 +61,7 @@ async def get_log_stats(
             "period_hours": hours,
             "metadata": {
                 "generated_at": (
-                    await get_timezone_aware_timestamp_async(log_service.db)
+                    await get_timezone_aware_timestamp_async(log_service.async_db)
                 ).isoformat(),
                 "data_range": {
                     "first_log": (
@@ -86,7 +85,7 @@ async def get_log_stats(
 @router.get("/logs")
 @handle_exceptions("get logs")
 async def get_logs(
-    log_service: LogServiceDep,
+    log_service: LoggerServiceDep,
     level: Optional[str] = Query(
         None, description=f"Filter by log level ({', '.join(LOG_LEVELS_LIST)})"
     ),
@@ -175,7 +174,7 @@ async def get_logs(
 
 @router.get("/logs/sources")
 @handle_exceptions("get log sources")
-async def get_log_sources(log_service: LogServiceDep) -> dict:
+async def get_log_sources(log_service: LoggerServiceDep) -> dict:
     """Get available log sources and their statistics"""
 
     sources: List[LogSourceModel] = await log_service.get_log_sources()
@@ -191,7 +190,7 @@ async def get_log_sources(log_service: LogServiceDep) -> dict:
 @router.get("/logs/search")
 @handle_exceptions("search logs")
 async def search_logs(
-    log_service: LogServiceDep,
+    log_service: LoggerServiceDep,
     query: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(
@@ -243,7 +242,7 @@ async def search_logs(
 @router.delete("/logs/cleanup")
 @handle_exceptions("cleanup old logs")
 async def cleanup_old_logs(
-    log_service: LogServiceDep,
+    log_service: LoggerServiceDep,
     days_to_keep: int = Query(
         30,
         ge=0,
@@ -271,7 +270,7 @@ async def cleanup_old_logs(
 @handle_exceptions("get camera logs")
 async def get_camera_logs(
     camera_id: int,
-    log_service: LogServiceDep,
+    log_service: LoggerServiceDep,
     limit: int = Query(
         DEFAULT_LOG_PAGE_SIZE,
         ge=1,

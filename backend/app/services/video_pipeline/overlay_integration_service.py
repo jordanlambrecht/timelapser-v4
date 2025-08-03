@@ -6,23 +6,21 @@ Handles overlay availability checking and fallback coordination.
 Simplified version of OverlayManagementService focused on integration only.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
 
 from ...database.core import SyncDatabase
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 from ...database.timelapse_operations import SyncTimelapseOperations
-from ...utils.file_helpers import validate_file_path
 from ...config import settings
-from .constants import (
-    OVERLAY_PREFLIGHT_TIMEOUT_SECONDS,
-    ERROR_OVERLAY_SYSTEM_UNAVAILABLE,
-)
 
 
 class OverlayIntegrationService:
     """
-    Simplified overlay integration service.
+    Simplified video overlay integration service.
 
     Handles overlay coordination for video generation:
     - Check overlay availability
@@ -113,25 +111,26 @@ class OverlayIntegrationService:
         try:
             # Check if overlay service modules are available
             try:
-                from ...services.overlay_pipeline import AsyncOverlayService
-                from ...services.overlay_pipeline.services.job_service import AsyncOverlayJobService
+
                 overlay_modules_available = True
             except ImportError:
                 logger.debug("Overlay service modules not available")
                 overlay_modules_available = False
-            
+
             # Check if overlay directory structure exists
             overlay_base_dir = Path(settings.data_directory) / "overlays"
             overlay_structure_exists = overlay_base_dir.exists()
-            
+
             # System is available if both modules and basic structure exist
             system_available = overlay_modules_available and overlay_structure_exists
-            
+
             if system_available:
                 logger.debug("Overlay system is available")
             else:
-                logger.debug(f"Overlay system not available: modules={overlay_modules_available}, structure={overlay_structure_exists}")
-            
+                logger.debug(
+                    f"Overlay system not available: modules={overlay_modules_available}, structure={overlay_structure_exists}"
+                )
+
             return system_available
 
         except Exception as e:

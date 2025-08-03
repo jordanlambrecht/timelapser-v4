@@ -9,7 +9,10 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Union
 from zoneinfo import ZoneInfo
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LogSource, LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 from ...utils.time_utils import (
     get_timezone_from_cache_sync,
@@ -73,7 +76,7 @@ class SchedulerTimeUtils:
         Returns:
             Timezone-aware datetime for job scheduling
         """
-        current_time = get_timezone_aware_timestamp_sync()
+        current_time = get_timezone_aware_timestamp_sync(self.settings_service)
         return current_time + timedelta(seconds=delay_seconds)
 
     def get_current_time(self) -> datetime:
@@ -83,7 +86,7 @@ class SchedulerTimeUtils:
         Returns:
             Current timezone-aware datetime from database settings
         """
-        return get_timezone_aware_timestamp_sync()
+        return get_timezone_aware_timestamp_sync(self.settings_service)
 
     def invalidate_cache(self) -> None:
         """Manually invalidate the timezone cache."""

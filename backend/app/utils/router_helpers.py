@@ -10,7 +10,10 @@ Provides standardized error handling, entity validation, and response patterns.
 from functools import wraps
 from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable
 from fastapi import HTTPException
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SYSTEM)
 from app.utils.response_helpers import ResponseFormatter
 
 T = TypeVar("T")
@@ -52,9 +55,9 @@ def handle_exceptions(operation_name: str):
 
 
 async def validate_entity_exists(
-    db_method: Callable[..., Awaitable[Optional[T]]], 
-    entity_id: int, 
-    entity_name: str = "entity"
+    db_method: Callable[..., Awaitable[Optional[T]]],
+    entity_id: int,
+    entity_name: str = "entity",
 ) -> T:
     """
     Validate that an entity exists in the database with proper typing.
@@ -210,9 +213,7 @@ async def get_active_timelapse_for_camera(timelapse_service, camera_id: int):
         HTTPException: 400 if no active timelapse found
     """
     timelapses = await timelapse_service.get_timelapses(camera_id=camera_id)
-    active_timelapse = next(
-        (t for t in timelapses if t.status == "running"), None
-    )
+    active_timelapse = next((t for t in timelapses if t.status == "running"), None)
 
     if not active_timelapse:
         raise HTTPException(
@@ -379,7 +380,7 @@ class DatabaseOperationMixin:
 async def run_sync_service_method(func, *args, **kwargs):
     """
     Helper to run sync service methods in async context with proper error handling.
-    
+
     This utility bridges the gap between async router endpoints and sync service methods,
     executing sync functions in a thread pool to avoid blocking the event loop.
 
@@ -390,12 +391,12 @@ async def run_sync_service_method(func, *args, **kwargs):
 
     Returns:
         Result of the function call
-        
+
     Raises:
         Exception: Re-raises any exceptions from the wrapped function
     """
     import asyncio
-    
+
     try:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, func, *args, **kwargs)

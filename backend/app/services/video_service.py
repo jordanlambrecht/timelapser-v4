@@ -30,11 +30,21 @@ Separation of Concerns:
 
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from loguru import logger
 from pathlib import Path
 
-from ..enums import SSEPriority
+# from ..services import settings_service
 
+from ..models.health_model import HealthStatus
+from .logger import get_service_logger
+
+from ..enums import (
+    LogEmoji,
+    LogSource,
+    LoggerName,
+    SSEEvent,
+    SSEEventSource,
+    SSEPriority,
+)
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.video_operations import VideoOperations, SyncVideoOperations
 from ..database.sse_events_operations import (
@@ -48,17 +58,14 @@ from ..utils.time_utils import (
     get_timezone_aware_timestamp_sync,
 )
 from ..utils.file_helpers import (
-    validate_file_path,
     get_relative_path,
     get_file_size,
-)
-from ..constants import (
-    EVENT_VIDEO_CREATED,
-    EVENT_VIDEO_UPDATED,
-    EVENT_VIDEO_DELETED,
-    EVENT_VIDEO_STATS_CALCULATED,
+    validate_file_path,
+    ensure_directory_exists,
 )
 from ..config import settings
+
+logger = get_service_logger(LoggerName.VIDEO_SERVICE, LogSource.SYSTEM)
 
 
 class VideoService:
@@ -78,16 +85,18 @@ class VideoService:
     - Provides type-safe Pydantic model interfaces
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, sync_db: SyncDatabase, settings_service):
         """
         Initialize VideoService with async database instance.
 
         Args:
             db: AsyncDatabase instance
+            sync_db: SyncDatabase instance
         """
         self.db = db
         self.video_ops = VideoOperations(db)
         self.sse_ops = SSEEventsOperations(db)
+        self.settings_service = settings_service
 
     async def get_videos(
         self,
@@ -112,7 +121,8 @@ class VideoService:
         """
         try:
             logger.debug(
-                f"Retrieving videos with filters: timelapse_id={timelapse_id}, camera_id={camera_id}, status={status}"
+                f"Retrieving videos with filters: timelapse_id={timelapse_id}, camera_id={camera_id}, status={status}",
+                emoji=LogEmoji.SEARCH,
             )
 
             videos = await self.video_ops.get_videos(
@@ -123,11 +133,25 @@ class VideoService:
                 offset=offset,
             )
 
-            logger.debug(f"Retrieved {len(videos)} videos")
+            logger.debug(
+                f"Retrieved {len(videos)} videos",
+                emoji=LogEmoji.SUCCESS,
+            )
             return videos
 
         except Exception as e:
-            logger.error(f"Failed to get videos: {e}")
+            logger.error(
+                f"Failed to get videos",
+                exception=e,
+                extra_context={
+                    "operation": "get_videos",
+                    "filters": {
+                        "timelapse_id": timelapse_id,
+                        "camera_id": camera_id,
+                        "status": status,
+                    },
+                },
+            )
             return []
 
     async def get_video_by_id(self, video_id: int) -> Optional[VideoWithDetails]:
@@ -141,18 +165,30 @@ class VideoService:
             Video record or None if not found
         """
         try:
-            logger.debug(f"Retrieving video {video_id}")
+            logger.debug(
+                f"Retrieving video {video_id}",
+                emoji=LogEmoji.SEARCH,
+            )
 
             video = await self.video_ops.get_video_by_id(video_id)
             if video:
-                logger.debug(f"Found video {video_id}")
+                logger.debug(
+                    f"Found video {video_id}",
+                    emoji=LogEmoji.SUCCESS,
+                )
             else:
-                logger.warning(f"Video {video_id} not found")
+                logger.warning(
+                    f"Video {video_id} not found",
+                )
 
             return video
 
         except Exception as e:
-            logger.error(f"Failed to get video {video_id}: {e}")
+            logger.error(
+                f"Failed to get video {video_id}",
+                exception=e,
+                extra_context={"operation": "get_video_by_id", "video_id": video_id},
+            )
             return None
 
     async def create_video_record(self, video_data: VideoCreate) -> Optional[Video]:
@@ -167,7 +203,7 @@ class VideoService:
         """
         try:
             logger.debug(
-                f"Creating video record for timelapse {video_data.timelapse_id}"
+                f"Creating video record for timelapse {video_data.timelapse_id}",
             )
 
             # Ensure timezone-aware timestamp
@@ -182,13 +218,27 @@ class VideoService:
                             Path(video_data.file_path), settings.data_directory
                         )
 
-                    # Validate the file exists
-                    full_path = Path(settings.data_directory) / video_data.file_path
-                    if not full_path.exists():
-                        logger.warning(f"Video file does not exist: {full_path}")
+                    # Validate file path format using file_helpers
+                    try:
+                        validate_file_path(
+                            video_data.file_path,
+                            base_directory=settings.data_directory,
+                            must_exist=False,  # Don't require existence for new videos
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"File path validation failed: {e}",
+                        )
 
                 except Exception as e:
-                    logger.warning(f"File path validation failed: {e}")
+                    logger.warning(
+                        f"File path validation failed",
+                        exception=e,
+                        extra_context={
+                            "operation": "file_path_validation",
+                            "file_path": video_data.file_path,
+                        },
+                    )
 
             # Prepare video record data
             video_record_data = {
@@ -202,12 +252,17 @@ class VideoService:
 
             if video_record:
                 logger.info(
-                    f"✅ Created video record {video_record.id} for timelapse {video_data.timelapse_id}"
+                    f"Created video record {video_record.id} for timelapse {video_data.timelapse_id}",
+                    emoji=LogEmoji.SUCCESS,
+                    extra_context={
+                        "video_id": video_record.id,
+                        "timelapse_id": video_data.timelapse_id,
+                    },
                 )
 
                 # Broadcast SSE event
                 await self._broadcast_video_event(
-                    event_type=EVENT_VIDEO_CREATED,
+                    event_type=SSEEvent.VIDEO_CREATED,
                     video_id=video_record.id,
                     event_data={
                         "video_id": video_record.id,
@@ -223,12 +278,23 @@ class VideoService:
                 return video_record
             else:
                 logger.error(
-                    f"❌ Failed to create video record for timelapse {video_data.timelapse_id}"
+                    f"Failed to create video record for timelapse {video_data.timelapse_id}",
+                    extra_context={
+                        "operation": "create_video_record",
+                        "timelapse_id": video_data.timelapse_id,
+                    },
                 )
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating video record: {e}")
+            logger.error(
+                f"Error creating video record",
+                exception=e,
+                extra_context={
+                    "operation": "create_video_record",
+                    "timelapse_id": video_data.timelapse_id,
+                },
+            )
             return None
 
     async def update_video_record(
@@ -245,12 +311,21 @@ class VideoService:
             Updated video record or None if failed
         """
         try:
-            logger.debug(f"Updating video record {video_id}")
+            logger.debug(
+                f"Updating video record {video_id}",
+                emoji=LogEmoji.UPDATE,
+            )
 
             # Check if video exists
             existing_video = await self.get_video_by_id(video_id)
             if not existing_video:
-                logger.error(f"Video {video_id} not found for update")
+                logger.error(
+                    f"Video {video_id} not found for update",
+                    extra_context={
+                        "operation": "update_video_record",
+                        "video_id": video_id,
+                    },
+                )
                 return None
 
             # Prepare update data with timestamp
@@ -266,11 +341,11 @@ class VideoService:
             )
 
             if updated_video:
-                logger.info(f"✅ Updated video record {video_id}")
+                logger.info(f"Updated video record {video_id}", emoji=LogEmoji.SUCCESS)
 
                 # Broadcast SSE event
                 await self._broadcast_video_event(
-                    event_type=EVENT_VIDEO_UPDATED,
+                    event_type=SSEEvent.VIDEO_UPDATED,
                     video_id=video_id,
                     event_data={
                         "video_id": video_id,
@@ -286,11 +361,24 @@ class VideoService:
 
                 return updated_video
             else:
-                logger.error(f"❌ Failed to update video record {video_id}")
+                logger.error(
+                    f"Failed to update video record {video_id}",
+                    extra_context={
+                        "operation": "update_video_record",
+                        "video_id": video_id,
+                    },
+                )
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error updating video record {video_id}: {e}")
+            logger.error(
+                f"Error updating video record {video_id}",
+                exception=e,
+                extra_context={
+                    "operation": "update_video_record",
+                    "video_id": video_id,
+                },
+            )
             return None
 
     async def delete_video(self, video_id: int, soft_delete: bool = True) -> bool:
@@ -305,12 +393,18 @@ class VideoService:
             True if deleted successfully
         """
         try:
-            logger.debug(f"Deleting video {video_id} (soft_delete={soft_delete})")
+            logger.debug(
+                f"Deleting video {video_id} (soft_delete={soft_delete})",
+                emoji=LogEmoji.DELETE,
+            )
 
             # Get video info before deletion for event data
             video_info = await self.get_video_by_id(video_id)
             if not video_info:
-                logger.error(f"Video {video_id} not found for deletion")
+                logger.error(
+                    f"Video {video_id} not found for deletion",
+                    extra_context={"operation": "delete_video", "video_id": video_id},
+                )
                 return False
 
             # Perform deletion
@@ -330,12 +424,13 @@ class VideoService:
 
             if success:
                 logger.info(
-                    f"✅ {'Soft' if soft_delete else 'Hard'} deleted video {video_id}"
+                    f"{'Soft' if soft_delete else 'Hard'} deleted video {video_id}",
+                    emoji=LogEmoji.SUCCESS,
                 )
 
                 # Broadcast SSE event
                 await self._broadcast_video_event(
-                    event_type=EVENT_VIDEO_DELETED,
+                    event_type=SSEEvent.VIDEO_DELETED,
                     video_id=video_id,
                     event_data={
                         "video_id": video_id,
@@ -349,11 +444,18 @@ class VideoService:
 
                 return True
             else:
-                logger.error(f"❌ Failed to delete video {video_id}")
+                logger.error(
+                    f"Failed to delete video {video_id}",
+                    extra_context={"operation": "delete_video", "video_id": video_id},
+                )
                 return False
 
         except Exception as e:
-            logger.error(f"❌ Error deleting video {video_id}: {e}")
+            logger.error(
+                f"Error deleting video {video_id}",
+                exception=e,
+                extra_context={"operation": "delete_video", "video_id": video_id},
+            )
             return False
 
     async def get_video_statistics(
@@ -376,7 +478,10 @@ class VideoService:
             Video statistics response
         """
         try:
-            logger.debug(f"Calculating video statistics with filters")
+            logger.debug(
+                "Calculating video statistics with filters",
+                emoji=LogEmoji.SEARCH,
+            )
 
             # Get video statistics from database
             stats = await self.video_ops.get_video_statistics(
@@ -388,7 +493,7 @@ class VideoService:
 
             # Broadcast SSE event for statistics calculation
             await self._broadcast_video_event(
-                event_type=EVENT_VIDEO_STATS_CALCULATED,
+                event_type=SSEEvent.VIDEO_STATS_CALCULATED,
                 video_id=None,
                 event_data={
                     "total_videos": stats.total_videos,
@@ -408,11 +513,18 @@ class VideoService:
                 },
             )
 
-            logger.debug(f"Calculated video statistics: {stats.total_videos} videos")
+            logger.debug(
+                f"Calculated video statistics: {stats.total_videos} videos",
+                emoji=LogEmoji.SUCCESS,
+            )
             return stats
 
         except Exception as e:
-            logger.error(f"Failed to calculate video statistics: {e}")
+            logger.error(
+                "Failed to calculate video statistics",
+                exception=e,
+                extra_context={"operation": "get_video_statistics"},
+            )
             return VideoStatistics(
                 total_videos=0,
                 total_size_bytes=0,
@@ -459,15 +571,28 @@ class VideoService:
             List of matching video records
         """
         try:
-            logger.debug(f"Searching videos for term: {search_term}")
+            logger.debug(
+                f"Searching videos for term: {search_term}", emoji=LogEmoji.SEARCH
+            )
 
             videos = await self.video_ops.search_videos(search_term, limit)
 
-            logger.debug(f"Found {len(videos)} videos matching search term")
+            logger.debug(
+                f"Found {len(videos)} videos matching search term",
+                emoji=LogEmoji.SEARCH,
+            )
+
             return videos
 
         except Exception as e:
-            logger.error(f"Failed to search videos: {e}")
+            logger.error(
+                f"Failed to search videos",
+                exception=e,
+                extra_context={
+                    "operation": "search_videos",
+                    "search_term": search_term,
+                },
+            )
             return []
 
     async def validate_video_file(self, video_id: int) -> Dict[str, Any]:
@@ -481,7 +606,9 @@ class VideoService:
             Dictionary with validation results and file metadata
         """
         try:
-            logger.debug(f"Validating video file for video {video_id}")
+            logger.debug(
+                f"Validating video file for video {video_id}", emoji=LogEmoji.SEARCH
+            )
 
             video = await self.get_video_by_id(video_id)
             if not video:
@@ -496,14 +623,18 @@ class VideoService:
                     "error": "Video has no file path",
                 }
 
-            # Construct full file path
-            full_path = Path(settings.data_directory) / video.file_path
-
-            if not full_path.exists():
+            # Validate file path using file_helpers
+            try:
+                full_path = validate_file_path(
+                    video.file_path,
+                    base_directory=settings.data_directory,
+                    must_exist=True,
+                )
+            except Exception as e:
                 return {
                     "valid": False,
-                    "error": f"Video file does not exist: {full_path}",
-                    "file_path": str(full_path),
+                    "error": str(e),
+                    "file_path": video.file_path,
                 }
 
             # Get file metadata
@@ -517,7 +648,14 @@ class VideoService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to validate video file for video {video_id}: {e}")
+            logger.error(
+                "Failed to validate video file",
+                exception=e,
+                extra_context={
+                    "operation": "validate_video_file",
+                    "video_id": video_id,
+                },
+            )
             return {
                 "valid": False,
                 "error": str(e),
@@ -525,11 +663,11 @@ class VideoService:
 
     async def _broadcast_video_event(
         self,
-        event_type: str,
+        event_type: SSEEvent,
         video_id: Optional[int],
         event_data: Dict[str, Any],
-        priority: str = SSEPriority.NORMAL,
-        source: str = "video_service",
+        priority: SSEPriority = SSEPriority.NORMAL,
+        source: SSEEventSource = SSEEventSource.VIDEO_PIPELINE,
     ) -> None:
         """
         Broadcast SSE event for video operations.
@@ -557,63 +695,122 @@ class VideoService:
                 source=source,
             )
 
-            logger.debug(f"Broadcasted SSE event: {event_type} for video {video_id}")
+            logger.debug(
+                f"Broadcasted SSE event: {event_type} for video {video_id}",
+                extra_context={
+                    "operation": "broadcast_video_event",
+                    "event_type": event_type,
+                    "video_id": video_id,
+                    "event_data": event_data_with_timestamp,
+                },
+                emoji=LogEmoji.BROADCAST,
+            )
 
         except Exception as e:
-            logger.warning(f"Failed to broadcast SSE event {event_type}: {e}")
+            logger.warning(
+                f"Failed to broadcast SSE event {event_type}",
+                exception=e,
+                extra_context={
+                    "operation": "broadcast_video_event",
+                    "event_type": event_type,
+                },
+            )
 
     async def get_queue_statistics_with_health(self, video_pipeline) -> dict:
         """
         Get comprehensive queue statistics with health assessment (async version).
-        
+
         Args:
             video_pipeline: Video pipeline service for accessing job data
-            
+
         Returns:
             Dictionary with queue statistics and health status
         """
-        from ..constants import VIDEO_QUEUE_WARNING_THRESHOLD, VIDEO_QUEUE_ERROR_THRESHOLD
+        from ..constants import (
+            VIDEO_QUEUE_WARNING_THRESHOLD,
+            VIDEO_QUEUE_ERROR_THRESHOLD,
+        )
         from ..utils.router_helpers import run_sync_service_method
-        
+
         try:
             # Get basic queue statistics from job service using async wrapper
             queue_status = await run_sync_service_method(
                 video_pipeline.job_service.get_queue_status
             )
-            
+
             # Calculate derived statistics
             total_jobs = sum(queue_status.values())
             pending_jobs = queue_status.get("pending", 0)
             processing_jobs = queue_status.get("processing", 0)
             completed_jobs = queue_status.get("completed", 0)
             failed_jobs = queue_status.get("failed", 0)
-            
+
             # Determine queue health based on thresholds
             if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
-                queue_health = "unhealthy"
+                queue_health = HealthStatus.UNHEALTHY
             elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
-                queue_health = "degraded"
+                queue_health = HealthStatus.DEGRADED
             else:
-                queue_health = "healthy"
-            
+                queue_health = HealthStatus.HEALTHY
+
             return {
                 "total_jobs": total_jobs,
                 "pending_jobs": pending_jobs,
                 "processing_jobs": processing_jobs,
                 "completed_jobs": completed_jobs,
                 "failed_jobs": failed_jobs,
-                "queue_health": queue_health
+                "queue_health": queue_health,
             }
-            
+
         except Exception as e:
-            logger.error(f"Failed to get queue statistics (async): {e}")
+            logger.error(
+                "Failed to get queue statistics (async)",
+                exception=e,
+                extra_context={"operation": "get_queue_statistics_with_health"},
+            )
             return {
                 "total_jobs": 0,
                 "pending_jobs": 0,
                 "processing_jobs": 0,
                 "completed_jobs": 0,
                 "failed_jobs": 0,
-                "queue_health": "unhealthy"
+                "queue_health": "unhealthy",
+            }
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get VideoService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            return {
+                "service_name": "VideoService",
+                "service_type": "video_data_management",
+                "database_status": "healthy" if self.db else "unavailable",
+                "video_ops_status": "healthy" if self.video_ops else "unavailable",
+                "sse_ops_status": "healthy" if self.sse_ops else "unavailable",
+                "settings_service_status": (
+                    "healthy" if self.settings_service else "unavailable"
+                ),
+                "data_directory": settings.data_directory,
+                "videos_directory": settings.videos_directory,
+                "service_healthy": all(
+                    [
+                        self.db is not None,
+                        self.video_ops is not None,
+                        self.sse_ops is not None,
+                        self.settings_service is not None,
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "service_name": "VideoService",
+                "service_type": "video_data_management",
+                "service_healthy": False,
+                "status_error": str(e),
             }
 
 
@@ -625,7 +822,7 @@ class SyncVideoService:
     that need to create or manage video records without async/await complexity.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, settings_service):
         """
         Initialize SyncVideoService with sync database instance.
 
@@ -635,6 +832,7 @@ class SyncVideoService:
         self.db = db
         self.video_ops = SyncVideoOperations(db)
         self.sse_ops = SyncSSEEventsOperations(db)
+        self.settings_service = settings_service
 
     def get_videos(
         self,
@@ -659,7 +857,8 @@ class SyncVideoService:
         """
         try:
             logger.debug(
-                f"Retrieving videos (sync) with filters: timelapse_id={timelapse_id}, camera_id={camera_id}"
+                f"Retrieving videos (sync) with filters: timelapse_id={timelapse_id}, camera_id={camera_id}",
+                emoji=LogEmoji.SEARCH,
             )
 
             videos = self.video_ops.get_videos(
@@ -670,11 +869,18 @@ class SyncVideoService:
                 offset=offset,
             )
 
-            logger.debug(f"Retrieved {len(videos)} videos (sync)")
+            logger.debug(
+                f"Retrieved {len(videos)} videos (sync)",
+                emoji=LogEmoji.SUCCESS,
+            )
             return videos
 
         except Exception as e:
-            logger.error(f"Failed to get videos (sync): {e}")
+            logger.error(
+                "Failed to get videos (sync)",
+                exception=e,
+                extra_context={"operation": "get_videos_sync"},
+            )
             return []
 
     def get_video_by_id(self, video_id: int) -> Optional[Video]:
@@ -688,18 +894,33 @@ class SyncVideoService:
             Video record or None if not found
         """
         try:
-            logger.debug(f"Retrieving video {video_id} (sync)")
+            logger.debug(
+                f"Retrieving video {video_id} (sync)",
+                emoji=LogEmoji.SEARCH,
+            )
 
             video = self.video_ops.get_video_by_id(video_id)
             if video:
-                logger.debug(f"Found video {video_id} (sync)")
+                logger.debug(
+                    f"Found video {video_id} (sync)",
+                    emoji=LogEmoji.SUCCESS,
+                )
             else:
-                logger.warning(f"Video {video_id} not found (sync)")
+                logger.warning(
+                    f"Video {video_id} not found (sync)",
+                )
 
             return video
 
         except Exception as e:
-            logger.error(f"Failed to get video {video_id} (sync): {e}")
+            logger.error(
+                f"Failed to get video {video_id} (sync)",
+                exception=e,
+                extra_context={
+                    "operation": "get_video_by_id_sync",
+                    "video_id": video_id,
+                },
+            )
             return None
 
     def create_video_record(self, video_data: Dict[str, Any]) -> Optional[Video]:
@@ -714,11 +935,12 @@ class SyncVideoService:
         """
         try:
             logger.debug(
-                f"Creating video record (sync) for timelapse {video_data.get('timelapse_id')}"
+                f"Creating video record (sync) for timelapse {video_data.get('timelapse_id')}",
+                emoji=LogEmoji.CREATE,
             )
 
             # Ensure timezone-aware timestamp
-            current_time = get_timezone_aware_timestamp_sync(self.db)
+            current_time = get_timezone_aware_timestamp_sync(self.settings_service)
 
             # Prepare video record data
             video_record_data = {
@@ -732,12 +954,13 @@ class SyncVideoService:
 
             if video_record:
                 logger.info(
-                    f"✅ Created video record {video_record.id} (sync) for timelapse {video_data.get('timelapse_id')}"
+                    f"Created video record {video_record.id} (sync) for timelapse {video_data.get('timelapse_id')}",
+                    emoji=LogEmoji.SUCCESS,
                 )
 
                 # Broadcast SSE event
                 self._broadcast_video_event(
-                    event_type=EVENT_VIDEO_CREATED,
+                    event_type=SSEEvent.VIDEO_CREATED,
                     video_id=video_record.id,
                     event_data={
                         "video_id": video_record.id,
@@ -753,12 +976,20 @@ class SyncVideoService:
                 return video_record
             else:
                 logger.error(
-                    f"❌ Failed to create video record (sync) for timelapse {video_data.get('timelapse_id')}"
+                    f"Failed to create video record (sync) for timelapse {video_data.get('timelapse_id')}",
+                    extra_context={
+                        "operation": "create_video_record_sync",
+                        "timelapse_id": video_data.get("timelapse_id"),
+                    },
                 )
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating video record (sync): {e}")
+            logger.error(
+                "Error creating video record (sync)",
+                exception=e,
+                extra_context={"operation": "create_video_record_sync"},
+            )
             return None
 
     def delete_video(self, video_id: int) -> bool:
@@ -772,23 +1003,35 @@ class SyncVideoService:
             True if deleted successfully
         """
         try:
-            logger.debug(f"Deleting video {video_id} (sync)")
+            logger.debug(
+                f"Deleting video {video_id} (sync)",
+                emoji=LogEmoji.DELETE,
+            )
 
             # Get video info before deletion for event data
             video_info = self.get_video_by_id(video_id)
             if not video_info:
-                logger.error(f"Video {video_id} not found for deletion (sync)")
+                logger.error(
+                    f"Video {video_id} not found for deletion (sync)",
+                    extra_context={
+                        "operation": "delete_video_sync",
+                        "video_id": video_id,
+                    },
+                )
                 return False
 
             # Perform deletion
             success = self.video_ops.delete_video(video_id)
 
             if success:
-                logger.info(f"✅ Deleted video {video_id} (sync)")
+                logger.info(
+                    f"Deleted video {video_id} (sync)",
+                    emoji=LogEmoji.SUCCESS,
+                )
 
                 # Broadcast SSE event
                 self._broadcast_video_event(
-                    event_type=EVENT_VIDEO_DELETED,
+                    event_type=SSEEvent.VIDEO_DELETED,
                     video_id=video_id,
                     event_data={
                         "video_id": video_id,
@@ -801,20 +1044,30 @@ class SyncVideoService:
 
                 return True
             else:
-                logger.error(f"❌ Failed to delete video {video_id} (sync)")
+                logger.error(
+                    f"Failed to delete video {video_id} (sync)",
+                    extra_context={
+                        "operation": "delete_video_sync",
+                        "video_id": video_id,
+                    },
+                )
                 return False
 
         except Exception as e:
-            logger.error(f"❌ Error deleting video {video_id} (sync): {e}")
+            logger.error(
+                f"Error deleting video {video_id} (sync)",
+                exception=e,
+                extra_context={"operation": "delete_video_sync", "video_id": video_id},
+            )
             return False
 
     def _broadcast_video_event(
         self,
-        event_type: str,
+        event_type: SSEEvent,
         video_id: Optional[int],
         event_data: Dict[str, Any],
-        priority: str = SSEPriority.NORMAL,
-        source: str = "video_service",
+        priority: SSEPriority = SSEPriority.NORMAL,
+        source: SSEEventSource = SSEEventSource.VIDEO_PIPELINE,
     ) -> None:
         """
         Broadcast SSE event for video operations (sync version).
@@ -830,7 +1083,9 @@ class SyncVideoService:
             # Add timestamp to all events
             event_data_with_timestamp = {
                 **event_data,
-                "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+                "timestamp": get_timezone_aware_timestamp_sync(
+                    self.settings_service
+                ).isoformat(),
             }
 
             self.sse_ops.create_event(
@@ -841,59 +1096,115 @@ class SyncVideoService:
             )
 
             logger.debug(
-                f"Broadcasted SSE event (sync): {event_type} for video {video_id}"
+                f"Broadcasted SSE event (sync): {event_type} for video {video_id}",
+                emoji=LogEmoji.BROADCAST,
+                extra_context={
+                    "operation": "broadcast_video_event_sync",
+                    "event_type": event_type,
+                    "video_id": video_id,
+                },
             )
 
         except Exception as e:
-            logger.warning(f"Failed to broadcast SSE event (sync) {event_type}: {e}")
+            logger.warning(
+                f"Failed to broadcast SSE event (sync) {event_type}",
+                exception=e,
+                extra_context={
+                    "operation": "broadcast_video_event_sync",
+                    "event_type": event_type,
+                },
+            )
 
     def get_queue_statistics_with_health(self, video_pipeline) -> dict:
         """
         Get comprehensive queue statistics with health assessment.
-        
+
         Args:
             video_pipeline: Video pipeline service for accessing job data
-            
+
         Returns:
             Dictionary with queue statistics and health status
         """
-        from ..constants import VIDEO_QUEUE_WARNING_THRESHOLD, VIDEO_QUEUE_ERROR_THRESHOLD
-        
+        from ..constants import (
+            VIDEO_QUEUE_WARNING_THRESHOLD,
+            VIDEO_QUEUE_ERROR_THRESHOLD,
+        )
+
         try:
             # Get basic queue statistics from job service
             queue_status = video_pipeline.job_service.get_queue_status()
-            
+
             # Calculate derived statistics
             total_jobs = sum(queue_status.values())
             pending_jobs = queue_status.get("pending", 0)
             processing_jobs = queue_status.get("processing", 0)
             completed_jobs = queue_status.get("completed", 0)
             failed_jobs = queue_status.get("failed", 0)
-            
+
             # Determine queue health based on thresholds
             if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
-                queue_health = "unhealthy"
+                queue_health = HealthStatus.UNHEALTHY
             elif pending_jobs >= VIDEO_QUEUE_WARNING_THRESHOLD:
-                queue_health = "degraded"
+                queue_health = HealthStatus.DEGRADED
             else:
-                queue_health = "healthy"
-            
+                queue_health = HealthStatus.HEALTHY
+
             return {
                 "total_jobs": total_jobs,
                 "pending_jobs": pending_jobs,
                 "processing_jobs": processing_jobs,
                 "completed_jobs": completed_jobs,
                 "failed_jobs": failed_jobs,
-                "queue_health": queue_health
+                "queue_health": queue_health,
             }
-            
+
         except Exception as e:
-            logger.error(f"Failed to get queue statistics: {e}")
+            logger.error(
+                f"Failed to get queue statistics",
+                exception=e,
+                extra_context={"operation": "get_queue_statistics_with_health_sync"},
+            )
             return {
                 "total_jobs": 0,
                 "pending_jobs": 0,
                 "processing_jobs": 0,
                 "completed_jobs": 0,
                 "failed_jobs": 0,
-                "queue_health": "unhealthy"
+                "queue_health": "unhealthy",
+            }
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get SyncVideoService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            return {
+                "service_name": "SyncVideoService",
+                "service_type": "sync_video_data_management",
+                "database_status": "healthy" if self.db else "unavailable",
+                "video_ops_status": "healthy" if self.video_ops else "unavailable",
+                "sse_ops_status": "healthy" if self.sse_ops else "unavailable",
+                "settings_service_status": (
+                    "healthy" if self.settings_service else "unavailable"
+                ),
+                "data_directory": settings.data_directory,
+                "videos_directory": settings.videos_directory,
+                "service_healthy": all(
+                    [
+                        self.db is not None,
+                        self.video_ops is not None,
+                        self.sse_ops is not None,
+                        self.settings_service is not None,
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "service_name": "SyncVideoService",
+                "service_type": "sync_video_data_management",
+                "service_healthy": False,
+                "status_error": str(e),
             }

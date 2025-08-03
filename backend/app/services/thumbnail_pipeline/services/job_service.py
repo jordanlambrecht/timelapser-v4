@@ -4,16 +4,21 @@ Thumbnail Job Service - Job queue management for thumbnail generation.
 """
 
 from typing import List, Optional, Dict, Any
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ....database.core import SyncDatabase, AsyncDatabase
-from ....database.thumbnail_job_operations import SyncThumbnailJobOperations
+from ....database.thumbnail_job_operations import (
+    SyncThumbnailJobOperations,
+    ThumbnailJobOperations,
+)
 from ....models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
 )
 from ....enums import (
-    JobPriority,
     ThumbnailJobPriority,
     ThumbnailJobType,
 )
@@ -22,7 +27,7 @@ from ....enums import (
 class SyncThumbnailJobService:
     """Synchronous thumbnail job service for worker processes."""
 
-    def __init__(self, db: SyncDatabase, settings_service=None):
+    def __init__(self, db: SyncDatabase, settings_service=None) -> None:
         """Initialize with sync database."""
         self.db = db
         self.thumbnail_job_ops = SyncThumbnailJobOperations(db)
@@ -42,7 +47,9 @@ class SyncThumbnailJobService:
             job = self.thumbnail_job_ops.create_job(job_data)
             return job.id if job else None
         except Exception as e:
-            logger.error(f"Failed to queue thumbnail job for image {image_id}: {e}")
+            logger.error(
+                f"Failed to queue thumbnail job for image {image_id}", exception=e
+            )
             return None
 
     def get_pending_jobs(self, batch_size: int = 5) -> List[ThumbnailGenerationJob]:
@@ -50,7 +57,7 @@ class SyncThumbnailJobService:
         try:
             return self.thumbnail_job_ops.get_pending_jobs(batch_size=batch_size)
         except Exception as e:
-            logger.error(f"Failed to get pending jobs: {e}")
+            logger.error("Failed to get pending jobs", exception=e)
             return []
 
     def mark_job_completed(self, job_id: int, result: Dict[str, Any]) -> bool:
@@ -61,7 +68,7 @@ class SyncThumbnailJobService:
                 job_id=job_id, processing_time_ms=processing_time
             )
         except Exception as e:
-            logger.error(f"Failed to mark job {job_id} as completed: {e}")
+            logger.error(f"Failed to mark job {job_id} as completed", exception=e)
             return False
 
     def mark_job_failed(self, job_id: int, error: str) -> bool:
@@ -71,7 +78,7 @@ class SyncThumbnailJobService:
                 job_id=job_id, error_message=error
             )
         except Exception as e:
-            logger.error(f"Failed to mark job {job_id} as failed: {e}")
+            logger.error(f"Failed to mark job {job_id} as failed", exception=e)
             return False
 
     def mark_job_started(self, job_id: int) -> bool:
@@ -79,7 +86,7 @@ class SyncThumbnailJobService:
         try:
             return self.thumbnail_job_ops.mark_job_started(job_id)
         except Exception as e:
-            logger.error(f"Failed to mark job {job_id} as started: {e}")
+            logger.error(f"Failed to mark job {job_id} as started", exception=e)
             return False
 
     def schedule_retry(self, job_id: int, retry_count: int, delay_minutes: int) -> bool:
@@ -89,7 +96,7 @@ class SyncThumbnailJobService:
                 job_id, retry_count, delay_minutes
             )
         except Exception as e:
-            logger.error(f"Failed to schedule retry for job {job_id}: {e}")
+            logger.error(f"Failed to schedule retry for job {job_id}", exception=e)
             return False
 
     def cleanup_completed_jobs(self, older_than_hours: int) -> int:
@@ -97,7 +104,7 @@ class SyncThumbnailJobService:
         try:
             return self.thumbnail_job_ops.cleanup_completed_jobs(older_than_hours)
         except Exception as e:
-            logger.error(f"Failed to cleanup completed jobs: {e}")
+            logger.error("Failed to cleanup completed jobs", exception=e)
             return 0
 
     def get_job_statistics(self) -> Dict[str, Any]:
@@ -105,30 +112,42 @@ class SyncThumbnailJobService:
         try:
             return self.thumbnail_job_ops.get_job_statistics()
         except Exception as e:
-            logger.error(f"Failed to get job statistics: {e}")
+            logger.error("Failed to get job statistics", exception=e)
             return {}
 
 
 class ThumbnailJobService:
     """Async thumbnail job service for API endpoints."""
 
-    def __init__(self, db: AsyncDatabase, settings_service=None):
+    def __init__(self, db: AsyncDatabase, settings_service=None) -> None:
         """Initialize with async database."""
         self.db = db
-        # TODO: Implement async operations when needed
-        pass
+        self.thumbnail_job_ops = ThumbnailJobOperations(db)
+        self.settings_service = settings_service
 
     async def queue_job(
         self,
         image_id: int,
-        priority: str = JobPriority.MEDIUM,
+        priority: ThumbnailJobPriority = ThumbnailJobPriority.MEDIUM,
         force_regenerate: bool = False,
     ) -> Optional[int]:
         """Queue a thumbnail generation job (async)."""
-        # TODO: Implement async version when needed
-        pass
+        try:
+            job_data = ThumbnailGenerationJobCreate(
+                image_id=image_id, priority=priority, job_type=ThumbnailJobType.SINGLE
+            )
+            job = await self.thumbnail_job_ops.create_job(job_data)
+            return job.id if job else None
+        except Exception as e:
+            logger.error(
+                f"Failed to queue thumbnail job for image {image_id}", exception=e
+            )
+            return None
 
     async def get_job_statistics(self) -> Dict[str, Any]:
         """Get job queue statistics (async)."""
-        # TODO: Implement async version when needed
-        return {}
+        try:
+            return await self.thumbnail_job_ops.get_job_statistics()
+        except Exception as e:
+            logger.error("Failed to get job statistics", exception=e)
+            return {}

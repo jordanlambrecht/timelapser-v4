@@ -11,7 +11,10 @@ import time
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LogEmoji, LoggerName
+
+logger = get_service_logger(LoggerName.MIDDLEWARE)
 
 from ..config import settings
 
@@ -104,12 +107,13 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
                 }
 
             logger.info(
-                f"📥 {request.method} {request.url.path}",
-                extra={
+                f"{request.method} {request.url.path}",
+                extra_context={
                     "correlation_id": correlation_id,
                     "event_type": "request_start",
                     "request_info": request_info,
                 },
+                emoji=LogEmoji.REQUEST,
             )
 
         except Exception as e:
@@ -150,7 +154,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
 
             getattr(logger, log_level)(
                 log_message,
-                extra={
+                extra_context={
                     "correlation_id": correlation_id,
                     "event_type": "request_complete",
                     "response_info": response_info,
@@ -177,8 +181,8 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             }
 
             logger.error(
-                f"💥 {request.method} {request.url.path} -> FAILED ({failure_info['duration_ms']}ms)",
-                extra={
+                f"{request.method} {request.url.path} -> FAILED ({failure_info['duration_ms']}ms)",
+                extra_context={
                     "correlation_id": correlation_id,
                     "event_type": "request_failed",
                     "failure_info": failure_info,

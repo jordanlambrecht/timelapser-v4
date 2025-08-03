@@ -12,16 +12,23 @@ Maintains all functionality while using shared infrastructure:
 import time
 from typing import List, Dict, Any
 
+from ..services.logger import get_service_logger
+
 from ..database.timelapse_operations import SyncTimelapseOperations
-from .mixins.job_batch_processor import ProcessableJob
+
+# from .mixins.job_batch_processor import ProcessableJob
 
 from .mixins.job_processing_mixin import JobProcessingMixin
-from ..utils.time_utils import utc_now
 from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
 from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
-from ..enums import SSEPriority, SSEEvent, SSEEventSource
+from ..enums import (
+    LogEmoji,
+    LogSource,
+    LoggerName,
+    SSEEventSource,
+)
 from ..constants import (
     DEFAULT_THUMBNAIL_JOB_BATCH_SIZE,
     DEFAULT_THUMBNAIL_WORKER_INTERVAL,
@@ -34,6 +41,8 @@ from ..constants import (
     THUMBNAIL_PROCESSING_TIME_WARNING_MS,
     THUMBNAIL_CONCURRENT_JOBS,
 )
+
+logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 
 
 class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
@@ -112,14 +121,21 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
     async def initialize(self) -> None:
         """Initialize thumbnail worker resources."""
-        self.log_info(
+        logger.info(
             f"Initialized with batch_size={self.job_batch_processor.current_batch_size}, "
-            f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}"
+            f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}",
+            extra_context={
+                "worker_type": "thumbnail",
+                "batch_size": self.job_batch_processor.current_batch_size,
+                "worker_interval": self.worker_interval,
+                "max_retries": self.retry_manager.max_retries,
+                "concurrent_jobs": THUMBNAIL_CONCURRENT_JOBS,
+            },
         )
 
         # Perform startup recovery for stuck thumbnail jobs
         try:
-            self.log_info("🔄 Performing startup recovery for stuck thumbnail jobs...")
+            logger.info("🔄 Performing startup recovery for stuck thumbnail jobs...")
             recovery_results = (
                 self.thumbnail_job_service.thumbnail_job_ops.recover_stuck_jobs(
                     max_processing_age_minutes=30
@@ -127,19 +143,20 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             )
 
             if recovery_results.get("stuck_jobs_recovered", 0) > 0:
-                self.log_info(
-                    f"✅ Recovered {recovery_results['stuck_jobs_recovered']} stuck thumbnail jobs on startup"
+                logger.info(
+                    f"Recovered {recovery_results['stuck_jobs_recovered']} stuck thumbnail jobs on startup",
+                    emoji=LogEmoji.SUCCESS,
                 )
             elif recovery_results.get("stuck_jobs_found", 0) > 0:
-                self.log_warning(
-                    f"⚠️ Found {recovery_results['stuck_jobs_found']} stuck jobs but only recovered "
+                logger.warning(
+                    f"Found {recovery_results['stuck_jobs_found']} stuck jobs but only recovered "
                     f"{recovery_results['stuck_jobs_recovered']}"
                 )
             else:
-                self.log_debug("No stuck thumbnail jobs found during startup recovery")
+                logger.debug("No stuck thumbnail jobs found during startup recovery")
 
         except Exception as e:
-            self.log_error(f"Error during startup recovery for thumbnail jobs: {e}")
+            logger.error(f"Error during startup recovery for thumbnail jobs: {e}")
 
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
@@ -151,7 +168,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         # Get final statistics before shutdown
         final_stats = self.get_status()
 
-        self.log_info(
+        logger.info(
             f"Final worker stats: {final_stats['processed_jobs_total']} processed, "
             f"{final_stats['failed_jobs_total']} failed, "
             f"{final_stats['success_rate_percent']:.1f}% success rate"
@@ -193,14 +210,27 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         try:
             job_start_time = time.time()
 
-            self.log_debug(
+            logger.debug(
                 f"Processing thumbnail job {job.id} for image {job.image_id} "
-                f"(priority: {job.priority})"
+                f"(priority: {job.priority})",
+                extra_context={
+                    "job_id": job.id,
+                    "image_id": job.image_id,
+                    "priority": job.priority,
+                    "job_type": "thumbnail_generation",
+                },
             )
 
             # Mark job as started in database
             if not self.thumbnail_job_service.mark_job_started(job.id):
-                self.log_warning(f"Failed to mark job {job.id} as started")
+                logger.warning(
+                    f"Failed to mark job {job.id} as started",
+                    extra_context={
+                        "job_id": job.id,
+                        "image_id": job.image_id,
+                        "operation": "mark_job_started",
+                    },
+                )
                 return False
 
             # Generate thumbnails using thumbnail pipeline (thumbnail-specific logic)
@@ -210,8 +240,14 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
             # Ensure result_dict contains all required fields for ThumbnailGenerationResult
             if not isinstance(result_dict, dict):
-                self.log_error(
-                    f"Invalid result type from thumbnail pipeline: {type(result_dict)}"
+                logger.error(
+                    f"Invalid result type from thumbnail pipeline: {type(result_dict)}",
+                    extra_context={
+                        "job_id": job.id,
+                        "image_id": job.image_id,
+                        "result_type": str(type(result_dict)),
+                        "operation": "thumbnail_pipeline_processing",
+                    },
                 )
                 return False
 
@@ -219,7 +255,15 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             try:
                 result = ThumbnailGenerationResult(**result_dict)
             except Exception as e:
-                self.log_error(f"Failed to create ThumbnailGenerationResult: {e}")
+                logger.error(
+                    f"Failed to create ThumbnailGenerationResult: {e}",
+                    extra_context={
+                        "job_id": job.id,
+                        "image_id": job.image_id,
+                        "error_type": type(e).__name__,
+                        "operation": "create_thumbnail_result",
+                    },
+                )
                 return False
 
             processing_time_ms = int((time.time() - job_start_time) * 1000)
@@ -229,7 +273,15 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 if not self.thumbnail_job_service.mark_job_completed(
                     job.id, {"processing_time_ms": processing_time_ms}
                 ):
-                    self.log_error(f"Failed to mark job {job.id} as completed")
+                    logger.error(
+                        f"Failed to mark job {job.id} as completed",
+                        extra_context={
+                            "job_id": job.id,
+                            "image_id": job.image_id,
+                            "processing_time_ms": processing_time_ms,
+                            "operation": "mark_job_completed",
+                        },
+                    )
                     return False
 
                 # Update thumbnail counts in timelapse table (thumbnail-specific logic)
@@ -237,22 +289,45 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
                 # Log slow processing as warning (thumbnail-specific threshold)
                 if processing_time_ms > THUMBNAIL_PROCESSING_TIME_WARNING_MS:
-                    self.log_warning(
-                        f"Slow thumbnail processing detected: job {job.id} took {processing_time_ms}ms"
+                    logger.warning(
+                        f"Slow thumbnail processing detected: job {job.id} took {processing_time_ms}ms",
+                        extra_context={
+                            "job_id": job.id,
+                            "image_id": job.image_id,
+                            "processing_time_ms": processing_time_ms,
+                            "threshold_ms": THUMBNAIL_PROCESSING_TIME_WARNING_MS,
+                            "performance_warning": True,
+                        },
                     )
 
-                self.log_debug(
-                    f"Successfully completed thumbnail job {job.id} in {processing_time_ms}ms"
+                logger.debug(
+                    f"Successfully completed thumbnail job {job.id} in {processing_time_ms}ms",
+                    extra_context={
+                        "job_id": job.id,
+                        "image_id": job.image_id,
+                        "processing_time_ms": processing_time_ms,
+                        "operation": "job_completed",
+                        "success": True,
+                    },
                 )
                 return True
             else:
                 # Job failed - JobProcessingMixin will handle retry logic
                 error_msg = result.error or "Unknown thumbnail generation error"
-                self.log_warning(f"Thumbnail job {job.id} failed: {error_msg}")
+                logger.warning(
+                    f"Thumbnail job {job.id} failed: {error_msg}",
+                    extra_context={
+                        "job_id": job.id,
+                        "image_id": job.image_id,
+                        "error_message": error_msg,
+                        "operation": "job_failed",
+                        "success": False,
+                    },
+                )
                 return False
 
         except Exception as e:
-            self.log_error(f"Exception processing thumbnail job {job.id}", e)
+            logger.error(f"Exception processing thumbnail job {job.id}", e)
             return False
 
     def mark_job_failed(self, job_id: int, error_message: str) -> bool:
@@ -273,7 +348,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 # retry_count=self.retry_manager.max_retries,
             )
         except Exception as e:
-            self.log_error(f"Error marking thumbnail job {job_id} as failed", e)
+            logger.error(f"Error marking thumbnail job {job_id} as failed", e)
             return False
 
     def schedule_job_retry(
@@ -295,7 +370,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 job_id=job_id, retry_count=retry_count, delay_minutes=delay_minutes
             )
         except Exception as e:
-            self.log_error(f"Error scheduling retry for thumbnail job {job_id}", e)
+            logger.error(f"Error scheduling retry for thumbnail job {job_id}", e)
             return False
 
     def cleanup_completed_jobs(self, hours_to_keep: int) -> int:
@@ -311,7 +386,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         try:
             return self.thumbnail_job_service.cleanup_completed_jobs(hours_to_keep)
         except Exception as e:
-            self.log_error(f"Error cleaning up thumbnail jobs", e)
+            logger.error(f"Error cleaning up thumbnail jobs", e)
             return 0
 
     def get_queue_statistics(self) -> Dict[str, int]:
@@ -324,7 +399,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         try:
             return self.thumbnail_job_service.get_job_statistics()
         except Exception as e:
-            self.log_error(f"Error getting thumbnail queue statistics", e)
+            logger.error(f"Error getting thumbnail queue statistics", e)
             return {"pending_jobs": 0, "processing_jobs": 0, "completed_jobs": 0}
 
     # Thumbnail-specific helper methods
@@ -357,16 +432,29 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 )
 
                 if success:
-                    self.log_debug(
-                        f"Updated thumbnail counts for timelapse {result.timelapse_id}"
+                    logger.debug(
+                        f"Updated thumbnail counts for timelapse {result.timelapse_id}",
+                        extra_context={
+                            "timelapse_id": result.timelapse_id,
+                            "increment_thumbnail": increment_thumbnail,
+                            "increment_small": increment_small,
+                            "operation": "update_thumbnail_counts",
+                        },
                     )
                 else:
-                    self.log_warning(
-                        f"Failed to update thumbnail counts for timelapse {result.timelapse_id}"
+                    logger.warning(
+                        f"Failed to update thumbnail counts for timelapse {result.timelapse_id}",
+                        extra_context={
+                            "timelapse_id": result.timelapse_id,
+                            "increment_thumbnail": increment_thumbnail,
+                            "increment_small": increment_small,
+                            "operation": "update_thumbnail_counts",
+                            "success": False,
+                        },
                     )
 
         except Exception as e:
-            self.log_error(
+            logger.error(
                 f"Error updating thumbnail counts for timelapse {result.timelapse_id}",
                 e,
             )

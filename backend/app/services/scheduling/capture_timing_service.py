@@ -25,10 +25,12 @@ Business Rules:
 
 from datetime import datetime, time
 from typing import Optional, TYPE_CHECKING
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName, LogSource
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.settings_operations import SettingsOperations, SyncSettingsOperations
 from ...models.shared_models import (
     NextCaptureResult,
     CaptureValidationResult,
@@ -36,10 +38,11 @@ from ...models.shared_models import (
     CaptureDueCheckResult,
     CaptureCountEstimate,
 )
-from ...utils.time_utils import create_time_delta
+
 from ...utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
+    create_time_delta,
 )
 from ...constants import (
     MIN_CAPTURE_INTERVAL_SECONDS,
@@ -71,28 +74,34 @@ class CaptureTimingService:
     - Broadcasts timing events via SSE
     """
 
-    def __init__(self, db: AsyncDatabase, time_window_service: TimeWindowService):
+    def __init__(
+        self,
+        db: AsyncDatabase,
+        time_window_service: TimeWindowService,
+        settings_service,
+    ):
         """
         Initialize CaptureTimingService with async database instance and service dependencies.
 
         Args:
             db: AsyncDatabase instance
             time_window_service: TimeWindowService for time window logic
+            settings_service: SettingsService for configuration access
         """
         self.db = db
         self.time_window_service = time_window_service
-        self.settings_ops = SettingsOperations(db)
+        self.settings_service = settings_service
 
     async def _get_timing_settings(self) -> dict:
         """Get timing settings from database using proper operations layer."""
         try:
-            min_interval = await self.settings_ops.get_setting(
+            min_interval = await self.settings_service.get_setting(
                 "min_capture_interval_seconds"
             )
-            max_interval = await self.settings_ops.get_setting(
+            max_interval = await self.settings_service.get_setting(
                 "max_capture_interval_seconds"
             )
-            grace_period = await self.settings_ops.get_setting(
+            grace_period = await self.settings_service.get_setting(
                 "capture_grace_period_seconds"
             )
 
@@ -311,7 +320,9 @@ class CaptureTimingService:
             NextCaptureResult with detailed calculation results
         """
         if current_time is None:
-            current_time = await get_timezone_aware_timestamp_async(self.db)
+            current_time = await get_timezone_aware_timestamp_async(
+                self.settings_service
+            )
 
         if last_capture_time is None:
             # First capture - check if we're in time window
@@ -377,7 +388,9 @@ class CaptureTimingService:
     ) -> bool:
         """Internal helper for capture due determination."""
         if current_time is None:
-            current_time = await get_timezone_aware_timestamp_async(self.db)
+            current_time = await get_timezone_aware_timestamp_async(
+                self.settings_service
+            )
 
         settings = await self._get_timing_settings()
         grace_period_seconds = settings["grace_period_seconds"]
@@ -428,7 +441,9 @@ class CaptureTimingService:
             CaptureDueCheckResult with detailed due check results
         """
         if current_time is None:
-            current_time = await get_timezone_aware_timestamp_async(self.db)
+            current_time = await get_timezone_aware_timestamp_async(
+                self.settings_service
+            )
 
         settings = await self._get_timing_settings()
         grace_period_seconds = settings["grace_period_seconds"]
@@ -460,9 +475,12 @@ class CaptureTimingService:
                 else "First capture - waiting for time window"
             )
         else:
-            time_since_last_seconds = int(
-                (current_time - last_capture_time).total_seconds()
-            )
+            if last_capture_time is not None:
+                time_since_last_seconds = int(
+                    (current_time - last_capture_time).total_seconds()
+                )
+            else:
+                time_since_last_seconds = None
             if not is_due:
                 if time_window_start and time_window_end:
                     current_time_only = current_time.time()
@@ -501,24 +519,39 @@ class SyncCaptureTimingService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase, time_window_service: SyncTimeWindowService):
+    def __init__(
+        self,
+        db: SyncDatabase,
+        async_db: AsyncDatabase,
+        time_window_service: SyncTimeWindowService,
+        settings_service,
+    ):
         """
         Initialize SyncCaptureTimingService with sync database instance.
 
         Args:
             db: SyncDatabase instance
+            async_db: AsyncDatabase instance (required for some operations)
             time_window_service: SyncTimeWindowService for time window logic
+            settings_service: SyncSettingsService for configuration access
         """
         self.db = db
+        self.async_db = async_db
         self.time_window_service = time_window_service
-        self.settings_ops = SyncSettingsOperations(db)
+        self.settings_service = settings_service
 
     def _get_timing_settings(self) -> dict:
         """Get timing settings from database using proper operations layer (sync version)."""
         try:
-            min_interval = self.settings_ops.get_setting("min_capture_interval_seconds")
-            max_interval = self.settings_ops.get_setting("max_capture_interval_seconds")
-            grace_period = self.settings_ops.get_setting("capture_grace_period_seconds")
+            min_interval = self.settings_service.get_setting(
+                "min_capture_interval_seconds"
+            )
+            max_interval = self.settings_service.get_setting(
+                "max_capture_interval_seconds"
+            )
+            grace_period = self.settings_service.get_setting(
+                "capture_grace_period_seconds"
+            )
 
             return {
                 "min_interval_seconds": (
@@ -590,7 +623,7 @@ class SyncCaptureTimingService:
             True if capture is due
         """
         if current_time is None:
-            current_time = get_timezone_aware_timestamp_sync(self.settings_ops)
+            current_time = get_timezone_aware_timestamp_sync(self.settings_service)
 
         settings = self._get_timing_settings()
         grace_period_seconds = settings["grace_period_seconds"]
@@ -652,7 +685,7 @@ class SyncCaptureTimingService:
             from ...database.camera_operations import SyncCameraOperations
             from ...database.timelapse_operations import SyncTimelapseOperations
 
-            camera_ops = SyncCameraOperations(self.db)
+            camera_ops = SyncCameraOperations(self.db, self.async_db)
             timelapse_ops = SyncTimelapseOperations(self.db)
 
             # Step 0: Extract camera_id from timelapse if camera_id=0 (scheduler convenience)
@@ -707,7 +740,7 @@ class SyncCaptureTimingService:
                 )
 
             # Step 4: Validate capture timing (is capture due?)
-            current_time = get_timezone_aware_timestamp_sync(self.db)
+            current_time = get_timezone_aware_timestamp_sync(self.settings_service)
 
             # Get last capture time for this camera
             last_capture_time = camera.last_capture_at

@@ -18,7 +18,10 @@ from ...database.image_operations import SyncImageOperations
 
 from dataclasses import dataclass, field
 
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 
 
 class ImageOperationsProtocol(Protocol):

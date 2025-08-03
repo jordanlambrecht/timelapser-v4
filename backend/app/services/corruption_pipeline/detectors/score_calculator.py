@@ -9,7 +9,10 @@ whether an image should be considered corrupted.
 
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from loguru import logger
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
 @dataclass
@@ -140,7 +143,9 @@ class CorruptionScoreCalculator:
             )
 
         except Exception as e:
-            logger.error(f"Error calculating corruption score: {e}")
+            logger.error(
+                "Error calculating corruption score", exception=e, emoji=LogEmoji.FAILED
+            )
             # Return safe defaults on error
             return ScoreCalculationResult(
                 final_score=100.0,  # Assume corrupted on error
@@ -194,7 +199,10 @@ class CorruptionScoreCalculator:
     def update_config(self, new_config: Dict[str, Any]) -> None:
         """Update configuration with new values"""
         self.config.update(new_config)
-        logger.info(f"Updated corruption score calculator config: {new_config}")
+        logger.info(
+            f"Updated corruption score calculator config: {new_config}",
+            emoji=LogEmoji.SYSTEM,
+        )
 
     def assess_quality_level(self, score: float) -> str:
         """

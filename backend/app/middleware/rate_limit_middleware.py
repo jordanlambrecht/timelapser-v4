@@ -13,7 +13,10 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.MIDDLEWARE)
 
 from .rate_limiter import apply_rate_limit, cleanup_rate_limiter
 

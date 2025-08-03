@@ -8,9 +8,8 @@ This module handles database initialization with a hybrid approach:
 
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from loguru import logger
 import psycopg
 
 from ..config import settings
@@ -37,7 +36,7 @@ class AlembicError(DatabaseSchemaError):
 class SchemaManager:
     """Manages database schema creation and migration detection."""
 
-    def __init__(self, database_url: Optional[str] = None):
+    def __init__(self, database_url: Optional[str] = None) -> None:
         """
         Initialize SchemaManager.
 
@@ -91,7 +90,6 @@ class SchemaManager:
                     table_exists = result[0]
 
                     if not table_exists:
-                        logger.info("Fresh database: no alembic_version table")
                         return True
 
                     # Check if table has migration data
@@ -104,16 +102,8 @@ class SchemaManager:
                     count = result[0]
 
                     if count == 0:
-                        logger.info("Fresh database: empty alembic_version table")
                         return True
 
-                    # Get current revision for logging
-                    cur.execute("SELECT version_num FROM alembic_version")
-                    result = cur.fetchone()
-                    if result is None:
-                        raise DatabaseSchemaError("Failed to get current revision")
-                    revision = result[0]
-                    logger.info(f"Existing database: revision {revision}")
                     return False
 
         except psycopg.Error as e:
@@ -127,7 +117,6 @@ class SchemaManager:
             DatabaseSchemaError: If schema creation fails
         """
         try:
-            logger.info("Creating fresh schema from SQL file")
 
             with open(self._schema_file_path, "r", encoding="utf-8") as f:
                 schema_sql = f.read()
@@ -146,8 +135,6 @@ class SchemaManager:
                         if statement:  # Skip empty statements
                             # Use bytes to bypass LiteralString requirement
                             cur.execute(statement.encode("utf-8"))
-
-            logger.info("Fresh schema created successfully")
 
         except psycopg.Error as e:
             raise DatabaseSchemaError(f"Schema creation failed: {e}") from e
@@ -180,7 +167,6 @@ class SchemaManager:
                 if line and not line.startswith("#"):
                     revision = line.split()[0]
                     if revision:
-                        logger.debug(f"Current HEAD revision: {revision}")
                         return revision
 
             raise AlembicError("Could not parse revision from alembic output")
@@ -199,7 +185,6 @@ class SchemaManager:
         """
         try:
             current_revision = self.get_current_revision()
-            logger.info(f"Stamping database with revision: {current_revision}")
 
             subprocess.run(
                 ["alembic", "stamp", current_revision],
@@ -209,8 +194,6 @@ class SchemaManager:
                 text=True,
                 timeout=30,
             )
-
-            logger.info("Database stamped successfully")
 
         except subprocess.CalledProcessError as e:
             raise AlembicError(f"Alembic stamp failed: {e.stderr}") from e
@@ -225,8 +208,6 @@ class SchemaManager:
             AlembicError: If migration fails
         """
         try:
-            logger.info("Running Alembic migrations")
-
             subprocess.run(
                 ["alembic", "upgrade", "head"],
                 cwd=Path(__file__).parent.parent.parent,
@@ -235,8 +216,6 @@ class SchemaManager:
                 text=True,
                 timeout=300,  # 5 minutes for migrations
             )
-
-            logger.info("Migrations completed successfully")
 
         except subprocess.CalledProcessError as e:
             raise AlembicError(f"Migration failed: {e.stderr}") from e

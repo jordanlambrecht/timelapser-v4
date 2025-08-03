@@ -9,7 +9,10 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 
 from typing import List, Protocol, runtime_checkable
 from datetime import datetime, timedelta
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from ...utils.time_utils import utc_now, utc_timestamp
 

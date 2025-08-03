@@ -28,16 +28,26 @@ Architecture: Composition-based with dependency injection for type-safe operatio
 """
 
 from typing import List, Optional, Dict, Any
-from loguru import logger
 
 # from ..services.capture_pipeline.rtsp_utils import detect_source_resolution
 
-from ..enums import SSEPriority, JobPriority
+from ..enums import (
+    SSEPriority,
+    JobPriority,
+    LogSource,
+    LoggerName,
+    TimelapseStatus,
+    TimelapseAction,
+    SSEEvent,
+)
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.camera_operations import AsyncCameraOperations, SyncCameraOperations
+from ..database.exceptions import CameraOperationError
+from ..services.logger import get_service_logger
 from ..database.timelapse_operations import TimelapseOperations, SyncTimelapseOperations
-from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
+
+# SettingsOperations import removed - using injected SettingsService instead
 from ..utils.cache_manager import cached_response
 from ..models.camera_model import (
     Camera,
@@ -82,15 +92,6 @@ from ..models.camera_action_models import TimelapseActionRequest
 from ..constants import (
     CAMERA_STATUSES,
     CAMERA_NOT_FOUND,
-    TIMELAPSE_ACTION_CREATE,
-    TIMELAPSE_ACTION_PAUSE,
-    TIMELAPSE_ACTION_RESUME,
-    TIMELAPSE_ACTION_END,
-    EVENT_CAMERA_CREATED,
-    EVENT_CAMERA_UPDATED,
-    EVENT_CAMERA_DELETED,
-    EVENT_CAMERA_STATUS_UPDATED,
-    EVENT_CAMERA_HEALTH_UPDATED,
     # Camera health constants
     CAMERA_HEALTH_FAILURE_THRESHOLD,
     CAMERA_HEALTH_DEGRADED_THRESHOLD,
@@ -99,9 +100,11 @@ from ..constants import (
     CAMERA_HEALTH_OFFLINE,
     CAMERA_CAPTURE_READY_STATUSES,
     CAMERA_TIMELAPSE_READY_STATUSES,
-    # Timelapse status enum
-    TimelapseStatus,
 )
+
+
+# Use recommended service logger factory pattern
+logger = get_service_logger(LoggerName.CAMERA_SERVICE, LogSource.SYSTEM)
 
 
 class CameraService:
@@ -123,6 +126,7 @@ class CameraService:
     def __init__(
         self,
         db: AsyncDatabase,
+        sync_db: SyncDatabase,
         settings_service,
         rtsp_service=None,
         # corruption_service=None,  # Removed - using corruption_pipeline
@@ -135,6 +139,7 @@ class CameraService:
 
         Args:
             db: AsyncDatabase instance
+            sync_db: SyncDatabase instance
             settings_service: SettingsService instance
             rtsp_service: Optional AsyncRTSPService for RTSP operations
             # corruption_service: Optional CorruptionService for health monitoring (removed)
@@ -244,7 +249,14 @@ class CameraService:
         Returns:
             List of Camera model instances (unified camera model with stats)
         """
-        return await self.camera_ops.get_cameras()
+        try:
+            return await self.camera_ops.get_cameras()
+        except CameraOperationError as e:
+            logger.error(f"Database error retrieving cameras: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving cameras: {e}")
+            raise
 
     async def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
         """
@@ -256,16 +268,23 @@ class CameraService:
         Returns:
             Camera model instance (unified camera model with stats), or None if not found
         """
-        camera = await self.camera_ops.get_camera_by_id(camera_id)
+        try:
+            camera = await self.camera_ops.get_camera_by_id(camera_id)
+        except CameraOperationError as e:
+            logger.error(f"Database error retrieving camera {camera_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving camera {camera_id}: {e}")
+            raise
         if camera is None:
             logger.warning(
-                f"Camera not found",
-                extra={"camera_id": camera_id, "operation": "get_camera_by_id"},
+                "Camera not found",
+                extra_context={"camera_id": camera_id, "operation": "get_camera_by_id"},
             )
         else:
             logger.info(
-                f"Camera retrieved successfully",
-                extra={"camera_id": camera_id, "operation": "get_camera_by_id"},
+                "Camera retrieved successfully",
+                extra_context={"camera_id": camera_id, "operation": "get_camera_by_id"},
             )
         return camera
 
@@ -290,7 +309,7 @@ class CameraService:
             **extra_data,
         }
         await self.sse_ops.create_event(
-            event_type="timelapse_status_changed",
+            event_type=SSEEvent.TIMELAPSE_STATUS_UPDATED,
             event_data=event_data,
         )
 
@@ -299,7 +318,7 @@ class CameraService:
     ):
         """Helper method to broadcast scheduler-related events."""
         await self.sse_ops.create_event(
-            event_type="scheduler_sync_requested",
+            event_type=SSEEvent.SYSTEM_INFO,
             event_data=event_data,
             priority=priority,
         )
@@ -331,12 +350,18 @@ class CameraService:
         #     width, height = detect_source_resolution(camera_data.rtsp_url)
         #     if width > 0 and height > 0:
         #         camera_data.source_resolution = {"width": width, "height": height}
-        #         logger.info(
-        #             f"📷 Detected source resolution for camera '{camera_data.name}': {width}x{height}"
+        #         await self.log.log_system(
+        #             f"📷 Detected source resolution for camera '{camera_data.name}': {width}x{height}",
+        #             level=LogLevel.INFO,
+        #
+        #             logger_name=LoggerName.CAMERA_SERVICE
         #         )
         #     else:
-        #         logger.error(
-        #             f"❌ Could not detect source resolution for camera: {camera_data.name} ({camera_data.rtsp_url})"
+        #         await self.log.log_error(
+        #             f"Could not detect source resolution for camera: {camera_data.name} ({camera_data.rtsp_url})",
+        #             level=LogLevel.ERROR,
+        #
+        #             logger_name=LoggerName.CAMERA_SERVICE
         #         )
         #         camera_data.source_resolution = {"width": 0, "height": 0}
 
@@ -372,15 +397,15 @@ class CameraService:
 
             # Broadcast SSE event for camera creation
             await self._broadcast_camera_event(
-                EVENT_CAMERA_CREATED,
+                SSEEvent.CAMERA_CREATED,
                 created_camera.id,
                 camera_name=created_camera.name,
                 rtsp_url=created_camera.rtsp_url,
             )
 
             logger.info(
-                f"Created camera successfully",
-                extra={
+                "Created camera successfully",
+                extra_context={
                     "camera_id": created_camera.id,
                     "camera_name": created_camera.name,
                     "operation": "create_camera",
@@ -388,14 +413,23 @@ class CameraService:
             )
             return created_camera
 
-        except Exception as e:
+        except CameraOperationError as e:
             logger.error(
-                f"Failed to create camera",
-                extra={
+                f"Database error creating camera '{camera_data.name}': {e}",
+                error_context={
                     "camera_name": camera_data.name,
-                    "error": str(e),
                     "operation": "create_camera",
                 },
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to create camera",
+                error_context={
+                    "camera_name": camera_data.name,
+                    "operation": "create_camera",
+                },
+                exception=e,
             )
             raise RuntimeError(f"Failed to create camera: {str(e)}") from e
 
@@ -427,14 +461,14 @@ class CameraService:
 
             # Broadcast SSE event for camera update
             await self._broadcast_camera_event(
-                EVENT_CAMERA_UPDATED,
+                SSEEvent.CAMERA_UPDATED,
                 camera_id,
                 changes=camera_data.model_dump(exclude_unset=True),
             )
 
             logger.info(
-                f"Updated camera successfully",
-                extra={
+                "Updated camera successfully",
+                extra_context={
                     "camera_id": camera_id,
                     "camera_name": updated_camera.name,
                     "operation": "update_camera",
@@ -448,12 +482,12 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to update camera",
-                extra={
+                "Failed to update camera",
+                error_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "update_camera",
                 },
+                exception=e,
             )
             raise RuntimeError(f"Failed to update camera: {str(e)}") from e
 
@@ -484,19 +518,20 @@ class CameraService:
             if success:
                 # Broadcast SSE event for camera deletion
                 await self._broadcast_camera_event(
-                    EVENT_CAMERA_DELETED,
+                    SSEEvent.CAMERA_DELETED,
                     camera_id,
                     operation="delete",
                 )
 
                 logger.info(
-                    f"Deleted camera successfully",
-                    extra={
+                    "Deleted camera successfully",
+                    extra_context={
                         "camera_id": camera_id,
                         "camera_name": camera.name,
                         "operation": "delete_camera",
-                        "icon": "🗑️",
                     },
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
                 )
 
             return success
@@ -506,12 +541,12 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to delete camera",
-                extra={
+                "Failed to delete camera",
+                error_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "delete_camera",
                 },
+                exception=e,
             )
             raise RuntimeError(f"Failed to delete camera: {str(e)}") from e
 
@@ -555,19 +590,21 @@ class CameraService:
                     event_data["error_message"] = error_message
 
                 await self.sse_ops.create_event(
-                    event_type=EVENT_CAMERA_STATUS_UPDATED,
+                    event_type=SSEEvent.CAMERA_UPDATED,
                     event_data=event_data,
                     priority=SSEPriority.HIGH,
                     source="system",
                 )
 
                 logger.info(
-                    f"Updated camera status successfully",
-                    extra={
+                    "Updated camera status successfully",
+                    extra_context={
                         "camera_id": camera_id,
                         "new_status": status,
                         "operation": "update_camera_status",
                     },
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
                 )
             else:
                 raise ValueError(CAMERA_NOT_FOUND)
@@ -579,13 +616,13 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to update camera status",
-                extra={
+                "Failed to update camera status",
+                error_context={
                     "camera_id": camera_id,
                     "status": status,
-                    "error": str(e),
                     "operation": "update_camera_status",
                 },
+                exception=e,
             )
             raise RuntimeError(f"Failed to update camera status: {str(e)}") from e
 
@@ -606,22 +643,24 @@ class CameraService:
             if health_status:
                 logger.debug(
                     f"Retrieved health status for camera {camera_id}",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "degraded_mode_active": health_status.degraded_mode_active,
                         "operation": "get_camera_health_status",
                     },
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
                 )
             return health_status
 
         except Exception as e:
             logger.error(
                 f"Failed to get health status for camera {camera_id}",
-                extra={
+                error_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "get_camera_health_status",
                 },
+                exception=e,
             )
             raise
 
@@ -656,16 +695,18 @@ class CameraService:
             if success:
                 logger.info(
                     f"Updated health data for camera {camera_id}",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "health_data": health_data,
                         "operation": "update_camera_health",
                     },
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
                 )
 
                 # Broadcast SSE event for health update
                 await self.sse_ops.create_event(
-                    event_type=EVENT_CAMERA_HEALTH_UPDATED,
+                    event_type=SSEEvent.CAMERA_HEALTH_CHANGED,
                     event_data={
                         "camera_id": camera_id,
                         "health_data": health_data,
@@ -679,11 +720,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update health for camera {camera_id}",
-                extra={
+                error_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "update_camera_health",
                 },
+                exception=e,
             )
             raise
 
@@ -710,13 +751,13 @@ class CameraService:
             # After validation, we know camera is not None
             assert camera is not None, "Camera should not be None after validation"
 
-            if request.action == TIMELAPSE_ACTION_CREATE:
+            if request.action == TimelapseAction.CREATE:
                 return await self._handle_create_action(camera_id, request)
-            elif request.action == TIMELAPSE_ACTION_PAUSE:
+            elif request.action == TimelapseAction.PAUSE:
                 return await self._handle_pause_action(camera_id, camera)
-            elif request.action == TIMELAPSE_ACTION_RESUME:
+            elif request.action == TimelapseAction.RESUME:
                 return await self._handle_resume_action(camera_id, camera)
-            elif request.action == TIMELAPSE_ACTION_END:
+            elif request.action == TimelapseAction.END:
                 return await self._handle_end_action(camera_id, camera)
             else:
                 raise ValueError(f"Invalid timelapse action: {request.action}")
@@ -724,13 +765,13 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Failed to execute timelapse action '{request.action}' for camera {camera_id}",
-                extra={
+                error_context={
                     "camera_id": camera_id,
                     "action": request.action,
-                    "error": str(e),
                     "operation": "execute_timelapse_action",
                     "timelapse_data": getattr(request, "timelapse_data", None),
                 },
+                exception=e,
             )
             return {
                 "success": False,
@@ -752,7 +793,9 @@ class CameraService:
             Dictionary with action result
         """
         logger.info(
-            f"Starting new timelapse for camera {camera_id} with data: {request.timelapse_data}"
+            f"Starting new timelapse for camera {camera_id} with data: {request.timelapse_data}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
 
         # Create TimelapseCreate model from the data, filtering out fields not in the model
@@ -768,29 +811,45 @@ class CameraService:
         timelapse_create_data["camera_id"] = camera_id
         timelapse_create_data["status"] = TimelapseStatus.RUNNING
 
-        logger.info(f"Creating timelapse with cleaned data: {timelapse_create_data}")
+        logger.info(
+            f"Creating timelapse with cleaned data: {timelapse_create_data}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
+        )
 
         # Create TimelapseCreate model instance (this will apply defaults)
         timelapse_create = TimelapseCreate(**timelapse_create_data)
         logger.info(
-            f"TimelapseCreate model created with defaults: {timelapse_create.model_dump()}"
+            f"TimelapseCreate model created with defaults: {timelapse_create.model_dump()}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
 
         # Create timelapse using instance timelapse_ops with correct method
         timelapse = await self.timelapse_ops.create_new_timelapse(
             camera_id, timelapse_create
         )
-        logger.info(f"Created timelapse: {timelapse.id}")
+        logger.info(
+            f"Created timelapse: {timelapse.id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
+        )
 
         # Update the camera's active timelapse
         await self.camera_ops.update_camera(
             camera_id, {"active_timelapse_id": timelapse.id}
         )
-        logger.info(f"Updated camera {camera_id} active_timelapse_id to {timelapse.id}")
+        logger.info(
+            f"Updated camera {camera_id} active_timelapse_id to {timelapse.id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
+        )
 
         # Create SSE event for real-time updates
         logger.info(
-            f"🔄 Creating timelapse_status_changed SSE event for start: camera_id={camera_id}, timelapse_id={timelapse.id}"
+            f"🔄 Creating timelapse_status_changed SSE event for start: camera_id={camera_id}, timelapse_id={timelapse.id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
         await self._broadcast_timelapse_status_event(
             timelapse.id,
@@ -801,7 +860,9 @@ class CameraService:
 
         # Reset capture timing fields for new timelapse - let scheduler handle timing
         logger.info(
-            f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts with clean state"
+            f"🕐 Resetting capture timing for camera {camera_id} - new timelapse starts with clean state",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
         try:
             update_result = await self.camera_ops.update_camera(
@@ -812,17 +873,21 @@ class CameraService:
                 },
             )
             logger.info(
-                f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}"
+                f"✅ Capture timing reset successful: last_capture_at={update_result.last_capture_at}, next_capture_at={update_result.next_capture_at}",
             )
         except Exception as e:
             logger.error(
-                f"❌ Failed to reset capture timing for camera {camera_id}: {e}"
+                f"Failed to reset capture timing for camera {camera_id}",
+                error_context={"camera_id": camera_id},
+                exception=e,
             )
             # Continue with timelapse creation even if timing reset fails
 
         # Trigger immediate scheduler sync for the new timelapse
         logger.info(
-            f"🔄 Triggering immediate scheduler sync for new timelapse {timelapse.id}"
+            f"🔄 Triggering immediate scheduler sync for new timelapse {timelapse.id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
         await self._broadcast_scheduler_event(
             {
@@ -836,7 +901,7 @@ class CameraService:
         # Schedule immediate first capture using scheduler authority service
         if self.scheduler_authority_service:
             logger.info(
-                f"🎯 Scheduling immediate first capture for timelapse {timelapse.id}"
+                f"🎯 Scheduling immediate first capture for timelapse {timelapse.id}",
             )
             try:
                 capture_result = (
@@ -846,25 +911,35 @@ class CameraService:
                 )
                 if capture_result:
                     logger.info(
-                        f"✅ Immediate capture scheduled successfully for timelapse {timelapse.id}"
+                        f"✅ Immediate capture scheduled successfully for timelapse {timelapse.id}",
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.CAMERA_SERVICE,
                     )
                 else:
                     logger.warning(
-                        f"⚠️ Failed to schedule immediate capture for timelapse {timelapse.id}"
+                        f"⚠️ Failed to schedule immediate capture for timelapse {timelapse.id}",
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.CAMERA_SERVICE,
                     )
             except Exception as e:
                 logger.error(
-                    f"❌ Error scheduling immediate capture for timelapse {timelapse.id}: {e}"
+                    f"Error scheduling immediate capture for timelapse {timelapse.id}",
+                    error_context={"timelapse_id": timelapse.id},
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
+                    exception=e,
                 )
         else:
             logger.warning(
-                "⚠️ Scheduler authority service not available - immediate capture skipped"
+                "⚠️ Scheduler authority service not available - immediate capture skipped",
             )
 
         # Note: First capture scheduled immediately, then will follow normal scheduled interval
 
         logger.info(
-            f"Successfully started timelapse {timelapse.id} for camera {camera_id}"
+            f"Successfully started timelapse {timelapse.id} for camera {camera_id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
         )
 
         return {
@@ -887,7 +962,11 @@ class CameraService:
         Returns:
             Dictionary with action result
         """
-        logger.info(f"Starting pause operation for camera {camera_id}")
+        logger.info(
+            f"Starting pause operation for camera {camera_id}",
+            source=LogSource.SYSTEM,
+            logger_name=LoggerName.CAMERA_SERVICE,
+        )
 
         if not camera.active_timelapse_id:
             raise ValueError(f"Camera {camera_id} has no active timelapse")
@@ -1074,11 +1153,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Health monitoring coordination failed",
-                extra={
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "coordinate_health_monitoring",
                 },
+                exception=e,
             )
 
             monitoring_timestamp = await get_timezone_aware_timestamp_async(
@@ -1144,11 +1223,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Capture scheduling failed",
-                extra={
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "schedule_capture",
                 },
+                exception=e,
             )
 
             current_time = await self._get_current_timestamp()
@@ -1201,7 +1280,7 @@ class CameraService:
 
                     logger.info(
                         f"Connectivity test completed",
-                        extra={
+                        extra_context={
                             "camera_id": camera_id,
                             "success": rtsp_result.success,
                             "response_time": getattr(
@@ -1216,11 +1295,11 @@ class CameraService:
                 except Exception as rtsp_error:
                     logger.error(
                         f"RTSP connectivity test failed",
-                        extra={
+                        extra_context={
                             "camera_id": camera_id,
-                            "error": str(rtsp_error),
                             "operation": "test_connectivity",
                         },
+                        exception=rtsp_error,
                     )
 
                     # Update connectivity as failed
@@ -1239,7 +1318,7 @@ class CameraService:
             else:
                 logger.warning(
                     f"RTSPService not configured, cannot test connectivity",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "operation": "test_connectivity",
                     },
@@ -1259,11 +1338,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Connectivity test failed",
-                extra={
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "test_connectivity",
                 },
+                exception=e,
             )
 
             test_timestamp = await get_timezone_aware_timestamp_async(
@@ -1302,7 +1381,7 @@ class CameraService:
             if success:
                 logger.debug(
                     f"Updated connectivity status for camera {camera_id}",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "is_connected": is_connected,
                         "error_message": error_message,
@@ -1315,11 +1394,11 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update connectivity for camera {camera_id}",
-                extra={
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "update_camera_connectivity",
                 },
+                exception=e,
             )
             raise
 
@@ -1376,8 +1455,8 @@ class CameraService:
             health_monitoring = await self.coordinate_health_monitoring(camera_id)
             if not health_monitoring.success:
                 logger.warning(
-                    f"Health monitoring issues for camera",
-                    extra={
+                    "Health monitoring issues for camera",
+                    extra_context={
                         "camera_id": camera_id,
                         "error": health_monitoring.error,
                         "operation": "coordinate_capture_workflow",
@@ -1405,10 +1484,10 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Capture workflow coordination failed",
-                extra={
+                "Capture workflow coordination failed",
+                exception=e,
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "coordinate_capture_workflow",
                 },
             )
@@ -1472,20 +1551,31 @@ class CameraService:
 
             # Check if crop/rotation is enabled
             if not getattr(camera, "crop_rotation_enabled", False):
-                logger.debug(f"Crop/rotation not enabled for camera {camera_id}")
+                logger.debug(
+                    f"Crop/rotation not enabled for camera {camera_id}",
+                )
                 return None
 
             # Parse settings from JSONB
             settings_data = getattr(camera, "crop_rotation_settings", {}) or {}
             if not settings_data:
-                logger.debug(f"No crop/rotation settings found for camera {camera_id}")
+                logger.debug(
+                    f"No crop/rotation settings found for camera {camera_id}",
+                )
                 return None
 
             # Validate and return as Pydantic model
             return CropRotationSettings(**settings_data)
 
         except Exception as e:
-            logger.error(f"Error getting crop settings for camera {camera_id}: {e}")
+            logger.error(
+                f"Error getting crop settings for camera {camera_id}",
+                exception=e,
+                extra_context={
+                    "operation": "get_crop_settings",
+                    "camera_id": camera_id,
+                },
+            )
             raise
 
     async def update_crop_settings(
@@ -1538,7 +1628,9 @@ class CameraService:
             return validated_settings
 
         except Exception as e:
-            logger.error(f"Error updating crop settings for camera {camera_id}: {e}")
+            logger.error(
+                f"Error updating crop settings for camera {camera_id}", exception=e
+            )
             raise
 
     async def disable_crop_settings(self, camera_id: int) -> bool:
@@ -1568,7 +1660,9 @@ class CameraService:
             return True
 
         except Exception as e:
-            logger.error(f"Error disabling crop settings for camera {camera_id}: {e}")
+            logger.error(
+                f"Error disabling crop settings for camera {camera_id}", exception=e
+            )
             raise
 
     async def get_source_resolution(self, camera_id: int) -> Optional[SourceResolution]:
@@ -1590,13 +1684,22 @@ class CameraService:
 
             resolution_data = getattr(camera, "source_resolution", {}) or {}
             if not resolution_data:
-                logger.debug(f"No source resolution stored for camera {camera_id}")
+                logger.debug(
+                    f"No source resolution stored for camera {camera_id}",
+                )
                 return None
 
             return SourceResolution(**resolution_data)
 
         except Exception as e:
-            logger.error(f"Error getting source resolution for camera {camera_id}: {e}")
+            logger.error(
+                f"Error getting source resolution for camera {camera_id}",
+                exception=e,
+                extra_context={
+                    "operation": "get_source_resolution",
+                    "camera_id": camera_id,
+                },
+            )
             raise
 
     async def get_cameras_ready_for_capture(self) -> List[Camera]:
@@ -1629,14 +1732,15 @@ class CameraService:
 
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture"},
+                extra_context={"operation": "get_cameras_ready_for_capture"},
             )
 
             return ready_cameras
         except Exception as e:
             logger.error(
                 f"Failed to get cameras ready for capture",
-                extra={"error": str(e), "operation": "get_cameras_ready_for_capture"},
+                exception=e,
+                extra_context={"operation": "get_cameras_ready_for_capture"},
             )
             # Return empty list rather than failing entirely
             return []
@@ -1646,7 +1750,6 @@ class CameraService:
         camera_id: int,
         success: bool,
         consecutive_failures: int = 0,
-        error_message: Optional[str] = None,
     ) -> bool:
         """
         Update camera capture statistics using business logic for health determination.
@@ -1655,7 +1758,6 @@ class CameraService:
             camera_id: ID of the camera
             success: Whether the capture was successful
             consecutive_failures: Current consecutive failure count (for health determination)
-            error_message: Optional error message if capture failed
 
         Returns:
             True if stats were updated successfully
@@ -1668,13 +1770,13 @@ class CameraService:
 
             # Update database with determined health status
             result = await self.camera_ops.update_camera_capture_stats(
-                camera_id, success, health_status, error_message
+                camera_id, success, health_status
             )
 
             if result:
                 logger.debug(
                     f"Updated capture stats for camera",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "capture_success": success,
                         "health_status": health_status,
@@ -1686,13 +1788,58 @@ class CameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update camera capture stats",
-                extra={
+                exception=e,
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "update_capture_stats",
                 },
             )
             return False
+
+    async def get_status(self) -> Dict[str, Any]:
+        """
+        Get CameraService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            # Get basic counts
+            cameras = await self.get_cameras()
+            active_cameras = [c for c in cameras if c.status == "active"]
+
+            # Get cameras with running timelapses
+            running_timelapses = [c for c in cameras if c.timelapse_status == "running"]
+
+            # Get health status distribution
+            health_status_counts = {}
+            for camera in cameras:
+                health = getattr(camera, "health_status", "unknown")
+                health_status_counts[health] = health_status_counts.get(health, 0) + 1
+
+            return {
+                "service": "camera_service",
+                "database_connected": self.db is not None,
+                "total_cameras": len(cameras),
+                "active_cameras": len(active_cameras),
+                "cameras_with_running_timelapses": len(running_timelapses),
+                "health_status_distribution": health_status_counts,
+                "dependencies": {
+                    "rtsp_service": self.rtsp_service is not None,
+                    "scheduling_service": self.scheduling_service is not None,
+                    "timelapse_service": self.timelapse_service is not None,
+                    "scheduler_authority_service": self.scheduler_authority_service
+                    is not None,
+                },
+                "error": None,
+            }
+        except Exception as e:
+            logger.error(f"Camera service status check failed: {e}")
+            return {
+                "service": "camera_service",
+                "database_connected": False,
+                "error": str(e),
+            }
 
 
 class SyncCameraService:
@@ -1706,6 +1853,7 @@ class SyncCameraService:
     def __init__(
         self,
         db: SyncDatabase,
+        async_db,
         rtsp_service=None,
         scheduling_service=None,
         settings_service=None,
@@ -1715,14 +1863,15 @@ class SyncCameraService:
 
         Args:
             db: SyncDatabase instance
+            async_db: AsyncDatabase instance (for operations that need async)
             rtsp_service: Optional RTSPService for RTSP operations
             scheduling_service: Optional SyncSchedulingService for capture scheduling
             settings_service: Optional SyncSettingsService for timezone operations
         """
         self.db = db
-        self.camera_ops = SyncCameraOperations(db)
+        self.camera_ops = SyncCameraOperations(db, async_db)
         self.timelapse_ops = SyncTimelapseOperations(db)
-        self.settings_ops = SyncSettingsOperations(db)
+        # Direct SettingsOperations removed - use injected settings_service instead
         self.rtsp_service = rtsp_service
         self.scheduling_service = scheduling_service
         self.settings_service = settings_service
@@ -1863,7 +2012,8 @@ class SyncCameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update sync connectivity for camera {camera_id}",
-                extra={"camera_id": camera_id, "error": str(e)},
+                exception=e,
+                extra_context={"camera_id": camera_id},
             )
             raise
 
@@ -1883,7 +2033,9 @@ class SyncCameraService:
             if not camera:
                 raise ValueError(f"Camera {camera_id} not found")
 
-            test_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            test_timestamp = get_timezone_aware_timestamp_sync(
+                settings_service=self.settings_service
+            )
 
             # Test RTSP connection
             if self.rtsp_service:
@@ -1904,9 +2056,9 @@ class SyncCameraService:
                 except Exception as rtsp_error:
                     logger.error(
                         f"RTSP connectivity test failed",
-                        extra={
+                        exception=rtsp_error,
+                        extra_context={
                             "camera_id": camera_id,
-                            "error": str(rtsp_error),
                         },
                     )
 
@@ -1931,10 +2083,11 @@ class SyncCameraService:
         except Exception as e:
             logger.error(
                 f"Sync connectivity test failed for camera {camera_id}",
-                extra={"camera_id": camera_id, "error": str(e)},
+                exception=e,
+                extra_context={"camera_id": camera_id},
             )
 
-            test_timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            test_timestamp = get_timezone_aware_timestamp_sync(self.settings_service)
 
             return CameraConnectivityTestResult(
                 success=False,
@@ -1960,9 +2113,6 @@ class SyncCameraService:
             RuntimeError: If database operation fails
         """
         try:
-            # Get current timezone-aware timestamp
-            current_time = get_timezone_aware_timestamp_sync(self.settings_ops)
-
             # Note: Next capture time should be managed by scheduler worker based on active timelapse intervals
             # This sync method should not update next capture time directly
             success = True  # Always succeed since we're not doing anything
@@ -1977,9 +2127,9 @@ class SyncCameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update next capture time",
-                extra={
+                exception=e,
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "update_next_capture_time",
                 },
             )
@@ -2062,7 +2212,7 @@ class SyncCameraService:
 
             logger.info(
                 f"Reset corruption failures for camera",
-                extra={
+                extra_context={
                     "camera_id": camera_id,
                     "operation": "reset_corruption_failures",
                 },
@@ -2075,9 +2225,9 @@ class SyncCameraService:
         except Exception as e:
             logger.error(
                 f"Failed to reset corruption failures",
-                extra={
+                exception=e,
+                extra_context={
                     "camera_id": camera_id,
-                    "error": str(e),
                     "operation": "reset_corruption_failures",
                 },
             )
@@ -2113,14 +2263,15 @@ class SyncCameraService:
 
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture"},
+                extra_context={"operation": "get_cameras_ready_for_capture"},
             )
 
             return ready_cameras
         except Exception as e:
             logger.error(
                 f"Failed to get cameras ready for capture",
-                extra={"error": str(e), "operation": "get_cameras_ready_for_capture"},
+                exception=e,
+                extra_context={"operation": "get_cameras_ready_for_capture"},
             )
             # Return empty list rather than failing entirely
             return []
@@ -2155,31 +2306,28 @@ class SyncCameraService:
 
             logger.debug(
                 f"Found {len(ready_cameras)} cameras ready for capture out of {len(due_cameras)} due",
-                extra={"operation": "get_cameras_ready_for_capture_sync"},
+                extra_context={"operation": "get_cameras_ready_for_capture_sync"},
             )
 
             return ready_cameras
         except Exception as e:
             logger.error(
                 f"Failed to get cameras ready for capture",
-                extra={
-                    "error": str(e),
+                exception=e,
+                extra_context={
                     "operation": "get_cameras_ready_for_capture_sync",
                 },
             )
             # Return empty list rather than failing entirely
             return []
 
-    def update_camera_capture_stats(
-        self, camera_id: int, success: bool, error_message: Optional[str] = None
-    ) -> bool:
+    def update_camera_capture_stats(self, camera_id: int, success: bool) -> bool:
         """
         Update camera capture statistics after a capture attempt.
 
         Args:
             camera_id: ID of the camera
             success: Whether the capture was successful
-            error_message: Optional error message if capture failed
 
         Returns:
             True if stats were updated successfully
@@ -2189,7 +2337,8 @@ class SyncCameraService:
             camera = self.get_camera_by_id(camera_id)
             if not camera:
                 logger.error(
-                    f"Camera {camera_id} not found when updating capture stats"
+                    f"Camera {camera_id} not found when updating capture stats",
+                    extra_context={"camera_id": camera_id},
                 )
                 return False
 
@@ -2205,13 +2354,13 @@ class SyncCameraService:
             )
 
             success_result = self.camera_ops.update_camera_capture_stats(
-                camera_id, success, health_status, error_message
+                camera_id, success, health_status
             )
 
             if success_result:
                 logger.debug(
                     f"Updated capture stats for camera",
-                    extra={
+                    extra_context={
                         "camera_id": camera_id,
                         "capture_success": success,
                         "operation": "update_capture_stats",
@@ -2223,10 +2372,10 @@ class SyncCameraService:
         except Exception as e:
             logger.error(
                 f"Failed to update capture stats",
-                extra={
+                exception=e,
+                extra_context={
                     "camera_id": camera_id,
                     "capture_success": success,
-                    "error": str(e),
                     "operation": "update_capture_stats",
                 },
             )
@@ -2254,5 +2403,47 @@ class SyncCameraService:
             return CropRotationSettings(**settings_data)
 
         except Exception as e:
-            logger.error(f"Error getting crop settings for camera {camera_id}: {e}")
+            logger.error(
+                f"Error getting crop settings for camera {camera_id}",
+                exception=e,
+                extra_context={"camera_id": camera_id},
+            )
             raise
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get SyncCameraService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            # Get basic counts
+            active_cameras = self.get_active_cameras()
+            cameras_with_timelapses = self.get_cameras_with_running_timelapses()
+
+            # Get health status distribution
+            health_status_counts = {}
+            for camera in active_cameras:
+                health = getattr(camera, "health_status", "unknown")
+                health_status_counts[health] = health_status_counts.get(health, 0) + 1
+
+            return {
+                "service": "sync_camera_service",
+                "database_connected": self.db is not None,
+                "active_cameras": len(active_cameras),
+                "cameras_with_running_timelapses": len(cameras_with_timelapses),
+                "health_status_distribution": health_status_counts,
+                "dependencies": {
+                    "rtsp_service": self.rtsp_service is not None,
+                    "scheduling_service": self.scheduling_service is not None,
+                },
+                "error": None,
+            }
+        except Exception as e:
+            logger.error(f"Sync camera service status check failed: {e}")
+            return {
+                "service": "sync_camera_service",
+                "database_connected": False,
+                "error": str(e),
+            }

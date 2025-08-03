@@ -7,7 +7,10 @@ following the architecture pattern of service -> operations -> database.
 """
 
 from typing import List, Optional
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName, LogSource, LogEmoji
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....utils.time_utils import utc_timestamp
@@ -27,8 +30,6 @@ from ....enums import (
 )
 from ....constants import (
     DEFAULT_OVERLAY_JOB_BATCH_SIZE,
-    DEFAULT_OVERLAY_MAX_RETRIES,
-    OVERLAY_JOB_RETRY_DELAYS,
 )
 
 
@@ -64,7 +65,7 @@ class SyncOverlayJobService:
         Args:
             db: Synchronous database connection for worker operations
             settings_service: Optional SettingsService for configuration access
-                             Required for overlay generation settings validation
+                            Required for overlay generation settings validation
 
         Note:
             The db is exposed as self.sync_db to allow worker classes
@@ -99,7 +100,9 @@ class SyncOverlayJobService:
             return job
 
         except Exception as e:
-            logger.error(f"Failed to queue overlay job for image {image_id}: {e}")
+            logger.error(
+                f"Failed to queue overlay job for image {image_id}", exception=e
+            )
             return None
 
     def queue_priority_job(self, image_id: int) -> Optional[OverlayGenerationJob]:
@@ -113,7 +116,7 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.get_pending_jobs(batch_size)
         except Exception as e:
-            logger.error(f"Failed to get pending overlay jobs: {e}")
+            logger.error(f"Failed to get pending overlay jobs", exception=e)
             return []
 
     def mark_job_processing(self, job_id: int) -> bool:
@@ -121,7 +124,9 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.mark_job_processing(job_id)
         except Exception as e:
-            logger.error(f"Failed to mark overlay job {job_id} as processing: {e}")
+            logger.error(
+                f"Failed to mark overlay job {job_id} as processing", exception=e
+            )
             return False
 
     def mark_job_completed(self, job_id: int) -> bool:
@@ -129,7 +134,9 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.mark_job_completed(job_id)
         except Exception as e:
-            logger.error(f"Failed to mark overlay job {job_id} as completed: {e}")
+            logger.error(
+                f"Failed to mark overlay job {job_id} as completed", exception=e
+            )
             return False
 
     def mark_job_failed(self, job_id: int, error_message: str) -> bool:
@@ -137,7 +144,7 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.mark_job_failed(job_id, error_message)
         except Exception as e:
-            logger.error(f"Failed to mark overlay job {job_id} as failed: {e}")
+            logger.error(f"Failed to mark overlay job {job_id} as failed", exception=e)
             return False
 
     def recover_stuck_jobs(self, max_processing_age_minutes: int = 30) -> dict:
@@ -153,7 +160,7 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.recover_stuck_jobs(max_processing_age_minutes)
         except Exception as e:
-            logger.error(f"Failed to recover stuck overlay jobs: {e}")
+            logger.error("Failed to recover stuck overlay jobs", exception=e)
             return {"recovered_count": 0, "error": str(e)}
 
     def get_service_health(self) -> dict:
@@ -164,7 +171,7 @@ class SyncOverlayJobService:
             Dict containing detailed health metrics for monitoring
         """
         try:
-            logger.debug("🩺 Checking overlay job service health")
+            logger.debug("Checking overlay job service health")
 
             # Check database connectivity
             db_healthy = False
@@ -178,7 +185,7 @@ class SyncOverlayJobService:
                 )
             except Exception as e:
                 db_error = str(e)
-                logger.error(f"🗄️ Database connectivity failed: {e}")
+                logger.error("🗄️ Database connectivity failed", exception=e)
 
             # Basic queue health check
             queue_healthy = db_healthy
@@ -197,18 +204,22 @@ class SyncOverlayJobService:
                     )
                     settings_healthy = test_setting is not None
                     logger.debug(
-                        f"⚙️ Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}"
+                        f"Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}"
                     )
                 except Exception as e:
                     settings_healthy = False
                     settings_error = str(e)
-                    logger.error(f"⚙️ Settings service failed: {e}")
+                    logger.error(
+                        "Settings service failed", exception=e, emoji=LogEmoji.SYSTEM
+                    )
             else:
-                logger.debug("⚙️ Settings service: ⚪ not configured")
+                logger.debug(
+                    "Settings service: ⚪ not configured", emoji=LogEmoji.SYSTEM
+                )
 
             # Determine overall health
             # Core requirement: database connectivity
-            # Queue stats and settings are important but not critical
+            # Queue stats and settings are great but not critical
             overall_healthy = db_healthy
             if overall_healthy and queue_healthy and settings_healthy:
                 overall_status = "healthy"
@@ -240,12 +251,13 @@ class SyncOverlayJobService:
                 "timestamp": utc_timestamp(),
             }
 
-            logger.debug(f"🩺 Overlay job service health: {overall_status}")
+            logger.debug(
+                f"Overlay job service health: {overall_status}", emoji=LogEmoji.HEALTH
+            )
             return health_data
 
         except Exception as e:
-            logger.error(f"❌ Failed to get overlay job service health: {e}")
-            from ....utils.time_utils import utc_now
+            logger.error("Failed to get overlay job service health", exception=e)
 
             return {
                 "service": "overlay_job_service",
@@ -253,6 +265,14 @@ class SyncOverlayJobService:
                 "error": str(e),
                 "timestamp": utc_timestamp(),
             }
+
+    def get_job_statistics(self):
+        """Get comprehensive job queue statistics for monitoring (sync)."""
+        try:
+            return self.overlay_job_ops.get_job_statistics()
+        except Exception as e:
+            logger.error(f"Failed to get overlay job statistics", exception=e)
+            return None
 
 
 class AsyncOverlayJobService:
@@ -291,7 +311,9 @@ class AsyncOverlayJobService:
             return job
 
         except Exception as e:
-            logger.error(f"Failed to queue overlay job for image {image_id}: {e}")
+            logger.error(
+                f"Failed to queue overlay job for image {image_id}", exception=e
+            )
             return None
 
     async def queue_priority_job(self, image_id: int) -> Optional[OverlayGenerationJob]:
@@ -305,7 +327,7 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.get_pending_jobs(batch_size)
         except Exception as e:
-            logger.error(f"Failed to get pending overlay jobs: {e}")
+            logger.error(f"Failed to get pending overlay jobs", exception=e)
             return []
 
     async def get_job_statistics(self):
@@ -313,7 +335,7 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.get_job_statistics()
         except Exception as e:
-            logger.error(f"Failed to get overlay job statistics: {e}")
+            logger.error(f"Failed to get overlay job statistics", exception=e)
             return None
 
     async def get_jobs_by_image_id(self, image_id: int) -> List[OverlayGenerationJob]:
@@ -321,7 +343,9 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.get_jobs_by_image_id(image_id)
         except Exception as e:
-            logger.error(f"Failed to get overlay jobs for image {image_id}: {e}")
+            logger.error(
+                f"Failed to get overlay jobs for image {image_id}", exception=e
+            )
             return []
 
     async def cancel_pending_jobs_for_image(self, image_id: int) -> int:
@@ -330,6 +354,7 @@ class AsyncOverlayJobService:
             return await self.overlay_job_ops.cancel_pending_jobs_for_image(image_id)
         except Exception as e:
             logger.error(
-                f"Failed to cancel pending overlay jobs for image {image_id}: {e}"
+                f"Failed to cancel pending overlay jobs for image {image_id}",
+                exception=e,
             )
             return 0

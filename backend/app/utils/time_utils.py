@@ -26,14 +26,13 @@ from datetime import datetime, timezone, timedelta, date
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from loguru import logger
 import re
 
 # Import the cache manager for settings (async version only)
 # Note: get_timezone_async is only used by async functions.
 # Sync functions use direct settings service access to avoid event loop conflicts.
 from app.utils.cache_manager import get_timezone_async
-from ..services import settings_service
+# from ..services import settings_service  # Commented out to avoid circular import
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -56,12 +55,10 @@ def get_timezone_from_cache_sync(settings_service) -> str:
             timezone = settings_service.get_setting("timezone")
             return timezone or "UTC"
         else:
-            logger.warning(
-                f"Settings service {type(settings_service)} does not have get_setting method"
-            )
+            # Settings service doesn't have expected method - fall back to UTC
             return "UTC"
-    except Exception as e:
-        logger.error(f"❌ Failed to get timezone from settings service: {e}")
+    except Exception:
+        # Failed to get timezone from settings service - fall back to UTC
         return "UTC"
 
 
@@ -70,8 +67,8 @@ async def get_timezone_from_cache_async(settings_service) -> str:
     """Async wrapper for getting timezone from cache (for FastAPI endpoints)."""
     try:
         return await get_timezone_async(settings_service)
-    except Exception as e:
-        logger.error(f"❌ Failed to get timezone from cache (async): {e}")
+    except Exception:
+        # Failed to get timezone from cache - fall back to UTC
         return "UTC"
 
 
@@ -88,11 +85,8 @@ def create_timezone_aware_datetime(timezone_str: str) -> datetime:
     try:
         tz = ZoneInfo(timezone_str)
         return datetime.now(tz)
-    except Exception as e:
-        logger.warning(
-            f"⚠️ Failed to create timezone-aware datetime for '{timezone_str}': {e}"
-        )
-        # Fallback to UTC
+    except Exception:
+        # Failed to create timezone-aware datetime - fallback to UTC
         return datetime.now(ZoneInfo("UTC"))
 
 
@@ -146,10 +140,8 @@ def get_timezone_from_settings(settings_dict: dict) -> str:
     try:
         ZoneInfo(timezone_str)
         return timezone_str
-    except Exception as e:
-        logger.warning(
-            f"⚠️ Invalid timezone '{timezone_str}': {e}. Falling back to UTC."
-        )
+    except Exception:
+        # Invalid timezone - falling back to UTC
         return "UTC"
 
 
@@ -172,7 +164,7 @@ def get_supported_timezones() -> list[str]:
 
 
 # Updated: Use cache-backed timezone for sync timestamp
-def get_timezone_aware_timestamp_sync() -> datetime:
+def get_timezone_aware_timestamp_sync(settings_service) -> datetime:
     """
     Get current timestamp in database timezone (sync version).
 
@@ -189,8 +181,8 @@ def get_timezone_aware_timestamp_sync() -> datetime:
     try:
         tz = ZoneInfo(db_timezone_str)
         return datetime.now(tz)
-    except Exception as e:
-        logger.error(f"❌ Error getting timezone-aware timestamp: {e}")
+    except Exception:
+        # Error getting timezone-aware timestamp - fall back to UTC
         return datetime.now(timezone.utc)
 
 
@@ -212,8 +204,8 @@ async def get_timezone_aware_timestamp_async(settings_service) -> datetime:
     try:
         tz = ZoneInfo(db_timezone_str)
         return datetime.now(tz)
-    except Exception as e:
-        logger.error(f"❌ Error getting timezone-aware timestamp: {e}")
+    except Exception:
+        # Error getting timezone-aware timestamp - fall back to UTC
         return datetime.now(timezone.utc)
 
 
@@ -227,7 +219,7 @@ def get_timezone_aware_date_sync(settings_service) -> str:
     Returns:
         Date string in YYYY-MM-DD format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync()
+    timestamp = get_timezone_aware_timestamp_sync(settings_service)
     return timestamp.strftime("%Y-%m-%d")
 
 
@@ -245,7 +237,7 @@ async def get_timezone_aware_date_async(settings_service) -> str:
     return timestamp.strftime("%Y-%m-%d")
 
 
-def get_timezone_aware_timestamp_string_sync() -> str:
+def get_timezone_aware_timestamp_string_sync(settings_service) -> str:
     """
     Get current timestamp as filename-safe string in database timezone (sync).
 
@@ -255,7 +247,7 @@ def get_timezone_aware_timestamp_string_sync() -> str:
     Returns:
         Timestamp string in YYYYMMDD_HHMMSS format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync()
+    timestamp = get_timezone_aware_timestamp_sync(settings_service)
     return timestamp.strftime("%Y%m%d_%H%M%S")
 
 
@@ -282,6 +274,21 @@ def utc_now() -> datetime:
 
     Returns:
         Current UTC datetime object
+    """
+    return datetime.now(timezone.utc)
+
+
+def now() -> datetime:
+    """
+    Get current timestamp with UTC fallback.
+    
+    This is a convenience function for cases where you need a timestamp
+    but don't have access to settings service. Falls back to UTC.
+    
+    For timezone-aware operations, prefer get_timezone_aware_timestamp_sync(settings_service).
+    
+    Returns:
+        Current datetime (UTC if no timezone settings available)
     """
     return datetime.now(timezone.utc)
 
@@ -355,7 +362,7 @@ def get_timezone_aware_time_sync(settings_service) -> str:
     Returns:
         Time string in HH:MM:SS format using database timezone
     """
-    timestamp = get_timezone_aware_timestamp_sync()
+    timestamp = get_timezone_aware_timestamp_sync(settings_service)
     return timestamp.strftime("%H:%M:%S")
 
 
@@ -396,8 +403,8 @@ def convert_to_db_timezone_sync(utc_timestamp: datetime, settings_service) -> da
         if utc_timestamp.tzinfo is None:
             utc_timestamp = utc_timestamp.replace(tzinfo=timezone.utc)
         return utc_timestamp.astimezone(tz)
-    except Exception as e:
-        logger.error(f"❌ Error converting to database timezone: {e}")
+    except Exception:
+        # Error converting to database timezone - return original timestamp
         return utc_timestamp
 
 
@@ -420,8 +427,8 @@ async def convert_to_db_timezone_async(
         if utc_timestamp.tzinfo is None:
             utc_timestamp = utc_timestamp.replace(tzinfo=timezone.utc)
         return utc_timestamp.astimezone(tz)
-    except Exception as e:
-        logger.error(f"❌ Error converting to database timezone: {e}")
+    except Exception:
+        # Error converting to database timezone - return original timestamp
         return utc_timestamp
 
 
@@ -451,8 +458,9 @@ def extract_date_from_filename(
         if basename.startswith(prefix) and len(basename) >= len(prefix) + 8:
             date_str = basename[len(prefix) : len(prefix) + 8]  # Extract YYYYMMDD
             return datetime.strptime(date_str, "%Y%m%d").date()
-    except (ValueError, IndexError) as e:
-        logger.debug(f"🔍 Could not extract date from filename '{filename}': {e}")
+    except (ValueError, IndexError):
+        # Could not extract date from filename - return None
+        pass
 
     return None
 
@@ -682,8 +690,8 @@ def parse_iso_timestamp_safe(timestamp_str: str) -> datetime:
         return dt
 
     except (ValueError, TypeError) as e:
-        logger.error(f"❌ Failed to parse timestamp '{timestamp_str}': {e}")
-        raise ValueError(f"Invalid timestamp format: {timestamp_str}")
+        # Failed to parse timestamp - raise ValueError with details
+        raise ValueError(f"Invalid timestamp format: {timestamp_str}") from e
 
 
 def calculate_day_number_for_timelapse(timelapse, settings_service) -> int:
@@ -710,11 +718,11 @@ def calculate_day_number_for_timelapse(timelapse, settings_service) -> int:
         )
 
         if not start_date:
-            logger.warning("Timelapse has no start_date, defaulting day_number to 1")
+            # Timelapse has no start_date - default to day 1
             return 1
 
         return (current_date - start_date).days + 1
 
-    except Exception as e:
-        logger.warning(f"Error calculating day number: {e}")
+    except Exception:
+        # Error calculating day number - default to day 1
         return 1

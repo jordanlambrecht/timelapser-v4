@@ -8,12 +8,15 @@ Contains all overlay service functionality including job management, presets, te
 from .job_service import SyncOverlayJobService, AsyncOverlayJobService
 from .preset_service import OverlayPresetService, SyncOverlayPresetService
 from .template_service import OverlayTemplateService, SyncOverlayTemplateService
-from .integration_service import SyncOverlayIntegrationService, OverlayIntegrationService
+from .integration_service import (
+    SyncOverlayIntegrationService,
+    OverlayIntegrationService,
+)
 
 __all__ = [
     "SyncOverlayJobService",
     "AsyncOverlayJobService",
-    "OverlayPresetService", 
+    "OverlayPresetService",
     "SyncOverlayPresetService",
     "OverlayTemplateService",
     "SyncOverlayTemplateService",

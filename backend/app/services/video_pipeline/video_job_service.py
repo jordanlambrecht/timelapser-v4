@@ -5,34 +5,37 @@ Video Job Service - Simplified Job Management
 Consolidates job coordination, queue management, and lifecycle.
 Replaces separate JobCoordinationService with integrated functionality.
 """
-
 import json
 from typing import Dict, Any, List, Optional
-from datetime import datetime
-from loguru import logger
 
-from ...enums import JobPriority, JobStatus, SSEPriority, SSEEvent, SSEEventSource
-from ...constants import JOB_PRIORITY, JOB_STATUS, JOB_PRIORITIES_LIST
+from ...models.health_model import HealthStatus
+from ...services.logger import get_service_logger
+from ...enums import (
+    JobPriority,
+    JobStatus,
+    SSEPriority,
+    SSEEvent,
+    SSEEventSource,
+    LoggerName,
+)
 
-from ...database.core import SyncDatabase
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+
+from ...database.core import AsyncDatabase, SyncDatabase
 from ...database.video_operations import SyncVideoOperations
 from ...database.timelapse_operations import SyncTimelapseOperations
 from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...models.shared_models import (
-    VideoGenerationJob,
     VideoGenerationJobWithDetails,
-    VideoGenerationJobCreate,
 )
 from ...utils.time_utils import get_timezone_aware_timestamp_sync
 from .constants import (
-    DEFAULT_VIDEO_JOB_PRIORITY,
     DEFAULT_VIDEO_CLEANUP_DAYS,
 )
 from .utils import (
     validate_trigger_type,
     validate_job_status,
     create_video_job_metadata,
-    format_video_job_name,
 )
 
 
@@ -47,25 +50,28 @@ class VideoJobService:
     - Queue status and statistics
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, async_db: AsyncDatabase, settings_service):
         """
         Initialize VideoJobService with database dependency.
 
         Args:
             db: SyncDatabase instance for database operations
+            async_db: AsyncDatabase instance
+            settings_service: SettingsService for configuration access
         """
         self.db = db
+        self.async_db = async_db
         self.video_ops = SyncVideoOperations(db)
         self.timelapse_ops = SyncTimelapseOperations(db)
         self.sse_ops = SyncSSEEventsOperations(db)
-
+        self.settings_service = settings_service
         logger.debug("VideoJobService initialized with simplified architecture")
 
     def create_job(
         self,
         timelapse_id: int,
         trigger_type: str,
-        priority: str = DEFAULT_VIDEO_JOB_PRIORITY,
+        priority: JobPriority = JobPriority.MEDIUM,
         settings: Optional[Dict[str, Any]] = None,
     ) -> Optional[int]:
         """
@@ -88,10 +94,6 @@ class VideoJobService:
             # Validate inputs
             if not validate_trigger_type(trigger_type):
                 logger.error(f"Invalid trigger type: {trigger_type}")
-                return None
-
-            if priority not in JOB_PRIORITIES_LIST:
-                logger.error(f"Invalid priority: {priority}")
                 return None
 
             # Get timelapse info with error handling
@@ -117,10 +119,10 @@ class VideoJobService:
                 "timelapse_id": timelapse_id,
                 "trigger_type": trigger_type,
                 "priority": priority,
-                "status": JOB_STATUS.PENDING,
+                "status": JobStatus.PENDING,
                 "settings": json.dumps(settings or {}),
                 "metadata": json.dumps(job_metadata),
-                "created_at": get_timezone_aware_timestamp_sync(self.db),
+                "created_at": get_timezone_aware_timestamp_sync(self.settings_service),
             }
 
             try:
@@ -156,7 +158,7 @@ class VideoJobService:
 
         Priority Processing Order:
         1. All HIGH priority jobs (oldest first within priority)
-        2. All MEDIUM priority jobs (oldest first within priority)  
+        2. All MEDIUM priority jobs (oldest first within priority)
         3. All LOW priority jobs (oldest first within priority)
 
         Returns:
@@ -181,9 +183,9 @@ class VideoJobService:
 
             # Priority-based sorting algorithm
             priority_order = {
-                JobPriority.HIGH: 1,      # Immediate/per-capture automation
-                JobPriority.MEDIUM: 2,    # Milestone-triggered videos
-                JobPriority.LOW: 3,       # Scheduled automation videos
+                JobPriority.HIGH: 1,  # Immediate/per-capture automation
+                JobPriority.MEDIUM: 2,  # Milestone-triggered videos
+                JobPriority.LOW: 3,  # Scheduled automation videos
             }
 
             # Sort by priority first, then by creation time (FIFO within priority)
@@ -225,7 +227,9 @@ class VideoJobService:
             logger.debug(f"Starting video job {job_id}")
 
             # Update job status
-            success = self.video_ops.update_video_generation_job_status(job_id, JOB_STATUS.PROCESSING)
+            success = self.video_ops.update_video_generation_job_status(
+                job_id, JobStatus.PROCESSING
+            )
 
             if success:
                 # Get job details for event
@@ -272,7 +276,7 @@ class VideoJobService:
             logger.debug(f"Completing video job {job_id}, success: {success}")
 
             # Determine final status
-            final_status = JOB_STATUS.COMPLETED if success else JOB_STATUS.FAILED
+            final_status = JobStatus.COMPLETED if success else JobStatus.FAILED
 
             # Update job record
             job_update_success = self.video_ops.complete_video_generation_job(
@@ -336,10 +340,10 @@ class VideoJobService:
 
             # Ensure all statuses are represented
             default_counts = {
-                JOB_STATUS.PENDING.value: 0,
-                JOB_STATUS.PROCESSING.value: 0,
-                JOB_STATUS.COMPLETED.value: 0,
-                JOB_STATUS.FAILED.value: 0,
+                JobStatus.PENDING.value: 0,
+                JobStatus.PROCESSING.value: 0,
+                JobStatus.COMPLETED.value: 0,
+                JobStatus.FAILED.value: 0,
             }
 
             default_counts.update(status_counts)
@@ -379,9 +383,7 @@ class VideoJobService:
             logger.error(f"Failed to get jobs by status {status}: {e}")
             return []
 
-    def cleanup_old_jobs(
-        self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS
-    ) -> int:
+    def cleanup_old_jobs(self, days_to_keep: int = DEFAULT_VIDEO_CLEANUP_DAYS) -> int:
         """
         Clean up old completed video generation jobs.
 
@@ -425,13 +427,15 @@ class VideoJobService:
                 return False
 
             # Check if job is in a cancellable state
-            cancellable_statuses = [JOB_STATUS.PENDING, JOB_STATUS.PROCESSING]
+            cancellable_statuses = [JobStatus.PENDING, JobStatus.PROCESSING]
             if job.status not in [status.value for status in cancellable_statuses]:
                 logger.error(f"Cannot cancel job {job_id} with status '{job.status}'")
                 return False
 
             # Update job status to cancelled
-            success = self.video_ops.update_video_generation_job_status(job_id, JOB_STATUS.CANCELLED.value)
+            success = self.video_ops.update_video_generation_job_status(
+                job_id, JobStatus.CANCELLED
+            )
 
             if success:
                 # Broadcast cancellation event
@@ -458,7 +462,7 @@ class VideoJobService:
 
     def _broadcast_job_event(
         self,
-        event_type: str,
+        event_type: SSEEvent,
         job_id: int,
         timelapse_id: int,
         extra_data: Optional[Dict[str, Any]] = None,
@@ -476,7 +480,9 @@ class VideoJobService:
             event_data = {
                 "job_id": job_id,
                 "timelapse_id": timelapse_id,
-                "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+                "timestamp": get_timezone_aware_timestamp_sync(
+                    self.settings_service
+                ).isoformat(),
             }
 
             if extra_data:
@@ -486,7 +492,7 @@ class VideoJobService:
                 event_type=event_type,
                 event_data=event_data,
                 priority=SSEPriority.NORMAL,
-                source="video_pipeline",
+                source=SSEEventSource.VIDEO_PIPELINE,
             )
 
         except Exception as e:
@@ -504,7 +510,7 @@ class VideoJobService:
 
             return {
                 "service": "video_job_service",
-                "status": "healthy",
+                "status": HealthStatus.HEALTHY,
                 "database_connected": self.db is not None,
                 "queue_status": queue_status,
                 "pending_jobs": queue_status.get("pending", 0),
@@ -515,7 +521,7 @@ class VideoJobService:
             logger.error(f"Video job service health check failed: {e}")
             return {
                 "service": "video_job_service",
-                "status": "unhealthy",
+                "status": HealthStatus.UNHEALTHY,
                 "database_connected": False,
                 "error": str(e),
             }

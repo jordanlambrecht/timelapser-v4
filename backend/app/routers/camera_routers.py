@@ -10,7 +10,6 @@ Architecture: API Layer - delegates all business logic to services
 """
 
 from typing import List, Optional
-from datetime import datetime
 import asyncio
 
 from fastapi import (
@@ -23,7 +22,10 @@ from fastapi import (
     Body,
 )
 from fastapi.responses import FileResponse
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..constants import (
     CAMERA_NOT_FOUND,
@@ -32,15 +34,10 @@ from ..constants import (
     CAMERA_STATUS_UPDATED_SUCCESS,
     NO_IMAGES_FOUND,
 )
-from ..enums import JobPriority
 from ..dependencies import (
     CameraServiceDep,
-    TimelapseServiceDep,
-    VideoServiceDep,
     ImageServiceDep,
-    LogServiceDep,
     SettingsServiceDep,
-    SchedulerServiceDep,
 )
 from ..models import Camera, CameraCreate, CameraUpdate
 
@@ -74,7 +71,6 @@ from ..utils.time_utils import (
 from ..utils.cache_manager import (
     generate_timestamp_etag,
     generate_composite_etag,
-    generate_collection_etag,
     generate_content_hash_etag,
     validate_etag_match,
 )
@@ -121,7 +117,12 @@ async def execute_timelapse_action(
 
         # Execute the timelapse action using camera service
         logger.info(
-            f"Executing timelapse action '{action_request.action}' for camera {camera_id}"
+            f"Executing timelapse action '{action_request.action}' for camera {camera_id}",
+            extra_context={
+                "camera_id": camera_id,
+                "action": action_request.action,
+                "operation": "execute_timelapse_action",
+            },
         )
 
         # Delegate to camera service for actual timelapse control
@@ -145,7 +146,14 @@ async def execute_timelapse_action(
         raise
     except Exception as e:
         logger.error(
-            f"Failed to execute timelapse action '{action_request.action}': {e}"
+            f"Failed to execute timelapse action '{action_request.action}'",
+            exception=e,
+            extra_context={
+                "camera_id": camera_id,
+                "action": action_request.action,
+                "operation": "execute_timelapse_action",
+                "error_type": type(e).__name__,
+            },
         )
         return TimelapseActionResponse(
             success=False,
@@ -378,12 +386,19 @@ async def trigger_manual_capture(
     try:
         # 🎯 REAL CAPTURE: Execute actual capture workflow using WorkflowOrchestratorService
         logger.info(
-            f"Real capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}"
+            f"Real capture triggered for camera {camera_id}, timelapse {camera.timelapse_id}",
+            extra_context={
+                "camera_id": camera_id,
+                "timelapse_id": camera.timelapse_id,
+                "camera_name": camera.name,
+                "operation": "trigger_manual_capture",
+                "capture_type": "manual",
+            },
         )
 
         # Get workflow orchestrator from dependencies
         from ..dependencies import get_workflow_orchestrator_service
-        
+
         # Get the timelapse ID (we already validated it exists above)
         timelapse_id = camera.timelapse_id
         if not timelapse_id:
@@ -401,10 +416,12 @@ async def trigger_manual_capture(
             return workflow_orchestrator.execute_capture_workflow(
                 camera_id,
                 timelapse_id,
-                {"source": "manual_capture", "camera_name": camera.name}
+                {"source": "manual_capture", "camera_name": camera.name},
             )
-        
-        capture_result = await asyncio.get_event_loop().run_in_executor(None, execute_capture)
+
+        capture_result = await asyncio.get_event_loop().run_in_executor(
+            None, execute_capture
+        )
 
         # Convert RTSPCaptureResult to CameraCaptureWorkflowResult
         return CameraCaptureWorkflowResult(
@@ -415,7 +432,9 @@ async def trigger_manual_capture(
                 camera_id=camera_id,
                 rtsp_url=camera.rtsp_url,
                 response_time_ms=None,
-                connection_status="capture_executed" if capture_result.success else "capture_failed",
+                connection_status=(
+                    "capture_executed" if capture_result.success else "capture_failed"
+                ),
                 error=capture_result.error if not capture_result.success else None,
                 test_timestamp=capture_timestamp,
             ),
@@ -428,7 +447,12 @@ async def trigger_manual_capture(
             capture_scheduling=CameraCaptureScheduleResult(
                 success=capture_result.success,
                 camera_id=camera_id,
-                message=capture_result.message or ("Real capture executed successfully" if capture_result.success else "Real capture failed"),
+                message=capture_result.message
+                or (
+                    "Real capture executed successfully"
+                    if capture_result.success
+                    else "Real capture failed"
+                ),
                 scheduled_at=capture_timestamp,
                 error=capture_result.error if not capture_result.success else None,
             ),

@@ -1,0 +1,39 @@
+{
+  "name": "Weather & Time",
+  "description": "Weather conditions with timestamp - perfect for outdoor timelapses",
+  "overlay_config": {
+    "overlayPositions": {
+      "topLeft": {
+        "type": "weather_temp_conditions",
+        "textSize": 16,
+        "textColor": "#FFFFFF",
+        "backgroundOpacity": 50,
+        "enableBackground": true,
+        "backgroundColor": "#1E3A8A",
+        "unit": "fahrenheit",
+        "display": "both"
+      },
+      "bottomLeft": {
+        "type": "date_time",
+        "textSize": 18,
+        "textColor": "#FFFFFF",
+        "backgroundOpacity": 60,
+        "dateFormat": "MMM dd, yyyy HH:mm",
+        "enableBackground": true,
+        "backgroundColor": "#000000"
+      }
+    },
+    "globalOptions": {
+      "opacity": 100,
+      "font": "Arial",
+      "xMargin": 25,
+      "yMargin": 25,
+      "backgroundColor": "#000000",
+      "backgroundOpacity": 55,
+      "fillColor": "#FFFFFF",
+      "dropShadow": 3,
+      "preset": "weather_time"
+    }
+  },
+  "is_builtin": true
+}

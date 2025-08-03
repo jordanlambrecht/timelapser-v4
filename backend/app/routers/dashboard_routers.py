@@ -9,22 +9,18 @@ Interactions: Uses StatisticsService for aggregated data, coordinates multiple s
 
 from fastapi import APIRouter, Response
 
-from ..dependencies import CameraServiceDep, StatisticsServiceDep, HealthServiceDep
+from ..dependencies import StatisticsServiceDep, HealthServiceDep
 from ..utils.cache_manager import (
-    generate_collection_etag,
-    generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag,
 )
 from ..models.statistics_model import (
     DashboardStatsModel,
     EnhancedDashboardStatsModel,
-    SystemHealthScoreModel,
 )
 from ..utils.router_helpers import handle_exceptions
 from ..utils.response_helpers import ResponseFormatter
 
-# CACHING STRATEGY - ETAG + SHORT CACHE
+# NOTE: CACHING STRATEGY - ETAG + SHORT CACHE
 # Dashboard is perfect use case for ETag + short cache strategy:
 # - Composite data (stats/overview): ETag + 2-3 min cache - changes occasionally
 # - Health status: SSE broadcasting - critical real-time monitoring
@@ -32,7 +28,7 @@ from ..utils.response_helpers import ResponseFormatter
 router = APIRouter(tags=["dashboard"])
 
 
-# IMPLEMENTED: ETag + 2-3 minute cache (composite dashboard data changes occasionally)
+# NOTE: CACHING STRATEGY - ETag + 2-3 minute cache (composite dashboard data changes occasionally)
 # This is the PERFECT use case for composite endpoint caching
 # ETag based on hash of latest camera/timelapse/image/video timestamps
 @router.get("/dashboard", response_model=EnhancedDashboardStatsModel)
@@ -55,7 +51,7 @@ async def get_dashboard_overview(
     return enhanced_stats
 
 
-# IMPLEMENTED: ETag + 2-3 minute cache (dashboard stats change occasionally)
+# NOTE: CACHING STRATEGY - ETag + 2-3 minute cache (dashboard stats change occasionally)
 # ETag based on system activity - camera counts, image counts, latest activity
 @router.get("/dashboard/stats", response_model=DashboardStatsModel)
 @handle_exceptions("get dashboard stats")
@@ -94,7 +90,7 @@ async def get_dashboard_stats(
 async def get_dashboard_health(health_service: HealthServiceDep):
     """
     Get health status for dashboard display.
-    
+
     Note: Uses HTTP caching instead of SSE - health monitoring doesn't need
     real-time streaming and works better with periodic polling + caching.
     """

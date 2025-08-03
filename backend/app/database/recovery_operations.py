@@ -7,19 +7,17 @@ standard operations layer pattern. Handles both async and sync database operatio
 for consistent recovery behavior across all job systems.
 """
 
-from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
-from loguru import logger
+from typing import Any, Dict, Optional
 
-from .core import AsyncDatabase, SyncDatabase
+import psycopg
+
 from ..enums import JobStatus, SSEEvent, SSEEventSource
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_timestamp_etag,
-)
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_timestamp_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import RecoveryOperationError
 
 
 class RecoveryQueryBuilder:
@@ -215,17 +213,16 @@ class RecoveryOperations:
                 "table_name": table_name,
             }
 
-        except Exception as e:
-            logger.error(f"Failed to get recovery statistics for {table_name}: {e}")
-            return {
-                "processing_count": 0,
-                "stuck_count": 0,
-                "pending_count": 0,
-                "failed_count": 0,
-                "avg_processing_time_seconds": 0.0,
-                "error": str(e),
-                "table_name": table_name,
-            }
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise RecoveryOperationError(
+                f"Failed to get recovery statistics for {table_name}",
+                details={
+                    "operation": "get_recovery_statistics",
+                    "table_name": table_name,
+                    "max_processing_age_minutes": max_processing_age_minutes,
+                    "error": "An error occurred",
+                },
+            ) from e
 
     async def recover_stuck_jobs_for_table(
         self,
@@ -273,7 +270,6 @@ class RecoveryOperations:
                     stuck_jobs = await cur.fetchall()
 
             if not stuck_jobs:
-                logger.debug(f"🔄 No stuck {job_type_name} found for recovery")
                 return {
                     "stuck_jobs_found": 0,
                     "stuck_jobs_recovered": 0,
@@ -282,8 +278,6 @@ class RecoveryOperations:
                     "cutoff_time": cutoff_time.isoformat(),
                     "recovery_successful": True,
                 }
-
-            logger.info(f"🔄 Found {len(stuck_jobs)} stuck {job_type_name} to recover")
 
             # Broadcast recovery start event
             if sse_broadcaster:
@@ -298,8 +292,9 @@ class RecoveryOperations:
                         },
                         source=SSEEventSource.SYSTEM,
                     )
-                except Exception as e:
-                    logger.warning(f"Failed to broadcast recovery start event: {e}")
+                except Exception:
+                    # Ignore broadcast failures - not critical
+                    pass
 
             # Reset stuck jobs to pending using optimized query builder
             update_query = RecoveryQueryBuilder.build_update_stuck_jobs_query(
@@ -351,10 +346,9 @@ class RecoveryOperations:
                         },
                         source=SSEEventSource.SYSTEM,
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to broadcast recovery completion event: {e}"
-                    )
+                except Exception:
+                    # Ignore broadcast failures - not critical
+                    pass
 
             result = {
                 "stuck_jobs_found": len(stuck_jobs),
@@ -365,33 +359,13 @@ class RecoveryOperations:
                 "recovery_successful": True,
             }
 
-            if recovered_count > 0:
-                logger.info(
-                    f"✅ Recovered {recovered_count} stuck {job_type_name} in {recovery_duration:.2f}s"
-                )
-            else:
-                logger.warning(
-                    f"⚠️ Failed to recover any of the {len(stuck_jobs)} stuck {job_type_name}"
-                )
-
             return result
 
-        except Exception as e:
-            recovery_end_time = utc_now()
-            recovery_duration = (
-                recovery_end_time - recovery_start_time
-            ).total_seconds()
-
-            logger.error(f"❌ Recovery failed for {job_type_name}: {e}")
-
-            return {
-                "stuck_jobs_found": 0,
-                "stuck_jobs_recovered": 0,
-                "stuck_jobs_failed": 0,
-                "recovery_duration_seconds": recovery_duration,
-                "recovery_successful": False,
-                "error": str(e),
-            }
+        except (psycopg.Error, KeyError, ValueError):
+            raise RecoveryOperationError(
+                "Recovery failed",
+                details={"operation": "recover_stuck_jobs_for_table"},
+            )
 
     async def _broadcast_recovery_event(
         self,
@@ -408,8 +382,9 @@ class RecoveryOperations:
                     data={"message": message, **extra_data},
                     source=SSEEventSource.SYSTEM,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to broadcast recovery event: {e}")
+            except Exception:
+                # Ignore broadcast failures - not critical
+                pass
 
 
 class SyncRecoveryOperations:
@@ -470,7 +445,6 @@ class SyncRecoveryOperations:
                     stuck_jobs = cur.fetchall()
 
             if not stuck_jobs:
-                logger.debug(f"🔄 No stuck {job_type_name} found for recovery")
                 return {
                     "stuck_jobs_found": 0,
                     "stuck_jobs_recovered": 0,
@@ -479,8 +453,6 @@ class SyncRecoveryOperations:
                     "cutoff_time": cutoff_time.isoformat(),
                     "recovery_successful": True,
                 }
-
-            logger.info(f"🔄 Found {len(stuck_jobs)} stuck {job_type_name} to recover")
 
             # Broadcast recovery start event
             self._broadcast_recovery_event(
@@ -542,33 +514,13 @@ class SyncRecoveryOperations:
                 "recovery_successful": True,
             }
 
-            if recovered_count > 0:
-                logger.info(
-                    f"✅ Recovered {recovered_count} stuck {job_type_name} in {recovery_duration:.2f}s"
-                )
-            else:
-                logger.warning(
-                    f"⚠️ Failed to recover any of the {len(stuck_jobs)} stuck {job_type_name}"
-                )
-
             return result
 
-        except Exception as e:
-            recovery_end_time = utc_now()
-            recovery_duration = (
-                recovery_end_time - recovery_start_time
-            ).total_seconds()
-
-            logger.error(f"❌ Recovery failed for {job_type_name}: {e}")
-
-            return {
-                "stuck_jobs_found": 0,
-                "stuck_jobs_recovered": 0,
-                "stuck_jobs_failed": 0,
-                "recovery_duration_seconds": recovery_duration,
-                "recovery_successful": False,
-                "error": str(e),
-            }
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise RecoveryOperationError(
+                "Recovery failed",
+                details={"operation": "recover_stuck_jobs_for_table_sync"},
+            ) from e
 
     def _broadcast_recovery_event(
         self,
@@ -585,5 +537,6 @@ class SyncRecoveryOperations:
                     data={"message": message, **extra_data},
                     source=SSEEventSource.SYSTEM,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to broadcast recovery event: {e}")
+            except Exception:
+                # Ignore broadcast failures - not critical
+                pass

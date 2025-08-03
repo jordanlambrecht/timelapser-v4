@@ -4,7 +4,10 @@ Thumbnail Repair Service - Orphaned file management and cleanup.
 """
 
 from typing import Dict, Any
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ....database.core import SyncDatabase, AsyncDatabase
 
@@ -12,7 +15,7 @@ from ....database.core import SyncDatabase, AsyncDatabase
 class SyncThumbnailRepairService:
     """Synchronous repair service for worker processes."""
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database."""
         self.db = db
 
@@ -30,7 +33,7 @@ class SyncThumbnailRepairService:
 class ThumbnailRepairService:
     """Async repair service for API endpoints."""
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database."""
         self.db = db
 

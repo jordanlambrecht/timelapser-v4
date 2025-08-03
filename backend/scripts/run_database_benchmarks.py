@@ -18,7 +18,10 @@ from app.database.core import AsyncDatabase
 from backend.app.utils.database_performance_profiler import DatabasePerformanceProfiler
 from backend.app.utils.database_micro_optimizations import DatabaseMicroOptimizer
 from app.config import settings
-from loguru import logger
+from backend.app.services.logger import get_service_logger
+from backend.app.enums import LoggerName
+
+logger = get_service_logger(LoggerName.TEST)
 
 
 async def main():

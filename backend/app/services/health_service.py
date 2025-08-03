@@ -23,11 +23,12 @@ import psutil
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-from loguru import logger
 
 from app.database.core import AsyncDatabase
 from app.database.health_operations import HealthOperations
 from app.database.statistics_operations import StatisticsOperations
+from app.services.logger import Log
+from app.enums import LogLevel, LogSource, LoggerName
 from app.models.health_model import (
     HealthStatus,
     BasicHealthCheck,
@@ -39,6 +40,7 @@ from app.models.health_model import (
     ApplicationMetrics,
 )
 from app.utils.time_utils import get_timezone_aware_timestamp_async
+from .logger import get_service_logger
 from .video_pipeline import ffmpeg_utils
 from app.config import settings
 from app.constants import (
@@ -55,6 +57,8 @@ from app.constants import (
     HEALTH_VIDEO_QUEUE_WARNING,
     HEALTH_VIDEO_QUEUE_ERROR,
 )
+
+logger = get_service_logger(LoggerName.HEALTH_WORKER, LogSource.HEALTH)
 
 
 class HealthService:
@@ -101,7 +105,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Basic health check failed: {e}")
+            logger.error(
+                f"Basic health check failed",
+                extra_context={"operation": "basic_health_check"},
+                exception=e,
+            )
             return BasicHealthCheck(
                 status=HealthStatus.UNKNOWN,
                 timestamp=await get_timezone_aware_timestamp_async(self.db),
@@ -205,7 +213,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Detailed health check failed: {e}")
+            logger.error(
+                f"Detailed health check failed",
+                extra_context={"operation": "detailed_health_check"},
+                exception=e,
+            )
             return DetailedHealthCheck(
                 status=HealthStatus.UNKNOWN,
                 timestamp=await get_timezone_aware_timestamp_async(self.db),
@@ -268,7 +280,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Database health check failed: {e}")
+            logger.error(
+                "Database health check failed",
+                extra_context={"operation": "database_health_check"},
+                exception=e,
+            )
             return ComponentHealth(
                 status=HealthStatus.UNHEALTHY,
                 message="Database health check failed",
@@ -353,7 +369,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Filesystem health check failed: {e}")
+            logger.error(
+                "Filesystem health check failed",
+                extra_context={"operation": "filesystem_health_check"},
+                exception=e,
+            )
             return ComponentHealth(
                 status=HealthStatus.UNHEALTHY,
                 message="Filesystem health check failed",
@@ -424,7 +444,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"System resources check failed: {e}")
+            logger.error(
+                "System resources check failed",
+                extra_context={"operation": "system_resources_check"},
+                exception=e,
+            )
             return ComponentHealth(
                 status=HealthStatus.UNHEALTHY,
                 message="System resources check failed",
@@ -465,7 +489,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"External dependencies check failed: {e}")
+            logger.error(
+                "External dependencies check failed",
+                extra_context={"operation": "external_dependencies_check"},
+                exception=e,
+            )
             return ComponentHealth(
                 status=HealthStatus.UNHEALTHY,
                 message="External dependencies check failed",
@@ -516,7 +544,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Application health check failed: {e}")
+            logger.error(
+                "Application health check failed",
+                extra_context={"operation": "application_health_check"},
+                exception=e,
+            )
             return ComponentHealth(
                 status=HealthStatus.UNHEALTHY,
                 message="Application health check failed",
@@ -567,7 +599,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Database health check failed: {e}")
+            logger.error(
+                "Database health check failed",
+                extra_context={"operation": "database_health_detailed"},
+                exception=e,
+            )
             return DatabaseHealth(
                 status=HealthStatus.UNHEALTHY,
                 async_latency_ms=None,
@@ -624,7 +660,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"Filesystem health check failed: {e}")
+            logger.error(
+                "Filesystem health check failed",
+                extra_context={"operation": "filesystem_health_detailed"},
+                exception=e,
+            )
             return FilesystemHealth(
                 status=HealthStatus.UNHEALTHY,
                 data_directory_accessible=False,
@@ -675,7 +715,11 @@ class HealthService:
             )
 
         except Exception as e:
-            logger.error(f"System metrics check failed: {e}")
+            logger.error(
+                "System metrics check failed",
+                extra_context={"operation": "system_metrics_check"},
+                exception=e,
+            )
             # Return safe defaults
             return SystemMetrics(
                 cpu_percent=0.0,

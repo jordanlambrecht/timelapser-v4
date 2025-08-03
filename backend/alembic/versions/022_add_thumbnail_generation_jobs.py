@@ -15,8 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "app"))
-from app.enums import JobPriority, JobStatus
-from app.constants import THUMBNAIL_JOB_TYPE_SINGLE
+from app.enums import JobPriority, JobStatus, ThumbnailJobType
 
 # revision identifiers, used by Alembic.
 revision = "022_thumbnail_jobs"
@@ -46,7 +45,7 @@ def upgrade():
             default=JobStatus.PENDING,
         ),
         sa.Column(
-            "job_type", sa.String(20), nullable=False, default=THUMBNAIL_JOB_TYPE_SINGLE
+            "job_type", sa.String(20), nullable=False, default=ThumbnailJobType.SINGLE
         ),
         sa.Column(
             "created_at",

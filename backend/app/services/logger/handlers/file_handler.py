@@ -9,6 +9,7 @@ environments where log persistence is required.
 import os
 import gzip
 import shutil
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from ....constants import (
     LOG_FILE_DIRECTORY,
     LOG_FILE_BASE_NAME,
 )
+from ..utils.settings_cache import LoggerSettingsCache
 
 
 class FileHandler:
@@ -40,36 +42,56 @@ class FileHandler:
 
     def __init__(
         self,
+        settings_cache: Optional[LoggerSettingsCache] = None,
         log_directory: str = LOG_FILE_DIRECTORY,
         base_filename: str = LOG_FILE_BASE_NAME,
-        max_file_size: int = LOG_FILE_MAX_SIZE,
-        max_files: int = LOG_FILE_MAX_COUNT,
-        retention_days: int = LOG_FILE_RETENTION_DAYS,
-        min_level: LogLevel = LogLevel.INFO,
+        max_file_size: Optional[int] = None,  # Will use user settings if None
+        max_files: Optional[int] = None,  # Will use user settings if None
+        retention_days: Optional[int] = None,  # Will use user settings if None
+        min_level: Optional[LogLevel] = None,  # Will use user settings if None
         use_json_format: bool = True,
-        compress_old_files: bool = True,
+        compress_old_files: Optional[bool] = None,  # Will use user settings if None
     ):
         """
-        Initialize the file handler.
+        Initialize the file handler with dynamic user settings support.
 
         Args:
+            settings_cache: Settings cache for dynamic configuration
             log_directory: Directory to store log files
             base_filename: Base name for log files
-            max_file_size: Maximum size per log file (bytes)
-            max_files: Maximum number of log files to keep
-            retention_days: Days to retain log files
-            min_level: Minimum log level to write to files
+            max_file_size: Maximum size per log file (bytes, None = use user settings)
+            max_files: Maximum number of log files to keep (None = use user settings)
+            retention_days: Days to retain log files (None = use user settings)
+            min_level: Minimum log level to write to files (None = use user settings)
             use_json_format: Whether to use JSON format (vs plain text)
-            compress_old_files: Whether to compress rotated files
+            compress_old_files: Whether to compress rotated files (None = use user settings)
         """
+        self.settings_cache = settings_cache
         self.log_directory = Path(log_directory)
         self.base_filename = base_filename
-        self.max_file_size = max_file_size
-        self.max_files = max_files
-        self.retention_days = retention_days
-        self.min_level = min_level
         self.use_json_format = use_json_format
-        self.compress_old_files = compress_old_files
+
+        # Store override values (None means use user settings)
+        self._override_max_file_size = max_file_size
+        self._override_max_files = max_files
+        self._override_retention_days = retention_days
+        self._override_min_level = min_level
+        self._override_compress_old_files = compress_old_files
+
+        # Cache current settings to avoid frequent database queries
+        self._cached_settings = {}
+        self._settings_cache_time = 0
+        self._settings_cache_ttl = 30.0  # 30 seconds
+
+        # Initialize computed properties
+        self._update_settings_from_cache()
+
+        # Dynamic properties (will be updated from user settings)
+        self.max_file_size = self._get_setting_value("max_file_size")
+        self.max_files = self._get_setting_value("max_files")
+        self.retention_days = self._get_setting_value("retention_days")
+        self.min_level = self._get_setting_value("min_level")
+        self.compress_old_files = self._get_setting_value("compress_old_files")
 
         # Thread safety
         self._lock = threading.Lock()
@@ -81,6 +103,95 @@ class FileHandler:
 
         # Initialize log directory and files
         self._initialize_logging()
+
+    def _update_settings_from_cache(self) -> None:
+        """Update settings from cache if needed."""
+        if not self.settings_cache:
+            return
+
+        current_time = time.time()
+        if (current_time - self._settings_cache_time) < self._settings_cache_ttl:
+            return  # Cache still valid
+
+        try:
+            # Load all file logging settings at once for efficiency
+            self._cached_settings = {
+                "file_log_max_size": self.settings_cache.get_setting_sync(
+                    "file_log_max_size"
+                ),
+                "file_log_max_files": self.settings_cache.get_setting_sync(
+                    "file_log_max_files"
+                ),
+                "file_log_retention_days": self.settings_cache.get_setting_sync(
+                    "file_log_retention_days"
+                ),
+                "file_log_level": self.settings_cache.get_setting_sync(
+                    "file_log_level"
+                ),
+                "file_log_enable_compression": self.settings_cache.get_setting_sync(
+                    "file_log_enable_compression"
+                ),
+            }
+            self._settings_cache_time = current_time
+
+        except Exception:
+            # On error, use defaults (handled by _get_setting_value fallbacks)
+            pass
+
+    def _get_setting_value(self, setting_type: str) -> Any:
+        """
+        Get a setting value, using override if provided, otherwise user settings, otherwise defaults.
+
+        Args:
+            setting_type: Type of setting (max_file_size, max_files, etc.)
+
+        Returns:
+            Setting value
+        """
+        # Check for override first
+        if setting_type == "max_file_size" and self._override_max_file_size is not None:
+            return self._override_max_file_size
+        elif setting_type == "max_files" and self._override_max_files is not None:
+            return self._override_max_files
+        elif (
+            setting_type == "retention_days"
+            and self._override_retention_days is not None
+        ):
+            return self._override_retention_days
+        elif setting_type == "min_level" and self._override_min_level is not None:
+            return self._override_min_level
+        elif (
+            setting_type == "compress_old_files"
+            and self._override_compress_old_files is not None
+        ):
+            return self._override_compress_old_files
+
+        # Update cache if needed
+        self._update_settings_from_cache()
+
+        # Get from user settings with fallbacks
+        if setting_type == "max_file_size":
+            mb_value = self._cached_settings.get("file_log_max_size", 10)
+            return mb_value * 1024 * 1024  # Convert MB to bytes
+        elif setting_type == "max_files":
+            return self._cached_settings.get("file_log_max_files", LOG_FILE_MAX_COUNT)
+        elif setting_type == "retention_days":
+            return self._cached_settings.get(
+                "file_log_retention_days", LOG_FILE_RETENTION_DAYS
+            )
+        elif setting_type == "min_level":
+            return self._cached_settings.get("file_log_level", LogLevel.INFO)
+        elif setting_type == "compress_old_files":
+            return self._cached_settings.get("file_log_enable_compression", True)
+
+        # Fallback to constants
+        return {
+            "max_file_size": LOG_FILE_MAX_SIZE,
+            "max_files": LOG_FILE_MAX_COUNT,
+            "retention_days": LOG_FILE_RETENTION_DAYS,
+            "min_level": LogLevel.INFO,
+            "compress_old_files": True,
+        }.get(setting_type)
 
     def _initialize_logging(self) -> None:
         """Initialize the logging directory and current log file."""
@@ -182,7 +293,7 @@ class FileHandler:
 
     def _should_log_level(self, level: LogLevel) -> bool:
         """
-        Check if the given log level should be written to files.
+        Check if the given log level should be written to files based on current user settings.
 
         Args:
             level: Log level to check
@@ -190,6 +301,9 @@ class FileHandler:
         Returns:
             True if level should be logged
         """
+        # Refresh settings dynamically
+        current_min_level = self._get_setting_value("min_level")
+
         level_order = {
             LogLevel.DEBUG: 0,
             LogLevel.INFO: 1,
@@ -198,7 +312,7 @@ class FileHandler:
             LogLevel.CRITICAL: 4,
         }
 
-        return level_order.get(level, 0) >= level_order.get(self.min_level, 0)
+        return level_order.get(level, 0) >= level_order.get(current_min_level, 0)
 
     def _format_log_entry(
         self,
@@ -314,8 +428,11 @@ class FileHandler:
     def _check_rotation(self) -> None:
         """Check if log file rotation is needed."""
         try:
+            # Get current settings dynamically
+            current_max_size = self._get_setting_value("max_file_size")
+
             # Check file size rotation
-            if self._current_file_size >= self.max_file_size:
+            if self._current_file_size >= current_max_size:
                 self._rotate_current_file(self._current_log_path)
                 self._setup_current_log_file()
                 return
@@ -354,8 +471,9 @@ class FileHandler:
             # Move current file to rotated name
             shutil.move(str(current_path), str(rotated_path))
 
-            # Compress if enabled
-            if self.compress_old_files:
+            # Compress if enabled (check user settings)
+            current_compression_enabled = self._get_setting_value("compress_old_files")
+            if current_compression_enabled:
                 self._compress_file(rotated_path)
 
         except Exception as e:
@@ -382,8 +500,12 @@ class FileHandler:
             print(f"FileHandler._compress_file failed: {e}")
 
     def _cleanup_old_files(self) -> None:
-        """Clean up old log files based on retention policies."""
+        """Clean up old log files based on current user retention policies."""
         try:
+            # Get current settings dynamically
+            current_max_files = self._get_setting_value("max_files")
+            current_retention_days = self._get_setting_value("retention_days")
+
             # Get all log files in directory
             log_files = []
 
@@ -395,8 +517,8 @@ class FileHandler:
             log_files.sort(key=lambda x: x.stat().st_mtime)
 
             # Remove files beyond max count
-            if len(log_files) > self.max_files:
-                files_to_remove = log_files[: len(log_files) - self.max_files]
+            if len(log_files) > current_max_files:
+                files_to_remove = log_files[: len(log_files) - current_max_files]
                 for file_path in files_to_remove:
                     try:
                         file_path.unlink()
@@ -404,7 +526,7 @@ class FileHandler:
                         print(f"Failed to remove old log file {file_path}: {e}")
 
             # Remove files older than retention period
-            cutoff_date = datetime.now() - timedelta(days=self.retention_days)
+            cutoff_date = datetime.now() - timedelta(days=current_retention_days)
             cutoff_timestamp = cutoff_date.timestamp()
 
             for file_path in log_files:

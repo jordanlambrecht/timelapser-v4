@@ -185,7 +185,7 @@ class BatchingDatabaseHandler:
                     message, level, source, logger_name, camera_id, extra_data
                 )
             except Exception as fallback_error:
-                logger.error(f"Fallback write also failed: {fallback_error}")
+                logger.error("Fallback write also failed", exception=fallback_error)
 
     def handle_sync(
         self,
@@ -257,7 +257,7 @@ class BatchingDatabaseHandler:
                     extra_data=extra_data,
                 )
             except Exception as fallback_error:
-                logger.error(f"Fallback write also failed: {fallback_error}")
+                logger.error("Fallback write also failed", exception=fallback_error)
 
     async def _flush_batch_async(self):
         """Flush the current batch to the database asynchronously."""

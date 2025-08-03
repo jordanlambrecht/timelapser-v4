@@ -27,9 +27,20 @@ Business Rules:
 - Priority-based job queuing is supported
 """
 
-from typing import Dict, Any, Optional, Union, TYPE_CHECKING
-from datetime import datetime
-from loguru import logger
+from typing import Dict, Any, Optional, TYPE_CHECKING
+from ...services.logger import get_service_logger
+from ...enums import (
+    JobTypes,
+    LogEmoji,
+    LoggerName,
+    SSEEvent,
+    SSEEventSource,
+    ThumbnailJobPriority,
+    ThumbnailJobStatus,
+    ThumbnailJobType,
+)
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...database.thumbnail_job_operations import (
@@ -49,25 +60,14 @@ from ...models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
     VideoGenerationJob,
-    VideoGenerationJobCreate,
 )
 from ...models.overlay_model import (
-    OverlayGenerationJob,
     OverlayGenerationJobCreate,
 )
 from ...utils.time_utils import (
     get_timezone_aware_timestamp_async,
 )
 from ...enums import SSEPriority, JobPriority, JobStatus
-from ...constants import (
-    THUMBNAIL_JOB_PRIORITY_MEDIUM,
-    THUMBNAIL_JOB_TYPE_SINGLE,
-    EVENT_JOB_CREATED,
-    EVENT_JOB_FAILED,
-)
-
-if TYPE_CHECKING:
-    pass
 
 
 class JobQueueService:
@@ -103,8 +103,8 @@ class JobQueueService:
     async def create_thumbnail_job(
         self,
         image_id: int,
-        priority: str = THUMBNAIL_JOB_PRIORITY_MEDIUM,
-        job_type: str = THUMBNAIL_JOB_TYPE_SINGLE,
+        priority: ThumbnailJobPriority = ThumbnailJobPriority.MEDIUM,
+        job_type: ThumbnailJobType = ThumbnailJobType.SINGLE,
         broadcast_sse: bool = True,
     ) -> Optional[ThumbnailGenerationJob]:
         """
@@ -123,7 +123,7 @@ class JobQueueService:
             job_data = ThumbnailGenerationJobCreate(
                 image_id=image_id,
                 priority=priority,
-                status=JobStatus.PENDING,
+                status=ThumbnailJobStatus.PENDING,
                 job_type=job_type,
             )
 
@@ -136,22 +136,20 @@ class JobQueueService:
                 # Broadcast SSE event if requested
                 if broadcast_sse:
                     await self._broadcast_job_created_event(
-                        job_type="thumbnail",
+                        job_type=JobTypes.THUMBNAIL,
                         job_id=job.id,
                         related_id=image_id,
-                        priority=priority,
+                        priority=SSEPriority.NORMAL,
                     )
 
                 return job
             else:
-                logger.warning(
-                    f"❌ Failed to create thumbnail job for image {image_id}"
-                )
+                logger.warning(f"Failed to create thumbnail job for image {image_id}")
 
                 # Broadcast failure event if requested
                 if broadcast_sse:
                     await self._broadcast_job_failed_event(
-                        job_type="thumbnail",
+                        job_type=JobTypes.THUMBNAIL,
                         related_id=image_id,
                         error="Job creation returned None",
                     )
@@ -159,12 +157,12 @@ class JobQueueService:
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating thumbnail job for image {image_id}: {e}")
+            logger.error(f"Error creating thumbnail job for image {image_id}: {e}")
 
             # Broadcast failure event if requested
             if broadcast_sse:
                 await self._broadcast_job_failed_event(
-                    job_type="thumbnail",
+                    job_type=JobTypes.THUMBNAIL,
                     related_id=image_id,
                     error=str(e),
                 )
@@ -202,7 +200,7 @@ class JobQueueService:
                 # Broadcast SSE event if requested
                 if broadcast_sse:
                     await self._broadcast_job_created_event(
-                        job_type="video",
+                        job_type=JobTypes.VIDEO_GENERATION,
                         job_id=job.id,
                         related_id=job_data.get("timelapse_id"),
                         priority=job_data.get("priority", JobPriority.MEDIUM),
@@ -210,12 +208,12 @@ class JobQueueService:
 
                 return job
             else:
-                logger.warning("❌ Failed to create video generation job")
+                logger.warning("Failed to create video generation job")
 
                 # Broadcast failure event if requested
                 if broadcast_sse:
                     await self._broadcast_job_failed_event(
-                        job_type="video",
+                        job_type=JobTypes.VIDEO_GENERATION,
                         related_id=job_data.get("timelapse_id"),
                         error="Job creation returned None",
                     )
@@ -223,12 +221,12 @@ class JobQueueService:
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating video generation job: {e}")
+            logger.error(f"Error creating video generation job: {e}")
 
             # Broadcast failure event if requested
             if broadcast_sse:
                 await self._broadcast_job_failed_event(
-                    job_type="video",
+                    job_type=JobTypes.VIDEO_GENERATION,
                     related_id=job_data.get("timelapse_id"),
                     error=str(e),
                 )
@@ -277,7 +275,7 @@ class JobQueueService:
                 # Broadcast SSE event if requested
                 if broadcast_sse:
                     await self._broadcast_job_created_event(
-                        job_type="overlay",
+                        job_type=JobTypes.OVERLAY,
                         job_id=job_id,
                         related_id=job_data.get("image_id"),
                         priority=job_data.get("priority", JobPriority.MEDIUM),
@@ -291,12 +289,12 @@ class JobQueueService:
                 else:
                     return {"id": job_id} if job_id else None
             else:
-                logger.warning("❌ Failed to create overlay job")
+                logger.warning("Failed to create overlay job")
 
                 # Broadcast failure event if requested
                 if broadcast_sse:
                     await self._broadcast_job_failed_event(
-                        job_type="overlay",
+                        job_type=JobTypes.OVERLAY,
                         related_id=job_data.get("image_id"),
                         error="Job creation returned None",
                     )
@@ -304,12 +302,12 @@ class JobQueueService:
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating overlay job: {e}")
+            logger.error(f"Error creating overlay job: {e}")
 
             # Broadcast failure event if requested
             if broadcast_sse:
                 await self._broadcast_job_failed_event(
-                    job_type="overlay",
+                    job_type=JobTypes.OVERLAY,
                     related_id=job_data.get("image_id"),
                     error=str(e),
                 )
@@ -318,10 +316,10 @@ class JobQueueService:
 
     async def _broadcast_job_created_event(
         self,
-        job_type: str,
+        job_type: JobTypes,
         job_id: Optional[int],
         related_id: Optional[int] = None,
-        priority: str = SSEPriority.NORMAL,
+        priority: SSEPriority = SSEPriority.NORMAL,
     ) -> None:
         """
         Broadcast SSE event for successful job creation.
@@ -344,7 +342,7 @@ class JobQueueService:
                 event_data[f"{job_type}_related_id"] = str(related_id)
 
             await self.sse_ops.create_event(
-                event_type=EVENT_JOB_CREATED,
+                event_type=SSEEvent.JOB_CREATED,
                 event_data=event_data,
                 priority=SSEPriority.NORMAL,
                 source="job_queue",
@@ -355,7 +353,7 @@ class JobQueueService:
 
     async def _broadcast_job_failed_event(
         self,
-        job_type: str,
+        job_type: JobTypes,
         related_id: Optional[int] = None,
         error: str = "Unknown error",
     ) -> None:
@@ -378,10 +376,10 @@ class JobQueueService:
                 event_data[f"{job_type}_related_id"] = str(related_id)
 
             await self.sse_ops.create_event(
-                event_type=EVENT_JOB_FAILED,
+                event_type=SSEEvent.JOB_CANCELLED,
                 event_data=event_data,
                 priority=SSEPriority.HIGH,
-                source="job_queue",
+                source=SSEEventSource.SYSTEM,
             )
 
         except Exception as e:
@@ -412,8 +410,8 @@ class SyncJobQueueService:
     def create_thumbnail_job(
         self,
         image_id: int,
-        priority: str = THUMBNAIL_JOB_PRIORITY_MEDIUM,
-        job_type: str = THUMBNAIL_JOB_TYPE_SINGLE,
+        priority: ThumbnailJobPriority = ThumbnailJobPriority.MEDIUM,
+        job_type: ThumbnailJobType = ThumbnailJobType.SINGLE,
         broadcast_sse: bool = True,
     ) -> Optional[int]:
         """
@@ -432,7 +430,7 @@ class SyncJobQueueService:
             job_data = ThumbnailGenerationJobCreate(
                 image_id=image_id,
                 priority=priority,
-                status=JobStatus.PENDING,
+                status=ThumbnailJobStatus.PENDING,
                 job_type=job_type,
             )
 
@@ -446,27 +444,28 @@ class SyncJobQueueService:
                     job_id = int(job)
                 else:
                     job_id = None
-                logger.debug(f"✅ Created thumbnail job {job_id} for image {image_id}")
+                logger.debug(
+                    f"Created thumbnail job {job_id} for image {image_id}",
+                    emoji=LogEmoji.SUCCESS,
+                )
 
                 # Broadcast SSE event if requested
                 if broadcast_sse:
                     self._broadcast_job_created_event(
-                        job_type="thumbnail",
+                        job_type=JobTypes.THUMBNAIL,
                         job_id=job_id,
                         related_id=image_id,
-                        priority=priority,
+                        priority=SSEPriority.NORMAL,
                     )
 
                 return job_id
             else:
-                logger.warning(
-                    f"❌ Failed to create thumbnail job for image {image_id}"
-                )
+                logger.warning(f"Failed to create thumbnail job for image {image_id}")
 
                 # Broadcast failure event if requested
                 if broadcast_sse:
                     self._broadcast_job_failed_event(
-                        job_type="thumbnail",
+                        job_type=JobTypes.THUMBNAIL,
                         related_id=image_id,
                         error="Job creation returned None",
                     )
@@ -474,12 +473,12 @@ class SyncJobQueueService:
                 return None
 
         except Exception as e:
-            logger.error(f"❌ Error creating thumbnail job for image {image_id}: {e}")
+            logger.error(f"Error creating thumbnail job for image {image_id}: {e}")
 
             # Broadcast failure event if requested
             if broadcast_sse:
                 self._broadcast_job_failed_event(
-                    job_type="thumbnail",
+                    job_type=JobTypes.THUMBNAIL,
                     related_id=image_id,
                     error=str(e),
                 )
@@ -488,10 +487,10 @@ class SyncJobQueueService:
 
     def _broadcast_job_created_event(
         self,
-        job_type: str,
+        job_type: JobTypes,
         job_id: Optional[int],
         related_id: Optional[int] = None,
-        priority: str = SSEPriority.NORMAL,
+        priority: SSEPriority = SSEPriority.NORMAL,
     ) -> None:
         """
         Broadcast SSE event for successful job creation (sync version).
@@ -514,10 +513,10 @@ class SyncJobQueueService:
                 event_data[f"{job_type}_related_id"] = str(related_id)
 
             self.sse_ops.create_event(
-                event_type=EVENT_JOB_CREATED,
+                event_type=SSEEvent.JOB_CREATED,
                 event_data=event_data,
                 priority=SSEPriority.NORMAL,
-                source="job_queue",
+                source=SSEEventSource.SYSTEM,
             )
 
         except Exception as e:
@@ -525,7 +524,7 @@ class SyncJobQueueService:
 
     def _broadcast_job_failed_event(
         self,
-        job_type: str,
+        job_type: JobTypes,
         related_id: Optional[int] = None,
         error: str = "Unknown error",
     ) -> None:
@@ -548,10 +547,10 @@ class SyncJobQueueService:
                 event_data[f"{job_type}_related_id"] = str(related_id)
 
             self.sse_ops.create_event(
-                event_type=EVENT_JOB_FAILED,
+                event_type=SSEEvent.JOB_FAILED,
                 event_data=event_data,
                 priority=SSEPriority.HIGH,
-                source="job_queue",
+                source=SSEEventSource.SYSTEM,
             )
 
         except Exception as e:

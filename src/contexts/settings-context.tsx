@@ -90,7 +90,7 @@ interface SettingsContextType {
   setSmallGenerationMode: (
     value: "all" | "latest" | "disabled"
   ) => Promise<void>
-  setPurgeSmalllsOnCompletion: (value: boolean) => Promise<void>
+  setPurgeSmallsOnCompletion: (value: boolean) => Promise<void>
   setImageCaptureType: (value: "PNG" | "JPG") => void
   setOpenWeatherApiKey: (value: string) => void
   setApiKeyModified: (value: boolean) => void
@@ -515,7 +515,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     [updateSetting]
   )
 
-  const setPurgeSmalllsOnCompletion = useCallback(
+  const setPurgeSmallsOnCompletion = useCallback(
     async (value: boolean) => {
       setSettings((prev) => ({ ...prev, purgeSmalllsOnCompletion: value }))
       // Auto-save immediately
@@ -1274,7 +1274,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setTimezone,
     setEnableThumbnailGeneration,
     setSmallGenerationMode,
-    setPurgeSmalllsOnCompletion,
+    setPurgeSmallsOnCompletion,
     setImageCaptureType,
     setOpenWeatherApiKey,
     setApiKeyModified,

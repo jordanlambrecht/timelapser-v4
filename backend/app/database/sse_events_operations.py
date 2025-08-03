@@ -6,17 +6,19 @@ This module handles database operations for Server-Sent Events (SSE) using
 dependency injection for database operations, providing type-safe interfaces.
 """
 
+
 import json
-from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from loguru import logger
+from typing import Any, Dict, List, Optional
+
 import psycopg
 
-from .core import AsyncDatabase, SyncDatabase
 from ..enums import SSEPriority
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import cache, cached_response, generate_composite_etag
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import SSEOperationError
 
 
 class SSEEventQueryBuilder:
@@ -159,9 +161,10 @@ class SSEEventsOperations:
                         event_id = (
                             result["id"] if isinstance(result, dict) else result[0]
                         )
-                        logger.debug(
-                            f"Created SSE event: {event_type} with ID {event_id}"
-                        )
+                        # logger.debug(
+                        #     f"Created SSE event: {event_type} with ID {event_id}",
+                        #     emoji=LogEmoji.SUCCESS,
+                        # )
 
                         # Clear related caches after successful creation
                         await self._clear_sse_event_caches(
@@ -172,9 +175,16 @@ class SSEEventsOperations:
                     else:
                         raise psycopg.DatabaseError("Failed to create SSE event")
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create SSE event {event_type}: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to create SSE event '{event_type}'",
+                details={
+                    "operation": "create_event",
+                    "event_type": event_type,
+                    "priority": priority,
+                    "source": source,
+                },
+            )
 
     async def create_events_batch(self, events: List[Dict[str, Any]]) -> List[int]:
         """
@@ -229,13 +239,21 @@ class SSEEventsOperations:
                     if event_ids:
                         # Clear related caches after successful batch creation
                         await self._clear_sse_event_caches()
-                        logger.debug(f"Created {len(event_ids)} SSE events in batch")
+                        # logger.debug(
+                        #     f"Created {len(event_ids)} SSE events in batch",
+                        #     emoji=LogEmoji.SUCCESS,
+                        # )
 
                     return event_ids
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create SSE events batch: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to create SSE events batch ({len(events)} events)",
+                details={
+                    "operation": "create_events_batch",
+                    "batch_size": len(events),
+                },
+            )
 
     @cached_response(ttl_seconds=15, key_prefix="sse_events")
     async def get_pending_events(
@@ -280,13 +298,22 @@ class SSEEventsOperations:
                         }
                         events.append(event)
 
-                    if events:
-                        logger.debug(f"Retrieved {len(events)} pending SSE events")
+                    # if events:
+                    #     logger.debug(
+                    #         f"Retrieved {len(events)} pending SSE events",
+                    #         emoji=LogEmoji.SUCCESS,
+                    #     )
                     return events
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get pending SSE events: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to get pending SSE events (limit: {limit}, max_age: {max_age_minutes}m)",
+                details={
+                    "operation": "get_pending_events",
+                    "limit": limit,
+                    "max_age_minutes": max_age_minutes,
+                },
+            )
 
     async def mark_events_processed(self, event_ids: List[int]) -> int:
         """
@@ -320,12 +347,20 @@ class SSEEventsOperations:
                         # Clear related caches after successful processing
                         await self._clear_sse_event_caches()
 
-                    logger.debug(f"Marked {updated_count} SSE events as processed")
+                    # logger.debug(
+                    #     f"Marked {updated_count} SSE events as processed",
+                    #     emoji=LogEmoji.SUCCESS,
+                    # )
                     return updated_count
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to mark SSE events as processed: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to mark SSE events as processed ({len(event_ids)} events)",
+                details={
+                    "operation": "mark_events_processed",
+                    "event_ids_count": len(event_ids),
+                },
+            )
 
     async def cleanup_old_events(self, max_age_hours: int = 24) -> int:
         """
@@ -357,19 +392,27 @@ class SSEEventsOperations:
                     if deleted_count > 0:
                         # Clear related caches after successful cleanup
                         await self._clear_sse_event_caches()
-                        logger.info(
-                            f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)"
-                        )
+                        # logger.info(
+                        #     f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)",
+                        #     emoji=LogEmoji.CLEANUP,
+                        # )
                     else:
-                        logger.debug(
-                            f"No old SSE events found for cleanup (older than {max_age_hours}h)"
-                        )
+                        pass
+                        # logger.debug(
+                        #     f"No old SSE events found for cleanup (older than {max_age_hours}h)",
+                        #     emoji=LogEmoji.INFO,
+                        # )
 
                     return deleted_count
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to cleanup old SSE events: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to cleanup old SSE events (older than {max_age_hours}h)",
+                details={
+                    "operation": "cleanup_old_events",
+                    "max_age_hours": max_age_hours,
+                },
+            )
 
     @cached_response(ttl_seconds=60, key_prefix="sse_events")
     async def get_event_stats(self) -> Dict[str, Any]:
@@ -409,9 +452,67 @@ class SSEEventsOperations:
                             "unique_event_types": 0,
                         }
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to get SSE event stats: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                "Failed to get SSE event stats",
+                details={"operation": "get_event_stats"},
+            )
+
+    async def cleanup_stuck_events(self, max_age_hours: int = 24) -> int:
+        """
+        Clean up stuck/old unprocessed SSE events.
+
+        Args:
+            max_age_hours: Maximum age in hours for unprocessed events
+
+        Returns:
+            Number of events deleted
+        """
+        try:
+            cutoff_time = utc_now() - timedelta(hours=max_age_hours)
+
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Delete old unprocessed events
+                    delete_query = """
+                        DELETE FROM sse_events
+                        WHERE processed_at IS NULL
+                            AND created_at < %s
+                    """
+                    await cur.execute(delete_query, (cutoff_time,))
+                    deleted_count = cur.rowcount or 0
+
+                    # if deleted_count > 0:
+                    #     logger.info(
+                    #         f"Cleaned up {deleted_count} stuck SSE events older than {max_age_hours}h",
+                    #         emoji=LogEmoji.SUCCESS,
+                    #         extra_context={
+                    #             "operation": "cleanup_stuck_events",
+                    #             "deleted_count": deleted_count,
+                    #             "max_age_hours": max_age_hours,
+                    #             "cutoff_time": cutoff_time.isoformat(),
+                    #         },
+                    #     )
+                    # else:
+                    #     logger.debug(
+                    #         "No stuck SSE events found for cleanup",
+                    #         extra_context={
+                    #             "operation": "cleanup_stuck_events",
+                    #             "max_age_hours": max_age_hours,
+                    #             "cutoff_time": cutoff_time.isoformat(),
+                    #         },
+                    #     )
+
+                    return deleted_count
+
+        except (psycopg.Error, ValueError):
+            raise SSEOperationError(
+                f"Failed to cleanup stuck SSE events (older than {max_age_hours}h)",
+                details={
+                    "operation": "cleanup_stuck_events",
+                    "max_age_hours": max_age_hours,
+                },
+            )
 
 
 class SyncSSEEventsOperations:
@@ -469,16 +570,24 @@ class SyncSSEEventsOperations:
                     result = cur.fetchone()
                     if result:
                         event_id = result["id"]
-                        logger.debug(
-                            f"Created SSE event: {event_type} with ID {event_id}"
-                        )
+                        # logger.debug(
+                        #     f"Created SSE event: {event_type} with ID {event_id}",
+                        #     emoji=LogEmoji.SUCCESS,
+                        # )
                         return event_id
                     else:
                         raise psycopg.DatabaseError("Failed to create SSE event")
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to create SSE event {event_type}: {e}")
-            raise
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to create SSE event '{event_type}' (sync)",
+                details={
+                    "operation": "create_event_sync",
+                    "event_type": event_type,
+                    "priority": priority,
+                    "source": source,
+                },
+            )
 
     # Removed business logic helper methods:
     # - create_image_captured_event()
@@ -510,11 +619,16 @@ class SyncSSEEventsOperations:
                     cur.execute(query, (max_age_hours,))
                     affected = cur.rowcount
 
-                    if affected and affected > 0:
-                        logger.info(f"Cleaned up {affected} old SSE events")
+                    # if affected and affected > 0:
+                    #     logger.info(
+                    #         f"Cleaned up {affected} old SSE events",
+                    #         emoji=LogEmoji.CLEANUP,
+                    #     )
 
                     return affected or 0
 
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to cleanup old SSE events: {e}")
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            # logger.error(
+            #     "Failed to cleanup old SSE events", exception=e, emoji=LogEmoji.ERROR
+            # )
             return 0

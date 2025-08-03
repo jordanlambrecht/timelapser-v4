@@ -11,7 +11,10 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-from loguru import logger
+from ..services.logger import get_service_logger, LogEmoji
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SYSTEM)
 
 
 class TempFileManager:

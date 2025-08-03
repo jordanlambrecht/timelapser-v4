@@ -49,7 +49,7 @@ export interface SettingsActions {
   setTimezone: (value: string) => void
   setEnableThumbnailGeneration: (value: boolean) => void
   setSmallGenerationMode: (value: boolean) => void
-  setPurgeSmalllsOnCompletion: (value: boolean) => void
+  setPurgeSmallsOnCompletion: (value: boolean) => void
   setImageCaptureType: (value: "PNG" | "JPG") => void
 
   // API settings
@@ -103,7 +103,7 @@ export interface CaptureSettingsCardProps {
   smallGenerationMode: boolean
   setSmallGenerationMode: (value: boolean) => void
   purgeSmalllsOnCompletion: boolean
-  setPurgeSmalllsOnCompletion: (value: boolean) => void
+  setPurgeSmallsOnCompletion: (value: boolean) => void
   imageCaptureType: "PNG" | "JPG"
   setImageCaptureType: (value: "PNG" | "JPG") => void
   saving: boolean

@@ -57,7 +57,10 @@ DESIGN PATTERN: Function Injection Manager
 import inspect
 import asyncio
 from typing import Dict, Any, Optional, Callable
-from loguru import logger
+from ..services.logger import get_service_logger, LogEmoji
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .utils import SchedulerTimeUtils, SchedulerJobTemplate
 from ..database.core import SyncDatabase

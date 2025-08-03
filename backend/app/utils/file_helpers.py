@@ -11,29 +11,51 @@ import re
 from typing import Optional, Dict, Any
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, Response
-from loguru import logger
-
+from ..services.logger import get_service_logger
+from ..enums import LoggerName, LogEmoji
 from ..constants import ALLOWED_IMAGE_EXTENSIONS
-
 from ..config import settings
+
+# Initialize logger
+logger = get_service_logger(LoggerName.UTILITY)
 
 
 # Utility to safely delete a file with logging
 def delete_file_safe(file_path: str) -> bool:
     """
     Safely delete a file, logging any errors. Returns True if deleted, False otherwise.
+
+    Args:
+        file_path: Path to the file to delete
     """
     try:
         path = Path(file_path).resolve()
         if path.exists():
             path.unlink()
-            logger.info(f"🗑️ Deleted file: {path}")
+            logger.info(
+                f"Deleted file: {path}",
+                emoji=LogEmoji.DELETE,
+                extra_context={"operation": "file_delete", "file_path": str(path)},
+            )
             return True
         else:
-            logger.warning(f"⚠️ File not found for deletion: {path}")
+            logger.warning(
+                f"File not found for deletion: {path}",
+                emoji=LogEmoji.WARNING,
+                extra_context={
+                    "operation": "file_delete",
+                    "file_path": str(path),
+                    "status": "not_found",
+                },
+            )
             return False
     except Exception as e:
-        logger.warning(f"❌ Failed to delete file {file_path}: {e}")
+        logger.error(
+            f"Failed to delete file {file_path}",
+            emoji=LogEmoji.ERROR,
+            error_context={"operation": "file_delete", "file_path": file_path},
+            exception=e,
+        )
         return False
 
 
@@ -69,7 +91,16 @@ def validate_file_path(
     try:
         full_path.relative_to(base_path)
     except ValueError:
-        logger.warning(f"Path traversal attempt detected: {file_path}")
+        logger.warning(
+            f"Path traversal attempt detected: {file_path}",
+            emoji=LogEmoji.SECURITY,
+            extra_context={
+                "operation": "file_validation",
+                "file_path": file_path,
+                "base_directory": str(base_path),
+                "security_violation": "path_traversal",
+            },
+        )
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Check if file exists (if required)
@@ -151,8 +182,7 @@ def create_image_response(
         return Response(content=image_bytes, media_type="image/jpeg", headers=headers)
 
     except Exception as e:
-        logger.error(f"Error creating image response for {file_path}: {e}")
-        raise HTTPException(status_code=500, detail="Error reading image file")
+        raise HTTPException(status_code=500, detail="Error reading image file") from e
 
 
 def get_image_with_fallbacks(
@@ -194,7 +224,6 @@ def get_image_with_fallbacks(
                 return file_path
 
     # If we get here, no files were found
-    logger.error(f"No image files found for image {image_data.get('id', 'unknown')}")
     raise HTTPException(status_code=404, detail="Image file not found")
 
 
@@ -216,8 +245,7 @@ def ensure_directory_exists(directory_path: str) -> Path:
         path.mkdir(parents=True, exist_ok=True)
         return path
     except Exception as e:
-        logger.error(f"Failed to create directory {directory_path}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create directory")
+        raise HTTPException(status_code=500, detail="Failed to create directory") from e
 
 
 def clean_filename(filename: str) -> str:
@@ -328,16 +356,14 @@ class FileOperationMixin:
                 try:
                     return func(*args, **kwargs)
                 except OSError as e:
-                    logger.error(f"File system error during {operation_name}: {e}")
                     raise HTTPException(
                         status_code=500,
                         detail=f"File system error during {operation_name}",
-                    )
+                    ) from e
                 except Exception as e:
-                    logger.error(f"Unexpected error during {operation_name}: {e}")
                     raise HTTPException(
                         status_code=500, detail=f"Failed to {operation_name}"
-                    )
+                    ) from e
 
             return wrapper
 
@@ -443,8 +469,8 @@ def scan_directory_for_thumbnails(directory_path: str) -> list:
 
         return thumbnail_files
 
-    except Exception as e:
-        logger.error(f"Error scanning directory {directory_path}: {e}")
+    except Exception:
+        # Error scanning directory - return empty list
         return []
 
 
@@ -533,8 +559,8 @@ def calculate_directory_size(directory_path: str) -> float:
 
         return total_size / (1024 * 1024)  # Convert to MB
 
-    except Exception as e:
-        logger.error(f"Error calculating directory size {directory_path}: {e}")
+    except Exception:
+        # Error calculating directory size - return 0
         return 0.0
 
 
@@ -649,10 +675,8 @@ def get_overlay_path_from_image_path(
 
         return None
 
-    except Exception as e:
-        logger.warning(
-            f"Failed to determine overlay path from image path {image_file}: {e}"
-        )
+    except Exception:
+        # Failed to determine overlay path from image path - return None
         return None
 
 
@@ -696,9 +720,6 @@ def prepare_image_metadata_for_serving(
         }
 
     except Exception as e:
-        logger.error(
-            f"Failed to prepare image {image_data.get('id', 'unknown')} for serving: {e}"
-        )
         return {
             "success": False,
             "error": f"Image preparation failed: {str(e)}",
@@ -744,8 +765,7 @@ def serve_image_with_metadata(
             return FileResponse(path=file_path, media_type=media_type)
 
     except Exception as e:
-        logger.error(f"Failed to create image response for {file_path}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to serve image file")
+        raise HTTPException(status_code=500, detail="Failed to serve image file") from e
 
 
 def get_file_size(file_path: str) -> int:

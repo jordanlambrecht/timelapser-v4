@@ -28,13 +28,18 @@ import asyncio
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
-from loguru import logger
+
+from ...services.settings_service import SettingsService
+from ...services.logger import get_service_logger
+from ...enums import LogSource, LoggerName
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 from urllib.parse import urlparse
 
 from ...utils.time_utils import get_timezone_aware_timestamp_sync
 from . import rtsp_utils
 
-from ...database.core import SyncDatabase
+from ...database.core import AsyncDatabase, SyncDatabase
 from ...models.shared_models import RTSPCaptureResult, CameraConnectivityTestResult
 from ...models.camera_model import CropRotationSettings, SourceResolution, Camera
 from ...constants import (
@@ -44,7 +49,9 @@ from ...constants import (
 )
 
 from ...database.camera_operations import SyncCameraOperations
-from ...database.settings_operations import SyncSettingsOperations
+
+
+# Use standard logger pattern (already imported at top)
 
 
 class RTSPService:
@@ -62,18 +69,20 @@ class RTSPService:
     - Processing settings validation
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, async_db: AsyncDatabase, settings_service):
         """
         Initialize RTSP service with database connection.
 
         Args:
             db: Synchronized database connection for camera data access
+            async_db: Async database connection for settings access
+            settings_service: SettingsService for configuration access
         """
         self.db = db
         # Initialize database operations for camera data access
 
-        self.camera_ops = SyncCameraOperations(db)
-        self.settings_ops = SyncSettingsOperations(db)
+        self.camera_ops = SyncCameraOperations(db, async_db)
+        self.settings_service = settings_service
 
     def test_connection(
         self, camera_id: int, rtsp_url: str
@@ -110,11 +119,14 @@ class RTSPService:
                 response_time_ms=response_time_ms,
                 connection_status="online" if success else "offline",
                 error=None if success else message,
-                test_timestamp=get_timezone_aware_timestamp_sync(self.settings_ops),
+                test_timestamp=get_timezone_aware_timestamp_sync(self.settings_service),
             )
 
         except Exception as e:
-            logger.error(f"Error testing RTSP connection for camera {camera_id}: {e}")
+            logger.error(
+                f"Error testing RTSP connection for camera {camera_id}: {e}",
+                exception=e,
+            )
 
             return CameraConnectivityTestResult(
                 success=False,
@@ -123,7 +135,7 @@ class RTSPService:
                 response_time_ms=None,
                 connection_status="error",
                 error=str(e),
-                test_timestamp=get_timezone_aware_timestamp_sync(self.settings_ops),
+                test_timestamp=get_timezone_aware_timestamp_sync(self.settings_service),
             )
 
     def capture_frame_raw(
@@ -154,7 +166,9 @@ class RTSPService:
             return frame
 
         except Exception as e:
-            logger.error(f"Failed to capture raw frame from {rtsp_url}: {e}")
+            logger.error(
+                f"Failed to capture raw frame from {rtsp_url}: {e}", exception=e
+            )
             return None
 
     def capture_and_process_frame(
@@ -191,7 +205,8 @@ class RTSPService:
 
         except Exception as e:
             logger.error(
-                f"Failed to capture and process frame for camera {camera.id}: {e}"
+                f"Failed to capture and process frame for camera {camera.id}: {e}",
+                exception=e,
             )
             return {"success": False, "error": str(e)}
 
@@ -286,7 +301,7 @@ class RTSPService:
                 return None
 
             # Create resolution model
-            now = get_timezone_aware_timestamp_sync(self.settings_ops)
+            now = get_timezone_aware_timestamp_sync(self.settings_service)
             resolution = SourceResolution(width=width, height=height, detected_at=now)
 
             logger.info(
@@ -296,7 +311,8 @@ class RTSPService:
 
         except Exception as e:
             logger.error(
-                f"Error detecting source resolution for camera {camera_id}: {e}"
+                f"Error detecting source resolution for camera {camera_id}: {e}",
+                exception=e,
             )
             return None
 
@@ -350,7 +366,9 @@ class RTSPService:
             return width, height
 
         except Exception as e:
-            logger.error(f"Error testing crop settings for camera {camera_id}: {e}")
+            logger.error(
+                f"Error testing crop settings for camera {camera_id}: {e}", exception=e
+            )
             return None
 
     def capture_preview(self, camera_id: int) -> RTSPCaptureResult:
@@ -396,7 +414,9 @@ class RTSPService:
             )
 
         except Exception as e:
-            logger.error(f"Error capturing preview for camera {camera_id}: {e}")
+            logger.error(
+                f"Error capturing preview for camera {camera_id}: {e}", exception=e
+            )
             return RTSPCaptureResult(success=False, error=str(e))
 
     def validate_rtsp_url(self, rtsp_url: str) -> Dict[str, Any]:
@@ -447,7 +467,7 @@ class RTSPService:
             }
 
         except Exception as e:
-            logger.error(f"RTSP URL validation failed: {e}")
+            logger.error(f"RTSP URL validation failed: {e}", exception=e)
             return {"valid": False, "error": str(e)}
 
     def get_frame_metadata(self, raw_frame: Any) -> Dict[str, Any]:
@@ -484,7 +504,7 @@ class RTSPService:
             return metadata
 
         except Exception as e:
-            logger.error(f"Failed to extract frame metadata: {e}")
+            logger.error(f"Failed to extract frame metadata: {e}", exception=e)
             return {"error": str(e)}
 
     def _get_camera_with_validation(self, camera_id: int) -> Optional[Camera]:
@@ -505,7 +525,7 @@ class RTSPService:
                 logger.error(f"Camera {camera_id} not found")
             return camera
         except Exception as e:
-            logger.error(f"Database error getting camera {camera_id}: {e}")
+            logger.error(f"Database error getting camera {camera_id}: {e}", exception=e)
             return None
 
     def _get_capture_settings(self) -> Dict[str, Any]:
@@ -518,8 +538,8 @@ class RTSPService:
             Capture settings dictionary with defaults
         """
         try:
-            quality_setting = self.settings_ops.get_setting("image_quality")
-            timeout_setting = self.settings_ops.get_setting("rtsp_timeout_seconds")
+            quality_setting = self.settings_service.get_setting("image_quality")
+            timeout_setting = self.settings_service.get_setting("rtsp_timeout_seconds")
 
             quality = DEFAULT_RTSP_QUALITY
             if quality_setting:
@@ -546,7 +566,7 @@ class RTSPService:
             }
 
         except Exception as e:
-            logger.warning(f"Failed to get capture settings: {e}")
+            logger.warning(f"Failed to get capture settings: {e}", exception=e)
             return {
                 "quality": DEFAULT_RTSP_QUALITY,
                 "timeout": DEFAULT_RTSP_TIMEOUT_SECONDS,
@@ -611,7 +631,7 @@ class RTSPService:
             return processed_frame, metadata
 
         except Exception as e:
-            logger.error(f"Processing pipeline failed: {e}")
+            logger.error(f"Processing pipeline failed: {e}", exception=e)
             return frame, {"error": str(e)}
 
 
@@ -654,7 +674,9 @@ class AsyncRTSPService:
             )
             return result
         except Exception as e:
-            logger.error(f"Async RTSP connection test failed for {rtsp_url}: {e}")
+            logger.error(
+                f"Async RTSP connection test failed for {rtsp_url}: {e}", exception=e
+            )
 
             return CameraConnectivityTestResult(
                 success=False,
@@ -664,7 +686,7 @@ class AsyncRTSPService:
                 connection_status="async_error",
                 error=str(e),
                 test_timestamp=get_timezone_aware_timestamp_sync(
-                    self.sync_rtsp_service.settings_ops
+                    self.sync_rtsp_service.settings_service
                 ),
             )
 
@@ -686,7 +708,9 @@ class AsyncRTSPService:
             )
             return result
         except Exception as e:
-            logger.error(f"Async preview capture failed for camera {camera_id}: {e}")
+            logger.error(
+                f"Async preview capture failed for camera {camera_id}: {e}", exception=e
+            )
             return RTSPCaptureResult(success=False, error=str(e))
 
     async def detect_source_resolution(
@@ -710,7 +734,8 @@ class AsyncRTSPService:
             return result
         except Exception as e:
             logger.error(
-                f"Async source resolution detection failed for camera {camera_id}: {e}"
+                f"Async source resolution detection failed for camera {camera_id}: {e}",
+                exception=e,
             )
             return None
 
@@ -736,5 +761,8 @@ class AsyncRTSPService:
             )
             return result
         except Exception as e:
-            logger.error(f"Async crop settings test failed for camera {camera_id}: {e}")
+            logger.error(
+                f"Async crop settings test failed for camera {camera_id}: {e}",
+                exception=e,
+            )
             return None

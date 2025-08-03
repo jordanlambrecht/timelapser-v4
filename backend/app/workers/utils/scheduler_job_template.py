@@ -55,7 +55,10 @@ CONFIGURATION STANDARDS:
 
 import asyncio
 from typing import Dict, Any, Callable
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .scheduler_time_utils import SchedulerTimeUtils
 from ...constants import SCHEDULER_MAX_INSTANCES

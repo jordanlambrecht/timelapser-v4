@@ -9,6 +9,7 @@ of duplicated code found across ThumbnailWorker and OverlayWorker.
 import asyncio
 import time
 from abc import abstractmethod
+from datetime import timedelta
 from typing import Dict, Any, List, Optional, Callable, TypeVar, Generic, Sequence
 
 from ..base_worker import BaseWorker
@@ -40,7 +41,6 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
     Workers that inherit from this mixin need only implement the
     job-specific logic while gaining all the shared infrastructure.
 
-    ELIMINATES: ~800 lines of duplicated code
     PROVIDES: Consistent, tested, optimized job processing patterns
     """
 
@@ -104,8 +104,8 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
         self.worker_interval = worker_interval
         self.cleanup_hours = cleanup_hours
 
-        # Cleanup tracking
-        self.last_cleanup_time = utc_now()
+        # Cleanup tracking - initialize to allow immediate first cleanup
+        self.last_cleanup_time = utc_now() - timedelta(hours=cleanup_hours)
 
     # Abstract methods that must be implemented by concrete workers
 
@@ -317,9 +317,9 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
         """
         now = utc_now()
 
-        # Only run cleanup at configured intervals
+        # Only run cleanup after the configured interval has passed
         if (now - self.last_cleanup_time).total_seconds() < (self.cleanup_hours * 3600):
-            return
+            return  # Not enough time has passed since last cleanup
 
         try:
             self.log_debug("Running periodic job cleanup")

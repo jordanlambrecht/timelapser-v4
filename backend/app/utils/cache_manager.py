@@ -8,24 +8,25 @@ Provides TTL-based caching for frequently requested data like latest images
 to reduce database load and improve response times.
 
 Related Files:
-- cache_invalidation.py: Business logic for cache invalidation events
-  This file contains the infrastructure (storage, TTL, statistics) while
-  cache_invalidation.py contains the business logic for when and how to
-  invalidate cached data based on SSE events and application state changes.
+    - cache_invalidation.py: Business logic for cache invalidation events
+        This file contains the infrastructure (storage, TTL, statistics) while
+    - cache_invalidation.py contains the business logic for when and how to
+        invalidate cached data based on SSE events and application state changes.
 """
 
 import time
 import hashlib
 import json
 from typing import Dict, Any, Optional, TypeVar, Callable, Awaitable, Union
-from datetime import datetime, timedelta
-from loguru import logger
+from datetime import datetime
+
 import asyncio
 from functools import wraps
 
 T = TypeVar("T")
 
 
+# NOTE: Keep logger out of this file otherwise it will cause circular imports
 class CacheEntry:
     """Individual cache entry with TTL and ETag support."""
 
@@ -74,13 +75,13 @@ class MemoryCache:
                 entry = self._cache[key]
                 if entry.is_expired():
                     del self._cache[key]
-                    logger.debug(f"🗑️ Cache expired and removed: {key}")
+                    # logger.debug(f"🗑️ Cache expired and removed: {key}")
                     return None
 
-                logger.debug(f"🎯 Cache hit: {key} (age: {entry.get_age_seconds()}s)")
+                # logger.debug(f"🎯 Cache hit: {key} (age: {entry.get_age_seconds()}s)")
                 return entry.data
 
-        logger.debug(f"❌ Cache miss: {key}")
+        # logger.debug(f"❌ Cache miss: {key}")
         return None
 
     async def set(
@@ -98,7 +99,7 @@ class MemoryCache:
         async with self._lock:
             self._cache[key] = CacheEntry(value, ttl_seconds, etag)
             etag_info = f" (ETag: {etag})" if etag else ""
-            logger.debug(f"💾 Cached: {key} (TTL: {ttl_seconds}s){etag_info}")
+            # logger.debug(f"💾 Cached: {key} (TTL: {ttl_seconds}s){etag_info}")
 
     async def get_with_etag(self, key: str) -> tuple[Optional[Any], Optional[str]]:
         """
@@ -115,15 +116,15 @@ class MemoryCache:
                 entry = self._cache[key]
                 if entry.is_expired():
                     del self._cache[key]
-                    logger.debug(f"🗑️ Cache expired and removed: {key}")
+                    # logger.debug(f"🗑️ Cache expired and removed: {key}")
                     return None, None
 
-                logger.debug(
-                    f"🎯 Cache hit with ETag: {key} (age: {entry.get_age_seconds()}s)"
-                )
+                # logger.debug(
+                #     f"🎯 Cache hit with ETag: {key} (age: {entry.get_age_seconds()}s)"
+                # )
                 return entry.data, entry.etag
 
-        logger.debug(f"❌ Cache miss: {key}")
+        # logger.debug(f"❌ Cache miss: {key}")
         return None, None
 
     async def delete(self, key: str) -> bool:
@@ -139,7 +140,7 @@ class MemoryCache:
         async with self._lock:
             if key in self._cache:
                 del self._cache[key]
-                logger.debug(f"🗑️ Cache deleted: {key}")
+                # logger.debug(f"🗑️ Cache deleted: {key}")
                 return True
         return False
 
@@ -148,7 +149,7 @@ class MemoryCache:
         async with self._lock:
             count = len(self._cache)
             self._cache.clear()
-            logger.info(f"🧹 Cache cleared: {count} entries removed")
+            # logger.info(f"🧹 Cache cleared: {count} entries removed")
 
     async def cleanup_expired(self) -> int:
         """
@@ -166,8 +167,8 @@ class MemoryCache:
             for key in expired_keys:
                 del self._cache[key]
 
-            if expired_keys:
-                logger.debug(f"🗑️ Removed {len(expired_keys)} expired cache entries")
+            # if expired_keys:
+            #     logger.debug(f"🗑️ Removed {len(expired_keys)} expired cache entries")
 
             return len(expired_keys)
 
@@ -258,10 +259,10 @@ class MemoryCache:
             for key in keys_to_delete:
                 del self._cache[key]
 
-            if keys_to_delete:
-                logger.debug(
-                    f"🗑️ Bulk deleted {len(keys_to_delete)} cache entries with prefix '{prefix}'"
-                )
+            # if keys_to_delete:
+            #     logger.debug(
+            #         f"🗑️ Bulk deleted {len(keys_to_delete)} cache entries with prefix '{prefix}'"
+            #     )
 
             return len(keys_to_delete)
 
@@ -392,9 +393,9 @@ def generate_timestamp_etag(obj: Any, timestamp_field: str = "updated_at") -> st
             timestamp = getattr(obj, timestamp_field, None)
 
         if timestamp is None:
-            logger.warning(
-                f"⚠️ No {timestamp_field} found for ETag generation, using current time"
-            )
+            # logger.warning(
+            #     f"⚠️ No {timestamp_field} found for ETag generation, using current time"
+            # )
             timestamp = datetime.now()
 
         # Convert datetime to timestamp
@@ -405,11 +406,11 @@ def generate_timestamp_etag(obj: Any, timestamp_field: str = "updated_at") -> st
             timestamp_value = float(timestamp)
 
         etag = f'"{timestamp_value}"'
-        logger.debug(f"🏷️ Generated timestamp ETag: {etag}")
+        # logger.debug(f"🏷️ Generated timestamp ETag: {etag}")
         return etag
 
     except Exception as e:
-        logger.error(f"❌ ETag generation failed: {e}")
+        # logger.error(f"❌ ETag generation failed: {e}")
         # Fallback to current timestamp
         return f'"{datetime.now().timestamp()}"'
 
@@ -452,11 +453,11 @@ def generate_content_hash_etag(
         hash_value = hasher.hexdigest()
 
         etag = f'"{hash_value}"'
-        logger.debug(f"🏷️ Generated {algorithm} hash ETag: {etag}")
+        # logger.debug(f"🏷️ Generated {algorithm} hash ETag: {etag}")
         return etag
 
     except Exception as e:
-        logger.error(f"❌ Hash ETag generation failed: {e}")
+        # logger.error(f"❌ Hash ETag generation failed: {e}")
         # Fallback to timestamp-based ETag
         return f'"{datetime.now().timestamp()}"'
 
@@ -507,11 +508,11 @@ def generate_composite_etag(
             parts.append(str(datetime.now().timestamp()))
 
         etag = f'"{"-".join(parts)}"'
-        logger.debug(f"🏷️ Generated composite ETag: {etag}")
+        # logger.debug(f"🏷️ Generated composite ETag: {etag}")
         return etag
 
     except Exception as e:
-        logger.error(f"❌ Composite ETag generation failed: {e}")
+        # logger.error(f"❌ Composite ETag generation failed: {e}")
         return f'"{obj_id}-{datetime.now().timestamp()}"'
 
 
@@ -574,11 +575,11 @@ def generate_collection_etag(items: list, count_field: Optional[str] = None) -> 
             total_count = count
 
         etag = f'"{total_count}-{latest_timestamp.timestamp()}"'
-        logger.debug(f"🏷️ Generated collection ETag: {etag} (count: {total_count})")
+        # logger.debug(f"🏷️ Generated collection ETag: {etag} (count: {total_count})")
         return etag
 
     except Exception as e:
-        logger.error(f"❌ Collection ETag generation failed: {e}")
+        # logger.error(f"❌ Collection ETag generation failed: {e}")
         return f'"{len(items) if items else 0}-{datetime.now().timestamp()}"'
 
 
@@ -615,10 +616,10 @@ def validate_etag_match(request_etag: Optional[str], current_etag: str) -> bool:
 
     match = normalized_request == normalized_current
 
-    if match:
-        logger.debug(f"✅ ETag match: {request_etag} == {current_etag}")
-    else:
-        logger.debug(f"❌ ETag mismatch: {request_etag} != {current_etag}")
+    # if match:
+    #     logger.debug(f"✅ ETag match: {request_etag} == {current_etag}")
+    # else:
+    #     logger.debug(f"❌ ETag mismatch: {request_etag} != {current_etag}")
 
     return match
 
@@ -641,7 +642,7 @@ def extract_etag_from_headers(headers: dict) -> Optional[str]:
     for header_name in ["if-none-match", "If-None-Match", "if-match", "If-Match"]:
         etag = headers.get(header_name)
         if etag:
-            logger.debug(f"🏷️ Extracted ETag from {header_name}: {etag}")
+            # logger.debug(f"🏷️ Extracted ETag from {header_name}: {etag}")
             return etag.strip()
 
     return None
@@ -688,7 +689,7 @@ def cached_response_with_etag(
             # Try to get from cache with ETag
             cached_result, cached_etag = await cache.get_with_etag(cache_key)
             if cached_result is not None:
-                logger.debug(f"🎯 Cache hit with ETag: {cache_key}")
+                # logger.debug(f"🎯 Cache hit with ETag: {cache_key}")
                 return cached_result
 
             # Execute function and cache result with ETag
@@ -700,7 +701,8 @@ def cached_response_with_etag(
                 try:
                     etag = etag_generator(result)
                 except Exception as e:
-                    logger.warning(f"⚠️ ETag generation failed for {cache_key}: {e}")
+                    # logger.warning(f"⚠️ ETag generation failed for {cache_key}: {e}")
+                    pass
 
             await cache.set(cache_key, result, ttl_seconds, etag)
 
@@ -735,12 +737,12 @@ async def get_timezone_async(settings_service) -> str:
                 timezone = settings_service.get_setting("timezone")
             return timezone or "UTC"
         else:
-            logger.warning(
-                f"Settings service {type(settings_service)} does not have get_setting method"
-            )
+            # logger.warning(
+            #     f"Settings service {type(settings_service)} does not have get_setting method"
+            # )
             return "UTC"
     except Exception as e:
-        logger.warning(f"Failed to get timezone from settings service: {e}")
+        # logger.warning(f"Failed to get timezone from settings service: {e}")
         return "UTC"
 
 
@@ -771,11 +773,11 @@ async def get_setting_cached(
                 value = settings_service.get_setting(key)
             return value if value is not None else default
         else:
-            logger.warning(
-                f"Settings service {type(settings_service)} does not have get_setting method"
-            )
+            # logger.warning(
+            #     f"Settings service {type(settings_service)} does not have get_setting method"
+            # )
             return default
 
     except Exception as e:
-        logger.error(f"❌ Settings error for key '{key}': {e}")
+        # logger.error(f"❌ Settings error for key '{key}': {e}")
         return default

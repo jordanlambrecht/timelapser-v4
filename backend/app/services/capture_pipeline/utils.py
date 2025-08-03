@@ -35,7 +35,10 @@ from datetime import datetime
 from pathlib import Path
 import os
 import traceback
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 import cv2
 
 

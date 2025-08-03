@@ -97,6 +97,20 @@ class ThumbnailJobType(str, Enum):
 # =============================================================================
 
 
+class OverlayGridPosition(str, Enum):
+    """Grid position enum for overlay items."""
+
+    TOP_LEFT = "topLeft"
+    TOP_CENTER = "topCenter"
+    TOP_RIGHT = "topRight"
+    CENTER_LEFT = "centerLeft"
+    CENTER = "center"
+    CENTER_RIGHT = "centerRight"
+    BOTTOM_LEFT = "bottomLeft"
+    BOTTOM_CENTER = "bottomCenter"
+    BOTTOM_RIGHT = "bottomRight"
+
+
 class OverlayJobPriority(str, Enum):
     """Overlay job priority levels (uses JobPriority values)."""
 
@@ -114,6 +128,7 @@ class OverlayJobStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    NOT_IMPLEMENTED = "not_implemented"
 
 
 class OverlayJobType(str, Enum):
@@ -163,6 +178,17 @@ class VideoAutomationMode(str, Enum):
     IMMEDIATE = "immediate"
     THUMBNAIL = "thumbnail"
 
+    @classmethod
+    def get_valid_modes(cls) -> list["VideoAutomationMode"]:
+        return [
+            cls.MANUAL,
+            cls.PER_CAPTURE,
+            cls.SCHEDULED,
+            cls.MILESTONE,
+            cls.IMMEDIATE,
+            cls.THUMBNAIL,
+        ]
+
 
 class VideoQuality(str, Enum):
     """Video quality levels for generation settings (unified definition)."""
@@ -171,6 +197,11 @@ class VideoQuality(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     ULTRA = "ultra"
+
+    @classmethod
+    def get_valid_levels(cls) -> list["VideoQuality"]:
+        """Return a list of all defined video quality levels."""
+        return [cls.LOW, cls.MEDIUM, cls.HIGH, cls.ULTRA]
 
 
 # =============================================================================
@@ -195,7 +226,17 @@ class TimelapseAction(str, Enum):
 class SSEEvent(str, Enum):
     """SSE event types for real-time event streaming."""
 
+    JOB_CREATED = "job_created"
+    JOB_STARTED = "job_started"
+    JOB_UPDATED = "job_updated"
+    JOB_COMPLETED = "job_completed"
+    JOB_FAILED = "job_failed"
+    JOB_CANCELLED = "job_cancelled"
+    JOB_RETRY_SCHEDULED = "job_retry_scheduled"
+    JOB_CLEANED_UP = "job_cleaned_up"
+
     # Video Pipeline Events
+    VIDEO_JOB_CREATED = "video_job_created"
     VIDEO_JOB_QUEUED = "video_job_queued"
     VIDEO_JOB_STARTED = "video_job_started"
     VIDEO_JOB_COMPLETED = "video_job_completed"
@@ -203,6 +244,10 @@ class SSEEvent(str, Enum):
     VIDEO_GENERATION_PROGRESS = "video_generation_progress"
     VIDEO_GENERATED = "video_generated"
     VIDEO_PIPELINE_HEALTH = "video_pipeline_health"
+    VIDEO_UPDATED = "video_updated"
+    VIDEO_CREATED = "video_created"
+    VIDEO_DELETED = "video_deleted"
+    VIDEO_STATS_CALCULATED = "video_stats_calculated"
 
     # Thumbnail Worker Events
     THUMBNAIL_WORKER_STARTED = "thumbnail_worker_started"
@@ -219,22 +264,64 @@ class SSEEvent(str, Enum):
     IMAGE_CAPTURED = "image_captured"
     CAPTURE_FAILED = "capture_failed"
     TIMELAPSE_STARTED = "timelapse_started"
+    TIMELAPSE_CREATED = "timelapse_created"
+    TIMELAPSE_UPDATED = "timelapse_updated"
+    TIMELAPSE_HEALTH_MONITORED = "timelapse_health_monitored"
+    TIMELAPSE_STATISTICS_UPDATED = "timelapse_statistics_updated"
+    TIMELAPSE_HEALTH_CHECK_COMPLETED = "timelapse_health_check_completed"
     TIMELAPSE_PAUSED = "timelapse_paused"
     TIMELAPSE_RESUMED = "timelapse_resumed"
     TIMELAPSE_COMPLETED = "timelapse_completed"
+    TIMELAPSE_DELETED = "timelapse_deleted"
+    TIMELAPSE_STATUS_UPDATED = "timelapse_status_updated"
+    TIMELAPSE_SETTINGS_UPDATED = "timelapse_automation_settings_updated"
+
+    # Overlay Pipeline Events
+    OVERLAY_GENERATION_STARTED = "overlay_generation_started"
+    OVERLAY_GENERATION_COMPLETED = "overlay_generation_completed"
+    OVERLAY_GENERATION_FAILED = "overlay_generation_failed"
+
+    # Image Service Events
+    IMAGE_CREATED = "image_created"
+    IMAGE_UPDATED = "image_updated"
+    IMAGE_DELETED = "image_deleted"
+    IMAGE_REQUESTED = "image_requested"
+    IMAGES_BATCH_LOADED = "images_batch_loaded"
+    IMAGE_BATCH_UPDATED = "image_batch_updated"
+    IMAGE_BATCH_DELETED = "image_batch_deleted"
 
     # Camera Events
     CAMERA_CREATED = "camera_created"
     CAMERA_UPDATED = "camera_updated"
     CAMERA_DELETED = "camera_deleted"
     CAMERA_HEALTH_CHANGED = "camera_health_changed"
+    CAMERA_STATUS_CHANGED = "camera_status_changed"
 
     # Settings Events
     SETTINGS_UPDATED = "settings_updated"
+    SETTING_DELETED = "settings_deleted"
+
+    # Weather Events
+    WEATHER_UPDATED = "weather_updated"
+    WEATHER_CONDITIONS_CHANGED = "weather_conditions_changed"
+
+    # Corruption Events
+    CORRUPTION_DETECTED = "corruption_detected"
+    CORRUPTION_RESOLVED = "corruption_resolved"
+    CORRUPTION_PIPELINE_STARTED = "corruption_pipeline_started"
+    CORRUPTION_PIPELINE_COMPLETED = "corruption_pipeline_completed"
+    CORRUPTION_PIPELINE_FAILED = "corruption_pipeline_failed"
+    CORRUPTION_PIPELINE_RETRY_SCHEDULED = "corruption_pipeline_retry_scheduled"
+    CORRUPTION_PIPELINE_CLEANED_UP = "corruption_pipeline_cleaned_up"
 
     # System Events
     WORKER_STARTED = "worker_started"
     WORKER_STOPPED = "worker_stopped"
+    WORKER_STATISTICS = "worker_statistics"
+    WORKER_ERROR = "worker_error"
+    SYSTEM_STARTED = "system_started"
+    SYSTEM_STOPPED = "system_stopped"
+    SYSTEM_HEALTH_CHECK = "system_health_check"
     SYSTEM_ERROR = "system_error"
     SYSTEM_INFO = "system_info"
     SYSTEM_WARNING = "system_warning"
@@ -259,6 +346,12 @@ class SSEEvent(str, Enum):
     LOG_BROADCASTED = "log_broadcasted"
     LOG = "log"  # Generic log event for all log messages
 
+    LOG_ERROR = "log_error"
+    LOG_WARNING = "log_warning"
+    LOG_INFO = "log_info"
+    LOG_DEBUG = "log_debug"
+    LOG_CRITICAL = "log_critical"
+
     # Admin Events
     ADMIN_ACTION = "admin_action"
 
@@ -278,6 +371,7 @@ class SSEEventSource(str, Enum):
     WORKER = "worker"
     FFMPEG = "ffmpeg"
     ADMIN = "admin"
+    API = "api"
 
 
 # =============================================================================
@@ -308,6 +402,7 @@ class LogSource(str, Enum):
     SCHEDULER = "scheduler"
     PIPELINE = "pipeline"
     MIDDLEWARE = "middleware"
+    HEALTH = "health"
 
 
 class LogEmoji(str, Enum):
@@ -322,12 +417,13 @@ class LogEmoji(str, Enum):
     # Status emojis
     SUCCESS = "✅"
     COMPLETED = "✅"
-    FAILED = "💥"
-    ERROR = "💥"
+    PENDING = "⏳"
+    FAILED = "❌"
+    ERROR = "❌"
     WARNING = "⚠️"
     INFO = "ℹ️"
-    DEBUG = "🔍"
-    CRITICAL = "🚨"
+    DEBUG = "🐞"
+    CRITICAL = "☠️"
 
     # Work emojis
     PROCESSING = "🔄"
@@ -355,6 +451,8 @@ class LogEmoji(str, Enum):
     HEALTH = "💓"
     CLEANUP = "🧹"
     MAINTENANCE = "🔧"
+    API = "🔌"
+    SECURITY = "🔒"
 
     # Database emojis
     DATABASE = "🗄️"
@@ -363,13 +461,31 @@ class LogEmoji(str, Enum):
 
     # Network emojis
     NETWORK = "🌐"
-    CONNECTION = "🔗"
-    DISCONNECTED = "🔌"
+    CONNECTION = "🟢"
+    DISCONNECTED = "🔴"
 
     # Worker emojis
     WORKER = "👷"
     SCHEDULER = "⏰"
     QUEUE = "📋"
+
+    # Action Emojis
+    CREATE = "➕"
+    UPDATE = "✏️"
+    DELETE = "🗑️"
+    ARCHIVE = "📦"
+    RESTORE = "🔄"
+
+    # User/Session emojis
+    USER = "👤"
+    SESSION = "🖥️"
+    LOGIN = "🔑"
+    LOGOUT = "🚪"
+
+    # Notification emojis
+    NOTIFICATION = "🔔"
+    ALERT = "🚨"
+    MESSAGE = "💬"
 
     # Other emojis
     CLOWN = "🤡"
@@ -377,7 +493,11 @@ class LogEmoji(str, Enum):
     FIRE = "🔥"
     ROCKET = "🚀"
     MAGIC = "✨"
+    CHART = "📊"
     ROBOT = "🤖"
+    BROADCAST = "📡"
+    SEARCH = "🔍"
+    FACTORY = "🏭"
 
 
 class LoggerName(str, Enum):
@@ -395,6 +515,7 @@ class LoggerName(str, Enum):
     SCHEDULER_WORKER = "scheduler_worker"
     HEALTH_WORKER = "health_worker"
     VIDEO_WORKER = "video_worker"
+    SSE_WORKER = "sse_worker"
 
     # Pipeline loggers
     VIDEO_PIPELINE = "video_pipeline"
@@ -410,10 +531,20 @@ class LoggerName(str, Enum):
     VIDEO_SERVICE = "video_service"
     SETTINGS_SERVICE = "settings_service"
     LOG_SERVICE = "log_service"
+    WEATHER_SERVICE = "weather_service"
+    SCHEDULING_SERVICE = "scheduling_service"
+    STATISTICS_SERVICE = "statistics_service"
 
     # System loggers
     SYSTEM = "system"
     FFMPEG = "ffmpeg"
+    SSEBROADCASTER = "sse_broadcaster"
+    DATABASE = "database"
+    ROUTER = "router"
+    API = "api"
+    TEST = "test"
+    UTILITY = "utility"
+    ADMIN = "admin"
 
     # Generic
     UNKNOWN = "unknown"
@@ -457,3 +588,4 @@ class TimelapseStatus(str, Enum):
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
+    UNKNOWN = "unknown"

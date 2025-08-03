@@ -8,37 +8,33 @@ Responsibilities:
 - Status updates and retry scheduling
 - Cleanup of completed jobs
 """
-
-from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, List, Optional
+
 import psycopg
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.overlay_model import (
-    OverlayGenerationJob,
-    OverlayGenerationJobCreate,
-    OverlayJobStatistics,
-)
-from ..enums import JobStatus
-from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 from ..constants import (
     DEFAULT_OVERLAY_JOB_BATCH_SIZE,
     DEFAULT_OVERLAY_MAX_RETRIES,
     OVERLAY_JOB_RETRY_DELAYS,
 )
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
+from ..enums import JobStatus
+from ..models.overlay_model import (
+    OverlayGenerationJob,
+    OverlayGenerationJobCreate,
+    OverlayJobStatistics,
 )
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import OverlayOperationError
+from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
 class OverlayJobQueryBuilder:
     """Centralized query builder for overlay job operations.
-    
+
     IMPORTANT: For optimal performance, ensure these indexes exist:
     - CREATE INDEX idx_overlay_jobs_status ON overlay_generation_jobs(status);
     - CREATE INDEX idx_overlay_jobs_priority_created ON overlay_generation_jobs(priority, created_at);
@@ -252,8 +248,9 @@ class OverlayJobOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to create overlay generation job: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to create overlay generation job: {e}", operation="create_job"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="overlay_job")
     async def get_job_by_id(self, job_id: int) -> Optional[OverlayGenerationJob]:
@@ -277,8 +274,9 @@ class OverlayJobOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get overlay generation job {job_id}: {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     @cached_response(ttl_seconds=15, key_prefix="overlay_job")
     async def get_pending_jobs(
@@ -300,7 +298,9 @@ class OverlayJobOperations:
                 async with conn.cursor() as cur:
                     # Use optimized query builder with named parameters
                     query = OverlayJobQueryBuilder.build_pending_jobs_query()
-                    await cur.execute(query, {"status": JobStatus.PENDING, "limit": limit})
+                    await cur.execute(
+                        query, {"status": JobStatus.PENDING, "limit": limit}
+                    )
 
                     rows = await cur.fetchall()
                     jobs = [_row_to_overlay_job(dict(row)) for row in rows]
@@ -308,8 +308,9 @@ class OverlayJobOperations:
                     return jobs
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get pending overlay generation jobs: {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     async def update_job_status(
         self,
@@ -368,9 +369,10 @@ class OverlayJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to update overlay generation job {job_id} status: {e}"
-            )
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
+
             return False
 
     async def mark_job_processing(self, job_id: int) -> bool:
@@ -424,7 +426,10 @@ class OverlayJobOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to increment retry count for job {job_id}: {e}")
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
+
             return False
 
     @cached_response(ttl_seconds=30, key_prefix="overlay_job")
@@ -441,30 +446,43 @@ class OverlayJobOperations:
         try:
             # Use safe query builder with named parameters
             now = utc_now()
-            
+
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     # Use safe query builder
                     query = OverlayJobQueryBuilder.build_retry_eligible_query()
-                    
+
                     # Build parameters safely based on configured retry delays
                     params = {
                         "status": JobStatus.FAILED,
                         "max_retries": DEFAULT_OVERLAY_MAX_RETRIES,
                         "now": now,
-                        "delay_0": str(OVERLAY_JOB_RETRY_DELAYS[0]) if len(OVERLAY_JOB_RETRY_DELAYS) > 0 else "5",
-                        "delay_1": str(OVERLAY_JOB_RETRY_DELAYS[1]) if len(OVERLAY_JOB_RETRY_DELAYS) > 1 else "15", 
-                        "delay_2": str(OVERLAY_JOB_RETRY_DELAYS[2]) if len(OVERLAY_JOB_RETRY_DELAYS) > 2 else "60"
+                        "delay_0": (
+                            str(OVERLAY_JOB_RETRY_DELAYS[0])
+                            if len(OVERLAY_JOB_RETRY_DELAYS) > 0
+                            else "5"
+                        ),
+                        "delay_1": (
+                            str(OVERLAY_JOB_RETRY_DELAYS[1])
+                            if len(OVERLAY_JOB_RETRY_DELAYS) > 1
+                            else "15"
+                        ),
+                        "delay_2": (
+                            str(OVERLAY_JOB_RETRY_DELAYS[2])
+                            if len(OVERLAY_JOB_RETRY_DELAYS) > 2
+                            else "60"
+                        ),
                     }
-                    
+
                     await cur.execute(query, params)
 
                     rows = await cur.fetchall()
                     return [_row_to_overlay_job(dict(row)) for row in rows]
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get jobs for retry: {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     async def cleanup_completed_jobs(self, hours: int = 24) -> int:
         """
@@ -502,8 +520,9 @@ class OverlayJobOperations:
                     return deleted_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to cleanup completed overlay jobs: {e}")
-            return 0
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="overlay_job")
     async def get_job_statistics(self) -> OverlayJobStatistics:
@@ -541,8 +560,10 @@ class OverlayJobOperations:
             return OverlayJobStatistics()
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get overlay job statistics: {e}")
-            return OverlayJobStatistics()
+            raise OverlayOperationError(
+                f"Failed to get overlay job statistics: {e}",
+                operation="get_job_statistics",
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="overlay_job")
     async def get_jobs_by_image_id(self, image_id: int) -> List[OverlayGenerationJob]:
@@ -559,10 +580,9 @@ class OverlayJobOperations:
                     return [_row_to_overlay_job(dict(row)) for row in rows]
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to get overlay generation jobs for image {image_id}: {e}"
-            )
-            return []
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     async def cancel_pending_jobs_for_image(self, image_id: int) -> int:
         """Cancel all pending overlay generation jobs for a specific image"""
@@ -591,8 +611,9 @@ class OverlayJobOperations:
                     return cancelled_count
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to cancel pending jobs for image {image_id}: {e}")
-            return 0
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     async def recover_stuck_jobs(
         self,
@@ -661,8 +682,9 @@ class SyncOverlayJobOperations:
                     return None
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to create overlay generation job (sync): {e}")
-            return None
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     def get_pending_jobs(
         self, limit: int = DEFAULT_OVERLAY_JOB_BATCH_SIZE
@@ -679,8 +701,9 @@ class SyncOverlayJobOperations:
                     return [_row_to_overlay_job(dict(row)) for row in rows]
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get pending overlay generation jobs (sync): {e}")
-            return []
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     def mark_job_processing(self, job_id: int) -> bool:
         """Mark job as processing (sync)"""
@@ -696,17 +719,16 @@ class SyncOverlayJobOperations:
                         {
                             "status": JobStatus.PROCESSING,
                             "started_at": utc_now(),
-                            "job_id": job_id
+                            "job_id": job_id,
                         },
                     )
 
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to mark overlay job {job_id} as processing (sync): {e}"
-            )
-            return False
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     def mark_job_completed(self, job_id: int) -> bool:
         """Mark job as completed (sync)"""
@@ -722,17 +744,16 @@ class SyncOverlayJobOperations:
                         {
                             "status": JobStatus.COMPLETED,
                             "completed_at": utc_now(),
-                            "job_id": job_id
+                            "job_id": job_id,
                         },
                     )
 
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to mark overlay job {job_id} as completed (sync): {e}"
-            )
-            return False
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     def mark_job_failed(self, job_id: int, error_message: str) -> bool:
         """Mark job as failed (sync)"""
@@ -749,15 +770,16 @@ class SyncOverlayJobOperations:
                             "status": JobStatus.FAILED,
                             "error_message": error_message,
                             "completed_at": utc_now(),
-                            "job_id": job_id
+                            "job_id": job_id,
                         },
                     )
 
                     return cur.rowcount > 0
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to mark overlay job {job_id} as failed (sync): {e}")
-            return False
+            raise OverlayOperationError(
+                f"Failed to perform operation: {e}", operation="overlay_operation"
+            ) from e
 
     def recover_stuck_jobs(
         self,
@@ -819,5 +841,7 @@ class SyncOverlayJobOperations:
             return OverlayJobStatistics()
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get overlay job statistics (sync): {e}")
-            return OverlayJobStatistics()
+            raise OverlayOperationError(
+                f"Failed to get overlay job statistics: {e}",
+                operation="get_job_statistics",
+            ) from e

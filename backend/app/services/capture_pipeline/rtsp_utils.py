@@ -11,7 +11,10 @@ import os
 import time
 from pathlib import Path
 from typing import Optional, Tuple, Any
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 
 from ...constants import (
     DEFAULT_MAX_RETRIES,
@@ -247,7 +250,7 @@ def _capture_frame_rtsps_fallback(
         return None
 
     except Exception as e:
-        logger.error(f"RTSPS capture fallback failed: {e}")
+        logger.error("RTSPS capture fallback failed", exception=e)
         return None
 
 
@@ -317,7 +320,7 @@ def test_rtsp_connection(
             return False, "Stream opened but properties unavailable"
 
     except Exception as e:
-        logger.error(f"RTSP connection test exception: {e}")
+        logger.error("RTSP connection test exception", exception=e)
         return False, f"Connection test failed: {str(e)}"
 
 
@@ -390,7 +393,7 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
         return False, "All RTSPS fallback approaches failed"
 
     except Exception as e:
-        logger.error(f"RTSPS fallback failed: {e}")
+        logger.error("RTSPS fallback failed", exception=e)
         return False, f"RTSPS fallback failed: {str(e)}"
 
 

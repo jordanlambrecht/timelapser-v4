@@ -7,36 +7,31 @@ for database operations, providing type-safe Pydantic model interfaces.
 
 # Standard library imports
 import io
-import os
 import zipfile
 from datetime import date
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from loguru import logger
+from fastapi import HTTPException
 
-from ..enums import SSEPriority
+from .logger import get_service_logger
+
+from ..enums import SSEEvent, SSEEventSource, SSEPriority, LoggerName
 
 from ..exceptions import (
     ImageNotFoundError,
     InvalidImageSizeError,
-    ImageServiceError,
 )
 
 # Local imports
 from ..constants import (
-    ALLOWED_IMAGE_EXTENSIONS,
     DEFAULT_CAMERA_IMAGES_LIMIT,
     DEFAULT_PAGE_SIZE,
     DEFAULT_TIMELAPSE_IMAGES_LIMIT,
-    EVENT_IMAGE_CAPTURED,
-    EVENT_IMAGE_DELETED,
-    EVENT_IMAGE_PROCESSED,
     IMAGE_SIZE_VARIANTS,
-    LOG_LEVELS,
-    MAX_PAGE_SIZE,
+    MAX_BULK_OPERATION_ITEMS,
 )
-from ..database.core import AsyncDatabase, SyncDatabase
+from ..database.core import SyncDatabase
 from ..database.image_operations import (
     AsyncImageOperations,
     ImageOperations,
@@ -46,33 +41,30 @@ from ..database.sse_events_operations import SSEEventsOperations
 from ..models.image_model import Image
 from ..models.shared_models import (
     PaginatedImagesResponse,
-    # NOTE: ThumbnailGenerationResult removed - thumbnail generation now scheduler-centric
+    # ThumbnailOperationResponse,
+    # ThumbnailRegenerationStatus,
+    # NOTE: ThumbnailGenerationResult removed - thumbnail generation handled by ThumbnailPipeline
 )
 
-# NOTE: thumbnail_utils removed - thumbnail generation now handled by scheduler/ThumbnailWorker
+# NOTE: thumbnail_utils removed - thumbnail generation handled by ThumbnailPipeline
 from ..utils.cache_manager import cached_response
 from ..utils.conversion_utils import sanitize_error_message
-from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import validate_entity_exists
 from ..utils.file_helpers import (
     clean_filename,
-    create_file_response,
-    ensure_directory_exists,
-    get_image_with_fallbacks,
     prepare_image_metadata_for_serving,
     serve_image_with_metadata,
     validate_file_path,
-    validate_media_type,
 )
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_string_async,
 )
-from .settings_service import SettingsService
-from .health_service import HealthService
-from .log_service import LogService, SyncLogService
+
 from ..models.health_model import HealthStatus
 from ..config import settings
+
+logger = get_service_logger(LoggerName.IMAGE_SERVICE)
 
 
 class ImageService:
@@ -81,38 +73,32 @@ class ImageService:
 
     Responsibilities:
     - Image metadata management (CRUD operations)
-    - Thumbnail job scheduling (through scheduler authority)
     - File serving with fallbacks
     - Image statistics calculations
 
-    🎯 SCHEDULER-CENTRIC ARCHITECTURE:
-    - No direct thumbnail generation (delegated to ThumbnailWorker)
-    - Schedules thumbnail jobs through scheduler authority
-    - Focuses on CRUD operations and metadata management
-
     Interactions:
     - Uses ImageOperations for database operations
-    - Schedules thumbnail jobs through scheduler (not direct generation)
+    - Serves image files with cascading fallbacks (full -> small -> thumbnail)
     - Coordinates with corruption pipeline for quality data
+
+    Note: Thumbnail generation is handled by ThumbnailPipeline, not ImageService
     """
 
     def __init__(
         self,
-        db: AsyncDatabase,
-        settings_service: SettingsService,
+        db,
+        settings_service,
         # corruption_service: Optional[CorruptionService] = None,  # Removed
-        health_service: Optional[HealthService] = None,
-        log_service: Optional[LogService] = None,
+        health_service=None,
     ):
         """
         Initialize ImageService with async database instance and service dependencies.
 
         Args:
             db: AsyncDatabase instance
-            settings_service: SettingsService for configuration management
+            settings_service: SettingsService instance for configuration management
             # corruption_service: Optional CorruptionService for quality data coordination (removed)
             health_service: Optional HealthService for health monitoring
-            log_service: Optional LogService for structured logging and audit trails
         """
         self.db = db
         self.image_ops = ImageOperations(db)
@@ -121,7 +107,6 @@ class ImageService:
         self.settings_service = settings_service
         # self.corruption_service = corruption_service  # Removed
         self.health_service = health_service
-        self.log_service = log_service
 
     def _get_data_directory(self) -> str:
         """Get data directory from config."""
@@ -146,11 +131,9 @@ class ImageService:
         try:
             db_health = await self.health_service.get_database_health()
             if db_health.status == HealthStatus.UNHEALTHY:
-                logger.warning(
-                    f"⚠️ Database health is unhealthy during {operation_name}"
-                )
+                logger.warning(f"Database health is unhealthy during {operation_name}")
             elif db_health.status == HealthStatus.DEGRADED:
-                logger.info(f"⚠️ Database health is degraded during {operation_name}")
+                logger.warning(f"Database health is degraded during {operation_name}")
         except Exception as e:
             logger.warning(f"Health check failed during {operation_name}: {e}")
 
@@ -178,7 +161,7 @@ class ImageService:
             Dictionary containing images list (Image models) and pagination metadata
         """
         # Light health monitoring for read operations (no performance impact)
-        if self.health_service and logger.level == LOG_LEVELS.DEBUG:
+        if self.health_service:
             await self._check_database_health("get_images")
 
         # Calculate offset from page
@@ -352,33 +335,36 @@ class ImageService:
         """
         # Get image info before deletion for SSE event and audit trail
         image_to_delete = await self.get_image_by_id(image_id)
-
+        logger.debug(
+            f"Attempting to delete image {image_id} (camera: {image_to_delete.camera_id if image_to_delete else 'N/A'})"
+        )
         # Audit trail for sensitive delete operation
-        if self.log_service and image_to_delete:
-            await self.log_service.maintain_audit_trail(
-                action="delete",
-                entity_type="image",
-                entity_id=image_id,
-                changes={
-                    "image_metadata": {
-                        "camera_id": image_to_delete.camera_id,
-                        "timelapse_id": image_to_delete.timelapse_id,
-                        "file_path": image_to_delete.file_path,
-                        "captured_at": (
-                            image_to_delete.captured_at.isoformat()
-                            if image_to_delete and image_to_delete.captured_at
-                            else None
-                        ),
-                    }
-                },
-            )
+        # if self.log_service and image_to_delete:
+        #     await self.log_service.maintain_audit_trail(
+        #         action="delete",
+        #         entity_type="image",
+        #         entity_id=image_id,
+        #         changes={
+        #             "image_metadata": {
+        #                 "camera_id": image_to_delete.camera_id,
+        #                 "timelapse_id": image_to_delete.timelapse_id,
+        #                 "file_path": image_to_delete.file_path,
+        #                 "captured_at": (
+        #                     image_to_delete.captured_at.isoformat()
+        #                     if image_to_delete and image_to_delete.captured_at
+        #                     else None
+        #                 ),
+        #             }
+        #         },
+        #     )
 
         success = await self.image_ops.delete_image(image_id)
 
         # Create SSE event for real-time updates
         if success and image_to_delete:
+            logger.info(f"Image {image_id} deleted successfully")
             await self.sse_ops.create_event(
-                event_type=EVENT_IMAGE_DELETED,
+                event_type=SSEEvent.IMAGE_DELETED,
                 event_data={
                     "image_id": image_id,
                     "camera_id": image_to_delete.camera_id,
@@ -386,7 +372,7 @@ class ImageService:
                     "filename": image_to_delete.file_path,
                 },
                 priority=SSEPriority.NORMAL,
-                source="api",
+                source=SSEEventSource.API,
             )
 
         return success
@@ -416,27 +402,27 @@ class ImageService:
         image_record = await self.image_ops.record_captured_image(image_data)
 
         # Audit trail for image creation
-        if self.log_service:
-            await self.log_service.maintain_audit_trail(
-                action="create",
-                entity_type="image",
-                entity_id=image_record.id,
-                changes={
-                    "image_metadata": {
-                        "camera_id": image_record.camera_id,
-                        "timelapse_id": image_record.timelapse_id,
-                        "file_path": image_record.file_path,
-                        "captured_at": image_record.captured_at.isoformat(),
-                        "file_size": image_data.get("file_size"),
-                        "day_number": image_record.day_number,
-                    }
-                },
-                user_id="system",
-            )
+        # if self.log_service:
+        #     await self.log_service.maintain_audit_trail(
+        #         action="create",
+        #         entity_type="image",
+        #         entity_id=image_record.id,
+        #         changes={
+        #             "image_metadata": {
+        #                 "camera_id": image_record.camera_id,
+        #                 "timelapse_id": image_record.timelapse_id,
+        #                 "file_path": image_record.file_path,
+        #                 "captured_at": image_record.captured_at.isoformat(),
+        #                 "file_size": image_data.get("file_size"),
+        #                 "day_number": image_record.day_number,
+        #             }
+        #         },
+        #         user_id="system",
+        #     )
 
         # Create SSE event for real-time updates
         await self.sse_ops.create_event(
-            event_type=EVENT_IMAGE_CAPTURED,
+            event_type=SSEEvent.IMAGE_CAPTURED,
             event_data={
                 "image_id": image_record.id,
                 "camera_id": image_record.camera_id,
@@ -445,7 +431,7 @@ class ImageService:
                 "captured_at": image_record.captured_at.isoformat(),
             },
             priority=SSEPriority.NORMAL,
-            source="worker",
+            source=SSEEventSource.WORKER,
         )
 
         return image_record
@@ -508,7 +494,9 @@ class ImageService:
                     images.append(image_data)
 
                 except Exception as e:
-                    logger.error(f"Error processing image {image_id} in batch: {e}")
+                    logger.error(
+                        f"Error processing image {image_id} in batch: {e}", exception=e
+                    )
                     continue
 
             logger.info(
@@ -522,77 +510,6 @@ class ImageService:
         except Exception as e:
             logger.error(f"Batch image loading failed: {e}")
             return []
-
-    async def schedule_thumbnail_generation(
-        self, image_id: int, force_regenerate: bool = False
-    ) -> Dict[str, Any]:
-        """
-        🎯 SCHEDULER-CENTRIC: Schedule thumbnail generation through scheduler authority.
-
-        This method no longer generates thumbnails directly. Instead, it schedules
-        thumbnail generation jobs through the scheduler to maintain the "scheduler says
-        jump, services say how high" philosophy.
-
-        Args:
-            image_id: ID of the image to schedule thumbnail generation for
-            force_regenerate: Whether to regenerate existing thumbnails
-
-        Returns:
-            Dict containing job scheduling result
-        """
-        try:
-            # Get image details for validation
-            image = await self._get_validated_image(image_id)
-            data_directory = self._get_data_directory()
-
-            # Validate that image file exists before scheduling
-            potential_image_path = os.path.join(
-                data_directory,
-                f"cameras/camera-{image.camera_id}/images/{image.file_path}",
-            )
-            if not os.path.exists(potential_image_path):
-                return {
-                    "success": False,
-                    "image_id": image_id,
-                    "error": f"Image file not found: {image.file_path}",
-                    "reason": "image_file_missing",
-                }
-
-            # 🎯 SCHEDULER-CENTRIC: Request thumbnail generation through scheduler
-            # Note: In a full implementation, this would call the scheduler service
-            # For now, we'll return a scheduling request result
-
-            logger.info(
-                f"🎯 Scheduling thumbnail generation for image {image_id} "
-                f"(force_regenerate={force_regenerate}) through scheduler authority"
-            )
-
-            # TODO: Implement actual scheduler integration when thumbnail job scheduling is available
-            # scheduler_result = await scheduler_service.schedule_thumbnail_generation(
-            #     image_id=image_id,
-            #     force_regenerate=force_regenerate,
-            #     priority="normal"
-            # )
-
-            return {
-                "success": True,
-                "image_id": image_id,
-                "message": "Thumbnail generation scheduled through scheduler authority",
-                "scheduled": True,
-                "force_regenerate": force_regenerate,
-                "reason": "scheduler_scheduled",
-            }
-
-        except Exception as e:
-            logger.error(
-                f"Failed to schedule thumbnail generation for image {image_id}: {e}"
-            )
-            return {
-                "success": False,
-                "image_id": image_id,
-                "error": sanitize_error_message(e, "thumbnail scheduling"),
-                "reason": "scheduling_error",
-            }
 
     async def calculate_image_statistics(
         self, timelapse_id: Optional[int] = None, camera_id: Optional[int] = None
@@ -622,7 +539,7 @@ class ImageService:
             # Combine statistics
 
             calculation_timestamp = await get_timezone_aware_timestamp_string_async(
-                self.db
+                self.settings_service
             )
             comprehensive_stats = {
                 "basic_statistics": basic_stats,
@@ -647,10 +564,13 @@ class ImageService:
             return comprehensive_stats
 
         except Exception as e:
-            logger.error(f"Image statistics calculation failed: {e}")
-            raise ImageServiceError(
-                f"Statistics calculation failed: {sanitize_error_message(e, 'statistics calculation')}"
-            )
+            logger.error(f"Image statistics calculation failed", exception=e)
+            return {
+                "basic_statistics": None,
+                "quality_statistics": None,
+                "calculation_timestamp": None,
+                "error": sanitize_error_message(e, "statistics calculation"),
+            }
 
     # coordinate_quality_assessment method removed - use corruption_pipeline directly
 
@@ -707,9 +627,9 @@ class ImageService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to serve image {image_id} (size: {size_variant}): {e}"
+                f"Failed to serve image {image_id} (size: {size_variant})", exception=e
             )
-            raise ImageServiceError("Failed to serve image file")
+            # raise ImageServiceError("Failed to serve image file")
 
     async def prepare_image_for_serving(
         self, image_id: int, size: str = "full"
@@ -750,10 +670,14 @@ class ImageService:
             return result
 
         except Exception as e:
-            logger.error(f"Failed to prepare image {image_id} for serving: {e}")
-            raise ImageServiceError(
-                f"Image preparation failed: {sanitize_error_message(e, 'image preparation')}"
-            )
+            logger.error(f"Failed to prepare image {image_id} for serving", exception=e)
+            return {
+                "success": False,
+                "file_path": None,
+                "media_type": None,
+                "image_data": None,
+                "error": sanitize_error_message(e, "image preparation"),
+            }
 
     async def prepare_bulk_download(
         self, image_ids: List[int], zip_filename: Optional[str] = None
@@ -772,7 +696,25 @@ class ImageService:
             data_directory = self._get_data_directory()
 
             if not image_ids:
-                raise ImageServiceError("No image IDs provided")
+                logger.warning("No image IDs provided")
+                # Return an empty ZIP file and metadata if no IDs provided
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED):
+                    pass
+                zip_buffer.seek(0)
+                timestamp_dt = await get_timezone_aware_timestamp_async(
+                    self.settings_service
+                )
+                timestamp = timestamp_dt.strftime("%Y%m%d_%H%M%S")
+                filename = zip_filename or f"timelapser_images_{timestamp}.zip"
+                filename = clean_filename(filename)
+                return {
+                    "zip_data": zip_buffer.getvalue(),
+                    "filename": filename,
+                    "requested_images": 0,
+                    "included_images": 0,
+                    "total_size": 0,
+                }
 
             # Create ZIP file in memory
             zip_buffer = io.BytesIO()
@@ -810,12 +752,15 @@ class ImageService:
                         continue
 
             if added_files == 0:
-                raise ImageServiceError("No valid images found for download")
-
+                logger.warning(
+                    "No valid images found for download - returning empty ZIP"
+                )
             zip_buffer.seek(0)
 
             # Generate filename with timezone-aware timestamp
-            timestamp_dt = await get_timezone_aware_timestamp_async(self.db)
+            timestamp_dt = await get_timezone_aware_timestamp_async(
+                self.settings_service
+            )
             timestamp = timestamp_dt.strftime("%Y%m%d_%H%M%S")
             filename = zip_filename or f"timelapser_images_{timestamp}.zip"
             filename = clean_filename(filename)
@@ -833,10 +778,16 @@ class ImageService:
             return result
 
         except Exception as e:
-            logger.error(f"Bulk download preparation failed: {e}")
-            raise ImageServiceError(
-                f"Bulk download preparation failed: {sanitize_error_message(e, 'bulk download')}"
-            )
+            logger.error(f"Bulk download preparation failed: {e}", exception=e)
+            # Always return a dict even on error
+            return {
+                "zip_data": b"",
+                "filename": "error.zip",
+                "requested_images": len(image_ids) if image_ids else 0,
+                "included_images": 0,
+                "total_size": 0,
+                "error": sanitize_error_message(e, "bulk download"),
+            }
 
     async def serve_images_batch(self, image_ids: List[int], size: str = "thumbnail"):
         """
@@ -906,43 +857,104 @@ class ImageService:
             logger.error(f"Error in batch image serving: {e}")
             raise
 
-    async def serve_images_batch_from_string(self, ids_string: str, size: str = "thumbnail"):
+    async def serve_images_batch_from_string(
+        self, ids_string: str, size: str = "thumbnail"
+    ):
         """
         Batch image serving from comma-separated string of image IDs.
-        
+
         Handles parsing, validation, and batch size limits before delegating
         to serve_images_batch().
-        
+
         Args:
             ids_string: Comma-separated string of image IDs
             size: Size variant for all images
-            
+
         Returns:
             JSON with image URLs and metadata
-            
+
         Raises:
             ValueError: If image IDs format is invalid
             HTTPException: If batch size exceeds limits
         """
-        from ..constants import MAX_BULK_OPERATION_ITEMS
-        from fastapi import HTTPException
-        
+
         try:
             # Parse comma-separated string to List[int]
             image_ids = [int(id_str.strip()) for id_str in ids_string.split(",")]
-            
+
             # Validate batch size
             if len(image_ids) > MAX_BULK_OPERATION_ITEMS:
                 raise HTTPException(
                     status_code=413,
                     detail=f"Batch size too large (max {MAX_BULK_OPERATION_ITEMS} images)",
                 )
-                
+
             # Delegate to existing batch method
             return await self.serve_images_batch(image_ids, size)
-            
+
         except ValueError as e:
-            raise ValueError("Invalid image IDs format - must be comma-separated integers") from e
+            raise ValueError(
+                "Invalid image IDs format - must be comma-separated integers"
+            ) from e
+
+    async def get_status(self) -> Dict[str, Any]:
+        """
+        Get service status information following standardized pattern.
+
+        Returns:
+            Dict containing service health and operational status
+        """
+        try:
+            # Basic service health
+            status_info = {
+                "service_name": "image_service",
+                "status": "healthy",
+                "database_connected": self.db is not None,
+                "health_service_available": self.health_service is not None,
+            }
+
+            # Database operations status
+            try:
+                # Test basic database connectivity with a simple operation
+                await self.image_ops.get_images_count()
+                status_info["database_operations"] = "healthy"
+            except Exception as e:
+                status_info["database_operations"] = "error"
+                status_info["database_error"] = str(e)
+                status_info["status"] = "degraded"
+
+            # Service capabilities
+            status_info["capabilities"] = {
+                "image_crud": True,
+                "image_serving": True,
+                "batch_operations": True,
+                "statistics_calculation": True,
+                "bulk_download": True,
+                "sse_events": self.sse_ops is not None,
+                "health_monitoring": self.health_service is not None,
+                "corruption_detection": False,  # Handled by corruption pipeline
+            }
+
+            # Operational metrics
+            try:
+                total_images = await self.image_ops.get_images_count()
+                status_info["metrics"] = {
+                    "total_images": total_images,
+                    "cache_enabled": True,  # Using @cached_response decorator
+                }
+            except Exception:
+                status_info["metrics"] = {"total_images": "unavailable"}
+
+            return status_info
+
+        except Exception as e:
+            logger.error("Failed to get image service status", exception=e)
+            return {
+                "service_name": "image_service",
+                "status": "error",
+                "error": str(e),
+                "database_connected": False,
+            }
 
 
 class SyncImageService:
@@ -953,7 +965,7 @@ class SyncImageService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase, log_service: Optional[SyncLogService] = None):
+    def __init__(self, db: SyncDatabase):
         """
         Initialize SyncImageService with sync database instance.
 
@@ -963,7 +975,6 @@ class SyncImageService:
         """
         self.db = db
         self.image_ops = SyncImageOperations(db)
-        self.log_service = log_service
 
     def record_captured_image(self, image_data: Dict[str, Any]) -> Image:
         """
@@ -978,26 +989,26 @@ class SyncImageService:
         image_record = self.image_ops.record_captured_image(image_data)
 
         # Sync audit trail for image creation (if log service available)
-        if self.log_service:
-            self.log_service.write_log_entry(
-                level="INFO",
-                message=f"Image captured and recorded: {image_record.file_path}",
-                logger_name="sync_image_service",
-                source="worker",
-                camera_id=image_record.camera_id,
-                extra_data={
-                    "action": "create",
-                    "entity_type": "image",
-                    "entity_id": image_record.id,
-                    "image_metadata": {
-                        "camera_id": image_record.camera_id,
-                        "timelapse_id": image_record.timelapse_id,
-                        "file_path": image_record.file_path,
-                        "file_size": image_data.get("file_size"),
-                        "day_number": image_record.day_number,
-                    },
-                },
-            )
+        # if self.log_service:
+        #     self.log_service.write_log_entry(
+        #         level="INFO",
+        #         message=f"Image captured and recorded: {image_record.file_path}",
+        #         logger_name="sync_image_service",
+        #         source="worker",
+        #         camera_id=image_record.camera_id,
+        #         extra_data={
+        #             "action": "create",
+        #             "entity_type": "image",
+        #             "entity_id": image_record.id,
+        #             "image_metadata": {
+        #                 "camera_id": image_record.camera_id,
+        #                 "timelapse_id": image_record.timelapse_id,
+        #                 "file_path": image_record.file_path,
+        #                 "file_size": image_data.get("file_size"),
+        #                 "day_number": image_record.day_number,
+        #             },
+        #         },
+        #     )
 
         return image_record
 
@@ -1036,3 +1047,91 @@ class SyncImageService:
             Image model instance, or None if not found
         """
         return self.image_ops.get_image_by_id(image_id)
+
+    def get_images_for_camera(
+        self, camera_id: int, limit: int = DEFAULT_CAMERA_IMAGES_LIMIT
+    ) -> List[Image]:
+        """
+        Get recent images for a specific camera (sync version).
+
+        Args:
+            camera_id: ID of the camera
+            limit: Maximum number of images to return
+
+        Returns:
+            List of Image model instances
+        """
+        images = self.image_ops.get_images_by_camera(camera_id)
+        return images[:limit]
+
+    def update_image_overlay_status(
+        self,
+        image_id: int,
+        overlay_path: str,
+        has_valid_overlay: bool,
+        overlay_updated_at,
+    ) -> bool:
+        """
+        Update overlay status and path for an image.
+
+        Args:
+            image_id: ID of the image to update
+            overlay_path: Path to the overlay image file
+            has_valid_overlay: Whether the overlay was successfully generated
+            overlay_updated_at: Timestamp when overlay was generated
+
+        Returns:
+            True if update was successful
+        """
+        return self.image_ops.update_image_overlay_status(
+            image_id=image_id,
+            overlay_path=overlay_path,
+            has_valid_overlay=has_valid_overlay,
+            overlay_updated_at=overlay_updated_at,
+        )
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get service status information following standardized pattern (sync version).
+
+        Returns:
+            Dict containing service health and operational status
+        """
+        try:
+            # Basic service health
+            status_info = {
+                "service_name": "sync_image_service",
+                "status": "healthy",
+                "database_connected": self.db is not None,
+                "version": "sync",
+            }
+
+            # Database operations status
+            try:
+                # Test basic database connectivity with a simple operation
+                total_images = self.image_ops.get_images_count()
+                status_info["database_operations"] = "healthy"
+                status_info["metrics"] = {"total_images": total_images}
+            except Exception as e:
+                status_info["database_operations"] = "error"
+                status_info["database_error"] = str(e)
+                status_info["status"] = "degraded"
+                status_info["metrics"] = {"total_images": "unavailable"}
+
+            # Service capabilities
+            status_info["capabilities"] = {
+                "image_crud": True,
+                "sync_operations": True,
+                "worker_compatible": True,
+            }
+
+            return status_info
+
+        except Exception as e:
+            logger.error("Failed to get sync image service status", exception=e)
+            return {
+                "service_name": "sync_image_service",
+                "status": "error",
+                "error": str(e),
+                "database_connected": False,
+            }

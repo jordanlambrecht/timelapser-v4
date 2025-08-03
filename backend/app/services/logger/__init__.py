@@ -1,8 +1,7 @@
 """
 Centralized Logger Service Module.
 
-This module provides a unified logging interface for the Timelapser v4 application,
-replacing direct loguru usage with a structured, type-safe logging system.
+A unified logging interface with a structured, type-safe logging system.
 
 Features:
 - Type-safe enum-based logging methods
@@ -12,12 +11,12 @@ Features:
 - Performance optimized for high-frequency logging
 
 Usage:
-    from app.services.logger import LoggerService
+    from app.services.logger import Log
     from app.enums import LogLevel, LogSource, LoggerName
 
-    logger_service = LoggerService(async_db, sync_db)
+    log = Log(async_db, sync_db)
 
-    logger_service.log_request(
+    await log.log_request(
         message="📥 GET /api/cameras",
         request_info={"method": "GET", "path": "/api/cameras"},
         level=LogLevel.INFO,
@@ -27,7 +26,7 @@ Usage:
     )
 """
 
-from .logger_service import LoggerService
+from .logger_service import Log, get_service_logger, initialize_global_logger, log
 from .handlers import EnhancedDatabaseHandler, ConsoleHandler, FileHandler
 from .services import LogCleanupService
 from .utils import LogMessageFormatter, ContextExtractor
@@ -35,8 +34,12 @@ from .utils import LogMessageFormatter, ContextExtractor
 # Re-export commonly used enums for convenience
 from ...enums import LogLevel, LogSource, LoggerName, LogEmoji
 
+
 __all__ = [
-    "LoggerService",
+    "Log",
+    "log",
+    "get_service_logger",
+    "initialize_global_logger",
     "EnhancedDatabaseHandler",
     "ConsoleHandler",
     "FileHandler",

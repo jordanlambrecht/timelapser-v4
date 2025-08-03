@@ -9,7 +9,10 @@ Handles individual thumbnail generation with quality and performance optimizatio
 from pathlib import Path
 from typing import Tuple, Dict, Any
 from PIL import Image
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ..utils.constants import (
     THUMBNAIL_SIZE,
@@ -24,7 +27,7 @@ from ..utils.thumbnail_utils import (
 class ThumbnailGenerator:
     """
     Component responsible for generating 200×150 dashboard thumbnails.
-    
+
     Optimized for:
     - Dashboard loading performance
     - Consistent aspect ratio handling
@@ -41,14 +44,13 @@ class ThumbnailGenerator:
         """
         self.quality = max(1, min(95, quality))
         self.target_size = THUMBNAIL_SIZE
-        
-        logger.debug(f"✅ ThumbnailGenerator initialized (quality={self.quality}, size={self.target_size})")
+
+        logger.debug(
+            f"ThumbnailGenerator initialized (quality={self.quality}, size={self.target_size})"
+        )
 
     def generate_thumbnail(
-        self,
-        source_path: str,
-        output_path: str,
-        force_regenerate: bool = False
+        self, source_path: str, output_path: str, force_regenerate: bool = False
     ) -> Dict[str, Any]:
         """
         Generate a 200×150 thumbnail from source image.
@@ -90,15 +92,24 @@ class ThumbnailGenerator:
             output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
             # Generate thumbnail
-            generation_result = self._generate_thumbnail_image(source_path_obj, output_path_obj)
-            
+            generation_result = self._generate_thumbnail_image(
+                source_path_obj, output_path_obj
+            )
+
             if generation_result["success"]:
-                logger.debug(f"✅ Generated thumbnail: {output_path_obj.name}")
-            
+                logger.debug(f"Generated thumbnail: {output_path_obj.name}")
+
             return generation_result
 
         except Exception as e:
-            logger.error(f"❌ Failed to generate thumbnail for {source_path}: {e}")
+            logger.error(
+                f"Failed to generate thumbnail for {source_path}",
+                exception=e,
+                extra_context={
+                    "source_path": source_path,
+                    "output_path": output_path,
+                },
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -106,7 +117,9 @@ class ThumbnailGenerator:
                 "output_path": output_path,
             }
 
-    def _generate_thumbnail_image(self, source_path: Path, output_path: Path) -> Dict[str, Any]:
+    def _generate_thumbnail_image(
+        self, source_path: Path, output_path: Path
+    ) -> Dict[str, Any]:
         """
         Internal method to perform the actual thumbnail generation.
 
@@ -121,19 +134,23 @@ class ThumbnailGenerator:
             # Open and process image
             with Image.open(source_path) as img:
                 # Convert to RGB if necessary (handles RGBA, P, etc.)
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
 
                 # Calculate dimensions preserving aspect ratio
                 target_width, target_height = self.target_size
-                thumbnail_size = self._calculate_thumbnail_dimensions(img.size, (target_width, target_height))
+                thumbnail_size = self._calculate_thumbnail_dimensions(
+                    img.size, (target_width, target_height)
+                )
 
                 # Create thumbnail with high-quality resampling
                 img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
 
                 # Create final thumbnail with proper centering on transparent background
-                thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
-                
+                thumbnail = Image.new(
+                    "RGB", (target_width, target_height), (255, 255, 255)
+                )
+
                 # Calculate position to center the thumbnail
                 paste_x = (target_width - img.width) // 2
                 paste_y = (target_height - img.height) // 2
@@ -142,10 +159,10 @@ class ThumbnailGenerator:
                 # Save with optimization
                 thumbnail.save(
                     output_path,
-                    'JPEG',
+                    "JPEG",
                     quality=self.quality,
                     optimize=True,
-                    progressive=True
+                    progressive=True,
                 )
 
                 # Get file size
@@ -170,7 +187,9 @@ class ThumbnailGenerator:
                 "output_path": str(output_path),
             }
 
-    def _calculate_thumbnail_dimensions(self, source_size: Tuple[int, int], target_size: Tuple[int, int]) -> Tuple[int, int]:
+    def _calculate_thumbnail_dimensions(
+        self, source_size: Tuple[int, int], target_size: Tuple[int, int]
+    ) -> Tuple[int, int]:
         """
         Calculate thumbnail dimensions that fit within target size while preserving aspect ratio.
 

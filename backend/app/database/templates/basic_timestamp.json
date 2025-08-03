@@ -1,0 +1,29 @@
+{
+  "name": "Basic Timestamp",
+  "description": "Simple date and time overlay in bottom-left corner with clean styling",
+  "overlay_config": {
+    "overlayPositions": {
+      "bottomLeft": {
+        "type": "date_time",
+        "textSize": 18,
+        "textColor": "#FFFFFF",
+        "backgroundOpacity": 60,
+        "dateFormat": "MM/dd/yyyy HH:mm",
+        "enableBackground": true,
+        "backgroundColor": "#000000"
+      }
+    },
+    "globalOptions": {
+      "opacity": 100,
+      "font": "Arial",
+      "xMargin": 25,
+      "yMargin": 25,
+      "backgroundColor": "#000000",
+      "backgroundOpacity": 60,
+      "fillColor": "#FFFFFF",
+      "dropShadow": 2,
+      "preset": "basic_timestamp"
+    }
+  },
+  "is_builtin": true
+}

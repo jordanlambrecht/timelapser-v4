@@ -44,7 +44,10 @@ IMMEDIATE vs SCHEDULED JOBS:
 """
 
 from typing import Dict, Any, Optional, Callable
-from loguru import logger
+from ..services.logger import get_service_logger, LogEmoji
+from ..enums import LoggerName, OverlayJobPriority
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .utils import SchedulerTimeUtils, JobIdGenerator
 from ..database.core import SyncDatabase
@@ -213,7 +216,7 @@ class ImmediateJobManager:
 
                     # Queue overlay job instead of direct generation
                     job = overlay_worker.overlay_job_service.queue_job(
-                        image_id=image_id, priority="high"
+                        image_id=image_id, priority=OverlayJobPriority.HIGH
                     )
 
                     if job:

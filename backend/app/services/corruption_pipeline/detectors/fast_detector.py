@@ -13,7 +13,10 @@ import os
 import time
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from loguru import logger
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
 @dataclass
@@ -140,7 +143,9 @@ class FastCorruptionDetector:
             }
 
         except Exception as e:
-            logger.error(f"Error in fast corruption detection: {e}")
+            logger.error(
+                "Error in fast corruption detection", exception=e, emoji=LogEmoji.FAILED
+            )
             return {
                 "success": False,
                 "corruption_score": 0.0,

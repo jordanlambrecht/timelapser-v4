@@ -16,7 +16,10 @@ Architecture:
 
 import asyncio
 from typing import Optional, Dict, Any
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 from ...database.core import AsyncDatabase
 from ...services.settings_service import SettingsService
@@ -249,9 +252,11 @@ class SchedulerAuthorityService:
             )
 
             # Delegate to scheduler worker async method directly
-            success = await self.scheduler_worker.schedule_immediate_thumbnail_generation(
-                image_id,
-                priority,
+            success = (
+                await self.scheduler_worker.schedule_immediate_thumbnail_generation(
+                    image_id,
+                    priority,
+                )
             )
 
             if success:
@@ -323,9 +328,7 @@ class SchedulerAuthorityService:
             }
 
         except Exception as e:
-            logger.error(
-                f"Error in SchedulerAuthorityService video cancellation: {e}"
-            )
+            logger.error(f"Error in SchedulerAuthorityService video cancellation: {e}")
             return {
                 "success": False,
                 "error": str(e),

@@ -7,18 +7,17 @@ These classes provide connection management and common functionality
 without mixin inheritance, eliminating type safety issues.
 """
 
-from contextlib import asynccontextmanager, contextmanager
-from typing import Dict, Optional, Any, AsyncGenerator, Generator
-import time
 import asyncio
+import time
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any, AsyncGenerator, Dict, Generator, Optional
 
-from loguru import logger
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool, AsyncConnectionPool
 import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool, ConnectionPool
 
 from ..config import settings
-from datetime import datetime, timezone
+from ..utils.time_utils import utc_now
 
 
 class AsyncDatabaseCore:
@@ -53,20 +52,16 @@ class AsyncDatabaseCore:
         try:
             self._pool = AsyncConnectionPool(
                 settings.database_url,
-                min_size=2,
+                min_size=5,  # Keep more idle connections for faster response
                 max_size=settings.db_pool_size,
                 max_waiting=settings.db_max_overflow,
+                timeout=settings.db_pool_timeout,
                 kwargs={"row_factory": dict_row},
                 open=False,
             )
             await self._pool.open()
-            self._pool_created_at = datetime.now(timezone.utc)
-            logger.info(
-                f"Async database pool initialized (min: 2, max: "
-                f"{settings.db_pool_size}, overflow: {settings.db_max_overflow})"
-            )
-        except (psycopg.Error, ConnectionError, OSError) as e:
-            logger.error(f"Failed to initialize async database pool: {e}")
+            self._pool_created_at = utc_now()
+        except (psycopg.Error, ConnectionError, OSError):
             raise
 
     async def close(self) -> None:
@@ -78,7 +73,6 @@ class AsyncDatabaseCore:
         """
         if self._pool:
             await self._pool.close()
-            logger.info("Async database pool closed")
 
     @asynccontextmanager
     async def get_connection(self) -> AsyncGenerator[Any, None]:
@@ -98,12 +92,9 @@ class AsyncDatabaseCore:
                     data = await cur.fetchall()
         """
         if not self._pool:
-            raise RuntimeError(
-                "Database pool not initialized. Call initialize() first."
-            )
+            raise RuntimeError("Database pool not initialized")
 
         self._connection_attempts += 1
-        start_time = time.time()
 
         try:
             async with self._pool.connection() as conn:
@@ -116,12 +107,15 @@ class AsyncDatabaseCore:
             Exception,
         ) as e:
             self._failed_connections += 1
-            connection_time = time.time() - start_time
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-            logger.error(
-                f"Database connection failed after {connection_time:.3f}s: {error_msg}"
-            )
-            raise
+            if isinstance(e, psycopg.OperationalError):
+                # Handle specific operational errors
+                raise ConnectionError("Database connection failed") from e
+            elif isinstance(e, psycopg.DatabaseError):
+                # Handle database-specific errors
+                raise RuntimeError("Database operation failed") from e
+            else:
+                # For any other exceptions, re-raise
+                raise
 
     async def get_pool_stats(self) -> Dict[str, Any]:
         """
@@ -141,7 +135,7 @@ class AsyncDatabaseCore:
                     self._pool_created_at.isoformat() if self._pool_created_at else None
                 ),
                 "uptime_seconds": (
-                    (datetime.now(timezone.utc) - self._pool_created_at).total_seconds()
+                    (utc_now() - self._pool_created_at).total_seconds()
                     if self._pool_created_at
                     else 0
                 ),
@@ -151,9 +145,10 @@ class AsyncDatabaseCore:
                 / max(self._connection_attempts, 1)
                 * 100,
                 "configuration": {
-                    "min_size": 2,
+                    "min_size": 5,
                     "max_size": settings.db_pool_size,
                     "max_waiting": settings.db_max_overflow,
+                    "timeout": settings.db_pool_timeout,
                 },
             }
 
@@ -218,7 +213,7 @@ class AsyncDatabaseCore:
                         result = await cur.fetchone()
 
             connection_time = time.time() - start_time
-            self._last_health_check = datetime.now(timezone.utc)
+            self._last_health_check = utc_now()
 
             return {
                 "status": "healthy",
@@ -269,16 +264,17 @@ class SyncDatabaseCore:
         try:
             self._pool = ConnectionPool(
                 settings.database_url,
-                min_size=1,
-                max_size=settings.db_pool_size // 2,  # Smaller pool for sync
+                min_size=2,  # Keep a couple idle connections for sync operations
+                max_size=max(
+                    5, settings.db_pool_size // 2
+                ),  # Smaller but reasonable pool for sync
                 max_waiting=settings.db_max_overflow,
+                timeout=settings.db_pool_timeout,
                 kwargs={"row_factory": dict_row},
                 open=False,
             )
             self._pool.open()
-            logger.info("Sync database pool initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize sync database pool: {e}")
+        except Exception:
             raise
 
     def close(self) -> None:
@@ -290,7 +286,6 @@ class SyncDatabaseCore:
         """
         if self._pool:
             self._pool.close()
-            logger.info("Sync database pool closed")
 
     @contextmanager
     def get_connection(self) -> Generator[Any, None, None]:
@@ -310,9 +305,7 @@ class SyncDatabaseCore:
                     data = cur.fetchall()
         """
         if not self._pool:
-            raise RuntimeError(
-                "Database pool not initialized. Call initialize() first."
-            )
+            raise RuntimeError("Database pool not initialized")
 
         with self._pool.connection() as conn:
             with conn.transaction():

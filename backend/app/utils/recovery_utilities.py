@@ -10,8 +10,6 @@ All database operations have been moved to recovery_operations.py in the databas
 
 from typing import Dict, Any, Optional
 from datetime import timedelta
-from loguru import logger
-
 from ..utils.time_utils import utc_now
 
 
@@ -199,9 +197,9 @@ def log_recovery_start(job_type_name: str, stuck_count: int) -> None:
         stuck_count: Number of stuck jobs found
     """
     if stuck_count > 0:
-        logger.info(f"🔄 Found {stuck_count} stuck {job_type_name} to recover")
+        pass
     else:
-        logger.debug(f"🔄 No stuck {job_type_name} found for recovery")
+        pass
 
 
 def log_recovery_completion(
@@ -224,9 +222,9 @@ def log_recovery_completion(
     )
 
     if recovered_count > 0:
-        logger.info(message)
+        pass
     else:
-        logger.warning(message)
+        pass
 
 
 def log_recovery_error(job_type_name: str, error: Exception) -> None:
@@ -237,4 +235,4 @@ def log_recovery_error(job_type_name: str, error: Exception) -> None:
         job_type_name: Human-readable job type name
         error: Exception that occurred
     """
-    logger.error(f"❌ Recovery failed for {job_type_name}: {error}")
+    pass

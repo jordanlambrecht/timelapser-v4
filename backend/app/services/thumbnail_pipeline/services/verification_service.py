@@ -4,7 +4,10 @@ Thumbnail Verification Service - File existence and integrity checks.
 """
 
 from typing import Dict, Any, Optional
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ....database.core import SyncDatabase, AsyncDatabase
 
@@ -12,7 +15,7 @@ from ....database.core import SyncDatabase, AsyncDatabase
 class SyncThumbnailVerificationService:
     """Synchronous verification service for worker processes."""
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database."""
         self.db = db
 
@@ -41,7 +44,7 @@ class SyncThumbnailVerificationService:
 class ThumbnailVerificationService:
     """Async verification service for API endpoints."""
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database."""
         self.db = db
 

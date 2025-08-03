@@ -1,12 +1,15 @@
 """Database operations for weather data."""
 
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from .core import AsyncDatabase, SyncDatabase
-from ..utils.cache_manager import cache, cached_response, generate_timestamp_etag
+import psycopg
+
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_timestamp_etag
 from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import WeatherOperationError
 
 
 class WeatherQueryBuilder:
@@ -51,8 +54,8 @@ class WeatherQueryBuilder:
                 api_failing = EXCLUDED.api_failing,
                 error_response_code = EXCLUDED.error_response_code,
                 last_error_message = EXCLUDED.last_error_message,
-                consecutive_failures = CASE 
-                    WHEN EXCLUDED.api_failing = true AND weather_data.api_failing = true 
+                consecutive_failures = CASE
+                    WHEN EXCLUDED.api_failing = true AND weather_data.api_failing = true
                     THEN weather_data.consecutive_failures + 1
                     ELSE 0
                 END,
@@ -129,14 +132,20 @@ class WeatherOperations:
     @cached_response(ttl_seconds=60, key_prefix="weather")
     async def get_latest_weather(self) -> Optional[Dict[str, Any]]:
         """Get the current weather data (single row)."""
-        # Use optimized query builder
-        query = WeatherQueryBuilder.build_latest_weather_query()
+        try:
+            # Use optimized query builder
+            query = WeatherQueryBuilder.build_latest_weather_query()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query)
-                row = await cur.fetchone()
-                return dict(row) if row else None
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query)
+                    row = await cur.fetchone()
+                    return dict(row) if row else None
+        except (psycopg.Error, KeyError, ValueError):
+            raise WeatherOperationError(
+                "Failed to get latest weather data",
+                details={"operation": "get_latest_weather"},
+            )
 
     async def insert_weather_data(
         self,
@@ -152,38 +161,50 @@ class WeatherOperations:
         last_error_message: Optional[str] = None,
     ) -> int:
         """Upsert weather data - maintains single row in table."""
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                # Use optimized query builder and centralized time management
-                query = WeatherQueryBuilder.build_weather_upsert_query()
-                now = utc_now()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Use optimized query builder and centralized time management
+                    query = WeatherQueryBuilder.build_weather_upsert_query()
+                    now = utc_now()
 
-                await cur.execute(
-                    query,
-                    (
-                        weather_date_fetched,
-                        current_temp,
-                        current_weather_icon,
-                        current_weather_description,
-                        sunrise_timestamp,
-                        sunset_timestamp,
-                        api_key_valid,
-                        api_failing,
-                        error_response_code,
-                        last_error_message,
-                        now,
-                    ),
-                )
-                row = await cur.fetchone()
-                if row:
-                    weather_id = row["id"]
+                    await cur.execute(
+                        query,
+                        (
+                            weather_date_fetched,
+                            current_temp,
+                            current_weather_icon,
+                            current_weather_description,
+                            sunrise_timestamp,
+                            sunset_timestamp,
+                            api_key_valid,
+                            api_failing,
+                            error_response_code,
+                            last_error_message,
+                            now,
+                        ),
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        weather_id = row["id"]
 
-                    # Clear related caches after successful upsert
-                    await self._clear_weather_caches(updated_at=now)
+                        # Clear related caches after successful upsert
+                        await self._clear_weather_caches(updated_at=now)
 
-                    return weather_id
-                else:
-                    raise Exception("No row returned from weather data upsert")
+                        return weather_id
+                    else:
+                        raise Exception("No row returned from weather data upsert")
+        except (psycopg.Error, KeyError, ValueError, Exception) as e:
+            raise WeatherOperationError(
+                "Failed to insert weather data",
+                details={
+                    "operation": "insert_weather_data",
+                    "api_key_valid": api_key_valid,
+                    "api_failing": api_failing,
+                    "current_temp": current_temp,
+                    "error": str(e),
+                },
+            ) from e
 
     async def update_weather_failure(
         self,
@@ -191,43 +212,67 @@ class WeatherOperations:
         last_error_message: Optional[str] = None,
     ) -> None:
         """Update weather data with failure information."""
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                # Use optimized query builder and centralized time management
-                query = WeatherQueryBuilder.build_weather_failure_update_query()
-                now = utc_now()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Use optimized query builder and centralized time management
+                    query = WeatherQueryBuilder.build_weather_failure_update_query()
+                    now = utc_now()
 
-                await cur.execute(
-                    query,
-                    (error_response_code, last_error_message, now),
-                )
+                    await cur.execute(
+                        query,
+                        (error_response_code, last_error_message, now),
+                    )
 
-                # Clear related caches after successful failure update
-                await self._clear_weather_caches(updated_at=now)
+                    # Clear related caches after successful failure update
+                    await self._clear_weather_caches(updated_at=now)
+        except (psycopg.Error, KeyError, ValueError):
+            raise WeatherOperationError(
+                "Failed to update weather failure information",
+                details={
+                    "operation": "update_weather_failure",
+                    "error_response_code": error_response_code,
+                    "last_error_message": (
+                        last_error_message[:100] + "..."
+                        if last_error_message and len(last_error_message) > 100
+                        else last_error_message
+                    ),
+                },
+            )
 
     @cached_response(ttl_seconds=300, key_prefix="weather")
     async def get_weather_for_hour(
         self, target_datetime: datetime
     ) -> Optional[Dict[str, Any]]:
         """Get weather data for a specific hour."""
-        # Round down to the hour
-        hour_start = target_datetime.replace(minute=0, second=0, microsecond=0)
+        try:
+            # Round down to the hour
+            hour_start = target_datetime.replace(minute=0, second=0, microsecond=0)
 
-        # Use optimized query builders
-        query = WeatherQueryBuilder.build_weather_for_hour_query()
-        fallback_query = WeatherQueryBuilder.build_fallback_weather_query()
+            # Use optimized query builders
+            query = WeatherQueryBuilder.build_weather_for_hour_query()
+            fallback_query = WeatherQueryBuilder.build_fallback_weather_query()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (hour_start, hour_start))
-                row = await cur.fetchone()
-
-                # If no data for this hour, get the most recent valid data
-                if not row:
-                    await cur.execute(fallback_query)
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (hour_start, hour_start))
                     row = await cur.fetchone()
 
-                return dict(row) if row else None
+                    # If no data for this hour, get the most recent valid data
+                    if not row:
+                        await cur.execute(fallback_query)
+                        row = await cur.fetchone()
+
+                    return dict(row) if row else None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise WeatherOperationError(
+                f"Failed to get weather data for hour {target_datetime}",
+                details={
+                    "operation": "get_weather_for_hour",
+                    "target_datetime": target_datetime.isoformat(),
+                    "error": str(e),
+                },
+            ) from e
 
 
 class SyncWeatherOperations:
@@ -238,14 +283,20 @@ class SyncWeatherOperations:
 
     def get_latest_weather(self) -> Optional[Dict[str, Any]]:
         """Get the current weather data (single row)."""
-        # Use optimized query builder
-        query = WeatherQueryBuilder.build_latest_weather_query()
+        try:
+            # Use optimized query builder
+            query = WeatherQueryBuilder.build_latest_weather_query()
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query)
-                row = cur.fetchone()
-                return dict(row) if row else None
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    row = cur.fetchone()
+                    return dict(row) if row else None
+        except (psycopg.Error, KeyError, ValueError):
+            raise WeatherOperationError(
+                "Failed to get latest weather data (sync)",
+                details={"operation": "get_latest_weather_sync"},
+            )
 
     def insert_weather_data(
         self,
@@ -261,34 +312,46 @@ class SyncWeatherOperations:
         last_error_message: Optional[str] = None,
     ) -> int:
         """Upsert weather data - maintains single row in table."""
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Use optimized query builder and centralized time management
-                query = WeatherQueryBuilder.build_weather_upsert_query()
-                now = utc_now()
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Use optimized query builder and centralized time management
+                    query = WeatherQueryBuilder.build_weather_upsert_query()
+                    now = utc_now()
 
-                cur.execute(
-                    query,
-                    (
-                        weather_date_fetched,
-                        current_temp,
-                        current_weather_icon,
-                        current_weather_description,
-                        sunrise_timestamp,
-                        sunset_timestamp,
-                        api_key_valid,
-                        api_failing,
-                        error_response_code,
-                        last_error_message,
-                        now,
-                    ),
-                )
-                row = cur.fetchone()
-                if row:
-                    weather_id = row["id"]
-                    return weather_id
-                else:
-                    raise Exception("No row returned from weather data upsert")
+                    cur.execute(
+                        query,
+                        (
+                            weather_date_fetched,
+                            current_temp,
+                            current_weather_icon,
+                            current_weather_description,
+                            sunrise_timestamp,
+                            sunset_timestamp,
+                            api_key_valid,
+                            api_failing,
+                            error_response_code,
+                            last_error_message,
+                            now,
+                        ),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        weather_id = row["id"]
+                        return weather_id
+                    else:
+                        raise Exception("No row returned from weather data upsert")
+        except (psycopg.Error, KeyError, ValueError, Exception) as e:
+            raise WeatherOperationError(
+                "Failed to insert weather data (sync)",
+                details={
+                    "operation": "insert_weather_data_sync",
+                    "api_key_valid": api_key_valid,
+                    "api_failing": api_failing,
+                    "current_temp": current_temp,
+                    "error": str(e),
+                },
+            ) from e
 
     def update_weather_failure(
         self,
@@ -296,34 +359,57 @@ class SyncWeatherOperations:
         last_error_message: Optional[str] = None,
     ) -> None:
         """Update weather data with failure information."""
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Use optimized query builder and centralized time management
-                query = WeatherQueryBuilder.build_weather_failure_update_query()
-                cur.execute(
-                    query,
-                    (error_response_code, last_error_message, utc_now()),
-                )
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Use optimized query builder and centralized time management
+                    query = WeatherQueryBuilder.build_weather_failure_update_query()
+                    cur.execute(
+                        query,
+                        (error_response_code, last_error_message, utc_now()),
+                    )
+        except (psycopg.Error, KeyError, ValueError):
+            raise WeatherOperationError(
+                "Failed to update weather failure information (sync)",
+                details={
+                    "operation": "update_weather_failure_sync",
+                    "error_response_code": error_response_code,
+                    "last_error_message": (
+                        last_error_message[:100] + "..."
+                        if last_error_message and len(last_error_message) > 100
+                        else last_error_message
+                    ),
+                },
+            )
 
     def get_weather_for_hour(
         self, target_datetime: datetime
     ) -> Optional[Dict[str, Any]]:
         """Get weather data for a specific hour."""
-        # Round down to the hour
-        hour_start = target_datetime.replace(minute=0, second=0, microsecond=0)
+        try:
+            # Round down to the hour
+            hour_start = target_datetime.replace(minute=0, second=0, microsecond=0)
 
-        # Use optimized query builders
-        query = WeatherQueryBuilder.build_weather_for_hour_query()
-        fallback_query = WeatherQueryBuilder.build_fallback_weather_query()
+            # Use optimized query builders
+            query = WeatherQueryBuilder.build_weather_for_hour_query()
+            fallback_query = WeatherQueryBuilder.build_fallback_weather_query()
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (hour_start, hour_start))
-                row = cur.fetchone()
-
-                # If no data for this hour, get the most recent valid data
-                if not row:
-                    cur.execute(fallback_query)
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (hour_start, hour_start))
                     row = cur.fetchone()
 
-                return dict(row) if row else None
+                    # If no data for this hour, get the most recent valid data
+                    if not row:
+                        cur.execute(fallback_query)
+                        row = cur.fetchone()
+
+                    return dict(row) if row else None
+        except (psycopg.Error, KeyError, ValueError):
+            raise WeatherOperationError(
+                f"Failed to get weather data for hour {target_datetime} (sync)",
+                details={
+                    "operation": "get_weather_for_hour_sync",
+                    "target_datetime": target_datetime.isoformat(),
+                },
+            )

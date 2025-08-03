@@ -9,37 +9,32 @@ This module handles all corruption-related database operations including:
 - Corruption settings
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 
-from loguru import logger
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import psycopg
 
-from ..models.corruption_model import CorruptionLogsPage
-
-from .core import AsyncDatabase, SyncDatabase
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
-)
-from ..utils.cache_invalidation import CacheInvalidationService
-from ..utils.time_utils import utc_now
 from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
+    DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
     DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
-    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
-    DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
-    DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
     MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE,
 )
 from ..models.corruption_model import (
-    CorruptionLogEntry,
-    CorruptionStats,
     CameraWithCorruption,
     CorruptionAnalysisStats,
+    CorruptionLogEntry,
+    CorruptionLogsPage,
+    CorruptionStats,
 )
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
 
 
 class CorruptionQueryBuilder:
@@ -119,9 +114,9 @@ class CorruptionQueryBuilder:
             LEFT JOIN corruption_logs cl ON c.id = cl.camera_id
                 AND cl.created_at > %(now)s - INTERVAL '1 hour'
             WHERE c.degraded_mode_active = true
-            GROUP BY c.id, c.name, c.enabled, c.degraded_mode_active, 
-                     c.consecutive_corruption_failures, c.lifetime_glitch_count,
-                     c.last_degraded_at, c.created_at, c.updated_at
+            GROUP BY c.id, c.name, c.enabled, c.degraded_mode_active,
+                    c.consecutive_corruption_failures, c.lifetime_glitch_count,
+                    c.last_degraded_at, c.created_at, c.updated_at
             ORDER BY c.last_degraded_at DESC NULLS LAST
         """
 
@@ -535,8 +530,8 @@ class CorruptionOperations:
         INSERT INTO settings (key, value, updated_at)
         VALUES (%(key)s, %(value)s, %(updated_at)s)
         ON CONFLICT (key)
-        DO UPDATE SET 
-            value = EXCLUDED.value, 
+        DO UPDATE SET
+            value = EXCLUDED.value,
             updated_at = EXCLUDED.updated_at
         """
 
@@ -829,15 +824,15 @@ class SyncCorruptionOperations:
             c.lifetime_glitch_count,
             c.degraded_mode_active,
             c.last_degraded_at,
-            COUNT(*) FILTER (WHERE cl.created_at > %(now)s - INTERVAL '1 hour' 
+            COUNT(*) FILTER (WHERE cl.created_at > %(now)s - INTERVAL '1 hour'
                             AND cl.action_taken = 'discarded') as failures_last_hour,
-            COUNT(*) FILTER (WHERE cl.created_at > %(now)s - INTERVAL '30 minutes' 
+            COUNT(*) FILTER (WHERE cl.created_at > %(now)s - INTERVAL '30 minutes'
                             AND cl.action_taken = 'discarded') as failures_last_30min
         FROM cameras c
         LEFT JOIN corruption_logs cl ON c.id = cl.camera_id
         WHERE c.id = %(camera_id)s
         GROUP BY c.id, c.consecutive_corruption_failures, c.lifetime_glitch_count,
-                 c.degraded_mode_active, c.last_degraded_at
+                c.degraded_mode_active, c.last_degraded_at
         """
 
         params = {"now": utc_now(), "camera_id": camera_id}
@@ -903,7 +898,7 @@ class SyncCorruptionOperations:
             WHERE t.camera_id = %(camera_id)s
                 AND i.captured_at > tw.window_start
         )
-        SELECT 
+        SELECT
             fs.total_failures,
             cs.total_captures
         FROM failure_stats fs
@@ -1028,7 +1023,7 @@ class SyncCorruptionOperations:
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    logger.info(f"Cleaned up {affected} old corruption logs")
+                    pass
 
                 return affected or 0
 
@@ -1058,8 +1053,8 @@ class SyncCorruptionOperations:
         INSERT INTO settings (key, value, updated_at)
         VALUES (%(key)s, %(value)s, %(updated_at)s)
         ON CONFLICT (key)
-        DO UPDATE SET 
-            value = EXCLUDED.value, 
+        DO UPDATE SET
+            value = EXCLUDED.value,
             updated_at = EXCLUDED.updated_at
         """
 
@@ -1118,13 +1113,13 @@ class SyncCorruptionOperations:
             # Use single query to handle both valid and invalid cases atomically
             query = """
             UPDATE cameras
-            SET consecutive_corruption_failures = CASE 
-                    WHEN %(is_valid)s THEN 0 
-                    ELSE consecutive_corruption_failures + 1 
+            SET consecutive_corruption_failures = CASE
+                    WHEN %(is_valid)s THEN 0
+                    ELSE consecutive_corruption_failures + 1
                 END,
-                lifetime_glitch_count = CASE 
-                    WHEN NOT %(is_valid)s THEN lifetime_glitch_count + 1 
-                    ELSE lifetime_glitch_count 
+                lifetime_glitch_count = CASE
+                    WHEN NOT %(is_valid)s THEN lifetime_glitch_count + 1
+                    ELSE lifetime_glitch_count
                 END,
                 updated_at = %(now)s
             WHERE id = %(camera_id)s
@@ -1142,8 +1137,5 @@ class SyncCorruptionOperations:
                     affected = cur.rowcount
                     return affected and affected > 0
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to update camera corruption stats for camera {camera_id}: {e}"
-            )
+        except (psycopg.Error, KeyError, ValueError):
             return False

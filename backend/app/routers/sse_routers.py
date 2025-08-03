@@ -14,7 +14,10 @@ from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..dependencies import AsyncDatabaseDep
 from ..database.sse_events_operations import SSEEventsOperations
@@ -79,7 +82,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         )
                     except Exception as cache_error:
                         logger.warning(
-                            f"Cache invalidation failed for {event['type']}: {cache_error}"
+                            f"Cache invalidation failed for {event['type']}", exception=cache_error
                         )
 
                     # Yield SSE-formatted data
@@ -116,7 +119,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                                 )
                             except Exception as cache_error:
                                 logger.warning(
-                                    f"Cache invalidation failed for {event['type']}: {cache_error}"
+                                    f"Cache invalidation failed for {event['type']}", exception=cache_error
                                 )
 
                             # Log events for debugging
@@ -148,7 +151,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                     await asyncio.sleep(3)
 
                 except Exception as e:
-                    logger.error(f"Error in SSE event generation: {e}")
+                    logger.error("Error in SSE event generation", exception=e)
                     # Send error event to client
                     error_event = {
                         "type": "error",
@@ -162,7 +165,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
             logger.info("SSE client disconnected")
             raise
         except Exception as e:
-            logger.error(f"Fatal error in SSE stream: {e}")
+            logger.error("Fatal error in SSE stream", exception=e)
             raise
 
     # Return streaming response with proper SSE headers

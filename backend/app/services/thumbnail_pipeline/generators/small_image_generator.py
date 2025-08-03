@@ -9,7 +9,10 @@ Provides higher quality than thumbnails but smaller than full resolution.
 from pathlib import Path
 from typing import Tuple, Dict, Any
 from PIL import Image
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from ..utils.constants import (
     SMALL_IMAGE_SIZE,
@@ -24,7 +27,7 @@ from ..utils.thumbnail_utils import (
 class SmallImageGenerator:
     """
     Component responsible for generating 800×600 medium-quality images.
-    
+
     Optimized for:
     - Modal displays and detailed views
     - Good quality with reasonable file size
@@ -41,17 +44,16 @@ class SmallImageGenerator:
         """
         self.quality = max(1, min(95, quality))
         self.target_size = SMALL_IMAGE_SIZE
-        
-        logger.debug(f"✅ SmallImageGenerator initialized (quality={self.quality}, size={self.target_size})")
+
+        logger.debug(
+            f"SmallImageGenerator initialized (quality={self.quality}, size={self.target_size})"
+        )
 
     def generate_small_image(
-        self,
-        source_path: str,
-        output_path: str,
-        force_regenerate: bool = False
+        self, source_path: str, output_path: str, force_regenerate: bool = False
     ) -> Dict[str, Any]:
         """
-        Generate an 800×600 small image from source image.
+        Generate an 800x600 small image from source image.
 
         Args:
             source_path: Path to source image file
@@ -90,15 +92,19 @@ class SmallImageGenerator:
             output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
             # Generate small image
-            generation_result = self._generate_small_image_file(source_path_obj, output_path_obj)
-            
+            generation_result = self._generate_small_image_file(
+                source_path_obj, output_path_obj
+            )
+
             if generation_result["success"]:
-                logger.debug(f"✅ Generated small image: {output_path_obj.name}")
-            
+                logger.debug(f"Generated small image: {output_path_obj.name}")
+
             return generation_result
 
         except Exception as e:
-            logger.error(f"❌ Failed to generate small image for {source_path}: {e}")
+            logger.error(
+                f"Failed to generate small image for {source_path}", exception=e
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -106,7 +112,9 @@ class SmallImageGenerator:
                 "output_path": output_path,
             }
 
-    def _generate_small_image_file(self, source_path: Path, output_path: Path) -> Dict[str, Any]:
+    def _generate_small_image_file(
+        self, source_path: Path, output_path: Path
+    ) -> Dict[str, Any]:
         """
         Internal method to perform the actual small image generation.
 
@@ -124,40 +132,44 @@ class SmallImageGenerator:
                 original_size = img.size
 
                 # Convert to RGB if necessary (handles RGBA, P, etc.)
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
 
                 # Calculate dimensions preserving aspect ratio
                 target_width, target_height = self.target_size
-                
+
                 # Check if image is already smaller than target
                 if img.width <= target_width and img.height <= target_height:
                     # Image is smaller than target - save as-is with compression
                     img.save(
                         output_path,
-                        'JPEG',
+                        # TODO: use enum
+                        "JPEG",
                         quality=self.quality,
                         optimize=True,
-                        progressive=True
+                        progressive=True,
                     )
-                    
+
                     final_size = img.size
                 else:
                     # Image is larger - resize with aspect ratio preservation
-                    small_size = self._calculate_small_dimensions(img.size, (target_width, target_height))
-                    
+                    small_size = self._calculate_small_dimensions(
+                        img.size, (target_width, target_height)
+                    )
+
                     # Resize with high-quality resampling
                     img = img.resize(small_size, Image.Resampling.LANCZOS)
-                    
+
                     # Save with optimization
                     img.save(
                         output_path,
-                        'JPEG',
+                        # TODO: use enum
+                        "JPEG",
                         quality=self.quality,
                         optimize=True,
-                        progressive=True
+                        progressive=True,
                     )
-                    
+
                     final_size = img.size
 
                 # Get file size
@@ -183,7 +195,9 @@ class SmallImageGenerator:
                 "output_path": str(output_path),
             }
 
-    def _calculate_small_dimensions(self, source_size: Tuple[int, int], max_size: Tuple[int, int]) -> Tuple[int, int]:
+    def _calculate_small_dimensions(
+        self, source_size: Tuple[int, int], max_size: Tuple[int, int]
+    ) -> Tuple[int, int]:
         """
         Calculate small image dimensions that fit within max size while preserving aspect ratio.
 
@@ -274,12 +288,16 @@ class SmallImageGenerator:
         total_pixels = source_width * source_height
 
         # Empirical estimation - small images take longer than thumbnails due to higher quality
-        base_time = total_pixels / 800_000  # Slightly slower processing for higher quality
+        base_time = (
+            total_pixels / 800_000
+        )  # Slightly slower processing for higher quality
         overhead = 0.15  # Slightly higher overhead for quality processing
 
         return base_time + overhead
 
-    def get_compression_ratio(self, original_size: Tuple[int, int], final_size: Tuple[int, int]) -> float:
+    def get_compression_ratio(
+        self, original_size: Tuple[int, int], final_size: Tuple[int, int]
+    ) -> float:
         """
         Calculate compression ratio between original and final image.
 
@@ -292,10 +310,10 @@ class SmallImageGenerator:
         """
         original_pixels = original_size[0] * original_size[1]
         final_pixels = final_size[0] * final_size[1]
-        
+
         if original_pixels == 0:
             return 0.0
-            
+
         return final_pixels / original_pixels
 
     def get_supported_formats(self) -> list:

@@ -9,22 +9,21 @@ This module handles health-specific database operations including:
 - Health check queries
 """
 
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
+
 import time
-from loguru import logger
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
+
 import psycopg
 
 from app.models.health_model import ApplicationMetrics
-from .core import AsyncDatabase, SyncDatabase
+
 from ..constants import DEFAULT_CORRUPTION_HISTORY_HOURS
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_timestamp_etag,
-)
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_timestamp_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import HealthOperationError
 
 
 class HealthQueryBuilder:
@@ -120,12 +119,12 @@ class HealthQueryBuilder:
                 pg_database_size(current_database()) as total_size_bytes,
                 (
                     SELECT SUM(pg_total_relation_size(schemaname||'.'||tablename))
-                    FROM pg_tables 
+                    FROM pg_tables
                     WHERE schemaname = 'public'
                 ) as tables_size_bytes,
                 (
-                    SELECT COUNT(*) 
-                    FROM information_schema.tables 
+                    SELECT COUNT(*)
+                    FROM information_schema.tables
                     WHERE table_schema = 'public'
                 ) as table_count
         """
@@ -178,8 +177,10 @@ class HealthOperations:
             latency_ms = (time.time() - start_time) * 1000
             return True, latency_ms, None
         except (psycopg.Error, ConnectionError, OSError) as e:
-            logger.error(f"Database connectivity test failed: {e}")
-            return False, None, str(e)
+            raise HealthOperationError(
+                f"Failed to test database connectivity: {e}",
+                operation="test_database_connectivity",
+            ) from e
 
     async def get_connection_pool_stats(self) -> Dict[str, Any]:
         """
@@ -198,8 +199,10 @@ class HealthOperations:
                 "note": "Basic pool monitoring - detailed stats not available",
             }
         except (psycopg.Error, AttributeError, ConnectionError) as e:
-            logger.error(f"Failed to get connection pool stats: {e}")
-            return {"status": "error", "error": str(e)}
+            raise HealthOperationError(
+                f"Failed to get connection pool stats: {e}",
+                operation="get_connection_pool_stats",
+            ) from e
 
     @cached_response(ttl_seconds=30, key_prefix="health")
     async def get_application_metrics(self) -> ApplicationMetrics:
@@ -231,16 +234,10 @@ class HealthOperations:
                     )
 
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Failed to get application metrics: {e}")
-            # Return safe defaults in case of error
-            return ApplicationMetrics(
-                total_cameras=0,
-                active_cameras=0,
-                running_timelapses=0,
-                images_last_24h=0,
-                pending_video_jobs=0,
-                processing_video_jobs=0,
-            )
+            raise HealthOperationError(
+                f"Failed to get application metrics: {e}",
+                operation="get_application_metrics",
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="health")
     async def check_database_integrity(self) -> Dict[str, Any]:
@@ -297,8 +294,10 @@ class HealthOperations:
                     return result
 
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Database integrity check failed: {e}")
-            return {"status": "error", "error": str(e)}
+            raise HealthOperationError(
+                f"Failed to check database integrity: {e}",
+                operation="check_database_integrity",
+            ) from e
 
     @cached_response(ttl_seconds=120, key_prefix="health")
     async def get_database_size_stats(self) -> Dict[str, Any]:
@@ -327,15 +326,10 @@ class HealthOperations:
                         "table_count": size_data["table_count"] or 0,
                     }
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Failed to get database size stats: {e}")
-            return {
-                "total_size_bytes": 0,
-                "total_size_mb": 0.0,
-                "tables_size_bytes": 0,
-                "tables_size_mb": 0.0,
-                "table_count": 0,
-                "error": str(e),
-            }
+            raise HealthOperationError(
+                f"Failed to get database size stats: {e}",
+                operation="get_database_size_stats",
+            ) from e
 
     async def get_comprehensive_health_check(self) -> Dict[str, Any]:
         """
@@ -387,12 +381,10 @@ class HealthOperations:
             }
 
         except Exception as e:
-            logger.error(f"Comprehensive health check failed: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "timestamp": utc_now().isoformat(),
-            }
+            raise HealthOperationError(
+                f"Failed comprehensive health check: {e}",
+                operation="get_comprehensive_health_check",
+            ) from e
 
 
 class SyncHealthOperations:
@@ -418,8 +410,10 @@ class SyncHealthOperations:
             latency_ms = (time.time() - start_time) * 1000
             return True, latency_ms, None
         except (psycopg.Error, ConnectionError, OSError) as e:
-            logger.error(f"Sync database connectivity test failed: {e}")
-            return False, None, str(e)
+            raise HealthOperationError(
+                f"Failed to test database connectivity: {e}",
+                operation="test_database_connectivity",
+            ) from e
 
     def get_connection_pool_stats(self) -> Dict[str, Any]:
         """
@@ -435,8 +429,10 @@ class SyncHealthOperations:
                 "note": "Sync pool monitoring - detailed stats not available",
             }
         except (psycopg.Error, AttributeError, ConnectionError) as e:
-            logger.error(f"Failed to get sync connection pool stats: {e}")
-            return {"status": "error", "error": str(e)}
+            raise HealthOperationError(
+                f"Failed to get connection pool stats: {e}",
+                operation="get_connection_pool_stats",
+            ) from e
 
     def get_application_metrics(self) -> ApplicationMetrics:
         """
@@ -467,16 +463,10 @@ class SyncHealthOperations:
                     )
 
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Failed to get sync application metrics: {e}")
-            # Return safe defaults in case of error
-            return ApplicationMetrics(
-                total_cameras=0,
-                active_cameras=0,
-                running_timelapses=0,
-                images_last_24h=0,
-                pending_video_jobs=0,
-                processing_video_jobs=0,
-            )
+            raise HealthOperationError(
+                f"Failed to get application metrics: {e}",
+                operation="get_application_metrics",
+            ) from e
 
     def check_database_integrity(self) -> Dict[str, Any]:
         """
@@ -531,8 +521,10 @@ class SyncHealthOperations:
                     return result
 
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Sync database integrity check failed: {e}")
-            return {"status": "error", "error": str(e)}
+            raise HealthOperationError(
+                f"Failed to check database integrity: {e}",
+                operation="check_database_integrity",
+            ) from e
 
     def get_database_size_stats(self) -> Dict[str, Any]:
         """
@@ -560,12 +552,7 @@ class SyncHealthOperations:
                         "table_count": size_data["table_count"] or 0,
                     }
         except (psycopg.Error, ConnectionError, KeyError) as e:
-            logger.error(f"Failed to get sync database size stats: {e}")
-            return {
-                "total_size_bytes": 0,
-                "total_size_mb": 0.0,
-                "tables_size_bytes": 0,
-                "tables_size_mb": 0.0,
-                "table_count": 0,
-                "error": str(e),
-            }
+            raise HealthOperationError(
+                f"Failed to get database size stats: {e}",
+                operation="get_database_size_stats",
+            ) from e

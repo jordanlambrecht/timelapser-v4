@@ -5,7 +5,7 @@ Video management and generation HTTP endpoints.
 Role: Video management and generation HTTP endpoints
 Responsibilities: Video metadata CRUD, manual video generation triggers, video file serving
 Interactions: Uses VideoService for business logic, coordinates with VideoAutomationService
-             for generation requests
+            for generation requests
 """
 
 # Standard library imports
@@ -16,7 +16,10 @@ from typing import List, Optional
 # Third party imports
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, status, Response
 from pydantic import BaseModel, Field, field_validator
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LogSource, LoggerName
+
+logger = get_service_logger(LoggerName.API, LogSource.API)
 
 from ..services.video_pipeline.constants import (
     ERROR_VIDEO_FILE_NOT_FOUND,
@@ -29,7 +32,6 @@ from ..utils.cache_manager import (
     generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
-    generate_timestamp_etag,
 )
 from ..constants import (
     JOB_PRIORITY,

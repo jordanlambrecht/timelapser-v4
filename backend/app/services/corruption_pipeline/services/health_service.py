@@ -15,7 +15,10 @@ Responsibilities:
 
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
-from loguru import logger
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....models.corruption_model import (
@@ -204,13 +207,17 @@ class CorruptionHealthService:
                 issues=issues,
                 recommendations=recommendations,
                 # TODO: Use timezone-aware datetime from settings instead of UTC
-                # Should use get_timezone_aware_timestamp_async(settings_service) 
+                # Should use get_timezone_aware_timestamp_async(settings_service)
                 assessment_timestamp=datetime.utcnow(),
                 metrics=metrics_dict,
             )
 
         except Exception as e:
-            logger.error(f"Error assessing camera {camera_id} health: {e}")
+            logger.error(
+                f"Error assessing camera {camera_id} health: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def get_system_health_overview(self) -> Dict[str, Any]:
@@ -299,7 +306,11 @@ class CorruptionHealthService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting system health overview: {e}")
+            logger.error(
+                f"Error getting system health overview: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def check_degraded_mode_triggers(self) -> List[Dict[str, Any]]:
@@ -320,7 +331,11 @@ class CorruptionHealthService:
             return cameras_to_degrade
 
         except Exception as e:
-            logger.error(f"Error checking degraded mode triggers: {e}")
+            logger.error(
+                f"Error checking degraded mode triggers: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def reset_camera_health(self, camera_id: int) -> bool:
@@ -337,7 +352,11 @@ class CorruptionHealthService:
             return await self.db_ops.reset_camera_degraded_mode(camera_id)
 
         except Exception as e:
-            logger.error(f"Error resetting camera {camera_id} health: {e}")
+            logger.error(
+                f"Error resetting camera {camera_id} health: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def get_health_trends(
@@ -404,7 +423,11 @@ class CorruptionHealthService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting health trends for camera {camera_id}: {e}")
+            logger.error(
+                f"Error getting health trends for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
 
@@ -440,7 +463,9 @@ class SyncCorruptionHealthService:
 
         except Exception as e:
             logger.error(
-                f"Error checking degraded mode trigger for camera {camera_id}: {e}"
+                f"Error checking degraded mode trigger for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
             )
             return False
 
@@ -459,7 +484,11 @@ class SyncCorruptionHealthService:
             return self.db_ops.set_camera_degraded_mode(camera_id, is_degraded)
 
         except Exception as e:
-            logger.error(f"Error setting degraded mode for camera {camera_id}: {e}")
+            logger.error(
+                f"Error setting degraded mode for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             return False
 
     def get_camera_failure_stats(self, camera_id: int) -> Dict[str, Any]:
@@ -476,7 +505,11 @@ class SyncCorruptionHealthService:
             return self.db_ops.get_camera_corruption_failure_stats(camera_id)
 
         except Exception as e:
-            logger.error(f"Error getting failure stats for camera {camera_id}: {e}")
+            logger.error(
+                f"Error getting failure stats for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             return {}
 
     def reset_camera_corruption_failures(self, camera_id: int) -> bool:
@@ -494,6 +527,8 @@ class SyncCorruptionHealthService:
 
         except Exception as e:
             logger.error(
-                f"Error resetting corruption failures for camera {camera_id}: {e}"
+                f"Error resetting corruption failures for camera {camera_id}: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
             )
             return False

@@ -1,12 +1,56 @@
 # Overlay Pipeline
 
+## Overview
+
+The Overlay Pipeline is a comprehensive system for generating dynamic overlays
+on timelapse images. It supports text-based overlays (timestamps, weather, frame
+numbers), image overlays (watermarks, logos), and custom content with flexible
+positioning and styling.
+
+**Key Features:**
+
+- 🎨 **Built-in Templates**: 3+ pre-configured overlay templates for common use
+  cases
+- 🐳 **Docker Ready**: Automatic template seeding during container deployment
+- 🔧 **Flexible Configuration**: Grid-based positioning with global and per-item
+  styling
+- 🌤️ **Weather Integration**: Live weather data overlays
+- 📊 **Performance Optimized**: Caching and background job processing
+
+## Template System
+
+### Built-in Templates
+
+The system includes pre-configured templates that are automatically seeded
+during fresh database deployments:
+
+1. **Basic Timestamp** - Simple date/time overlay for general use
+2. **Weather & Time** - Weather conditions with timestamp for outdoor timelapses
+3. **Complete Information** - Comprehensive overlay using all four corners
+
+### Template Management
+
+```bash
+# Check template status
+python3 init_templates.py --status
+
+# Initialize templates manually
+python3 init_templates.py
+
+# Docker deployment (automatic)
+# Templates are seeded during fresh database initialization
+```
+
+**Template Location**: `app/database/templates/`
+
+- `basic_timestamp.json`
+- `weather_info.json`
+- `complete_overlay.json`
+- `README.md` (documentation)
+
 ## Externally Associated Files
 
-### Docs
-
-- \_system-guides/TIMELAPSE_OVERLAY_SYSTEM.md
-
-### Backend
+### Core Backend Files
 
 - backend/app/database/overlay_job_operations.py
 - backend/app/database/overlay_operations.py
@@ -14,6 +58,18 @@
 - backend/app/utils/file_helpers.py
 - backend/app/utils/time_utils.py
 - backend/app/utils/temp_file_manager.py
+
+### Template System Files
+
+- backend/app/database/template_initializer.py
+- backend/app/database/templates/\*.json
+- backend/init_templates.py
+- backend/app/database/migrations.py (integration)
+
+### Documentation
+
+- \_system-guides/TIMELAPSE_OVERLAY_SYSTEM.md
+- backend/app/database/templates/README.md
 
 ### Pytests
 
@@ -127,6 +183,53 @@ The frontend sends overlay configuration as an array of overlay items:
 
 - **watermark** - Custom image overlay (logos, watermarks, etc.)
 
+## Docker Deployment
+
+### Automatic Template Seeding
+
+For Docker deployments, overlay templates are automatically initialized during
+fresh database setup:
+
+1. **Database Detection**: System detects fresh database (no Alembic history)
+2. **Schema Creation**: Creates database schema from SQL file
+3. **Template Initialization**: Automatically seeds built-in overlay templates
+4. **Alembic Stamping**: Marks database as current revision
+
+```python
+# Fresh database initialization includes templates
+result = initialize_database()
+# Returns: "Fresh database initialized successfully with 3 overlay templates"
+```
+
+### Template Configuration Format
+
+Templates use the backend `overlayPositions` format with grid-based positioning:
+
+```json
+{
+  "name": "Template Name",
+  "description": "Template description",
+  "overlay_config": {
+    "overlayPositions": {
+      "bottomLeft": {
+        "type": "date_time",
+        "textSize": 18,
+        "textColor": "#FFFFFF",
+        "backgroundOpacity": 60,
+        "dateFormat": "MM/dd/yyyy HH:mm"
+      }
+    },
+    "globalOptions": {
+      "opacity": 100,
+      "font": "Arial",
+      "xMargin": 25,
+      "yMargin": 25
+    }
+  },
+  "is_builtin": true
+}
+```
+
 ## Process Flow
 
 ### 1. Request Entry
@@ -187,14 +290,52 @@ APPROACH]_
 - Return success/failure status with error details
 - Update database records if needed
 
-## Current Architecture Issues
+## Template System Architecture
+
+### Database Integration
+
+- **Template Storage**: Built-in templates stored in `overlay_presets` table
+  with `is_builtin=true`
+- **User Presets**: User-created presets stored with `is_builtin=false`
+- **Template Seeding**: Automatic during fresh database initialization
+- **Duplicate Prevention**: Templates only inserted if name doesn't exist
+
+### Template Lifecycle
+
+1. **Development**: JSON templates created in `app/database/templates/`
+2. **Validation**: Template structure validated during loading
+3. **Deployment**: Auto-seeded during Docker container startup
+4. **Runtime**: Available as selectable presets in UI
+5. **Inheritance**: Templates can be customized per-timelapse
+
+### CLI Management
+
+```bash
+# Template status and management
+python3 init_templates.py --status        # Check template status
+python3 init_templates.py                 # Initialize templates
+python3 init_templates.py --json          # JSON output
+python3 test_docker_templates.py          # Test Docker readiness
+```
+
+## Current Architecture Status
+
+### ✅ Completed Features
+
+1. **Template System**: Built-in templates with Docker deployment
+2. **Database Operations**: Full CRUD for presets and configurations
+3. **Grid Positioning**: 9-position overlay system (topLeft, center, etc.)
+4. **Content Generation**: Support for all major overlay types
+5. **Error Handling**: Graceful fallbacks and validation
+
+### 🔄 Ongoing Issues
 
 1. **Data Structure Mismatch**: Frontend sends array, backend expects dict
 2. **Monolithic Content Generation**: Single large if-elif chain instead of
    modular generators
-3. **Missing Properties**: Backend doesn't support frontend properties (unit,
-   display, leadingZeros, hidePrefix)
-4. **Performance**: No caching of static overlay elements
+3. **Missing Properties**: Backend doesn't support some frontend properties
+   (unit, display, leadingZeros, hidePrefix)
+4. **Performance**: Limited caching of static overlay elements
 
 ## Future Improvements
 
@@ -202,3 +343,5 @@ APPROACH]_
 - Static overlay template caching for performance
 - Frontend-backend data transformation adapter
 - Enhanced property support and validation
+- Template versioning and migration system
+- Dynamic template loading from external sources

@@ -7,10 +7,14 @@ Handles database initialization with hybrid approach:
 """
 
 import sys
-from typing import Dict, Any, Optional
-from loguru import logger
+from typing import Any, Dict, Optional
 
-from .schema_manager import SchemaManager, DatabaseSchemaError, AlembicError
+# Use lazy logger utility to avoid circular dependency
+from .schema_manager import AlembicError, DatabaseSchemaError, SchemaManager
+from .template_initializer import (
+    TemplateInitializationError,
+    initialize_overlay_templates,
+)
 
 
 class DatabaseInitializationError(Exception):
@@ -49,28 +53,49 @@ def initialize_database(database_url: Optional[str] = None) -> Dict[str, Any]:
 
 
 def _initialize_fresh_database(schema_manager: SchemaManager) -> Dict[str, Any]:
-    """Initialize fresh database with schema creation."""
-    logger.info("Initializing fresh database")
+    """Initialize fresh database with schema creation and template seeding."""
 
     try:
+        # Create schema from SQL file
         schema_manager.create_fresh_schema()
+
+        # Stamp with current Alembic revision
         schema_manager.stamp_current_revision()
 
-        return {
+        # Initialize overlay templates
+        template_result = initialize_overlay_templates(schema_manager.database_url)
+
+        result = {
             "method": "fresh_schema",
             "success": True,
             "message": "Fresh database initialized successfully",
+            "template_initialization": template_result,
         }
+
+        # Update message if templates were initialized
+        if template_result.get("templates_inserted", 0) > 0:
+            result[
+                "message"
+            ] += f" with {template_result['templates_inserted']} overlay templates"
+
+        return result
 
     except (DatabaseSchemaError, AlembicError) as e:
         raise DatabaseInitializationError(
             f"Fresh database initialization failed: {e}"
         ) from e
+    except TemplateInitializationError as e:
+        # Don't fail the entire initialization if templates fail
+        return {
+            "method": "fresh_schema",
+            "success": True,
+            "message": "Fresh database initialized successfully (template seeding failed)",
+            "template_error": str(e),
+        }
 
 
 def _upgrade_existing_database(schema_manager: SchemaManager) -> Dict[str, Any]:
     """Upgrade existing database with migrations."""
-    logger.info("Upgrading existing database")
 
     try:
         schema_manager.run_migrations()
@@ -105,7 +130,6 @@ def get_database_status(database_url: Optional[str] = None) -> Dict[str, Any]:
 # CLI interface
 def main():
     """CLI entry point for database initialization."""
-    import sys
 
     try:
         result = initialize_database()

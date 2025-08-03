@@ -3,7 +3,6 @@
 Thumbnail Utility Functions
 """
 
-import os
 from pathlib import Path
 from typing import Tuple
 from PIL import Image
@@ -72,7 +71,6 @@ def calculate_thumbnail_dimensions(
         new_width = int(target_height * source_ratio)
 
     return (new_width, new_height)
-
 
 
 def create_thumbnail_directories(base_path: str, timelapse_id: int) -> None:

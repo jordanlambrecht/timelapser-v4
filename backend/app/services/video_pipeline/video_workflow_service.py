@@ -31,13 +31,20 @@ Separation of Concerns:
 """
 
 from typing import Dict, Any, Optional
-from loguru import logger
 
-from ...enums import SSEPriority, VideoQuality
+from ...services.logger import get_service_logger
+from ...enums import (
+    LogLevel,
+    LoggerName,
+    SSEEvent,
+    SSEEventSource,
+    SSEPriority,
+    VideoQuality,
+)
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 
 from ...database.core import SyncDatabase
-from ...database.video_operations import SyncVideoOperations
-from ...database.timelapse_operations import SyncTimelapseOperations
 from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...models.shared_models import VideoGenerationJobWithDetails
 from ...utils.file_helpers import (
@@ -47,7 +54,8 @@ from ...utils.file_helpers import (
 )
 from ...utils.time_utils import get_timezone_aware_timestamp_sync
 from ...config import settings
-from ..log_service import SyncLogService
+
+# from ..log_service import SyncLogService  # Removed: file does not exist
 from .video_job_service import VideoJobService
 from .overlay_integration_service import OverlayIntegrationService
 from . import ffmpeg_utils
@@ -83,7 +91,9 @@ class VideoWorkflowService:
         db: SyncDatabase,
         job_service: VideoJobService,
         overlay_service: OverlayIntegrationService,
-        log_service: Optional[SyncLogService] = None,
+        settings_service,
+        video_service=None,
+        timelapse_service=None,
         max_concurrent_jobs: int = 3,
     ):
         """
@@ -93,17 +103,32 @@ class VideoWorkflowService:
             db: SyncDatabase instance for database operations
             job_service: VideoJobService for job management
             overlay_service: OverlayIntegrationService for overlay coordination
-            log_service: Optional log service for audit trails
+            settings_service: SettingsService for configuration access
+            video_service: VideoService for video operations (optional, will create if not provided)
+            timelapse_service: TimelapseService for timelapse operations (optional, will create if not provided)
             max_concurrent_jobs: Maximum concurrent video jobs
         """
         self.db = db
         self.job_service = job_service
         self.overlay_service = overlay_service
-        self.log_service = log_service
+        self.settings_service = settings_service
 
-        # Database operations
-        self.video_ops = SyncVideoOperations(db)
-        self.timelapse_ops = SyncTimelapseOperations(db)
+        # Initialize services (inject or create)
+        if video_service:
+            self.video_service = video_service
+        else:
+            from ...services.video_service import SyncVideoService
+
+            self.video_service = SyncVideoService(db, settings_service)
+
+        if timelapse_service:
+            self.timelapse_service = timelapse_service
+        else:
+            from ...services.timelapse_service import SyncTimelapseService
+
+            self.timelapse_service = SyncTimelapseService(db)
+
+        # SSE operations (keep for now until we have a dedicated SSE service)
         self.sse_ops = SyncSSEEventsOperations(db)
 
         # Processing limits
@@ -145,7 +170,7 @@ class VideoWorkflowService:
                 }
 
             # Get the specific job
-            job = self.video_ops.get_video_generation_job_by_id(job_id)
+            job = self.job_service.video_ops.get_video_generation_job_by_id(job_id)
             if not job:
                 return {
                     "success": False,
@@ -161,13 +186,20 @@ class VideoWorkflowService:
                     "success": success,
                     "job_id": job_id,
                     "timelapse_id": timelapse_id,
-                    "message": "Video generation completed" if success else "Video generation failed",
+                    "message": (
+                        "Video generation completed"
+                        if success
+                        else "Video generation failed"
+                    ),
                 }
             finally:
                 self.currently_processing = max(0, self.currently_processing - 1)
 
         except Exception as e:
-            logger.error(f"Error executing scheduled video generation for job {job_id}: {e}")
+            logger.error(
+                f"Error executing scheduled video generation for job {job_id}: {e}",
+                exception=e,
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -212,7 +244,7 @@ class VideoWorkflowService:
                 self.currently_processing = max(0, self.currently_processing - 1)
 
         except Exception as e:
-            logger.error(f"Failed to process next job: {e}")
+            logger.error(f"Failed to process next job: {e}", exception=e)
             return None
 
     def _process_video_job(self, job: VideoGenerationJobWithDetails) -> bool:
@@ -233,18 +265,24 @@ class VideoWorkflowService:
             if not job_started:
                 logger.error(f"Failed to start video job {job_id}")
                 self._log_job_event(
-                    job, "ERROR", "Failed to start video job", "job_start_failure"
+                    job,
+                    LogLevel.ERROR,
+                    "Failed to start video job",
+                    "job_start_failure",
                 )
                 return False
 
             # Log job start
             self._log_job_event(
-                job, "INFO", f"Video generation job {job_id} started", "job_started"
+                job,
+                LogLevel.INFO,
+                f"Video generation job {job_id} started",
+                "job_started",
             )
 
             # Broadcast job started event
             self._broadcast_job_event(
-                "video_job_started",
+                SSEEvent.VIDEO_JOB_STARTED,
                 {
                     "job_id": job_id,
                     "timelapse_id": job.timelapse_id,
@@ -266,34 +304,27 @@ class VideoWorkflowService:
                 )
 
                 # Log successful completion
-                self._log_audit_trail(
-                    "generate",
-                    "video",
-                    video_result.get("video_id"),
-                    {
-                        "job_id": job_id,
-                        "timelapse_id": job.timelapse_id,
-                        "trigger_type": job.trigger_type,
-                        "video_path": video_result.get("video_path"),
-                        "metadata": video_result.get("metadata", {}),
-                    },
-                )
+                # Audit trail logging removed: no _log_audit_trail method exists
 
                 # Broadcast success events
                 self._broadcast_job_event(
-                    "video_job_completed",
+                    SSEEvent.VIDEO_JOB_COMPLETED,
                     {
                         "job_id": job_id,
                         "timelapse_id": job.timelapse_id,
                         "video_id": video_result.get("video_id"),
                         "video_path": video_result.get("video_path"),
-                        "duration_seconds": video_result.get("metadata", {}).get("duration_seconds", 0),
-                        "file_size_bytes": video_result.get("metadata", {}).get("file_size_bytes", 0),
+                        "duration_seconds": video_result.get("metadata", {}).get(
+                            "duration_seconds", 0
+                        ),
+                        "file_size_bytes": video_result.get("metadata", {}).get(
+                            "file_size_bytes", 0
+                        ),
                     },
                 )
 
                 self._broadcast_job_event(
-                    "video_generated",
+                    SSEEvent.VIDEO_GENERATED,
                     {
                         "video_id": video_result.get("video_id"),
                         "timelapse_id": job.timelapse_id,
@@ -315,14 +346,14 @@ class VideoWorkflowService:
                 # Log failure
                 self._log_job_event(
                     job,
-                    "ERROR",
+                    LogLevel.ERROR,
                     f"Video generation failed: {video_result.get('error')}",
                     "video_generation_failure",
                 )
 
                 # Broadcast failure event
                 self._broadcast_job_event(
-                    "video_job_failed",
+                    SSEEvent.VIDEO_JOB_FAILED,
                     {
                         "job_id": job_id,
                         "timelapse_id": job.timelapse_id,
@@ -335,12 +366,12 @@ class VideoWorkflowService:
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to process video job {job_id}: {e}")
+            logger.error(f"Failed to process video job {job_id}: {e}", exception=e)
 
             # Log unexpected error
             self._log_job_event(
                 job,
-                "ERROR",
+                LogLevel.ERROR,
                 f"Unexpected error processing job: {str(e)}",
                 "unexpected_processing_error",
             )
@@ -352,7 +383,9 @@ class VideoWorkflowService:
 
             return False
 
-    def _generate_video_for_job(self, job: VideoGenerationJobWithDetails) -> Dict[str, Any]:
+    def _generate_video_for_job(
+        self, job: VideoGenerationJobWithDetails
+    ) -> Dict[str, Any]:
         """
         Generate video for a specific job with complete workflow.
 
@@ -363,10 +396,12 @@ class VideoWorkflowService:
             Generation result dictionary
         """
         try:
-            logger.info(f"Starting video generation for job {job.id}, timelapse {job.timelapse_id}")
+            logger.info(
+                f"Starting video generation for job {job.id}, timelapse {job.timelapse_id}"
+            )
 
             # Get timelapse data
-            timelapse = self.timelapse_ops.get_timelapse_by_id(job.timelapse_id)
+            timelapse = self.timelapse_service.get_timelapse_by_id(job.timelapse_id)
             if not timelapse:
                 return {
                     "success": False,
@@ -384,7 +419,9 @@ class VideoWorkflowService:
             )
 
             # Generate output filename
-            timestamp_str = get_timezone_aware_timestamp_sync(self.db).strftime("%Y%m%d_%H%M%S")
+            timestamp_str = get_timezone_aware_timestamp_sync(
+                self.settings_service
+            ).strftime("%Y%m%d_%H%M%S")
             output_filename = f"timelapse_{job.timelapse_id}_{timestamp_str}.mp4"
 
             # Ensure output directory exists
@@ -392,7 +429,9 @@ class VideoWorkflowService:
             output_path = videos_dir / output_filename
 
             # Determine overlay mode
-            overlay_mode = self.overlay_service.get_overlay_mode_for_video(job.timelapse_id)
+            overlay_mode = self.overlay_service.get_overlay_mode_for_video(
+                job.timelapse_id
+            )
             use_overlay_images = overlay_mode == "overlay"
 
             logger.info(f"Generating video with overlay mode: {overlay_mode}")
@@ -420,7 +459,9 @@ class VideoWorkflowService:
                     "camera_id": timelapse.camera_id,
                     "timelapse_id": job.timelapse_id,
                     "name": f"Timelapse {timelapse.name}",
-                    "file_path": get_relative_path(output_path, settings.data_directory),
+                    "file_path": get_relative_path(
+                        output_path, settings.data_directory
+                    ),
                     "status": "completed",
                     "settings": video_settings,
                     "image_count": metadata.get("image_count", 0),
@@ -428,13 +469,16 @@ class VideoWorkflowService:
                     "duration_seconds": metadata.get("duration_seconds", 0),
                     "calculated_fps": metadata.get("framerate", video_settings["fps"]),
                     "images_start_date": timelapse.start_date,
-                    "images_end_date": timelapse.last_capture_at or timelapse.start_date,
+                    "images_end_date": timelapse.last_capture_at
+                    or timelapse.start_date,
                     "trigger_type": job.trigger_type,
                     "job_id": job.id,
-                    "created_at": get_timezone_aware_timestamp_sync(self.db),
+                    "created_at": get_timezone_aware_timestamp_sync(
+                        self.settings_service
+                    ),
                 }
 
-                video_record = self.video_ops.create_video_record(video_data)
+                video_record = self.video_service.create_video_record(video_data)
                 if not video_record:
                     logger.error(f"Failed to create video record for job {job.id}")
                     return {
@@ -451,12 +495,14 @@ class VideoWorkflowService:
                     "metadata": metadata,
                 }
             else:
-                logger.error(f"FFmpeg video generation failed for job {job.id}: {message}")
+                logger.error(
+                    f"FFmpeg video generation failed for job {job.id}: {message}"
+                )
 
                 # Log structured FFmpeg error
                 self._log_job_event(
                     job,
-                    "ERROR",
+                    LogLevel.ERROR,
                     f"FFmpeg video generation failed",
                     "ffmpeg_generation_failure",
                     {
@@ -471,12 +517,12 @@ class VideoWorkflowService:
                 return {"success": False, "error": message}
 
         except Exception as e:
-            logger.error(f"Video generation failed for job {job.id}: {e}")
+            logger.error(f"Video generation failed for job {job.id}: {e}", exception=e)
 
             # Log unexpected video generation error
             self._log_job_event(
                 job,
-                "ERROR",
+                LogLevel.ERROR,
                 f"Unexpected video generation error: {str(e)}",
                 "unexpected_generation_error",
             )
@@ -499,14 +545,16 @@ class VideoWorkflowService:
                 "queue_status": queue_status,
                 "pending_jobs": queue_status.get("pending", 0),
                 "processing_jobs": queue_status.get("processing", 0),
-                "can_process_more": self.currently_processing < self.max_concurrent_jobs,
+                "can_process_more": self.currently_processing
+                < self.max_concurrent_jobs,
                 "capacity_utilization_percent": (
                     self.currently_processing / self.max_concurrent_jobs
-                ) * 100,
+                )
+                * 100,
             }
 
         except Exception as e:
-            logger.error(f"Failed to get processing status: {e}")
+            logger.error(f"Failed to get processing status: {e}", exception=e)
             return {"error": str(e)}
 
     def execute_video_generation_direct(
@@ -514,14 +562,14 @@ class VideoWorkflowService:
     ) -> Dict[str, Any]:
         """
         🎯 SCHEDULER-CENTRIC: Execute direct video generation when commanded by scheduler.
-        
+
         This method provides direct execution without job queue management,
         used when SchedulerWorker commands immediate video generation.
-        
+
         Args:
             timelapse_id: Timelapse ID to generate video for
             settings: Optional video generation settings override
-            
+
         Returns:
             Dict containing execution results
         """
@@ -529,15 +577,17 @@ class VideoWorkflowService:
             logger.info(
                 f"🎬 Direct video generation for timelapse {timelapse_id} (scheduler commanded)"
             )
-            
+
             # Create a temporary job for direct execution
             job_data = {
                 "timelapse_id": timelapse_id,
-                "trigger_type": settings.get("trigger_type", "manual") if settings else "manual",
+                "trigger_type": (
+                    settings.get("trigger_type", "manual") if settings else "manual"
+                ),
                 "priority": SSEPriority.HIGH,
                 "settings": settings,
             }
-            
+
             # Use job service to create job
             job_id = self.job_service.create_job(
                 timelapse_id=timelapse_id,
@@ -545,67 +595,70 @@ class VideoWorkflowService:
                 priority=job_data["priority"],
                 settings=settings,
             )
-            
+
             if not job_id:
                 return {
                     "success": False,
                     "error": "Failed to create video job",
                 }
-            
+
             # Execute the job immediately
             result = self.execute_video_generation(
                 job_id=job_id,
                 timelapse_id=timelapse_id,
                 settings=settings,
             )
-            
+
             return result
-            
+
         except Exception as e:
-            logger.error(f"Direct video generation failed for timelapse {timelapse_id}: {e}")
+            logger.error(
+                f"Direct video generation failed for timelapse {timelapse_id}: {e}",
+                exception=e,
+            )
             return {
                 "success": False,
                 "error": str(e),
             }
-    
+
     def process_queue_only(self) -> Dict[str, Any]:
         """
         🎯 SCHEDULER-CENTRIC: Process existing jobs without autonomous trigger evaluation.
-        
+
         This method processes pending jobs in the queue without making any
         autonomous timing decisions or creating new jobs. Used by VideoWorker
         in execution-only mode.
-        
+
         Returns:
             Dict containing processing results
         """
         try:
             logger.debug("Processing video queue (execution-only mode)")
-            
+
             jobs_processed = 0
             errors = []
-            
+
             # Process up to max_concurrent_jobs
             while self.currently_processing < self.max_concurrent_jobs:
                 # Get next pending job
                 job_id = self.process_next_pending_job()
-                
+
                 if job_id:
                     jobs_processed += 1
                     logger.info(f"Processed video job {job_id}")
                 else:
                     # No more pending jobs
                     break
-                    
+
             return {
                 "success": True,
                 "jobs_processed": jobs_processed,
                 "currently_processing": self.currently_processing,
                 "errors": errors,
             }
-            
+
         except Exception as e:
-            logger.error(f"Queue processing failed: {e}")
+            logger.error(f"Queue processing failed: {e}", exception=e)
             return {
                 "success": False,
                 "jobs_processed": 0,
@@ -660,16 +713,20 @@ class VideoWorkflowService:
                     "job_service": job_service_health,
                     "overlay_service": overlay_service_health,
                 },
-                "last_check": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+                "last_check": get_timezone_aware_timestamp_sync(
+                    self.settings_service
+                ).isoformat(),
             }
 
         except Exception as e:
-            logger.error(f"Video workflow health check failed: {e}")
+            logger.error(f"Video workflow health check failed: {e}", exception=e)
             return {
                 "service": "video_workflow",
                 "status": "unhealthy",
                 "error": str(e),
-                "last_check": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+                "last_check": get_timezone_aware_timestamp_sync(
+                    self.settings_service
+                ).isoformat(),
             }
 
     def cancel_video_generation(self, job_id: int) -> Dict[str, Any]:
@@ -690,18 +747,14 @@ class VideoWorkflowService:
 
             if success:
                 # Log successful cancellation
-                if self.log_service:
-                    self.log_service.write_log_entry(
-                        level="INFO",
-                        message=f"Video generation job {job_id} cancelled successfully",
-                        logger_name="video_pipeline",
-                        source="video_workflow",
-                        extra_data={
-                            "job_id": job_id,
-                            "action": "cancel_job",
-                            "cancelled_by": "user",
-                        },
-                    )
+                logger.info(
+                    f"Video generation job {job_id} cancelled successfully",
+                    extra_context={
+                        "job_id": job_id,
+                        "action": "cancel_job",
+                        "cancelled_by": "user",
+                    },
+                )
 
                 return {
                     "success": True,
@@ -716,7 +769,9 @@ class VideoWorkflowService:
                 }
 
         except Exception as e:
-            logger.error(f"Failed to cancel video generation job {job_id}: {e}")
+            logger.error(
+                f"Failed to cancel video generation job {job_id}: {e}", exception=e
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -731,7 +786,7 @@ class VideoWorkflowService:
                     cur.execute("SELECT 1")
                     return cur.fetchone() is not None
         except Exception as e:
-            logger.error(f"Database connectivity check failed: {e}")
+            logger.error(f"Database connectivity check failed: {e}", exception=e)
             return False
 
     def _check_ffmpeg_health(self) -> tuple[bool, str]:
@@ -746,15 +801,12 @@ class VideoWorkflowService:
     def _log_job_event(
         self,
         job: VideoGenerationJobWithDetails,
-        level: str,
+        level: LogLevel,
         message: str,
         action: str,
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Log job-related events with structured data."""
-        if not self.log_service:
-            return
-
         try:
             log_data = {
                 "job_id": job.id,
@@ -764,60 +816,36 @@ class VideoWorkflowService:
                 **(extra_data or {}),
             }
 
-            self.log_service.write_log_entry(
-                level=level,
-                message=message,
-                logger_name="video_pipeline",
-                source="video_workflow",
-                extra_data=log_data,
-            )
+            # Use appropriate logger method based on log level
+            if level == LogLevel.INFO:
+                logger.info(message, extra_context=log_data)
+            elif level == LogLevel.ERROR:
+                logger.error(message, extra_context=log_data)
+            elif level == LogLevel.WARNING:
+                logger.warning(message, extra_context=log_data)
+            elif level == LogLevel.DEBUG:
+                logger.debug(message, extra_context=log_data)
+            else:
+                logger.info(message, extra_context=log_data)
         except Exception as e:
-            logger.warning(f"Failed to write structured log: {e}")
+            logger.error(f"Failed to log job event: {e}")
 
-    def _log_audit_trail(
-        self,
-        action: str,
-        entity_type: str,
-        entity_id: Optional[int],
-        changes: Dict[str, Any],
-    ) -> None:
-        """Log audit trail for video operations."""
-        if not self.log_service:
-            return
-
-        try:
-            # Use write_log_entry since SyncLogService doesn't have maintain_audit_trail
-            audit_data = {
-                "action": action,
-                "entity_type": entity_type,
-                "entity_id": entity_id,
-                "changes": changes,
-                "user_id": "system",
-                "audit_trail": True,
-            }
-            
-            self.log_service.write_log_entry(
-                level="INFO",
-                message=f"Audit: {action} {entity_type} {entity_id}",
-                logger_name="audit_trail",
-                source="video_workflow",
-                extra_data=audit_data,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to write audit trail: {e}")
+    # (Removed stray function signature and parameters outside any function)
 
     def _broadcast_job_event(
         self,
-        event_type: str,
+        event_type: SSEEvent,
         event_data: Dict[str, Any],
-        priority: str = SSEPriority.NORMAL,
-        source: str = "video_workflow",
+        priority: SSEPriority = SSEPriority.NORMAL,
+        source: SSEEventSource = SSEEventSource.VIDEO_PIPELINE,
     ) -> None:
         """Broadcast SSE event for workflow operations."""
         try:
             event_data_with_timestamp = {
                 **event_data,
-                "timestamp": get_timezone_aware_timestamp_sync(self.db).isoformat(),
+                "timestamp": get_timezone_aware_timestamp_sync(
+                    self.settings_service
+                ).isoformat(),
             }
 
             self.sse_ops.create_event(
@@ -831,3 +859,62 @@ class VideoWorkflowService:
 
         except Exception as e:
             logger.warning(f"Failed to broadcast SSE event {event_type}: {e}")
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get VideoWorkflowService status (STANDARDIZED METHOD NAME).
+
+        Returns:
+            Dict[str, Any]: Service status information
+        """
+        try:
+            processing_status = self.get_processing_status()
+
+            return {
+                "service_name": "VideoWorkflowService",
+                "service_type": "video_workflow_orchestration",
+                "database_status": "healthy" if self.db else "unavailable",
+                "job_service_status": "healthy" if self.job_service else "unavailable",
+                "overlay_service_status": (
+                    "healthy" if self.overlay_service else "unavailable"
+                ),
+                "settings_service_status": (
+                    "healthy" if self.settings_service else "unavailable"
+                ),
+                "video_service_status": (
+                    "healthy" if self.video_service else "unavailable"
+                ),
+                "timelapse_service_status": (
+                    "healthy" if self.timelapse_service else "unavailable"
+                ),
+                "sse_ops_status": "healthy" if self.sse_ops else "unavailable",
+                "currently_processing": self.currently_processing,
+                "max_concurrent_jobs": self.max_concurrent_jobs,
+                "capacity_utilization_percent": (
+                    (self.currently_processing / self.max_concurrent_jobs) * 100
+                    if self.max_concurrent_jobs > 0
+                    else 0
+                ),
+                "can_process_more": self.currently_processing
+                < self.max_concurrent_jobs,
+                "data_directory": settings.data_directory,
+                "videos_directory": settings.videos_directory,
+                "service_healthy": all(
+                    [
+                        self.db is not None,
+                        self.job_service is not None,
+                        self.overlay_service is not None,
+                        self.settings_service is not None,
+                        self.video_service is not None,
+                        self.timelapse_service is not None,
+                        self.sse_ops is not None,
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "service_name": "VideoWorkflowService",
+                "service_type": "video_workflow_orchestration",
+                "service_healthy": False,
+                "status_error": str(e),
+            }

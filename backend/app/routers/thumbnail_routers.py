@@ -10,22 +10,21 @@ Updated: 2025-07-06 - Debugging thumbnail regeneration endpoints
 """
 
 
-from fastapi import APIRouter, BackgroundTasks, Query
-from loguru import logger
+from fastapi import APIRouter, Query
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..dependencies import ThumbnailPipelineDep, SchedulerServiceDep
-from ..enums import JobPriority, ThumbnailJobPriority
+from ..enums import ThumbnailJobPriority
 from ..models.shared_models import (
     ThumbnailGenerationResult,
     ThumbnailRegenerationStatus,
     ThumbnailStatistics,
     ThumbnailOperationResponse,
 )
-from ..utils.router_helpers import handle_exceptions, validate_entity_exists
-from ..utils.response_helpers import ResponseFormatter
-from ..utils.time_utils import (
-    get_timezone_aware_timestamp_string_async,
-)
+from ..utils.router_helpers import handle_exceptions
 
 # NOTE: CACHING STRATEGY - MIXED APPROACH
 # Thumbnail operations use mixed caching strategy:
@@ -46,7 +45,7 @@ router = APIRouter(tags=["thumbnails"])
 async def generate_thumbnail_for_image(
     image_id: int,
     thumbnail_pipeline: ThumbnailPipelineDep,
-    scheduler_service: SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: Add scheduler dependency
+    scheduler_service: SchedulerServiceDep,
     force_regenerate: bool = Query(
         False, description="Force regeneration even if thumbnails exist"
     ),
@@ -71,7 +70,7 @@ async def generate_thumbnail_for_image(
         # First try to schedule through scheduler for consistency
         scheduler_result = await scheduler_service.schedule_immediate_thumbnail_generation(
             image_id=image_id,
-            priority=JobPriority.MEDIUM,  # Individual thumbnail generation is medium priority
+            priority=ThumbnailJobPriority.MEDIUM,  # Individual thumbnail generation is medium priority
         )
 
         if scheduler_result.get("success"):
@@ -145,6 +144,7 @@ async def get_thumbnail_stats(
 @router.post("/thumbnails/regenerate", deprecated=True)
 @handle_exceptions("start thumbnail regeneration")
 async def start_thumbnail_regeneration(
+    thumbnail_pipeline: ThumbnailPipelineDep,
     limit: int = Query(
         1000, ge=1, le=10000, description="Maximum number of images to process"
     ),
@@ -159,134 +159,77 @@ async def start_thumbnail_regeneration(
     Returns:
         ThumbnailOperationResponse with session ID and immediate status
     """
-    # TODO: Implement start_thumbnail_regeneration_background in ImageService
-    # For now, return placeholder result
-    result = {
-        "success": False,
-        "message": "Thumbnail regeneration not yet implemented",
-        "data": {"limit": limit},
-    }
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="regenerate_background",
-        data=result.get("data", {"limit": limit}),
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.start_thumbnail_regeneration_background(limit=limit)
 
 
 @router.get(
     "/thumbnails/regenerate-all/status", response_model=ThumbnailRegenerationStatus
 )
 @handle_exceptions("get thumbnail regeneration status")
-async def get_regeneration_status():
+async def get_regeneration_status(thumbnail_pipeline: ThumbnailPipelineDep):
     """
     Get current thumbnail regeneration status.
 
     Returns:
         ThumbnailRegenerationStatus with current progress
     """
-    # TODO: Implement get_thumbnail_regeneration_status in ImageService
-    # For now, return placeholder status
-    from ..models.shared_models import ThumbnailRegenerationStatus
-
-    return ThumbnailRegenerationStatus()
+    return await thumbnail_pipeline.get_thumbnail_regeneration_status()
 
 
 @router.post(
     "/thumbnails/regenerate-all/cancel", response_model=ThumbnailOperationResponse
 )
 @handle_exceptions("cancel thumbnail regeneration")
-async def cancel_thumbnail_regeneration():
+async def cancel_thumbnail_regeneration(thumbnail_pipeline: ThumbnailPipelineDep):
     """
     Cancel currently running thumbnail regeneration process.
 
     Returns:
         ThumbnailOperationResponse with cancellation status
     """
-    # TODO: Implement cancel_thumbnail_regeneration in ImageService
-    # For now, return placeholder result
-    result = {"success": False, "message": "Thumbnail cancellation not yet implemented"}
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="cancel",
-        data=result.get("data", {}),  # Let service provide cancellation data
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.cancel_thumbnail_regeneration()
 
 
 @router.delete("/thumbnails/delete-all", response_model=ThumbnailOperationResponse)
 @handle_exceptions("delete all thumbnails")
-async def delete_all_thumbnails():
+async def delete_all_thumbnails(thumbnail_pipeline: ThumbnailPipelineDep):
     """
     Delete all thumbnail files and clear database references.
 
     Returns:
         ThumbnailOperationResponse with deletion results
     """
-    # TODO: Implement delete_all_thumbnails in ImageService
-    # For now, return placeholder result
-    result = {"success": False, "message": "Thumbnail deletion not yet implemented"}
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="delete_all",
-        data=result.get("data", {}),  # Let service provide operation data
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.delete_all_thumbnails()
 
 
 @router.post("/thumbnails/verify", response_model=ThumbnailOperationResponse)
 @handle_exceptions("verify all thumbnails")
-async def verify_all_thumbnails():
+async def verify_all_thumbnails(thumbnail_pipeline: ThumbnailPipelineDep):
     """
     Verify all thumbnail files system-wide.
 
     Returns:
         ThumbnailOperationResponse with verification results
     """
-    # TODO: Implement verify_all_thumbnails in ImageService
-    # For now, return placeholder result
-    result = {"success": False, "message": "Thumbnail verification not yet implemented"}
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="verify",
-        data=result.get("data", {}),  # Let service provide verification data
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.verify_all_thumbnails()
 
 
 @router.post("/thumbnails/repair", response_model=ThumbnailOperationResponse)
 @handle_exceptions("repair orphaned thumbnails")
-async def repair_orphaned_thumbnails():
+async def repair_orphaned_thumbnails(thumbnail_pipeline: ThumbnailPipelineDep):
     """
     Repair orphaned thumbnail files by matching them back to database.
 
     Returns:
         ThumbnailOperationResponse with repair results
     """
-    # TODO: Implement repair_orphaned_thumbnails in ImageService
-    # For now, return placeholder result
-    result = {"success": False, "message": "Thumbnail repair not yet implemented"}
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="repair",
-        data=result.get("data", {}),  # Let service provide repair data
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.repair_orphaned_thumbnails()
 
 
 @router.delete("/thumbnails/cleanup", response_model=ThumbnailOperationResponse)
 @handle_exceptions("cleanup orphaned thumbnails")
 async def cleanup_orphaned_thumbnails(
+    thumbnail_pipeline: ThumbnailPipelineDep,
     dry_run: bool = Query(
         False, description="Preview cleanup without actually deleting files"
     ),
@@ -300,31 +243,22 @@ async def cleanup_orphaned_thumbnails(
     Returns:
         ThumbnailOperationResponse with cleanup results
     """
-    # TODO: Implement cleanup_orphaned_thumbnails in ImageService
-    # For now, return placeholder result
-    result = {
-        "success": False,
-        "message": f"Thumbnail cleanup not yet implemented (dry_run={dry_run})",
-    }
-
-    return ThumbnailOperationResponse(
-        success=result["success"],
-        message=result["message"],
-        operation="cleanup",
-        data=result.get("data", {}),  # Let service provide cleanup data
-        timestamp=result.get("timestamp"),  # Let service provide timestamp
-    )
+    return await thumbnail_pipeline.cleanup_orphaned_thumbnails(dry_run=dry_run)
 
 
-# ARCHITECTURAL COMPLIANCE ACHIEVED:
-# - Background task function moved to ImageService (proper service layer)
-# - Global state management moved to service layer
-# - Router now delegates to service methods following layered architecture
+# ARCHITECTURAL COMPLIANCE:
+# - Router now delegates to ThumbnailPipeline (proper service layer)
+# - Individual thumbnail generation routed through SchedulerService (CEO architecture)
+# - Bulk operations handled by ThumbnailPipeline using existing building blocks
 # - All business logic removed from router layer
 #
-# Service layer methods now handle:
-# - start_thumbnail_regeneration() - Initiates background processing
-# - get_thumbnail_regeneration_status() - Retrieves current state
-# - cancel_thumbnail_regeneration() - Handles cancellation logic
+# ThumbnailPipeline methods now handle:
+# - start_thumbnail_regeneration_background() - Bulk job queuing
+# - get_thumbnail_regeneration_status() - Job statistics tracking
+# - cancel_thumbnail_regeneration() - Active job cancellation
+# - verify_all_thumbnails() - System-wide verification
+# - repair_orphaned_thumbnails() - Orphaned file repair
+# - cleanup_orphaned_thumbnails() - File cleanup with dry-run
+# - delete_all_thumbnails() - Database reference clearing
 #
-# This eliminates all architectural violations and follows proper patterns.
+# This follows the Scheduler CEO architecture and uses existing functionality.

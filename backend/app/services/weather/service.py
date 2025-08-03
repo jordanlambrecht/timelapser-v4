@@ -25,12 +25,15 @@ import traceback
 import requests
 import inspect
 import json
-from datetime import datetime, date, time, timedelta, timezone
+from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional, Tuple
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
 from zoneinfo import ZoneInfo
 
 from ...database import sync_db
+
+logger = get_service_logger(LoggerName.WEATHER_SERVICE)
 from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import SSEPriority
 

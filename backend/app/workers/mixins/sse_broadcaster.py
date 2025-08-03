@@ -7,7 +7,10 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 """
 
 from typing import Dict, Any, Optional
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName, SSEEvent
+
+logger = get_service_logger(LoggerName.SSEBROADCASTER)
 
 from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import SSEPriority, SSEEventSource
@@ -74,7 +77,7 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="job_started", event_data=event_data, priority=priority
+            event_type=SSEEvent.JOB_STARTED, event_data=event_data, priority=priority
         )
 
     def broadcast_job_completed(
@@ -105,7 +108,7 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="job_completed", event_data=event_data, priority=priority
+            event_type=SSEEvent.JOB_COMPLETED, event_data=event_data, priority=priority
         )
 
     def broadcast_job_failed(
@@ -178,7 +181,9 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="job_retry_scheduled", event_data=event_data, priority=priority
+            event_type=SSEEvent.JOB_RETRY_SCHEDULED,
+            event_data=event_data,
+            priority=priority,
         )
 
     def broadcast_worker_statistics(
@@ -201,7 +206,9 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="worker_statistics", event_data=event_data, priority=priority
+            event_type=SSEEvent.WORKER_STATISTICS,
+            event_data=event_data,
+            priority=priority,
         )
 
     def broadcast_worker_started(
@@ -224,7 +231,7 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="worker_started", event_data=event_data, priority=priority
+            event_type=SSEEvent.WORKER_STARTED, event_data=event_data, priority=priority
         )
 
     def broadcast_worker_stopped(
@@ -254,7 +261,7 @@ class SSEBroadcaster:
             event_data.update(final_stats)
 
         return self._create_event(
-            event_type="worker_stopped", event_data=event_data, priority=priority
+            event_type=SSEEvent.WORKER_STOPPED, event_data=event_data, priority=priority
         )
 
     def broadcast_worker_error(
@@ -282,7 +289,7 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="worker_error", event_data=event_data, priority=priority
+            event_type=SSEEvent.WORKER_ERROR, event_data=event_data, priority=priority
         )
 
     def broadcast_performance_update(
@@ -307,7 +314,7 @@ class SSEBroadcaster:
         }
 
         return self._create_event(
-            event_type="worker_performance_update",
+            event_type=SSEEvent.SYSTEM_HEALTH_CHECK,
             event_data=event_data,
             priority=priority,
         )

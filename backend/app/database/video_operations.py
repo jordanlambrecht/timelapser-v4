@@ -7,26 +7,24 @@ instead of mixin inheritance, providing type-safe Pydantic model interfaces.
 
 Note: Complex automation features have been removed - automation is now handled by video pipeline.
 """
-from typing import List, Optional, Dict, Any
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, List, Optional
+
+import psycopg
 from pydantic import ValidationError
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.video_model import Video, VideoWithDetails
 from ..models.shared_models import (
     VideoGenerationJob,
     VideoGenerationJobWithDetails,
     VideoStatistics,
 )
-from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
-)
+from ..models.video_model import Video, VideoWithDetails
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
 from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import VideoOperationError
+from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
 class VideoQueryBuilder:
@@ -182,8 +180,10 @@ class VideoOperations:
             }
             return VideoGenerationJob.model_validate(job_fields)
         except ValidationError as e:
-            logger.error(f"Error creating VideoGenerationJob model: {e}")
-            raise
+            raise VideoOperationError(
+                f"Error creating VideoGenerationJob model: {e}",
+                operation="_row_to_video_generation_job",
+            ) from e
 
     def _row_to_video_generation_job_with_details(
         self, row: Dict[str, Any]
@@ -205,8 +205,10 @@ class VideoOperations:
 
             return VideoGenerationJobWithDetails.model_validate(details_fields)
         except ValidationError as e:
-            logger.error(f"Error creating VideoGenerationJobWithDetails model: {e}")
-            raise
+            raise VideoOperationError(
+                f"Error creating VideoGenerationJobWithDetails model: {e}",
+                operation="_row_to_video_generation_job_with_details",
+            ) from e
 
     @cached_response(ttl_seconds=120, key_prefix="video")
     async def get_videos(
@@ -258,9 +260,18 @@ class VideoOperations:
                     return [
                         self._row_to_video_with_details(dict(row)) for row in results
                     ]
-        except Exception as e:
-            logger.error(f"Error getting videos: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting videos: {e}",
+                operation="get_videos",
+                details={
+                    "timelapse_id": timelapse_id,
+                    "camera_id": camera_id,
+                    "status": status,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            ) from e
 
     @cached_response(ttl_seconds=180, key_prefix="video")
     async def get_video_by_id(self, video_id: int) -> Optional[VideoWithDetails]:
@@ -338,7 +349,9 @@ class VideoOperations:
                     )
 
                     return created_video
-                raise Exception("Failed to create video record")
+                raise psycopg.DatabaseError(
+                    "Failed to create video record: no data returned from insert"
+                )
 
     async def update_video(self, video_id: int, video_data: Dict[str, Any]) -> Video:
         """
@@ -388,7 +401,7 @@ class VideoOperations:
         params["updated_at"] = utc_now()
 
         # Use safe parameterized query construction
-        set_clause = ', '.join(update_fields)
+        set_clause = ", ".join(update_fields)
         query = f"""
         UPDATE videos
         SET {set_clause}
@@ -412,7 +425,9 @@ class VideoOperations:
                     )
 
                     return updated_video
-                raise Exception(f"Failed to update video {video_id}")
+                raise psycopg.DatabaseError(
+                    f"Failed to update video {video_id}: no rows affected"
+                )
 
     async def delete_video(self, video_id: int) -> bool:
         """
@@ -509,7 +524,9 @@ class VideoOperations:
                     )
 
                     return job
-                raise Exception("Failed to create video generation job")
+                raise psycopg.DatabaseError(
+                    "Failed to create video generation job: no data returned from insert"
+                )
 
     async def update_video_generation_job_status(
         self,
@@ -570,7 +587,9 @@ class VideoOperations:
                     await self._clear_video_caches(updated_at=now)
 
                     return job
-                raise Exception(f"Failed to update video generation job {job_id}")
+                raise psycopg.DatabaseError(
+                    f"Failed to update video generation job {job_id}: no rows affected"
+                )
 
     @cached_response(ttl_seconds=240, key_prefix="video")
     async def get_video_statistics(
@@ -617,7 +636,8 @@ class VideoOperations:
 
             # Build safe query without string replacement
             if where_clause:
-                query = """
+                query = (
+                    """
                 SELECT
                     COUNT(*) as total_videos,
                     COALESCE(SUM(file_size), 0) as total_size_bytes,
@@ -625,7 +645,9 @@ class VideoOperations:
                     COALESCE(AVG(calculated_fps), 0) as avg_fps,
                     MAX(created_at) as latest_video_at
                 FROM videos
-                """ + f"\n        {where_clause}"
+                """
+                    + f"\n        {where_clause}"
+                )
             else:
                 query = VideoQueryBuilder.build_video_statistics_query()
 
@@ -637,12 +659,17 @@ class VideoOperations:
                     try:
                         return VideoStatistics.model_validate(dict(results[0]))
                     except ValidationError as e:
-                        logger.error(f"Error creating VideoStatistics model: {e}")
-                        return VideoStatistics()  # Return empty stats
+                        raise VideoOperationError(
+                            f"Error creating VideoStatistics model: {e}",
+                            operation="get_video_statistics",
+                        ) from e
                 return VideoStatistics()  # Return empty stats
-        except Exception as e:
-            logger.error(f"Error getting video statistics: {e}")
-            return VideoStatistics()  # Return empty stats
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video statistics: {e}",
+                operation="get_video_statistics",
+                details={},
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="video")
     async def search_videos(self, search_term: str, limit: int = 50) -> List[Video]:
@@ -670,9 +697,12 @@ class VideoOperations:
                     await cur.execute(query, (f"%{search_term}%", limit))
                     rows = await cur.fetchall()
                     return [self._row_to_video(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Error searching videos: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error searching videos: {e}",
+                operation="search_videos",
+                details={"search_term": search_term, "limit": limit},
+            ) from e
 
     async def recover_stuck_jobs(
         self,
@@ -737,8 +767,10 @@ class SyncVideoOperations:
 
             return VideoGenerationJobWithDetails.model_validate(details_fields)
         except ValidationError as e:
-            logger.error(f"Error creating VideoGenerationJobWithDetails model: {e}")
-            raise
+            raise VideoOperationError(
+                f"Error creating VideoGenerationJobWithDetails model: {e}",
+                operation="_row_to_video_generation_job_with_details",
+            ) from e
 
     def get_pending_video_generation_jobs(self) -> List[VideoGenerationJobWithDetails]:
         """
@@ -845,16 +877,27 @@ class SyncVideoOperations:
                     query_parts = ["SELECT v.* FROM videos v"]
                     if where_clause:
                         query_parts.append(where_clause)
-                    query_parts.extend(["ORDER BY v.created_at DESC", "LIMIT %s OFFSET %s"])
+                    query_parts.extend(
+                        ["ORDER BY v.created_at DESC", "LIMIT %s OFFSET %s"]
+                    )
                     query = "\n                        ".join(query_parts)
                     params.extend([limit, offset])
 
                     cur.execute(query, params)
                     rows = cur.fetchall()
                     return [self._row_to_video(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Error getting videos (sync): {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting videos (sync): {e}",
+                operation="get_videos",
+                details={
+                    "timelapse_id": timelapse_id,
+                    "camera_id": camera_id,
+                    "status": status,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            ) from e
 
     def get_video_by_id(self, video_id: int) -> Optional[Video]:
         """
@@ -877,9 +920,12 @@ class SyncVideoOperations:
                     cur.execute(query, (video_id,))
                     row = cur.fetchone()
                     return self._row_to_video(dict(row)) if row else None
-        except Exception as e:
-            logger.error(f"Error getting video by ID (sync): {e}")
-            return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video by ID (sync): {e}",
+                operation="get_video_by_id",
+                details={"video_id": video_id},
+            ) from e
 
     def create_video_record(self, video_data: Dict[str, Any]) -> Video:
         """
@@ -914,7 +960,9 @@ class SyncVideoOperations:
                     video_row = results[0]
                     video = self._row_to_video(video_row)
                     return video
-                raise Exception("Failed to create video record")
+                raise psycopg.DatabaseError(
+                    "Failed to create video record: no data returned from insert"
+                )
 
     def delete_video(self, video_id: int) -> bool:
         """
@@ -932,9 +980,12 @@ class SyncVideoOperations:
                     query = "DELETE FROM videos WHERE id = %s"
                     cur.execute(query, (video_id,))
                     return cur.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error deleting video (sync): {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error deleting video (sync): {e}",
+                operation="delete_video",
+                details={"video_id": video_id},
+            ) from e
 
     def _row_to_video(self, row: Dict[str, Any]) -> Video:
         """Convert database row to Video model."""
@@ -963,17 +1014,17 @@ class SyncVideoOperations:
         current_time = utc_now()
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, {"current_time": current_time, "days_to_keep": days_to_keep})
+                cur.execute(
+                    query, {"current_time": current_time, "days_to_keep": days_to_keep}
+                )
                 affected = cur.rowcount
 
                 if affected and affected > 0:
-                    logger.info(f"Cleaned up {affected} old video generation jobs")
+                    pass  # Successfully cleaned up old jobs
 
                 return affected or 0
 
-    def create_video_generation_job(
-        self, job_data: Dict[str, Any]
-    ) -> Optional[int]:
+    def create_video_generation_job(self, job_data: Dict[str, Any]) -> Optional[int]:
         """
         Create a new video generation job (sync version).
 
@@ -1010,13 +1061,14 @@ class SyncVideoOperations:
 
                         return job_id
                     return None
-        except Exception as e:
-            logger.error(f"Failed to create video generation job: {e}")
-            return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to create video generation job: {e}",
+                operation="create_video_generation_job",
+                details={"job_data": job_data},
+            ) from e
 
-    def start_video_generation_job(
-        self, job_id: int
-    ) -> bool:
+    def start_video_generation_job(self, job_id: int) -> bool:
         """
         Mark a video generation job as started.
 
@@ -1045,9 +1097,12 @@ class SyncVideoOperations:
                         conn.commit()
 
                     return success
-        except Exception as e:
-            logger.error(f"Failed to start video generation job {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to start video generation job {job_id}: {e}",
+                operation="start_video_generation_job",
+                details={"job_id": job_id},
+            ) from e
 
     def complete_video_generation_job(
         self,
@@ -1088,9 +1143,17 @@ class SyncVideoOperations:
                         conn.commit()
 
                     return update_success
-        except Exception as e:
-            logger.error(f"Failed to complete video generation job {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to complete video generation job {job_id}: {e}",
+                operation="complete_video_generation_job",
+                details={
+                    "job_id": job_id,
+                    "success": success,
+                    "video_path": video_path,
+                    "error_message": error_message,
+                },
+            ) from e
 
     def get_video_generation_jobs_by_status(
         self, status: Optional[str] = None, limit: int = 50
@@ -1135,9 +1198,12 @@ class SyncVideoOperations:
                         self._row_to_video_generation_job_with_details(row)
                         for row in results
                     ]
-        except Exception as e:
-            logger.error(f"Failed to get video generation jobs by status: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to get video generation jobs by status: {e}",
+                operation="get_video_generation_jobs_by_status",
+                details={"status": status, "limit": limit},
+            ) from e
 
     # Removed over-engineered automation settings - automation is now handled by video pipeline
 
@@ -1160,9 +1226,12 @@ class SyncVideoOperations:
                     cur.execute(query)
                     result = cur.fetchone()
                     return dict(result)["count"] if result else 0
-        except Exception as e:
-            logger.error(f"Failed to get active job count: {e}")
-            return 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to get active job count: {e}",
+                operation="get_active_job_count",
+                details={},
+            ) from e
 
     def get_timelapse_video_settings(
         self, timelapse_id: int, job_settings: Optional[Dict[str, Any]] = None
@@ -1194,9 +1263,6 @@ class SyncVideoOperations:
                     row = cur.fetchone()
 
                     if not row:
-                        logger.warning(
-                            f"Timelapse {timelapse_id} not found, using defaults"
-                        )
                         return self._get_default_video_settings()
 
                     row_dict = dict(row)
@@ -1214,11 +1280,12 @@ class SyncVideoOperations:
 
                     return settings
 
-        except Exception as e:
-            logger.error(
-                f"Failed to get effective video settings for timelapse {timelapse_id}: {e}"
-            )
-            return self._get_default_video_settings()
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Failed to get effective video settings for timelapse {timelapse_id}: {e}",
+                operation="get_timelapse_video_settings",
+                details={"timelapse_id": timelapse_id, "job_settings": job_settings},
+            ) from e
 
     def _get_default_video_settings(self) -> Dict[str, Any]:
         """Get default video generation settings."""
@@ -1242,11 +1309,12 @@ class SyncVideoOperations:
                 with conn.cursor() as cur:
                     cur.execute(query, (utc_now(), timelapse_id))
                     return cur.rowcount or 0
-        except Exception as e:
-            logger.error(
-                f"Error cancelling video jobs for timelapse {timelapse_id}: {e}"
-            )
-            return 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error cancelling video jobs for timelapse {timelapse_id}: {e}",
+                operation="cancel_pending_jobs_by_timelapse",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def cancel_pending_jobs_by_camera(self, camera_id: int) -> int:
         """Cancel pending video jobs for a specific camera."""
@@ -1261,9 +1329,12 @@ class SyncVideoOperations:
                 with conn.cursor() as cur:
                     cur.execute(query, (utc_now(), camera_id))
                     return cur.rowcount or 0
-        except Exception as e:
-            logger.error(f"Error cancelling video jobs for camera {camera_id}: {e}")
-            return 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error cancelling video jobs for camera {camera_id}: {e}",
+                operation="cancel_pending_jobs_by_camera",
+                details={"camera_id": camera_id},
+            ) from e
 
     def cancel_pending_jobs(self) -> int:
         """Cancel all pending video jobs."""
@@ -1273,9 +1344,12 @@ class SyncVideoOperations:
                 with conn.cursor() as cur:
                     cur.execute(query, (utc_now(),))
                     return cur.rowcount or 0
-        except Exception as e:
-            logger.error(f"Error cancelling all pending video jobs: {e}")
-            return 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error cancelling all pending video jobs: {e}",
+                operation="cancel_pending_jobs",
+                details={},
+            ) from e
 
     def get_video_job_statistics(self) -> Dict[str, Any]:
         """Get basic statistics for the video job queue."""
@@ -1310,9 +1384,12 @@ class SyncVideoOperations:
                     stats["failed_today"] = count
 
             return stats
-        except Exception as e:
-            logger.error(f"Error getting video job statistics: {e}")
-            return {}
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video job statistics: {e}",
+                operation="get_video_job_statistics",
+                details={},
+            ) from e
 
     # Removed unused priority promotion - job prioritization is now handled by video pipeline
 
@@ -1334,9 +1411,12 @@ class SyncVideoOperations:
                     cur.execute(query)
                     results = cur.fetchall()
                     return {row["status"]: row["count"] for row in results}
-        except Exception as e:
-            logger.error(f"Error getting video job queue status: {e}")
-            return {}
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video job queue status: {e}",
+                operation="get_video_job_queue_status",
+                details={},
+            ) from e
 
     def get_video_generation_job_by_id(
         self, job_id: int
@@ -1369,9 +1449,12 @@ class SyncVideoOperations:
                     if row:
                         return self._row_to_video_generation_job_with_details(row)
                     return None
-        except Exception as e:
-            logger.error(f"Error getting video generation job by ID {job_id}: {e}")
-            return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video generation job by ID {job_id}: {e}",
+                operation="get_video_generation_job_by_id",
+                details={"job_id": job_id},
+            ) from e
 
     def update_video_generation_job_status(self, job_id: int, status: str) -> bool:
         """
@@ -1394,9 +1477,12 @@ class SyncVideoOperations:
                 with conn.cursor() as cur:
                     cur.execute(query, (status, utc_now(), job_id))
                     return cur.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error updating video generation job status: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error updating video generation job status: {e}",
+                operation="update_video_generation_job_status",
+                details={"job_id": job_id, "status": status},
+            ) from e
 
     def get_last_scheduled_video(self, timelapse_id: int) -> Optional[Video]:
         """
@@ -1423,11 +1509,12 @@ class SyncVideoOperations:
                     if row:
                         return self._row_to_video(dict(row))
                     return None
-        except Exception as e:
-            logger.error(
-                f"Error getting last scheduled video for timelapse {timelapse_id}: {e}"
-            )
-            return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting last scheduled video for timelapse {timelapse_id}: {e}",
+                operation="get_last_scheduled_video",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def get_last_milestone_video(self, timelapse_id: int) -> Optional[Video]:
         """
@@ -1454,11 +1541,12 @@ class SyncVideoOperations:
                     if row:
                         return self._row_to_video(dict(row))
                     return None
-        except Exception as e:
-            logger.error(
-                f"Error getting last milestone video for timelapse {timelapse_id}: {e}"
-            )
-            return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting last milestone video for timelapse {timelapse_id}: {e}",
+                operation="get_last_milestone_video",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def recover_stuck_jobs(
         self,
@@ -1507,6 +1595,9 @@ class SyncVideoOperations:
 
             return file_paths
 
-        except Exception as e:
-            logger.error(f"Error getting video file paths: {e}")
-            return set()
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise VideoOperationError(
+                f"Error getting video file paths: {e}",
+                operation="get_all_video_file_paths",
+                details={},
+            ) from e

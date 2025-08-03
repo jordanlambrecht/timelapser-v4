@@ -15,13 +15,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
-from loguru import logger
+from .services.logger.logger_service import LoggerService
+from .services.logger import get_service_logger
+from .enums import LoggerName, LogEmoji
+from .constants import DEFAULT_TIMEZONE
 
-from backend.app.services.logger.logger_service import LoggerService
 
 from .config import settings
 from .database import async_db, sync_db
-from .enums import LogLevel
 
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
 
@@ -49,26 +50,78 @@ from app.routers import overlay_routers as overlay
 
 from app.utils.ascii_text import print_welcome_message
 
+logger = get_service_logger(LoggerName.SYSTEM)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Handle application startup and shutdown"""
     # Startup
-    logger.info("Starting FastAPI application")
+    logger.info(
+        "Starting FastAPI application",
+        extra_context={
+            "operation": "application_startup",
+            "environment": settings.environment,
+            "api_host": settings.api_host,
+            "api_port": settings.api_port,
+        },
+    )
 
     # Initialize database with hybrid approach
     from .database.migrations import initialize_database, DatabaseInitializationError
 
     try:
         result = initialize_database()
-        logger.info(f"Database initialized successfully: {result['method']}")
+        logger.info(
+            f"Database initialized successfully: {result['method']}",
+            extra_context={
+                "operation": "database_initialization",
+                "initialization_method": result["method"],
+                "database_url": (
+                    settings.database_url.split("@")[-1]
+                    if "@" in settings.database_url
+                    else "local"
+                ),
+            },
+        )
 
         # Initialize async and sync databases
         await async_db.initialize()
         sync_db.initialize()
 
+        # Validate database timezone configuration
+        from app.utils.time_utils import validate_database_timezone_config
+
+        is_valid, db_timezone = validate_database_timezone_config()
+        if not is_valid:
+            logger.warning(
+                f"Database timezone configuration warning: {db_timezone}",
+                extra_context={
+                    "operation": "timezone_validation",
+                    "db_timezone": db_timezone,
+                    "expected": DEFAULT_TIMEZONE,
+                    "severity": "warning",
+                },
+            )
+            # Don't fail startup, but log warning for operations team
+        else:
+            logger.info(
+                f"Database timezone validated: {db_timezone}",
+                extra_context={
+                    "operation": "timezone_validation",
+                    "db_timezone": db_timezone,
+                    "status": "valid",
+                },
+            )
+
     except DatabaseInitializationError as e:
-        logger.error(f"Database initialization failed: {e}")
+        logger.error(
+            f"Database initialization failed: {e}",
+            extra_context={
+                "operation": "database_initialization",
+                "error_type": type(e).__name__,
+            },
+        )
         raise RuntimeError(f"Cannot start application: {e}") from e
 
     # Initialize centralized LoggerService for application logging
@@ -88,16 +141,28 @@ async def lifespan(_app: FastAPI):
         _app.state.logger_service = global_logger_service
 
         # Log startup success with the new system
-        await global_logger_service.log_system(
-            message="🚀 FastAPI application started with centralized logging system",
-            level=LogLevel.INFO,
+        global_logger_service.info(
+            message="FastAPI application started with centralized logging system",
+            emoji=LogEmoji.STARTUP,
             store_in_db=True,
             broadcast_sse=True,
         )
 
-        logger.info("Centralized LoggerService initialized with batching enabled")
+        logger.info(
+            "Centralized LoggerService initialized with batching enabled",
+            extra_context={
+                "operation": "logger_service_initialization",
+                "batching_enabled": True,
+            },
+        )
     except Exception as e:
-        logger.error(f"Failed to initialize LoggerService: {e}")
+        logger.error(
+            f"Failed to initialize LoggerService: {e}",
+            extra_context={
+                "operation": "logger_service_initialization",
+                "error_type": type(e).__name__,
+            },
+        )
 
     # ⚠️ IMPORTANT: DO NOT START WORKERS HERE! ⚠️
     # Background workers (ThumbnailWorker, OverlayWorker, CaptureWorker, etc.)
@@ -111,27 +176,46 @@ async def lifespan(_app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("Shutting down FastAPI application")
+    logger.info(
+        "Shutting down FastAPI application",
+        extra_context={
+            "operation": "application_shutdown",
+            "environment": settings.environment,
+        },
+    )
 
     # Gracefully shutdown LoggerService with final flush
     try:
-        if hasattr(_app.state, "logger_service"):
-            await _app.state.logger_service.log_system(
-                message="🛑 FastAPI application shutting down",
-                level=LogLevel.INFO,
+        if hasattr(app.state, "logger_service"):
+            app.state.logger_service.info(
+                message="FastAPI application shutting down",
+                emoji=LogEmoji.SHUTDOWN,
                 store_in_db=True,
                 broadcast_sse=True,
             )
             # Ensure all batched logs are written before shutdown
             await _app.state.logger_service.shutdown()
-            logger.info("LoggerService shutdown complete")
+            logger.info(
+                "LoggerService shutdown complete",
+                extra_context={"operation": "logger_service_shutdown", "success": True},
+            )
     except Exception as e:
-        logger.error(f"Error during LoggerService shutdown: {e}")
+        logger.error(
+            f"Error during LoggerService shutdown: {e}",
+            extra_context={
+                "operation": "logger_service_shutdown",
+                "error_type": type(e).__name__,
+                "success": False,
+            },
+        )
 
     # Database cleanup
     await async_db.close()
     sync_db.close()
-    logger.info("Database connections closed")
+    logger.info(
+        "Database connections closed",
+        extra_context={"operation": "database_shutdown", "success": True},
+    )
 
 
 app = FastAPI(

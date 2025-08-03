@@ -21,7 +21,6 @@ from typing import List, Optional, Dict, Any
 
 # Third party imports
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 
 
 # Local application imports
@@ -42,6 +41,8 @@ from ..models.shared_models import (
     GenerationSchedule,
     MilestoneConfig,
     VideoGenerationJobWithDetails,
+    ManualGenerationRequest,
+    QueueStatsResponse,
 )
 
 from ..models.timelapse_model import TimelapseUpdate
@@ -71,7 +72,7 @@ from ..utils.time_utils import (
 )
 
 # Constants and enums for consistency
-from ..enums import JobPriority, SSEPriority
+from ..enums import JobPriority, SSEEvent, SSEEventSource, SSEPriority
 from ..constants import (
     JOB_PRIORITIES_LIST,
     JOB_STATUS_LIST,
@@ -84,7 +85,7 @@ from ..constants import (
     MAX_PAGE_SIZE,
 )
 
-# TODO: CACHING STRATEGY - MINIMAL CACHE + SSE
+# NOTE: CACHING STRATEGY - MINIMAL CACHE + SSE
 # Video automation is critical operational monitoring requiring real-time updates:
 # - Queue/stats: Very short cache (30-60 seconds max) or SSE broadcasting
 # - Settings: ETag + 5-10 min cache - configuration changes occasionally
@@ -113,33 +114,7 @@ class AutomationSettingsUpdate(
     pass
 
 
-class ManualGenerationRequest(BaseModel):
-    """Manual video generation request model"""
-
-    timelapse_id: int = Field(
-        ..., description="ID of the timelapse to generate video from"
-    )
-    video_name: Optional[str] = Field(None, description="Optional custom video name")
-    priority: Optional[str] = Field(
-        JobPriority.HIGH,
-        description=f"Job priority. Must be one of: {', '.join(JOB_PRIORITIES_LIST)}",
-    )
-    settings: Optional[Dict[str, Any]] = Field(
-        default_factory=dict, description="Custom video generation settings"
-    )
-
-
-# TODO: This needs to be moved to shared models
-class QueueStatsResponse(BaseModel):
-    """Video generation queue statistics response model"""
-
-    total_jobs: int
-    pending_jobs: int
-    processing_jobs: int
-    completed_jobs: int
-    failed_jobs: int
-    queue_health: str
-    timestamp: str
+# Video automation request models moved to shared_models.py
 
 
 # API Endpoints
@@ -230,7 +205,7 @@ async def get_queue_stats(
     try:
         # Delegate business logic to video service
         stats = await video_service.get_queue_statistics_with_health(video_pipeline)
-        
+
         # Add timezone-aware timestamp
         timestamp = await get_timezone_aware_timestamp_async(settings_service)
 
@@ -292,7 +267,7 @@ async def trigger_manual_generation(
         # Create SSE event for real-time updates
         sse_ops = SSEEventsOperations(db)
         await sse_ops.create_event(
-            event_type="video_generation_job_created",
+            event_type=SSEEvent.VIDEO_JOB_CREATED,
             event_data={
                 "timelapse_id": request.timelapse_id,
                 "trigger_type": VIDEO_AUTOMATION_MODE.MANUAL,
@@ -302,7 +277,7 @@ async def trigger_manual_generation(
                 "message": result.get("message"),
             },
             priority=SSEPriority.NORMAL,
-            source="api",
+            source=SSEEventSource.API,
         )
 
         return ResponseFormatter.success(
@@ -361,15 +336,14 @@ async def get_timelapse_automation_settings(
 
     # Apply settings inheritance using helper function
     effective_settings = get_effective_automation_settings(
-        timelapse_settings=timelapse_dict, 
-        camera_settings=camera_dict or {}
+        timelapse_settings=timelapse_dict, camera_settings=camera_dict or {}
     )
 
     # Create response using helper function
     response_data = create_timelapse_automation_response(
         timelapse_id=timelapse_id,
         effective_settings=effective_settings,
-        timelapse_model=timelapse
+        timelapse_model=timelapse,
     )
 
     return TimelapseAutomationSettings(**response_data)
@@ -399,14 +373,16 @@ async def update_timelapse_automation_settings(
     mode_valid, mode_error = validate_automation_mode_updates(update_data)
     if not mode_valid:
         return ResponseFormatter.error(
-            mode_error or "Invalid automation mode", error_code="invalid_automation_mode"
+            mode_error or "Invalid automation mode",
+            error_code="invalid_automation_mode",
         )
 
     # Validate settings using validation helpers
     is_valid, error = validate_video_settings(update_data)
     if not is_valid:
         return ResponseFormatter.error(
-            f"Invalid settings: {error or 'Unknown validation error'}", error_code="invalid_settings"
+            f"Invalid settings: {error or 'Unknown validation error'}",
+            error_code="invalid_settings",
         )
 
     try:
@@ -416,14 +392,14 @@ async def update_timelapse_automation_settings(
         # Create SSE event for real-time updates
         sse_ops = SSEEventsOperations(db)
         await sse_ops.create_event(
-            event_type="timelapse_automation_settings_updated",
+            event_type=SSEEvent.TIMELAPSE_SETTINGS_UPDATED,
             event_data={
                 "timelapse_id": timelapse_id,
                 "updated_fields": list(update_data.keys()),
                 "settings": update_data,
             },
             priority=SSEPriority.NORMAL,
-            source="api",
+            source=SSEEventSource.API,
         )
 
         return ResponseFormatter.success(

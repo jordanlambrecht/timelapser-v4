@@ -8,11 +8,26 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 
 import asyncio
 import time
-from typing import List, Dict, Any, Callable, Optional, Protocol, runtime_checkable, Sequence, TypeVar, Generic
+from typing import (
+    List,
+    Dict,
+    Any,
+    Callable,
+    Optional,
+    Protocol,
+    runtime_checkable,
+    Sequence,
+    TypeVar,
+    Generic,
+)
 from datetime import datetime, timedelta
-from loguru import logger
+from ...services.logger import get_service_logger, LogEmoji
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from ...utils.time_utils import utc_now
+
 # Enum imports removed - using Any for priority field flexibility
 
 
@@ -26,7 +41,7 @@ class ProcessableJob(Protocol):
 
 
 # Generic type variable for job types
-T = TypeVar('T', bound=ProcessableJob)
+T = TypeVar("T", bound=ProcessableJob)
 
 
 class JobBatchProcessor(Generic[T]):
@@ -95,7 +110,9 @@ class JobBatchProcessor(Generic[T]):
     def _ensure_semaphore(self) -> asyncio.Semaphore:
         """Ensure semaphore is initialized for current event loop."""
         if self.concurrent_jobs_semaphore is None:
-            self.concurrent_jobs_semaphore = asyncio.Semaphore(self._max_concurrent_jobs)
+            self.concurrent_jobs_semaphore = asyncio.Semaphore(
+                self._max_concurrent_jobs
+            )
         return self.concurrent_jobs_semaphore
 
     async def process_job_batch(

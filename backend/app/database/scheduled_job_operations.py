@@ -8,33 +8,30 @@ execution engine but the database provides visibility, audit trails,
 and recovery capabilities.
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-from loguru import logger
-import psycopg
 import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from .core import AsyncDatabase, SyncDatabase
+import psycopg
+
 from ..models.scheduled_job_model import (
     ScheduledJob,
     ScheduledJobCreate,
-    ScheduledJobUpdate,
     ScheduledJobExecution,
     ScheduledJobExecutionCreate,
     ScheduledJobStatistics,
-)
-from ..utils.time_utils import utc_now
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
+    ScheduledJobUpdate,
 )
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import ScheduledJobOperationError
 
 
 class ScheduledJobQueryBuilder:
     """Centralized query builder for scheduled job operations.
-    
+
     IMPORTANT: For optimal performance, ensure these indexes exist:
     - CREATE UNIQUE INDEX idx_scheduled_jobs_job_id ON scheduled_jobs(job_id);
     - CREATE INDEX idx_scheduled_jobs_job_type ON scheduled_jobs(job_type);
@@ -212,11 +209,11 @@ class ScheduledJobOperations:
                         return self._row_to_scheduled_job(dict(row))
                     return None
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Error creating/updating scheduled job {job_data.job_id}: {e}"
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
             )
-            return None
 
     @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_by_id(self, job_id: str) -> Optional[ScheduledJob]:
@@ -236,9 +233,11 @@ class ScheduledJobOperations:
 
                     return None
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting scheduled job {job_id}: {e}")
-            return None
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_jobs_by_type(
@@ -264,9 +263,11 @@ class ScheduledJobOperations:
                     jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
                     return jobs
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting scheduled jobs by type {job_type}: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_jobs_by_entity(
@@ -287,11 +288,11 @@ class ScheduledJobOperations:
                     jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
                     return jobs
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Error getting scheduled jobs for {entity_type} {entity_id}: {e}"
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
             )
-            return []
 
     @cached_response(ttl_seconds=30, key_prefix="scheduled_job")
     async def get_active_jobs(self) -> List[ScheduledJob]:
@@ -310,9 +311,11 @@ class ScheduledJobOperations:
                     jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
                     return jobs
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting active scheduled jobs: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def update_job_status(self, job_id: str, status: str) -> bool:
         """Update job status using named parameters."""
@@ -322,13 +325,9 @@ class ScheduledJobOperations:
                 SET status = %(status)s, updated_at = %(updated_at)s
                 WHERE job_id = %(job_id)s
             """
-            
+
             current_time = utc_now()
-            params = {
-                "status": status,
-                "updated_at": current_time,
-                "job_id": job_id
-            }
+            params = {"status": status, "updated_at": current_time, "job_id": job_id}
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -341,9 +340,11 @@ class ScheduledJobOperations:
 
                     return success
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error updating job status for {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def update_job_timing(
         self,
@@ -362,7 +363,7 @@ class ScheduledJobOperations:
                 "updated_at": current_time,
                 "job_id": job_id,
             }
-            
+
             # Build safe UPDATE fields
             update_fields = ["updated_at = %(updated_at)s"]
 
@@ -409,9 +410,11 @@ class ScheduledJobOperations:
 
                     return success
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error updating job timing for {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def delete_job(self, job_id: str) -> bool:
         """Delete scheduled job using named parameters."""
@@ -429,17 +432,20 @@ class ScheduledJobOperations:
 
                     return success
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error deleting scheduled job {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def cleanup_old_jobs(self, max_age_days: int = 30) -> int:
         """Clean up old disabled/error jobs using safe date calculation."""
         try:
             # Calculate cutoff time safely in Python instead of dangerous SQL interpolation
             from datetime import timedelta
+
             cutoff_time = utc_now() - timedelta(days=max_age_days)
-            
+
             query = """
                 DELETE FROM scheduled_jobs
                 WHERE status IN ('disabled', 'error')
@@ -451,9 +457,11 @@ class ScheduledJobOperations:
                     await cur.execute(query, {"cutoff_time": cutoff_time})
                     return cur.rowcount or 0
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error cleaning up old scheduled jobs: {e}")
-            return 0
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def log_job_execution(
         self, execution_data: ScheduledJobExecutionCreate
@@ -469,9 +477,6 @@ class ScheduledJobOperations:
                     job_row = await cur.fetchone()
 
                     if not job_row:
-                        logger.warning(
-                            f"Cannot log execution for unknown job {execution_data.job_id}"
-                        )
                         return None
 
                     scheduled_job_id = (
@@ -516,11 +521,11 @@ class ScheduledJobOperations:
                         return self._row_to_execution(dict(row))
                     return None
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Error logging job execution for {execution_data.job_id}: {e}"
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
             )
-            return None
 
     def _row_to_scheduled_job(self, row: Dict[str, Any]) -> ScheduledJob:
         """Convert database row to ScheduledJob model."""
@@ -606,9 +611,11 @@ class ScheduledJobOperations:
                     jobs = [self._row_to_scheduled_job(dict(row)) for row in rows]
                     return jobs
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting filtered jobs: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=30, key_prefix="scheduled_job")
     async def get_job_executions(
@@ -622,12 +629,8 @@ class ScheduledJobOperations:
                 ORDER BY execution_start DESC
                 LIMIT %(limit)s OFFSET %(offset)s
             """
-            
-            params = {
-                "job_id": job_id,
-                "limit": limit,
-                "offset": offset
-            }
+
+            params = {"job_id": job_id, "limit": limit, "offset": offset}
 
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
@@ -638,9 +641,11 @@ class ScheduledJobOperations:
                     ]
                     return executions
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting job executions for {job_id}: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_execution_count(self, job_id: str) -> int:
@@ -655,9 +660,11 @@ class ScheduledJobOperations:
                     count = row["count"] if row else 0
                     return count
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting execution count for {job_id}: {e}")
-            return 0
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=60, key_prefix="scheduled_job")
     async def get_job_statistics(self) -> ScheduledJobStatistics:
@@ -689,9 +696,11 @@ class ScheduledJobOperations:
                     default_stats = ScheduledJobStatistics()
                     return default_stats
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting job statistics: {e}")
-            return ScheduledJobStatistics()
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     @cached_response(ttl_seconds=120, key_prefix="scheduled_job")
     async def get_job_type_statistics(self) -> Dict[str, Any]:
@@ -717,9 +726,11 @@ class ScheduledJobOperations:
                     }
                     return result
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting job type statistics: {e}")
-            return {}
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def update_job(self, job_id: str, update_data: "ScheduledJobUpdate") -> bool:
         """Update a scheduled job with new data using named parameters."""
@@ -730,7 +741,7 @@ class ScheduledJobOperations:
                 "updated_at": current_time,
                 "job_id": job_id,
             }
-            
+
             # Build safe UPDATE fields
             update_fields = ["updated_at = %(updated_at)s"]
 
@@ -773,9 +784,11 @@ class ScheduledJobOperations:
 
                     return success
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error updating job {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     async def bulk_update_job_status(
         self, job_ids: List[str], status: str
@@ -789,18 +802,15 @@ class ScheduledJobOperations:
         try:
             # Use safe placeholder generation for IN clause - create named parameters
             current_time = utc_now()
-            params = {
-                "status": status,
-                "updated_at": current_time
-            }
-            
+            params = {"status": status, "updated_at": current_time}
+
             # Create safe named placeholders for each job_id
             job_placeholders = []
             for i, job_id in enumerate(job_ids):
                 placeholder = f"job_id_{i}"
                 job_placeholders.append(f"%({placeholder})s")
                 params[placeholder] = job_id
-            
+
             # Safe construction - job_placeholders contains only validated named parameters
             query = f"""
                 UPDATE scheduled_jobs
@@ -823,13 +833,15 @@ class ScheduledJobOperations:
 
                         # Clear cache for updated jobs
                         if job_id in updated_job_ids:
-                            await self._clear_job_caches(job_id, updated_at=current_time)
+                            await self._clear_job_caches(
+                                job_id, updated_at=current_time
+                            )
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error in bulk update: {e}")
-            # Mark all as failed if there was a connection error
-            for job_id in job_ids:
-                results[job_id] = False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
         return results
 
@@ -942,11 +954,11 @@ class SyncScheduledJobOperations:
                         return self._row_to_scheduled_job(dict(row))
                     return None
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Error creating/updating scheduled job {job_data.job_id}: {e}"
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
             )
-            return None
 
     def get_active_jobs(self) -> List[ScheduledJob]:
         """Get all active scheduled jobs (sync version)."""
@@ -960,9 +972,11 @@ class SyncScheduledJobOperations:
 
                     return [self._row_to_scheduled_job(dict(row)) for row in rows]
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error getting active scheduled jobs: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     def delete_job(self, job_id: str) -> bool:
         """Delete scheduled job (sync version) using named parameters."""
@@ -974,9 +988,11 @@ class SyncScheduledJobOperations:
                     cur.execute(query, {"job_id": job_id})
                     return cur.rowcount > 0
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error deleting scheduled job {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     def update_job_timing(
         self,
@@ -995,7 +1011,7 @@ class SyncScheduledJobOperations:
                 "updated_at": current_time,
                 "job_id": job_id,
             }
-            
+
             # Build safe UPDATE fields
             update_fields = ["updated_at = %(updated_at)s"]
 
@@ -1027,9 +1043,11 @@ class SyncScheduledJobOperations:
                     cur.execute(query, params)
                     return cur.rowcount > 0
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Error updating job timing for {job_id}: {e}")
-            return False
+        except (psycopg.Error, KeyError, ValueError):
+            raise ScheduledJobOperationError(
+                "Failed to perform operation",
+                operation="scheduled_job_operation",
+            )
 
     def _row_to_scheduled_job(self, row: Dict[str, Any]) -> ScheduledJob:
         """Convert database row to ScheduledJob model."""

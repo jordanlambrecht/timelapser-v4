@@ -15,9 +15,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database.core import AsyncDatabase
-from backend.app.utils.database_performance_profiler import DatabasePerformanceProfiler
+from app.utils.database_performance_profiler import DatabasePerformanceProfiler
 from app.config import settings
-from loguru import logger
+from app.services.logger import get_service_logger
+from app.enums import LoggerName
+
+logger = get_service_logger(LoggerName.TEST)
 
 
 async def main():

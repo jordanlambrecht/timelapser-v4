@@ -10,7 +10,10 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from loguru import logger
+from ....services.logger import get_service_logger
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
 from .thumbnail_generator import ThumbnailGenerator
 from .small_image_generator import SmallImageGenerator
@@ -19,7 +22,7 @@ from .small_image_generator import SmallImageGenerator
 class BatchThumbnailGenerator:
     """
     Component responsible for bulk thumbnail and small image generation.
-    
+
     Optimized for:
     - Processing multiple images concurrently
     - Progress tracking and reporting
@@ -31,8 +34,8 @@ class BatchThumbnailGenerator:
         self,
         thumbnail_generator: Optional[ThumbnailGenerator] = None,
         small_generator: Optional[SmallImageGenerator] = None,
-        max_workers: int = 4,
-        batch_size: int = 10
+        max_workers: int = 6,  # Increased for better CPU utilization
+        batch_size: int = 20,  # Larger batches for better throughput
     ):
         """
         Initialize batch thumbnail generator.
@@ -45,17 +48,21 @@ class BatchThumbnailGenerator:
         """
         self.thumbnail_generator = thumbnail_generator or ThumbnailGenerator()
         self.small_generator = small_generator or SmallImageGenerator()
-        self.max_workers = max(1, min(max_workers, 8))  # Limit to reasonable range
+        self.max_workers = max(
+            2, min(max_workers, 12)
+        )  # Allow more workers for I/O-bound operations
         self.batch_size = max(1, batch_size)
-        
-        logger.debug(f"✅ BatchThumbnailGenerator initialized (workers={self.max_workers}, batch_size={self.batch_size})")
+
+        logger.debug(
+            f"BatchThumbnailGenerator initialized (workers={self.max_workers}, batch_size={self.batch_size})"
+        )
 
     def generate_batch_thumbnails(
         self,
         image_tasks: List[Dict[str, Any]],
         progress_callback: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
         include_small_images: bool = True,
-        force_regenerate: bool = False
+        force_regenerate: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate thumbnails and small images for a batch of images.
@@ -81,7 +88,7 @@ class BatchThumbnailGenerator:
                     "results": [],
                 }
 
-            logger.info(f"🔄 Starting batch thumbnail generation for {total_tasks} images")
+            logger.info(f"Starting batch thumbnail generation for {total_tasks} images")
 
             # Process in batches to manage memory usage
             all_results = []
@@ -92,14 +99,23 @@ class BatchThumbnailGenerator:
             for batch_start in range(0, total_tasks, self.batch_size):
                 batch_end = min(batch_start + self.batch_size, total_tasks)
                 batch_tasks = image_tasks[batch_start:batch_end]
-                
-                logger.debug(f"Processing batch {batch_start // self.batch_size + 1}: images {batch_start + 1}-{batch_end}")
+
+                logger.debug(
+                    f"Processing batch {batch_start // self.batch_size + 1}: images {batch_start + 1}-{batch_end}",
+                    extra_context={
+                        "batch_number": batch_start // self.batch_size + 1,
+                        "batch_start": batch_start + 1,
+                        "batch_end": batch_end,
+                        "batch_size": len(batch_tasks),
+                        "total_batches": (total_tasks + self.batch_size - 1)
+                        // self.batch_size,
+                        "remaining_images": total_tasks - batch_end,
+                    },
+                )
 
                 # Process current batch
                 batch_results = self._process_batch(
-                    batch_tasks,
-                    include_small_images,
-                    force_regenerate
+                    batch_tasks, include_small_images, force_regenerate
                 )
 
                 # Update counters
@@ -124,11 +140,25 @@ class BatchThumbnailGenerator:
                             "failed": total_failed,
                             "skipped": total_skipped,
                             "current_batch": batch_start // self.batch_size + 1,
-                            "total_batches": (total_tasks + self.batch_size - 1) // self.batch_size,
-                        }
+                            "total_batches": (total_tasks + self.batch_size - 1)
+                            // self.batch_size,
+                        },
                     )
 
-            logger.info(f"✅ Batch thumbnail generation completed: {total_completed} completed, {total_failed} failed, {total_skipped} skipped")
+            logger.info(
+                f"Batch thumbnail generation completed: {total_completed} completed, {total_failed} failed, {total_skipped} skipped",
+                extra_context={
+                    "total_tasks": total_tasks,
+                    "completed": total_completed,
+                    "failed": total_failed,
+                    "skipped": total_skipped,
+                    "success_rate": (
+                        (total_completed / total_tasks * 100) if total_tasks > 0 else 0
+                    ),
+                    "max_workers": self.max_workers,
+                    "batch_size": self.batch_size,
+                },
+            )
 
             return {
                 "success": True,
@@ -140,7 +170,7 @@ class BatchThumbnailGenerator:
             }
 
         except Exception as e:
-            logger.error(f"❌ Batch thumbnail generation failed: {e}")
+            logger.error("Batch thumbnail generation failed", exception=e)
             return {
                 "success": False,
                 "error": str(e),
@@ -155,7 +185,7 @@ class BatchThumbnailGenerator:
         self,
         batch_tasks: List[Dict[str, Any]],
         include_small_images: bool,
-        force_regenerate: bool
+        force_regenerate: bool,
     ) -> List[Dict[str, Any]]:
         """
         Process a single batch of thumbnail generation tasks.
@@ -179,7 +209,7 @@ class BatchThumbnailGenerator:
                     self._process_single_image,
                     task,
                     include_small_images,
-                    force_regenerate
+                    force_regenerate,
                 )
                 future_to_task[future] = task
 
@@ -190,21 +220,30 @@ class BatchThumbnailGenerator:
                     result = future.result()
                     batch_results.append(result)
                 except Exception as e:
-                    logger.error(f"❌ Task failed for image {task.get('image_id', 'unknown')}: {e}")
-                    batch_results.append({
-                        "success": False,
-                        "error": str(e),
-                        "image_id": task.get("image_id"),
-                        "source_path": task.get("source_path"),
-                    })
+                    logger.error(
+                        f"Task failed for image {task.get('image_id', 'unknown')}",
+                        exception=e,
+                        extra_context={
+                            "image_id": task.get("image_id"),
+                            "source_path": task.get("source_path"),
+                            "thumbnail_path": task.get("thumbnail_path"),
+                            "small_path": task.get("small_path"),
+                            "error_type": type(e).__name__,
+                        },
+                    )
+                    batch_results.append(
+                        {
+                            "success": False,
+                            "error": str(e),
+                            "image_id": task.get("image_id"),
+                            "source_path": task.get("source_path"),
+                        }
+                    )
 
         return batch_results
 
     def _process_single_image(
-        self,
-        task: Dict[str, Any],
-        include_small_images: bool,
-        force_regenerate: bool
+        self, task: Dict[str, Any], include_small_images: bool, force_regenerate: bool
     ) -> Dict[str, Any]:
         """
         Process thumbnail generation for a single image.
@@ -230,7 +269,7 @@ class BatchThumbnailGenerator:
                     "image_id": image_id,
                     "task": task,
                 }
-            
+
             # Ensure source_path is a string for type safety
             if not isinstance(source_path, str):
                 return {
@@ -254,22 +293,26 @@ class BatchThumbnailGenerator:
                 thumbnail_result = self.thumbnail_generator.generate_thumbnail(
                     source_path=source_path,
                     output_path=thumbnail_path,
-                    force_regenerate=force_regenerate
+                    force_regenerate=force_regenerate,
                 )
 
                 if thumbnail_result["success"]:
-                    results["thumbnail_generated"] = thumbnail_result.get("generated", False)
+                    results["thumbnail_generated"] = thumbnail_result.get(
+                        "generated", False
+                    )
                     results["thumbnail_path"] = thumbnail_result["output_path"]
                     results["thumbnail_size"] = thumbnail_result.get("file_size")
                 else:
-                    results["errors"].append(f"Thumbnail: {thumbnail_result.get('error', 'Unknown error')}")
+                    results["errors"].append(
+                        f"Thumbnail: {thumbnail_result.get('error', 'Unknown error')}"
+                    )
 
             # Generate small image if requested
             if include_small_images and small_path:
                 small_result = self.small_generator.generate_small_image(
                     source_path=source_path,
                     output_path=small_path,
-                    force_regenerate=force_regenerate
+                    force_regenerate=force_regenerate,
                 )
 
                 if small_result["success"]:
@@ -277,7 +320,9 @@ class BatchThumbnailGenerator:
                     results["small_path"] = small_result["output_path"]
                     results["small_size"] = small_result.get("file_size")
                 else:
-                    results["errors"].append(f"Small image: {small_result.get('error', 'Unknown error')}")
+                    results["errors"].append(
+                        f"Small image: {small_result.get('error', 'Unknown error')}"
+                    )
 
             # Determine overall success
             if results["errors"]:
@@ -298,7 +343,9 @@ class BatchThumbnailGenerator:
                 "source_path": task.get("source_path"),
             }
 
-    def estimate_batch_time(self, image_tasks: List[Dict[str, Any]]) -> Dict[str, float]:
+    def estimate_batch_time(
+        self, image_tasks: List[Dict[str, Any]]
+    ) -> Dict[str, float]:
         """
         Estimate processing time for a batch of images.
 
@@ -318,12 +365,14 @@ class BatchThumbnailGenerator:
             avg_time_per_image = avg_thumbnail_time + avg_small_time
 
             total_sequential_time = len(image_tasks) * avg_time_per_image
-            
+
             # Account for parallelization
             parallel_time = total_sequential_time / self.max_workers
-            
+
             # Add batch overhead
-            batch_overhead = (len(image_tasks) / self.batch_size) * 0.1  # 0.1s per batch
+            batch_overhead = (
+                len(image_tasks) / self.batch_size
+            ) * 0.1  # 0.1s per batch
             estimated_total = parallel_time + batch_overhead
 
             return {
@@ -335,7 +384,7 @@ class BatchThumbnailGenerator:
             }
 
         except Exception as e:
-            logger.error(f"Failed to estimate batch time: {e}")
+            logger.error("Failed to estimate batch time", exception=e)
             return {"total_time": 0.0, "per_image": 0.0, "parallel_time": 0.0}
 
     def get_batch_statistics(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -360,11 +409,17 @@ class BatchThumbnailGenerator:
 
             total_processed = len(results)
             successful = sum(1 for r in results if r.get("success", False))
-            thumbnails_generated = sum(1 for r in results if r.get("thumbnail_generated", False))
-            smalls_generated = sum(1 for r in results if r.get("small_generated", False))
+            thumbnails_generated = sum(
+                1 for r in results if r.get("thumbnail_generated", False)
+            )
+            smalls_generated = sum(
+                1 for r in results if r.get("small_generated", False)
+            )
             total_errors = sum(1 for r in results if r.get("errors"))
 
-            success_rate = (successful / total_processed) * 100 if total_processed > 0 else 0.0
+            success_rate = (
+                (successful / total_processed) * 100 if total_processed > 0 else 0.0
+            )
 
             return {
                 "total_processed": total_processed,
@@ -373,9 +428,13 @@ class BatchThumbnailGenerator:
                 "thumbnails_generated": thumbnails_generated,
                 "smalls_generated": smalls_generated,
                 "total_errors": total_errors,
-                "error_rate": ((total_processed - successful) / total_processed) * 100 if total_processed > 0 else 0.0,
+                "error_rate": (
+                    ((total_processed - successful) / total_processed) * 100
+                    if total_processed > 0
+                    else 0.0
+                ),
             }
 
         except Exception as e:
-            logger.error(f"Failed to calculate batch statistics: {e}")
+            logger.error("Failed to calculate batch statistics", exception=e)
             return {"error": str(e)}

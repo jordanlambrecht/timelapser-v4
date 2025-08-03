@@ -8,7 +8,10 @@ Provides REST interface for crop configuration and testing.
 
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.API)
 
 from ..dependencies import CameraServiceDep, AsyncRTSPServiceDep
 from ..models.camera_model import (

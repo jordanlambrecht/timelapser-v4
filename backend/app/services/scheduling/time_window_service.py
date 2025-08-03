@@ -27,11 +27,16 @@ Business Rules:
 """
 
 from datetime import datetime, time, date, timedelta
-from typing import Optional, Tuple
-from loguru import logger
+from typing import Optional, Tuple, TYPE_CHECKING
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.settings_operations import SettingsOperations, SyncSettingsOperations
+
+if TYPE_CHECKING:
+    pass  # No TYPE_CHECKING imports needed
 from ...models.shared_models import (
     TimeWindowStatus,
     TimeWindowValidationResult,
@@ -65,28 +70,39 @@ class TimeWindowService:
     - Structured data responses with Pydantic models
 
     Interactions:
-    - Uses SettingsOperations for configuration
+    - Uses injected SettingsService for configuration
     - Provides structured Pydantic model responses
     - Integrates with frontend configurable settings
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, settings_service=None):
         """
-        Initialize TimeWindowService with async database instance.
+        Initialize TimeWindowService with async database instance and settings service.
 
         Args:
             db: AsyncDatabase instance
+            settings_service: Optional SettingsService instance for dependency injection
         """
         self.db = db
-        self.settings_ops = SettingsOperations(db)
+        self.settings_service = settings_service
+
+    async def _get_setting(self, key: str):
+        """Helper method to get settings through proper dependency injection."""
+        if self.settings_service:
+            return await self.settings_service.get_setting(key)
+        else:
+            # Log warning when settings service is not available
+            logger.warning(f"Settings service not available for key: {key}")
+            return None
 
     async def _get_time_window_settings(self) -> dict:
         """Get time window settings from database using proper operations layer."""
         try:
-            validation_timeout = await self.settings_ops.get_setting(
+            # Use helper method for consistent settings access
+            validation_timeout = await self._get_setting(
                 "time_window_validation_timeout_seconds"
             )
-            grace_period = await self.settings_ops.get_setting(
+            grace_period = await self._get_setting(
                 "time_window_grace_period_seconds"
             )
 
@@ -599,8 +615,8 @@ class TimeWindowService:
     ) -> bool:
         """
         Check if current time is within the camera's operational time window.
-        
-        This method provides the interface expected by SchedulingService for 
+
+        This method provides the interface expected by SchedulingService for
         comprehensive capture readiness validation.
 
         Args:
@@ -617,7 +633,9 @@ class TimeWindowService:
                 return True
 
             # Validate and parse time window
-            validation_result = await self.validate_time_window(window_start, window_end)
+            validation_result = await self.validate_time_window(
+                window_start, window_end
+            )
             if not validation_result.is_valid:
                 logger.warning(
                     f"Invalid time window configuration: {validation_result.error_message}"
@@ -653,23 +671,34 @@ class SyncTimeWindowService:
     that require synchronous database operations.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, settings_service=None):
         """
-        Initialize SyncTimeWindowService with sync database instance.
+        Initialize SyncTimeWindowService with sync database instance and settings service.
 
         Args:
             db: SyncDatabase instance
+            settings_service: Optional SyncSettingsService instance for dependency injection
         """
         self.db = db
-        self.settings_ops = SyncSettingsOperations(db)
+        self.settings_service = settings_service
+
+    def _get_setting(self, key: str):
+        """Helper method to get settings through proper dependency injection (sync version)."""
+        if self.settings_service:
+            return self.settings_service.get_setting(key)
+        else:
+            # Log warning when settings service is not available
+            logger.warning(f"Settings service not available for key: {key}")
+            return None
 
     def _get_time_window_settings(self) -> dict:
         """Get time window settings from database using proper operations layer (sync version)."""
         try:
-            validation_timeout = self.settings_ops.get_setting(
+            # Use helper method for consistent settings access
+            validation_timeout = self._get_setting(
                 "time_window_validation_timeout_seconds"
             )
-            grace_period = self.settings_ops.get_setting(
+            grace_period = self._get_setting(
                 "time_window_grace_period_seconds"
             )
 
@@ -936,8 +965,8 @@ class SyncTimeWindowService:
     ) -> bool:
         """
         Check if current time is within the camera's operational time window (sync version).
-        
-        This method provides the interface expected by SyncSchedulingService for 
+
+        This method provides the interface expected by SyncSchedulingService for
         comprehensive capture readiness validation.
 
         Args:
@@ -954,7 +983,9 @@ class SyncTimeWindowService:
                 return True
 
             # Validate and parse time window
-            start_time_obj, end_time_obj = self.validate_time_window(window_start, window_end)
+            start_time_obj, end_time_obj = self.validate_time_window(
+                window_start, window_end
+            )
 
             # Use the core time-in-window logic
             return self.is_time_in_window(
@@ -964,6 +995,7 @@ class SyncTimeWindowService:
         except Exception as e:
             logger.error(f"Failed to check time window status (sync): {e}")
             return False
+
 
 # Backwards compatibility aliases
 TimeWindowService = TimeWindowService

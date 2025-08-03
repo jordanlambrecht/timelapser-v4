@@ -12,7 +12,11 @@ import time
 import asyncio
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict, deque
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.MIDDLEWARE)
+
 from fastapi import Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse
 
@@ -24,7 +28,7 @@ class SlidingWindowRateLimiter:
     Tracks requests per client within a time window and enforces limits.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         # Dict[client_id, deque[timestamp]]
         self._requests: Dict[str, deque] = defaultdict(lambda: deque())
         self._lock = asyncio.Lock()

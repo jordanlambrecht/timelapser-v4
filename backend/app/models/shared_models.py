@@ -337,6 +337,35 @@ class MilestoneConfig(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# Video automation request models
+class ManualGenerationRequest(BaseModel):
+    """Manual video generation request model"""
+
+    timelapse_id: int = Field(
+        ..., description="ID of the timelapse to generate video from"
+    )
+    video_name: Optional[str] = Field(None, description="Optional custom video name")
+    priority: Optional[str] = Field(
+        "high",  # Using string literal instead of JobPriority.HIGH to avoid import
+        description="Job priority (high, medium, low)",
+    )
+    settings: Optional[Dict[str, Any]] = Field(
+        default_factory=dict, description="Custom video generation settings"
+    )
+
+
+class QueueStatsResponse(BaseModel):
+    """Video generation queue statistics response model"""
+
+    total_jobs: int
+    pending_jobs: int
+    processing_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    queue_health: str
+    timestamp: str
+
+
 class CorruptionSettings(BaseModel):
     """Global corruption detection settings model"""
 

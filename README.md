@@ -32,6 +32,71 @@ architecture.
 - ✅ **Modern Patterns** - Server Components, proper error handling, structured
   logging
 
+### 🔍 Logging Architecture
+
+The application implements a sophisticated **exception-based logging pattern**
+that eliminates circular import dependencies while maintaining clean separation
+of concerns:
+
+#### **Core Principles**
+
+- **Database Layer**: Pure data operations that raise specific exceptions (no
+  logging)
+- **Service Layer**: Business logic that catches exceptions and handles logging
+- **Clean Dependencies**: Database → Exceptions → Services → Logger (no circular
+  imports)
+
+#### **Exception Hierarchy**
+
+```python
+DatabaseOperationError (base)
+├── SettingsOperationError
+├── CameraOperationError
+├── ImageOperationError
+└── ... (domain-specific exceptions)
+```
+
+#### **Usage Pattern**
+
+```python
+# Database Operation (Clean, No Logging)
+async def set_setting(self, key: str, value: str) -> bool:
+    try:
+        # Database operation logic
+        return True
+    except (psycopg.Error, ValueError) as e:
+        raise SettingsOperationError(f"Failed to set '{key}'") from e
+
+# Service Layer (Handles Exceptions + Logging)
+async def set_setting(self, key: str, value: str) -> bool:
+    try:
+        result = await self.settings_ops.set_setting(key, value)
+        logger.info(f"✅ Successfully set setting '{key}'")
+        return result
+    except SettingsOperationError as e:
+        logger.error(f"❌ Database error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
+        raise
+```
+
+#### **Benefits**
+
+- ✅ **No Circular Imports** - Clean dependency hierarchy
+- ✅ **Better Testability** - Database operations isolated from logging
+- ✅ **Specific Error Context** - Domain-specific exceptions with detailed
+  information
+- ✅ **Centralized Logging** - All logging happens at the service layer
+- ✅ **Maintainable** - Clear separation between data access and business logic
+
+#### **Logger Features**
+
+- **Auto-Detection** - Automatically detects sync vs async contexts
+- **Multiple Handlers** - Console, file, database, and SSE broadcasting
+- **Performance Optimized** - Batching and caching for high-frequency logging
+- **Type-Safe** - Enum-based configuration for consistency
+
 ## 📋 Prerequisites
 
 - **Node.js 18+** and **npm/pnpm**

@@ -6,9 +6,14 @@ Handles SSE events cleanup and maintenance tasks.
 
 from typing import Dict, Any
 
+from ..enums import LoggerName, LogSource
+from ..services.logger import get_service_logger
+
 from .base_worker import BaseWorker
 from ..database.sse_events_operations import SSEEventsOperations
 from ..database.core import AsyncDatabase
+
+logger = get_service_logger(LoggerName.SSE_WORKER, LogSource.WORKER)
 
 
 class SSEWorker(BaseWorker):
@@ -34,11 +39,11 @@ class SSEWorker(BaseWorker):
 
     async def initialize(self) -> None:
         """Initialize SSE worker resources."""
-        self.log_info("Initialized SSE worker")
+        logger.info("Initialized SSE worker")
 
     async def cleanup(self) -> None:
         """Cleanup SSE worker resources."""
-        self.log_info("Cleaned up SSE worker")
+        logger.info("Cleaned up SSE worker")
 
     async def cleanup_old_events(self, max_age_hours: int = 24) -> int:
         """
@@ -54,18 +59,18 @@ class SSEWorker(BaseWorker):
             deleted_count = await self.sse_ops.cleanup_old_events(max_age_hours)
 
             if deleted_count > 0:
-                self.log_info(
+                logger.info(
                     f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)"
                 )
             else:
-                self.log_debug(
+                logger.debug(
                     f"No old SSE events found for cleanup (older than {max_age_hours}h)"
                 )
 
             return deleted_count
 
         except Exception as e:
-            self.log_error("Error cleaning up old SSE events", e)
+            logger.error("Error cleaning up old SSE events", e)
             return 0
 
     async def get_sse_statistics(self) -> Dict[str, Any]:
@@ -77,11 +82,11 @@ class SSEWorker(BaseWorker):
         """
         try:
             stats = await self.sse_ops.get_event_stats()
-            self.log_debug(f"SSE statistics: {stats}")
+            logger.debug(f"SSE statistics: {stats}")
             return stats
 
         except Exception as e:
-            self.log_error("Error getting SSE statistics", e)
+            logger.error("Error getting SSE statistics", e)
             return {
                 "total_events": 0,
                 "pending_events": 0,
@@ -102,17 +107,18 @@ class SSEWorker(BaseWorker):
         try:
             # This would require a new method in SSEEventsOperations
             # For now, just log that this maintenance task exists
-            self.log_debug(
+            # TODO: This is the old logger system
+            logger.debug(
                 f"Checking for stuck unprocessed events older than {max_age_hours}h"
             )
 
-            # TODO: Implement cleanup_stuck_events in SSEEventsOperations
-            # deleted_count = await self.sse_ops.cleanup_stuck_events(max_age_hours)
+            # Clean up stuck events using implemented method
+            deleted_count = await self.sse_ops.cleanup_stuck_events(max_age_hours)
 
-            return 0
+            return deleted_count
 
         except Exception as e:
-            self.log_error("Error cleaning up stuck SSE events", e)
+            logger.error("Error cleaning up stuck SSE events", e)
             return 0
 
     async def optimize_sse_table(self) -> bool:
@@ -124,7 +130,7 @@ class SSEWorker(BaseWorker):
         """
         try:
             # This could include VACUUM, ANALYZE, or other DB maintenance
-            self.log_debug("SSE table optimization would run here")
+            logger.debug("SSE table optimization would run here")
 
             # TODO: Implement table optimization if needed
             # For PostgreSQL, this might include:
@@ -135,5 +141,5 @@ class SSEWorker(BaseWorker):
             return True
 
         except Exception as e:
-            self.log_error("Error optimizing SSE events table", e)
+            logger.error("Error optimizing SSE events table", e)
             return False

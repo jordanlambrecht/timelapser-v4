@@ -7,12 +7,10 @@ with consistent formatting, emoji support, and context integration.
 
 import re
 from typing import Dict, Any, Optional
-from datetime import datetime
 
 from ....enums import LogLevel, LogSource, LoggerName, LogEmoji
 from ..constants import (
     FORMATTER_ERROR_MESSAGE_MAX_LENGTH,
-    FORMATTER_CONTEXT_PREVIEW_MAX_ITEMS,
     PERFORMANCE_DURATION_MS_THRESHOLD_FAST,
     PERFORMANCE_DURATION_MS_THRESHOLD_SLOW,
     PERFORMANCE_DURATION_DECIMAL_PLACES,

@@ -13,7 +13,10 @@ left behind after system crashes or restarts, including:
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime, timedelta, timezone
-from loguru import logger
+from ..services.logger import get_service_logger
+from ..enums import LoggerName
+
+logger = get_service_logger(LoggerName.SYSTEM)
 
 from ..constants import ALLOWED_VIDEO_EXTENSIONS
 

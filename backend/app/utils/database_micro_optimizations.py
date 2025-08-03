@@ -10,8 +10,6 @@ and memory management improvements.
 import time
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
-from loguru import logger
-
 from .database_helpers import DatabaseConnectionBatcher
 from ..database.core import AsyncDatabase
 
@@ -200,7 +198,7 @@ class ConnectionOptimizer:
                 execution_time = (time.time() - start_time) * 1000
                 individual_times.append(execution_time)
             except Exception as e:
-                logger.warning(f"Operation failed during analysis: {e}")
+                pass
 
         # Test batched execution
         if len(operations) > 1:
@@ -239,7 +237,7 @@ class ConnectionOptimizer:
                         }
                     )
             except Exception as e:
-                logger.warning(f"Batch analysis failed: {e}")
+                pass
 
         return results
 

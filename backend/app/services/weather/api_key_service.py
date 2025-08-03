@@ -7,9 +7,12 @@ Completely separate from other settings to avoid confusion.
 """
 
 from typing import Optional
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
 
 from ...database.settings_operations import SettingsOperations, SyncSettingsOperations
+
+logger = get_service_logger(LoggerName.WEATHER_SERVICE)
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...utils.hashing import hash_api_key, mask_api_key
 
@@ -17,9 +20,29 @@ from ...utils.hashing import hash_api_key, mask_api_key
 class APIKeyService:
     """Async API key management service."""
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, settings_service=None):
         self.db = db
-        self.settings_ops = SettingsOperations(db)
+        self.settings_service = settings_service
+
+    async def _get_setting(self, key: str):
+        """Get setting using injected service or fallback to operations."""
+        if self.settings_service:
+            return await self.settings_service.get_setting(key)
+        else:
+            from ...database.settings_operations import SettingsOperations
+
+            settings_ops = SettingsOperations(self.db)
+            return await settings_ops.get_setting(key)
+
+    async def _set_setting(self, key: str, value: str):
+        """Set setting using injected service or fallback to operations."""
+        if self.settings_service:
+            await self.settings_service.set_setting(key, value)
+        else:
+            from ...database.settings_operations import SettingsOperations
+
+            settings_ops = SettingsOperations(self.db)
+            await settings_ops.set_setting(key, value)
 
     async def store_api_key(self, api_key: str) -> bool:
         """
@@ -34,17 +57,17 @@ class APIKeyService:
         try:
             if not api_key or not api_key.strip():
                 # Clear both keys
-                await self.settings_ops.set_setting("openweather_api_key_plain", "")
-                await self.settings_ops.set_setting("openweather_api_key_hash", "")
+                await self._set_setting("openweather_api_key_plain", "")
+                await self._set_setting("openweather_api_key_hash", "")
                 logger.info("Cleared OpenWeather API key")
                 return True
 
             # Store the plain key for retrieval and display
-            await self.settings_ops.set_setting("openweather_api_key_plain", api_key)
+            await self._set_setting("openweather_api_key_plain", api_key)
 
             # Store the hash for future security verification
             hashed_key = hash_api_key(api_key)
-            await self.settings_ops.set_setting("openweather_api_key_hash", hashed_key)
+            await self._set_setting("openweather_api_key_hash", hashed_key)
 
             logger.info("Stored OpenWeather API key and hash")
             return True
@@ -61,7 +84,7 @@ class APIKeyService:
             The plain text API key or None if not found
         """
         try:
-            return await self.settings_ops.get_setting("openweather_api_key_plain")
+            return await self._get_setting("openweather_api_key_plain")
         except Exception as e:
             logger.error(f"Failed to get API key for display: {e}")
             return None
@@ -74,7 +97,7 @@ class APIKeyService:
             The plain text API key or None if not found
         """
         try:
-            return await self.settings_ops.get_setting("openweather_api_key_plain")
+            return await self._get_setting("openweather_api_key_plain")
         except Exception as e:
             logger.error(f"Failed to get API key for service: {e}")
             return None
@@ -82,7 +105,7 @@ class APIKeyService:
     async def has_api_key(self) -> bool:
         """Check if an API key is stored."""
         try:
-            key = await self.settings_ops.get_setting("openweather_api_key_plain")
+            key = await self._get_setting("openweather_api_key_plain")
             return bool(key and key.strip())
         except Exception as e:
             logger.error(f"Failed to check API key existence: {e}")
@@ -92,26 +115,46 @@ class APIKeyService:
 class SyncAPIKeyService:
     """Sync API key management service for worker."""
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, settings_service=None):
         self.db = db
-        self.settings_ops = SyncSettingsOperations(db)
+        self.settings_service = settings_service
+
+    def _get_setting(self, key: str):
+        """Get setting using injected service or fallback to operations."""
+        if self.settings_service:
+            return self.settings_service.get_setting(key)
+        else:
+            from ...database.settings_operations import SyncSettingsOperations
+
+            settings_ops = SyncSettingsOperations(self.db)
+            return settings_ops.get_setting(key)
+
+    def _set_setting(self, key: str, value: str):
+        """Set setting using injected service or fallback to operations."""
+        if self.settings_service:
+            self.settings_service.set_setting(key, value)
+        else:
+            from ...database.settings_operations import SyncSettingsOperations
+
+            settings_ops = SyncSettingsOperations(self.db)
+            settings_ops.set_setting(key, value)
 
     def store_api_key(self, api_key: str) -> bool:
         """Store an API key securely (sync version)."""
         try:
             if not api_key or not api_key.strip():
                 # Clear both keys
-                self.settings_ops.set_setting("openweather_api_key_plain", "")
-                self.settings_ops.set_setting("openweather_api_key_hash", "")
+                self._set_setting("openweather_api_key_plain", "")
+                self._set_setting("openweather_api_key_hash", "")
                 logger.info("Cleared OpenWeather API key")
                 return True
 
             # Store the plain key for retrieval and display
-            self.settings_ops.set_setting("openweather_api_key_plain", api_key)
+            self._set_setting("openweather_api_key_plain", api_key)
 
             # Store the hash for future security verification
             hashed_key = hash_api_key(api_key)
-            self.settings_ops.set_setting("openweather_api_key_hash", hashed_key)
+            self._set_setting("openweather_api_key_hash", hashed_key)
 
             logger.info("Stored OpenWeather API key and hash")
             return True
@@ -123,7 +166,7 @@ class SyncAPIKeyService:
     def get_api_key_for_display(self) -> Optional[str]:
         """Get the API key for frontend display (sync version)."""
         try:
-            return self.settings_ops.get_setting("openweather_api_key_plain")
+            return self._get_setting("openweather_api_key_plain")
         except Exception as e:
             logger.error(f"Failed to get API key for display: {e}")
             return None
@@ -131,7 +174,7 @@ class SyncAPIKeyService:
     def get_api_key_for_service(self) -> Optional[str]:
         """Get the API key for weather service use (sync version)."""
         try:
-            return self.settings_ops.get_setting("openweather_api_key_plain")
+            return self._get_setting("openweather_api_key_plain")
         except Exception as e:
             logger.error(f"Failed to get API key for service: {e}")
             return None
@@ -139,7 +182,7 @@ class SyncAPIKeyService:
     def has_api_key(self) -> bool:
         """Check if an API key is stored (sync version)."""
         try:
-            key = self.settings_ops.get_setting("openweather_api_key_plain")
+            key = self._get_setting("openweather_api_key_plain")
             return bool(key and key.strip())
         except Exception as e:
             logger.error(f"Failed to check API key existence: {e}")

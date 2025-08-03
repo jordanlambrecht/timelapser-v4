@@ -11,14 +11,17 @@ Domain-specific statistics should be handled by their respective services:
 """
 
 from typing import List, Dict, Optional, Any
-from loguru import logger
 
 from ..database.core import AsyncDatabase, SyncDatabase
+from ..services.logger import get_service_logger
+from ..enums import LoggerName, LogSource
+
+logger = get_service_logger(LoggerName.STATISTICS_SERVICE, LogSource.SYSTEM)
 from ..database.statistics_operations import (
     StatisticsOperations,
     SyncStatisticsOperations,
 )
-from ..database.settings_operations import SettingsOperations, SyncSettingsOperations
+from .settings_service import SettingsService, SyncSettingsService
 from ..models.statistics_model import (
     DashboardStatsModel,
     CameraPerformanceModel,
@@ -66,14 +69,18 @@ class StatisticsService:
         """
         self.db = db
         self.stats_ops = StatisticsOperations(db)
-        self.settings_ops = SettingsOperations(db)
+        self.settings_service = SettingsService(db)
 
     async def get_dashboard_stats(self) -> DashboardStatsModel:
         """Get comprehensive dashboard statistics from operations layer."""
         try:
             return await self.stats_ops.get_dashboard_stats()
         except Exception as e:
-            logger.error(f"Failed to get dashboard stats: {e}")
+            logger.error(
+                "Failed to get dashboard stats",
+                exception=e,
+                extra_context={"operation": "get_dashboard_stats"},
+            )
             raise
 
     async def get_enhanced_dashboard_stats(self) -> "EnhancedDashboardStatsModel":
@@ -96,8 +103,9 @@ class StatisticsService:
                 camera_id=None  # System-wide performance data
             )
 
-            # Get system health score
-            health_score = await self.stats_ops.get_system_health_score()
+            # Get system health data
+            health_score_dict = await self.stats_ops.get_system_health_data()
+            health_score = SystemHealthScoreModel(**health_score_dict)
 
             # Get timezone-aware timestamp
             timestamp = await get_timezone_aware_timestamp_async(self.db)
@@ -150,7 +158,11 @@ class StatisticsService:
             return enhanced_stats
 
         except Exception as e:
-            logger.error(f"Failed to get enhanced dashboard stats: {e}")
+            logger.error(
+                "Failed to get enhanced dashboard stats",
+                exception=e,
+                extra_context={"operation": "get_enhanced_dashboard_stats"},
+            )
             raise
 
     async def get_camera_performance_stats(
@@ -160,7 +172,11 @@ class StatisticsService:
         try:
             return await self.stats_ops.get_camera_performance_stats(camera_id)
         except Exception as e:
-            logger.error(f"Failed to get camera performance stats: {e}")
+            logger.error(
+                "Failed to get camera performance stats",
+                exception=e,
+                extra_context={"operation": "get_camera_performance_stats"},
+            )
             raise
 
     async def get_quality_trend_data(
@@ -172,7 +188,11 @@ class StatisticsService:
         try:
             return await self.stats_ops.get_quality_trend_data(camera_id, hours)
         except Exception as e:
-            logger.error(f"Failed to get quality trend data: {e}")
+            logger.error(
+                "Failed to get quality trend data",
+                exception=e,
+                extra_context={"operation": "get_quality_trend_data"},
+            )
             raise
 
     async def get_storage_statistics(self) -> StorageStatsModel:
@@ -180,15 +200,25 @@ class StatisticsService:
         try:
             return await self.stats_ops.get_storage_statistics()
         except Exception as e:
-            logger.error(f"Failed to get storage statistics: {e}")
+            logger.error(
+                "Failed to get storage statistics",
+                exception=e,
+                extra_context={"operation": "get_storage_statistics"},
+            )
             raise
 
-    async def get_system_health_score(self) -> SystemHealthScoreModel:
+    async def get_system_health_data(self) -> SystemHealthScoreModel:
         """Calculate system health score based on various metrics."""
         try:
-            return await self.stats_ops.get_system_health_score()
+            health_data = await self.stats_ops.get_system_health_data()
+            # Convert dict to SystemHealthScoreModel
+            return SystemHealthScoreModel(**health_data)
         except Exception as e:
-            logger.error(f"Failed to get system health score: {e}")
+            logger.error(
+                "Failed to get system health score",
+                exception=e,
+                extra_context={"operation": "get_system_health_data"},
+            )
             raise
 
     async def compile_system_overview(self) -> Dict[str, Any]:
@@ -204,7 +234,7 @@ class StatisticsService:
             # Get basic system statistics from operations layer
             dashboard_stats = await self.get_dashboard_stats()
             storage_stats = await self.get_storage_statistics()
-            health_score = await self.get_system_health_score()
+            health_score = await self.get_system_health_data()
 
             overview_data = {
                 "compilation_timestamp": timestamp.isoformat(),
@@ -221,7 +251,11 @@ class StatisticsService:
             return overview_data
 
         except Exception as e:
-            logger.error(f"System overview compilation failed: {e}")
+            logger.error(
+                "System overview compilation failed",
+                exception=e,
+                extra_context={"operation": "compile_system_overview"},
+            )
             return {"error": str(e)}
 
     async def generate_aggregated_metrics(self) -> Dict[str, Any]:
@@ -235,7 +269,7 @@ class StatisticsService:
             timestamp = await get_timezone_aware_timestamp_async(self.db)
             dashboard_stats = await self.stats_ops.get_dashboard_stats()
             storage_stats = await self.stats_ops.get_storage_statistics()
-            health_score = await self.stats_ops.get_system_health_score()
+            health_score = await self.stats_ops.get_system_health_data()
             camera_performance = await self.stats_ops.get_camera_performance_stats(
                 camera_id=None
             )
@@ -246,7 +280,7 @@ class StatisticsService:
             metrics = {
                 "dashboard": dashboard_stats.model_dump() if dashboard_stats else {},
                 "storage": storage_stats.model_dump() if storage_stats else {},
-                "health_score": health_score.model_dump() if health_score else {},
+                "health_score": health_score if health_score else {},
                 "camera_performance": (
                     [cp.model_dump() for cp in camera_performance]
                     if camera_performance
@@ -267,7 +301,11 @@ class StatisticsService:
 
             return aggregated_data
         except Exception as e:
-            logger.error(f"Aggregated metrics generation failed: {e}")
+            logger.error(
+                "Aggregated metrics generation failed",
+                exception=e,
+                extra_context={"operation": "generate_aggregated_metrics"},
+            )
             return {"error": str(e)}
 
     async def prepare_system_dashboard_data(self) -> Dict[str, Any]:
@@ -286,14 +324,20 @@ class StatisticsService:
                 "data_timestamp": timestamp.isoformat(),
                 "system_overview": await self.compile_system_overview(),
                 "aggregated_metrics": await self.generate_aggregated_metrics(),
-                "health_summary": await self.get_system_health_score(),
+                "health_summary": await self.get_system_health_data(),
             }
 
-            logger.info("System dashboard data prepared successfully")
+            logger.info(
+                "System dashboard data prepared successfully",
+            )
             return dashboard_data
 
         except Exception as e:
-            logger.error(f"System dashboard data preparation failed: {e}")
+            logger.error(
+                "System dashboard data preparation failed",
+                exception=e,
+                extra_context={"operation": "prepare_system_dashboard_data"},
+            )
             return {"error": str(e)}
 
 
@@ -304,16 +348,20 @@ class SyncStatisticsService:
         """Initialize service with sync database instance."""
         self.db = db
         self.stats_ops = SyncStatisticsOperations(db)
-        self.settings_ops = SyncSettingsOperations(db)
+        self.settings_service = SyncSettingsService(db)
 
     def get_system_performance_metrics(self) -> Dict[str, Any]:
         """Get system performance metrics for monitoring."""
         try:
             # Calculate timestamp for database operation
-            timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            timestamp = get_timezone_aware_timestamp_sync(self.settings_service)
             return self.stats_ops.get_system_performance_metrics(timestamp.isoformat())
         except Exception as e:
-            logger.error(f"Failed to get system performance metrics: {e}")
+            logger.error(
+                "Failed to get system performance metrics",
+                exception=e,
+                extra_context={"operation": "get_system_performance_metrics"},
+            )
             raise
 
     def update_camera_statistics(self, camera_id: int) -> bool:
@@ -322,7 +370,12 @@ class SyncStatisticsService:
             return self.stats_ops.update_camera_statistics(camera_id)
         except Exception as e:
             logger.error(
-                f"Failed to update camera statistics for camera {camera_id}: {e}"
+                f"Failed to update camera statistics for camera {camera_id}",
+                exception=e,
+                extra_context={
+                    "operation": "update_camera_statistics",
+                    "camera_id": camera_id,
+                },
             )
             raise
 
@@ -332,7 +385,12 @@ class SyncStatisticsService:
             return self.stats_ops.get_capture_success_rate(camera_id, hours)
         except Exception as e:
             logger.error(
-                f"Failed to get capture success rate for camera {camera_id}: {e}"
+                f"Failed to get capture success rate for camera {camera_id}",
+                exception=e,
+                extra_context={
+                    "operation": "get_capture_success_rate",
+                    "camera_id": camera_id,
+                },
             )
             raise
 
@@ -341,13 +399,17 @@ class SyncStatisticsService:
         try:
             return self.stats_ops.cleanup_old_statistics(days_to_keep)
         except Exception as e:
-            logger.error(f"Failed to cleanup old statistics: {e}")
+            logger.error(
+                "Failed to cleanup old statistics",
+                exception=e,
+                extra_context={"operation": "cleanup_old_statistics"},
+            )
             raise
 
     def get_system_overview_sync(self) -> Dict[str, Any]:
         """Get system overview for worker processes."""
         try:
-            timestamp = get_timezone_aware_timestamp_sync(self.settings_ops)
+            timestamp = get_timezone_aware_timestamp_sync(self.settings_service)
 
             # Get basic metrics from operations layer
             performance_metrics = self.get_system_performance_metrics()
@@ -359,5 +421,9 @@ class SyncStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Sync system overview failed: {e}")
+            logger.error(
+                "Sync system overview failed",
+                exception=e,
+                extra_context={"operation": "get_system_overview_sync"},
+            )
             return {"error": str(e)}

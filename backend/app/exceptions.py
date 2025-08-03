@@ -6,7 +6,8 @@ Centralized location for all custom exception classes to avoid
 duplicating exception definitions across modules.
 """
 
-# TODO: Gotta get rid of this eventually because it's too comparmentalized imho
+# Exception design follows semantic clarity - each exception type represents
+# a distinct error domain with specific handling requirements
 
 
 class TimelapserError(Exception):
@@ -63,20 +64,14 @@ class InvalidImageSizeError(TimelapserError):
     pass
 
 
-class ImageServiceError(TimelapserError):
-    """Custom exception for general image service errors."""
+class ServiceError(TimelapserError):
+    """Custom exception for general service operation errors."""
 
     pass
 
 
 class ConfigurationError(TimelapserError):
-    """Custom exception for configuration errors."""
-
-    pass
-
-
-class ValidationError(TimelapserError):
-    """Custom exception for data validation errors."""
+    """Custom exception for configuration and validation errors."""
 
     pass
 

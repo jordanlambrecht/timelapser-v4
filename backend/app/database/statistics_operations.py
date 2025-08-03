@@ -9,38 +9,36 @@ This module handles all statistics-related database operations including:
 - Performance metrics
 """
 
-from typing import List, Dict, Optional, Any
-from datetime import datetime
 
-from loguru import logger
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
 import psycopg
-from app.models.statistics_model import (
-    CameraStatsModel,
-    TimelapseStatsModel,
-    ImageStatsModel,
-    VideoStatsModel,
-    AutomationStatsModel,
-    RecentActivityModel,
-    DashboardStatsModel,
-    CameraPerformanceModel,
-    QualityTrendDataPoint,
-    StorageStatsModel,
-)
-from ..constants import DEFAULT_STATISTICS_RETENTION_DAYS
 
-from .core import AsyncDatabase, SyncDatabase
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_timestamp_etag,
+from app.models.statistics_model import (
+    AutomationStatsModel,
+    CameraPerformanceModel,
+    CameraStatsModel,
+    DashboardStatsModel,
+    ImageStatsModel,
+    QualityTrendDataPoint,
+    RecentActivityModel,
+    StorageStatsModel,
+    TimelapseStatsModel,
+    VideoStatsModel,
 )
+
+from ..constants import DEFAULT_STATISTICS_RETENTION_DAYS
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_timestamp_etag
 from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import StatisticsOperationError
 
 
 class StatisticsQueryBuilder:
     """Centralized query builder for statistics operations.
-    
+
     IMPORTANT: For optimal performance, ensure these indexes exist:
     - CREATE INDEX idx_cameras_enabled ON cameras(enabled) WHERE enabled = true;
     - CREATE INDEX idx_cameras_degraded ON cameras(degraded_mode_active) WHERE degraded_mode_active = true;
@@ -151,15 +149,15 @@ class StatisticsQueryBuilder:
             LEFT JOIN timelapses t ON c.id = t.camera_id
             LEFT JOIN images i ON t.id = i.timelapse_id
             LEFT JOIN videos v ON t.id = v.timelapse_id"""
-        
+
         if camera_id is not None:
             base_query += " WHERE c.id = %(camera_id)s"
-        
+
         base_query += """
             GROUP BY c.id, c.name, c.enabled, c.degraded_mode_active,
                     c.lifetime_glitch_count, c.consecutive_corruption_failures
             ORDER BY c.name"""
-        
+
         return base_query
 
     @staticmethod
@@ -316,50 +314,13 @@ class StatisticsOperations:
                         automation=automation_model,
                         recent_activity=recent_activity_model,
                     )
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get dashboard stats: {e}")
-            return DashboardStatsModel(
-                camera=CameraStatsModel(
-                    total_cameras=0,
-                    enabled_cameras=0,
-                    degraded_cameras=0,
-                    cameras_with_heavy_detection=0,
-                ),
-                timelapse=TimelapseStatsModel(
-                    total_timelapses=0,
-                    running_timelapses=0,
-                    paused_timelapses=0,
-                    completed_timelapses=0,
-                ),
-                image=ImageStatsModel(
-                    total_images=0,
-                    images_today=0,
-                    flagged_images=0,
-                    avg_quality_score=0,
-                    total_storage_bytes=0,
-                ),
-                video=VideoStatsModel(
-                    total_videos=0,
-                    completed_videos=0,
-                    processing_videos=0,
-                    failed_videos=0,
-                    canceled_videos=0,
-                    total_file_size=0,
-                    avg_duration=0,
-                ),
-                automation=AutomationStatsModel(
-                    total_jobs=0,
-                    pending_jobs=0,
-                    processing_jobs=0,
-                    completed_jobs=0,
-                    failed_jobs=0,
-                    queue_health="healthy",
-                ),
-                recent_activity=RecentActivityModel(
-                    captures_last_hour=0, captures_last_24h=0
-                ),
+        except (psycopg.Error, KeyError, ValueError):
+            raise StatisticsOperationError(
+                "Failed to retrieve dashboard statistics",
+                operation="get_dashboard_statistics",
             )
 
+    @cached_response(ttl_seconds=300, key_prefix="statistics")
     @cached_response(ttl_seconds=180, key_prefix="statistics")
     async def get_camera_performance_stats(
         self, camera_id: Optional[int] = None
@@ -388,9 +349,11 @@ class StatisticsOperations:
                     rows = await cur.fetchall()
                     return [CameraPerformanceModel(**row) for row in rows]
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get camera performance stats: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise StatisticsOperationError(
+                "Failed to retrieve camera performance statistics",
+                operation="get_camera_performance",
+            )
 
     @cached_response(ttl_seconds=300, key_prefix="statistics")
     async def get_quality_trend_data(
@@ -417,19 +380,19 @@ class StatisticsOperations:
             FROM images i
             JOIN timelapses t ON i.timelapse_id = t.id
             WHERE i.captured_at > %(current_time)s - %(hours)s * INTERVAL '1 hour'"""
-            
+
             if camera_id:
                 base_query += " AND t.camera_id = %(camera_id)s"
-            
-            query = base_query + """
+
+            query = (
+                base_query
+                + """
             GROUP BY DATE_TRUNC('hour', i.captured_at)
             ORDER BY hour
             """
+            )
 
-            params: Dict[str, Any] = {
-                "current_time": utc_now(),
-                "hours": hours
-            }
+            params: Dict[str, Any] = {"current_time": utc_now(), "hours": hours}
             if camera_id:
                 params["camera_id"] = camera_id
 
@@ -439,9 +402,11 @@ class StatisticsOperations:
                     rows = await cur.fetchall()
                     return [QualityTrendDataPoint(**row) for row in rows]
 
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get quality trend data: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError):
+            raise StatisticsOperationError(
+                "Failed to retrieve quality trend data",
+                operation="get_quality_trend_data",
+            )
 
     @cached_response(ttl_seconds=240, key_prefix="statistics")
     async def get_storage_statistics(self) -> StorageStatsModel:
@@ -495,15 +460,10 @@ class StatisticsOperations:
                         avg_image_size=0.0,
                         avg_video_size=0.0,
                     )
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get storage statistics: {e}")
-            return StorageStatsModel(
-                total_image_storage=0,
-                total_video_storage=0,
-                total_images=0,
-                total_videos=0,
-                avg_image_size=0.0,
-                avg_video_size=0.0,
+        except (psycopg.Error, KeyError, ValueError):
+            raise StatisticsOperationError(
+                "Failed to retrieve storage statistics",
+                operation="get_storage_statistics",
             )
 
     @cached_response(ttl_seconds=120, key_prefix="statistics")
@@ -545,24 +505,11 @@ class StatisticsOperations:
                             "running_timelapses": result["running_timelapses"],
                         },
                     }
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to get system health data: {e}")
-            return {
-                "camera_health": {
-                    "total_cameras": 0,
-                    "enabled_cameras": 0,
-                    "degraded_cameras": 0,
-                },
-                "quality_health": {
-                    "avg_quality_score": 100.0,
-                    "flagged_images": 0,
-                    "total_images": 0,
-                },
-                "activity_health": {
-                    "captures_last_hour": 0,
-                    "running_timelapses": 0,
-                },
-            }
+        except (psycopg.Error, KeyError, ValueError):
+            raise StatisticsOperationError(
+                "Failed to retrieve system health data",
+                operation="get_system_health_data",
+            )
 
 
 class SyncStatisticsOperations:
@@ -626,7 +573,7 @@ class SyncStatisticsOperations:
                 CROSS JOIN corruption_activity ca
                 CROSS JOIN video_job_activity vja
                 """
-                
+
                 params: Dict[str, Any] = {"current_time": utc_now()}
                 cur.execute(query, params)
                 combined_metrics = cur.fetchone()
@@ -649,7 +596,7 @@ class SyncStatisticsOperations:
         """
         # This would typically update a camera_statistics table
         # For now, we'll just log the update
-        logger.debug(f"Camera statistics updated for camera {camera_id}")
+        pass
         return True
 
     def get_capture_success_rate(self, camera_id: int, hours: int = 24) -> float:
@@ -676,9 +623,9 @@ class SyncStatisticsOperations:
             params: Dict[str, Any] = {
                 "camera_id": camera_id,
                 "current_time": utc_now(),
-                "hours": hours
+                "hours": hours,
             }
-            
+
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, params)
@@ -690,10 +637,8 @@ class SyncStatisticsOperations:
                             data["successful_captures"] / data["total_attempts"]
                         ) * 100
                     return 100.0  # Assume 100% if no data
-        except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(
-                f"Failed to get capture success rate for camera {camera_id}: {e}"
-            )
+        except (psycopg.Error, KeyError, ValueError):
+            pass
             return 0.0
 
     def cleanup_old_statistics(
@@ -709,6 +654,23 @@ class SyncStatisticsOperations:
             Number of records cleaned up
         """
         # This would clean up cached statistics tables
-        # For now, just return 0 as we don't have specific stats tables yet
-        logger.debug(f"Statistics cleanup completed (keeping {days_to_keep} days)")
-        return 0
+        try:
+            query = """
+            DELETE FROM statistics
+            WHERE created_at < %(cutoff_date)s
+            RETURNING COUNT(*)
+            """
+
+            cutoff_date = utc_now() - timedelta(days=days_to_keep)
+            params: Dict[str, Any] = {"cutoff_date": cutoff_date}
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    count = cur.fetchone()[0]
+                    return count
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise StatisticsOperationError(
+                "Failed to cleanup old statistics records",
+                operation="cleanup_old_statistics",
+            ) from e

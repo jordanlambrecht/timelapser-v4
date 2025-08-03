@@ -39,7 +39,10 @@ class CaptureWorker:
 """
 
 from typing import Optional, Dict, Any
-from loguru import logger
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 from .corruption_pipeline import CorruptionPipeline
 

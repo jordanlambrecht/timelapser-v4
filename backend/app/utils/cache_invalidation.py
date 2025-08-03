@@ -9,20 +9,24 @@ events indicate data changes.
 
 Related Files:
 - cache_manager.py: Core caching infrastructure and storage mechanisms
-  This file contains the business logic for cache invalidation while
-  cache_manager.py provides the underlying TTL-based storage, statistics,
-  and caching decorators. Both work together to maintain cache coherency.
+    This file contains the business logic for cache invalidation while
+    cache_manager.py provides the underlying TTL-based storage, statistics,
+    and caching decorators. Both work together to maintain cache coherency.
 """
 
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
-from loguru import logger
+
+from ..enums import SSEEvent
+
+# from ..services.logger import get_service_logger, LogEmoji  # Commented out to avoid circular import
+
+# logger = get_service_logger(LoggerName.SYSTEM)  # Commented out to avoid circular import
 from .cache_manager import (
     cache,
     delete_cache_by_prefix,
     get_setting_cached,
     generate_timestamp_etag,
-    generate_content_hash_etag,
     generate_composite_etag,
     generate_collection_etag,
     validate_etag_match,
@@ -58,9 +62,8 @@ class CacheInvalidationService:
                 invalidated_count += 1
 
         if invalidated_count > 0:
-            logger.info(
-                f"🔄 Invalidated {invalidated_count} latest-image cache entries for camera {camera_id}"
-            )
+            # logger.info(f"🔄 Invalidated {invalidated_count} latest-image cache entries for camera {camera_id}")
+            pass
 
     @staticmethod
     async def invalidate_camera_status_cache(camera_id: int) -> None:
@@ -82,9 +85,8 @@ class CacheInvalidationService:
                 invalidated_count += 1
 
         if invalidated_count > 0:
-            logger.info(
-                f"🔄 Invalidated {invalidated_count} camera status cache entries for camera {camera_id}"
-            )
+            # logger.info(f"🔄 Invalidated {invalidated_count} camera status cache entries for camera {camera_id}")
+            pass
 
     @staticmethod
     async def invalidate_timelapse_cache(timelapse_id: int) -> None:
@@ -106,9 +108,8 @@ class CacheInvalidationService:
                 invalidated_count += 1
 
         if invalidated_count > 0:
-            logger.info(
-                f"🔄 Invalidated {invalidated_count} timelapse cache entries for timelapse {timelapse_id}"
-            )
+            # logger.info(f"🔄 Invalidated {invalidated_count} timelapse cache entries for timelapse {timelapse_id}")
+            pass
 
     @staticmethod
     async def invalidate_dashboard_cache() -> None:
@@ -130,7 +131,8 @@ class CacheInvalidationService:
                 invalidated_count += 1
 
         if invalidated_count > 0:
-            logger.info(f"🔄 Invalidated {invalidated_count} dashboard cache entries")
+            # logger.info(f"🔄 Invalidated {invalidated_count} dashboard cache entries")
+            pass
 
     @staticmethod
     async def invalidate_settings_cache(setting_key: Optional[str] = None) -> None:
@@ -145,14 +147,14 @@ class CacheInvalidationService:
             # Invalidate specific setting
             cache_key = f"setting:{setting_key}"
             if await cache.delete(cache_key):
-                logger.info(f"🔄 Invalidated settings cache: {setting_key}")
+                # logger.info(f"🔄 Invalidated settings cache: {setting_key}")
+                pass
         else:
             # Invalidate all settings cache entries using bulk operation
             invalidated_count = await delete_cache_by_prefix("setting:")
             if invalidated_count > 0:
-                logger.info(
-                    f"🔄 Invalidated {invalidated_count} settings cache entries"
-                )
+                # logger.info(f"🔄 Invalidated {invalidated_count} settings cache entries")
+                pass
 
     @staticmethod
     async def invalidate_all_settings_cache() -> int:
@@ -189,10 +191,12 @@ class CacheInvalidationService:
             cache_key = f"setting:{key}"
             success = await cache.delete(cache_key)
             if success:
-                logger.info(f"🔄 Invalidated settings cache: {key}")
+                # logger.info(f"🔄 Invalidated settings cache: {key}")
+                pass
             return success
         except Exception as e:
-            logger.error(f"❌ Failed to invalidate settings cache '{key}': {e}")
+            # logger.error(f"❌ Failed to invalidate settings cache '{key}': {e}")
+            pass
             return False
 
     @staticmethod
@@ -214,11 +218,13 @@ class CacheInvalidationService:
             # Reload from service (decorator handles caching)
             value = await get_setting_cached(settings_service, key)
 
-            logger.info(f"🔄 Refreshed settings cache: {key}")
+            # logger.info(f"🔄 Refreshed settings cache: {key}")
+            pass
             return value
 
         except Exception as e:
-            logger.error(f"❌ Failed to refresh settings cache '{key}': {e}")
+            # logger.error(f"❌ Failed to refresh settings cache '{key}': {e}")
+            pass
             return None
 
     @staticmethod
@@ -232,11 +238,12 @@ class CacheInvalidationService:
         invalidated_count = await delete_cache_by_prefix("get_images_batch:")
 
         if invalidated_count > 0:
-            logger.info(f"🔄 Invalidated {invalidated_count} image batch cache entries")
+            # logger.info(f"🔄 Invalidated {invalidated_count} image batch cache entries")
+            pass
 
     @classmethod
     async def handle_sse_event(
-        cls, event_type: str, event_data: Dict[str, Any]
+        cls, event_type: SSEEvent, event_data: Dict[str, Any]
     ) -> None:
         """
         Handle SSE events and invalidate appropriate cache entries.
@@ -246,41 +253,44 @@ class CacheInvalidationService:
             event_data: Event data containing relevant IDs
         """
         try:
-            if event_type == "image_captured":
+            if event_type == SSEEvent.IMAGE_CAPTURED:
                 camera_id = event_data.get("camera_id")
                 if camera_id:
                     await cls.invalidate_latest_image_cache(camera_id)
                     # Dashboard shows latest images, so invalidate that too
                     await cls.invalidate_dashboard_cache()
 
-            elif event_type == "camera_status_changed":
+            elif event_type == SSEEvent.CAMERA_STATUS_CHANGED:
                 camera_id = event_data.get("camera_id")
                 if camera_id:
                     await cls.invalidate_camera_status_cache(camera_id)
                     await cls.invalidate_dashboard_cache()
 
-            elif event_type == "timelapse_status_changed":
+            elif event_type == SSEEvent.TIMELAPSE_STATUS_UPDATED:
                 timelapse_id = event_data.get("timelapse_id")
                 if timelapse_id:
                     await cls.invalidate_timelapse_cache(timelapse_id)
                     await cls.invalidate_dashboard_cache()
 
-            elif event_type in ["corruption_detected", "corruption_resolved"]:
+            elif event_type in [
+                SSEEvent.CORRUPTION_DETECTED,
+                SSEEvent.CORRUPTION_RESOLVED,
+            ]:
                 camera_id = event_data.get("camera_id")
                 if camera_id:
                     await cls.invalidate_latest_image_cache(camera_id)
                     await cls.invalidate_dashboard_cache()
 
-            elif event_type == "settings_updated":
+            elif event_type == SSEEvent.SETTINGS_UPDATED:
                 setting_key = event_data.get("setting_key")
                 await cls.invalidate_settings_cache(setting_key)
                 # Settings changes might affect dashboard calculations
                 await cls.invalidate_dashboard_cache()
 
             elif event_type in [
-                "images_batch_loaded",
-                "image_deleted",
-                "image_updated",
+                SSEEvent.IMAGES_BATCH_LOADED,
+                SSEEvent.IMAGE_DELETED,
+                SSEEvent.IMAGE_UPDATED,
             ]:
                 # Invalidate batch cache when image data changes
                 await cls.invalidate_image_batch_cache()
@@ -291,7 +301,8 @@ class CacheInvalidationService:
                     await cls.invalidate_latest_image_cache(camera_id)
 
         except Exception as e:
-            logger.error(f"❌ Cache invalidation failed for event {event_type}: {e}")
+            # logger.error(f"❌ Cache invalidation failed for event {event_type}: {e}")
+            pass
 
     # ════════════════════════════════════════════════════════════════════════════════
     # ETag-Aware Cache Invalidation Methods
@@ -327,7 +338,8 @@ class CacheInvalidationService:
             cached_data, cached_etag = await cache.get_with_etag(cache_key)
 
             if cached_data is None:
-                logger.debug(f"🔍 No cached entry for ETag validation: {cache_key}")
+                # logger.debug(f"🔍 No cached entry for ETag validation: {cache_key}")
+                pass
                 return False, None
 
             # Check if ETags match (content unchanged)
@@ -336,22 +348,21 @@ class CacheInvalidationService:
                 and cached_etag
                 and validate_etag_match(cached_etag, current_etag)
             ):
-                logger.debug(f"✅ ETag match, cache still valid: {cache_key}")
+                # logger.debug(f"✅ ETag match, cache still valid: {cache_key}")
+                pass
                 return False, cached_etag
 
             # ETags don't match or forced invalidation - remove from cache
             invalidated = await cache.delete(cache_key)
 
             if invalidated:
-                logger.info(
-                    f"🔄 ETag-based cache invalidation: {cache_key} "
-                    f"(old: {cached_etag}, new: {current_etag})"
-                )
+                # logger.info(f"🔄 ETag-based cache invalidation: {cache_key} (old: {cached_etag}, new: {current_etag})")
+                pass
 
             return invalidated, cached_etag
 
         except Exception as e:
-            logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
+            # logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
             return False, None
 
     @staticmethod
@@ -383,20 +394,20 @@ class CacheInvalidationService:
                 )
 
                 if invalidated:
-                    logger.info(f"🔄 Image metadata cache invalidated: {image_id}")
+                    # logger.info(f"🔄 Image metadata cache invalidated: {image_id}")
+                    pass
 
                 return invalidated
             else:
                 # Force invalidation if no timestamp provided
                 invalidated = await cache.delete(cache_key)
                 if invalidated:
-                    logger.info(
-                        f"🔄 Image metadata cache force invalidated: {image_id}"
-                    )
+                    # logger.info(f"🔄 Image metadata cache force invalidated: {image_id}")
+                    pass
                 return invalidated
 
         except Exception as e:
-            logger.error(f"❌ Image metadata cache invalidation failed: {e}")
+            # logger.error(f"❌ Image metadata cache invalidation failed: {e}")
             return False
 
     @staticmethod
@@ -434,14 +445,13 @@ class CacheInvalidationService:
                 invalidated_count = await delete_cache_by_prefix("setting:")
 
                 if invalidated_count > 0:
-                    logger.info(
-                        f"🔄 Bulk settings cache invalidation: {invalidated_count} entries"
-                    )
+                    # logger.info(f"🔄 Bulk settings cache invalidation: {invalidated_count} entries")
+                    pass
 
                 return invalidated_count
 
         except Exception as e:
-            logger.error(f"❌ Settings ETag invalidation failed: {e}")
+            # logger.error(f"❌ Settings ETag invalidation failed: {e}")
             return 0
 
     @staticmethod
@@ -506,12 +516,13 @@ class CacheInvalidationService:
 
             if invalidated_any:
                 camera_info = f" for camera {camera_id}" if camera_id else ""
-                logger.info(f"🔄 Image collection cache invalidated{camera_info}")
+                # logger.info(f"🔄 Image collection cache invalidated{camera_info}")
+                pass
 
             return invalidated_any
 
         except Exception as e:
-            logger.error(f"❌ Image collection cache invalidation failed: {e}")
+            # logger.error(f"❌ Image collection cache invalidation failed: {e}")
             return False
 
     @staticmethod
@@ -539,27 +550,30 @@ class CacheInvalidationService:
             cached_data, cached_etag = await cache.get_with_etag(cache_key)
 
             if cached_data is None or cached_etag is None:
-                logger.debug(f"🔍 No cached data with ETag for: {cache_key}")
+                # logger.debug(f"🔍 No cached data with ETag for: {cache_key}")
+                pass
                 return False, None, None
 
             # Validate ETag match
             is_current = validate_etag_match(request_etag, cached_etag)
 
             if is_current:
-                logger.debug(f"✅ Client has current version: {cache_key}")
+                # logger.debug(f"✅ Client has current version: {cache_key}")
+                pass
             else:
-                logger.debug(f"🔄 Client version outdated: {cache_key}")
+                # logger.debug(f"🔄 Client version outdated: {cache_key}")
+                pass
 
             return is_current, cached_data, cached_etag
 
         except Exception as e:
-            logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
+            # logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
             return False, None, None
 
     @classmethod
     async def handle_sse_event_with_etag(
         cls,
-        event_type: str,
+        event_type: SSEEvent,
         event_data: Dict[str, Any],
         force_invalidation: bool = False,
     ) -> None:
@@ -605,9 +619,8 @@ class CacheInvalidationService:
                 await cls.handle_sse_event(event_type, event_data)
 
         except Exception as e:
-            logger.error(
-                f"❌ ETag-aware cache invalidation failed for event {event_type}: {e}"
-            )
+            # logger.error(f"❌ ETag-aware cache invalidation failed for event {event_type}: {e}")
+            pass
             # Fallback to regular invalidation
             await cls.handle_sse_event(event_type, event_data)
 

@@ -15,17 +15,27 @@ Architecture:
 - Performance optimized for high-frequency logging
 """
 
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 from loguru import logger
+
+from backend.app.database.log_operations import LogOperations
+
+from ...models.log_summary_model import LogSourceModel, LogSummaryModel
 
 
 from ...enums import LogLevel, LogSource, LoggerName, LogEmoji, SSEEvent, SSEPriority
+
+# Database operations will be injected to avoid circular imports
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.log_operations import LogOperations, SyncLogOperations
-from ...database.sse_events_operations import (
-    SSEEventsOperations,
-    SyncSSEEventsOperations,
-)
+
+# from ...database.log_operations import LogOperations, SyncLogOperations
+# from ...database.sse_events_operations import (
+#     SSEEventsOperations,
+#     SyncSSEEventsOperations,
+# )
+from ...models.log_model import Log
 
 # Timezone utilities available if needed
 from ...utils.time_utils import utc_now
@@ -38,6 +48,7 @@ from .handlers.file_handler import FileHandler
 from .services.cleanup_service import LogCleanupService
 from .utils.formatters import LogMessageFormatter
 from .utils.context_extractor import ContextExtractor
+from .utils.settings_cache import LoggerSettingsCache
 
 
 class LoggerService:
@@ -52,9 +63,9 @@ class LoggerService:
     - Performance optimized for high-frequency logging
 
     Usage:
-        logger_service = LoggerService(async_db, sync_db)
+        log = Log(async_db, sync_db)
 
-        logger_service.log_request(
+        await log.log_request(
             message="📥 GET /api/cameras",
             request_info={"method": "GET", "path": "/api/cameras"},
             level=LogLevel.INFO,
@@ -66,8 +77,12 @@ class LoggerService:
 
     def __init__(
         self,
-        async_db: AsyncDatabase,
-        sync_db: SyncDatabase,
+        async_db=None,
+        sync_db=None,
+        async_log_ops=None,
+        sync_log_ops=None,
+        sse_ops=None,
+        sync_sse_ops=None,
         enable_console: bool = True,
         enable_file_logging: bool = True,
         enable_sse_broadcasting: bool = True,
@@ -77,26 +92,31 @@ class LoggerService:
         Initialize the logger service with database connections and handler configuration.
 
         Args:
-            async_db: Async database instance for async operations
-            sync_db: Sync database instance for sync operations
+            async_db: Async database instance (optional, will be lazily loaded)
+            sync_db: Sync database instance (optional, will be lazily loaded)
+            async_log_ops: Async log operations (optional, for dependency injection)
+            sync_log_ops: Sync log operations (optional, for dependency injection)
+            sse_ops: SSE operations (optional, for dependency injection)
+            sync_sse_ops: Sync SSE operations (optional, for dependency injection)
             enable_console: Enable console output handler
             enable_file_logging: Enable file logging handler
             enable_sse_broadcasting: Enable SSE broadcasting handler
             enable_batching: Enable batching for high-frequency logging (default: True)
         """
-        # Database instances
+        # Database instances (may be None for lazy loading)
         self.async_db = async_db
         self.sync_db = sync_db
 
-        # Database operations
-        self.async_log_ops = LogOperations(async_db)
-        self.sync_log_ops = SyncLogOperations(sync_db)
-        self.sse_ops = SSEEventsOperations(async_db)
-        self.sync_sse_ops = SyncSSEEventsOperations(sync_db)
+        # Database operations (injected dependencies to avoid circular imports)
+        self.async_log_ops = async_log_ops
+        self.sync_log_ops = sync_log_ops
+        self.sse_ops = sse_ops
+        self.sync_sse_ops = sync_sse_ops
 
         # Utility services
         self.formatter = LogMessageFormatter()
         self.context_extractor = ContextExtractor()
+        self.settings_cache = LoggerSettingsCache(async_db, sync_db)
 
         # Handler configuration
         self.enable_console = enable_console
@@ -107,20 +127,17 @@ class LoggerService:
         # Initialize handlers
         self._initialize_handlers()
 
-        # Cleanup service
-        self.cleanup_service = LogCleanupService(self.async_log_ops, self.sync_log_ops)
+        # Cleanup service (will be initialized lazily if operations are not provided)
+        self.cleanup_service = None
+        if self.async_log_ops and self.sync_log_ops:
+            self.cleanup_service = LogCleanupService(
+                self.async_log_ops, self.sync_log_ops, self.settings_cache
+            )
 
     def _initialize_handlers(self) -> None:
         """Initialize all logging handlers based on configuration."""
-        # Database handler (choose batching or regular based on configuration)
-        if self.enable_batching:
-            self.database_handler = BatchingDatabaseHandler(
-                self.async_log_ops, self.sync_log_ops
-            )
-        else:
-            self.database_handler = EnhancedDatabaseHandler(
-                self.async_log_ops, self.sync_log_ops
-            )
+        # Database handler (will be initialized lazily when operations are available)
+        self.database_handler = None
 
         # Console handler
         if self.enable_console:
@@ -128,9 +145,244 @@ class LoggerService:
 
         # File handler
         if self.enable_file_logging:
-            self.file_handler = FileHandler()
+            self.file_handler = FileHandler(settings_cache=self.settings_cache)
 
         # SSE operations for broadcasting (direct pattern like other services)
+
+    def _ensure_database_operations(self):
+        """
+        Lazy initialization of database operations to avoid circular imports.
+        Only imports and initializes when actually needed.
+        """
+        if self.async_log_ops is None or self.sync_log_ops is None:
+            # Import here to avoid circular imports
+            from ...database.log_operations import LogOperations, SyncLogOperations
+            from ...database.sse_events_operations import (
+                SSEEventsOperations,
+                SyncSSEEventsOperations,
+            )
+
+            if self.async_db and self.async_log_ops is None:
+                self.async_log_ops = LogOperations(self.async_db)
+            if self.sync_db and self.sync_log_ops is None:
+                self.sync_log_ops = SyncLogOperations(self.sync_db)
+            if self.async_db and self.sse_ops is None:
+                self.sse_ops = SSEEventsOperations(self.async_db)
+            if self.sync_db and self.sync_sse_ops is None:
+                self.sync_sse_ops = SyncSSEEventsOperations(self.sync_db)
+
+            # Initialize cleanup service if both operations are now available
+            if (
+                self.cleanup_service is None
+                and self.async_log_ops
+                and self.sync_log_ops
+            ):
+                from .services.cleanup_service import LogCleanupService
+
+                self.cleanup_service = LogCleanupService(
+                    self.async_log_ops, self.sync_log_ops, self.settings_cache
+                )
+
+            # Initialize database handler if operations are now available
+            if (
+                self.database_handler is None
+                and self.async_log_ops
+                and self.sync_log_ops
+            ):
+                from .handlers.database_handler import EnhancedDatabaseHandler
+                from .handlers.batching_database_handler import BatchingDatabaseHandler
+
+                if self.enable_batching:
+                    self.database_handler = BatchingDatabaseHandler(
+                        self.async_log_ops, self.sync_log_ops
+                    )
+                else:
+                    self.database_handler = EnhancedDatabaseHandler(
+                        self.async_log_ops, self.sync_log_ops
+                    )
+
+    # =============================================================================
+    # USER SETTINGS INTEGRATION
+    # =============================================================================
+
+    async def _should_store_in_database_async(
+        self, level: LogLevel, explicit_store: Optional[bool] = None
+    ) -> bool:
+        """
+        Check if a log should be stored in database based on user settings and explicit override.
+
+        Args:
+            level: Log level to check
+            explicit_store: Explicit store_in_db value (overrides user settings if provided)
+
+        Returns:
+            True if log should be stored in database
+        """
+        # Explicit override always takes precedence
+        if explicit_store is not None:
+            return explicit_store
+
+        # Check user's db_log_level setting
+        try:
+            db_log_level = await self.settings_cache.get_setting_async("db_log_level")
+
+            # Convert levels to comparable integers
+            level_order = {
+                LogLevel.DEBUG: 10,
+                LogLevel.INFO: 20,
+                LogLevel.WARNING: 30,
+                LogLevel.ERROR: 40,
+                LogLevel.CRITICAL: 50,
+            }
+
+            current_level_value = level_order.get(level, 0)
+            min_level_value = level_order.get(db_log_level, 20)  # Default to INFO
+
+            return current_level_value >= min_level_value
+
+        except Exception:
+            # Fallback: store INFO and above if we can't check settings
+            return level in [
+                LogLevel.INFO,
+                LogLevel.WARNING,
+                LogLevel.ERROR,
+                LogLevel.CRITICAL,
+            ]
+
+    def _should_store_in_database_sync(
+        self, level: LogLevel, explicit_store: Optional[bool] = None
+    ) -> bool:
+        """
+        Check if a log should be stored in database based on user settings (sync version).
+
+        Args:
+            level: Log level to check
+            explicit_store: Explicit store_in_db value (overrides user settings if provided)
+
+        Returns:
+            True if log should be stored in database
+        """
+        # Explicit override always takes precedence
+        if explicit_store is not None:
+            return explicit_store
+
+        # Check user's db_log_level setting
+        try:
+            db_log_level = self.settings_cache.get_setting_sync("db_log_level")
+
+            # Convert levels to comparable integers
+            level_order = {
+                LogLevel.DEBUG: 10,
+                LogLevel.INFO: 20,
+                LogLevel.WARNING: 30,
+                LogLevel.ERROR: 40,
+                LogLevel.CRITICAL: 50,
+            }
+
+            current_level_value = level_order.get(level, 0)
+            min_level_value = level_order.get(db_log_level, 20)  # Default to INFO
+
+            return current_level_value >= min_level_value
+
+        except Exception:
+            # Fallback: store INFO and above if we can't check settings
+            return level in [
+                LogLevel.INFO,
+                LogLevel.WARNING,
+                LogLevel.ERROR,
+                LogLevel.CRITICAL,
+            ]
+
+    # =============================================================================
+    # DEBUG STORAGE GATEWAY
+    # =============================================================================
+
+    async def _check_debug_storage_setting(self) -> bool:
+        """
+        Check user setting for debug storage preference using settings cache.
+
+        Returns:
+            bool: True if debug logs should be stored in database, False otherwise
+        """
+        try:
+            return await self.settings_cache.get_setting_async("debug_logs_store_in_db")
+        except Exception:
+            # Fallback to False if we can't check settings
+            return False
+
+    def _check_debug_storage_setting_sync(self) -> bool:
+        """
+        Synchronous version of debug storage setting check using settings cache.
+
+        Returns:
+            bool: True if debug logs should be stored in database, False otherwise
+        """
+        try:
+            return self.settings_cache.get_setting_sync("debug_logs_store_in_db")
+        except Exception:
+            # Fallback to False if we can't check settings
+            return False
+
+    async def initialize_logging_settings(self) -> None:
+        """
+        Initialize all logging settings in the database if they don't exist.
+
+        This creates all required logging settings with default values to ensure
+        the logger service can function properly with user-configurable behavior.
+        """
+        try:
+            await self.settings_cache.initialize_missing_settings_async()
+
+            # Invalidate cache to force reload of newly initialized settings
+            self.settings_cache.invalidate_cache()
+
+        except Exception as e:
+            # If we can't initialize settings, log the issue but don't fail
+            from loguru import logger as fallback_logger
+
+            fallback_logger.warning(f"Failed to initialize logging settings: {e}")
+
+    def refresh_settings_cache(self) -> None:
+        """
+        Refresh the settings cache to pick up configuration changes.
+
+        This method can be called after settings have been updated to ensure
+        the logger service uses the latest configuration.
+        """
+        if self.settings_cache:
+            self.settings_cache.invalidate_cache()
+
+        # Also refresh file handler settings if it exists
+        if hasattr(self, "file_handler") and self.file_handler:
+            # Force file handler to refresh its settings on next operation
+            self.file_handler._settings_cache_time = 0
+
+    def get_current_settings(self) -> Dict[str, Any]:
+        """
+        Get current logging settings for debugging and monitoring.
+
+        Returns:
+            Dictionary with current logging configuration
+        """
+        if not self.settings_cache:
+            return {"error": "Settings cache not available"}
+
+        try:
+            # Try to get all settings via sync method (safe to call from any context)
+            settings = {}
+            for key in LoggerSettingsCache.DEFAULT_SETTINGS.keys():
+                try:
+                    settings[key] = self.settings_cache.get_setting_sync(key)
+                except Exception as e:
+                    settings[key] = f"Error: {e}"
+
+            # Add cache statistics
+            settings["_cache_stats"] = self.settings_cache.get_cache_stats()
+
+            return settings
+
+        except Exception as e:
+            return {"error": f"Failed to retrieve settings: {e}"}
 
     # Core Logging Methods
 
@@ -225,7 +477,7 @@ class LoggerService:
             store_in_db=store_in_db,
             broadcast_sse=broadcast_sse,
             correlation_id=correlation_id,
-            event_type="error_log",
+            event_type=SSEEvent.LOG_ERROR,
             sse_priority=(
                 SSEPriority.HIGH
                 if level in [LogLevel.ERROR, LogLevel.CRITICAL]
@@ -445,6 +697,41 @@ class LoggerService:
             correlation_id=correlation_id,
         )
 
+    def log_system_sync(
+        self,
+        message: str,
+        system_context: Optional[Dict[str, Any]] = None,
+        level: LogLevel = LogLevel.INFO,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = False,  # System logs often don't need DB storage
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Sync version of system logging for use in sync contexts.
+
+        Args:
+            message: System message
+            system_context: System context
+            level: Log level
+            source: Log source
+            logger_name: Logger name
+            emoji: Optional emoji
+            store_in_db: Whether to store in database (default False for system logs)
+            correlation_id: Optional correlation ID
+        """
+        self._log_entry_sync(
+            message=message,
+            level=level,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=system_context or {},
+            store_in_db=store_in_db,
+            correlation_id=correlation_id,
+        )
+
     # Core internal logging implementation
 
     async def _log_entry(
@@ -459,7 +746,7 @@ class LoggerService:
         broadcast_sse: bool = False,
         correlation_id: Optional[str] = None,
         camera_id: Optional[int] = None,
-        event_type: str = SSEEvent.LOG,
+        event_type: SSEEvent = SSEEvent.LOG,
         sse_priority: SSEPriority = SSEPriority.NORMAL,
     ) -> None:
         """
@@ -497,16 +784,21 @@ class LoggerService:
             if self.enable_file_logging:
                 self.file_handler.handle(formatted_message, level, enriched_context)
 
-            # Database storage (if requested)
-            if store_in_db:
-                await self.database_handler.handle_async(
-                    message=message,
-                    level=level,
-                    source=source,
-                    logger_name=logger_name,
-                    camera_id=camera_id,
-                    extra_data=enriched_context,
-                )
+            # Database storage (check user settings and explicit override)
+            should_store = await self._should_store_in_database_async(
+                level, store_in_db
+            )
+            if should_store:
+                self._ensure_database_operations()
+                if self.database_handler:
+                    await self.database_handler.handle_async(
+                        message=message,
+                        level=level,
+                        source=source,
+                        logger_name=logger_name,
+                        camera_id=camera_id,
+                        extra_data=enriched_context,
+                    )
 
             # SSE broadcasting (if requested and enabled)
             if broadcast_sse and self.enable_sse_broadcasting:
@@ -571,16 +863,19 @@ class LoggerService:
             if self.enable_file_logging:
                 self.file_handler.handle(formatted_message, level, enriched_context)
 
-            # Database storage (if requested)
-            if store_in_db:
-                self.database_handler.handle_sync(
-                    message=message,
-                    level=level,
-                    source=source,
-                    logger_name=logger_name,
-                    camera_id=camera_id,
-                    extra_data=enriched_context,
-                )
+            # Database storage (check user settings and explicit override)
+            should_store = self._should_store_in_database_sync(level, store_in_db)
+            if should_store:
+                self._ensure_database_operations()
+                if self.database_handler:
+                    self.database_handler.handle_sync(
+                        message=message,
+                        level=level,
+                        source=source,
+                        logger_name=logger_name,
+                        camera_id=camera_id,
+                        extra_data=enriched_context,
+                    )
 
         except Exception as e:
             # Fallback logging if our logging system fails
@@ -599,6 +894,8 @@ class LoggerService:
         Returns:
             Number of logs deleted
         """
+        if not self.cleanup_service:
+            return 0
         result = await self.cleanup_service.cleanup_old_logs(days_to_keep)
         return result.get("logs_deleted", 0) if isinstance(result, dict) else 0
 
@@ -612,6 +909,8 @@ class LoggerService:
         Returns:
             Number of logs deleted
         """
+        if not self.cleanup_service:
+            return 0
         result = self.cleanup_service.cleanup_old_logs_sync(days_to_keep)
         return result.get("logs_deleted", 0) if isinstance(result, dict) else 0
 
@@ -625,6 +924,8 @@ class LoggerService:
         Returns:
             Dictionary containing log statistics
         """
+        if not self.cleanup_service:
+            return {}
         return await self.cleanup_service.get_log_statistics(hours)
 
     # Health and status methods
@@ -638,8 +939,12 @@ class LoggerService:
         """
         return {
             "database_handler": {
-                "enabled": True,
-                "healthy": self.database_handler.is_healthy(),
+                "enabled": self.database_handler is not None,
+                "healthy": (
+                    self.database_handler.is_healthy()
+                    if self.database_handler
+                    else False
+                ),
             },
             "console_handler": {
                 "enabled": self.enable_console,
@@ -765,6 +1070,8 @@ class LoggerService:
     ) -> None:
         """Broadcast SSE event for log operations (matches other service patterns)."""
         try:
+            if not self.sse_ops:
+                return
 
             event_data_with_timestamp = {
                 **event_data,
@@ -782,3 +1089,817 @@ class LoggerService:
 
         except Exception as e:
             logger.warning(f"Failed to broadcast SSE event {event_type}: {e}")
+
+    # =============================================================================
+    # CONVENIENCE METHODS - Clean API for common logging patterns (async versions)
+    # =============================================================================
+
+    async def _error_async_internal(
+        self,
+        message: str,
+        *,
+        exception: Optional[Exception] = None,
+        error_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.ERROR_HANDLER,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = True,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Log an error message with automatic ERROR level (async version)."""
+        await self.log_error(
+            message=message,
+            error_context=error_context,
+            level=LogLevel.ERROR,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            store_in_db=store_in_db,
+            broadcast_sse=broadcast_sse,
+            correlation_id=correlation_id,
+            exception=exception,
+        )
+
+    async def _warning_async_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Log a warning message with automatic WARNING level (async version)."""
+        await self._log_entry(
+            message=message,
+            level=LogLevel.WARNING,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            broadcast_sse=broadcast_sse,
+            correlation_id=correlation_id,
+        )
+
+    async def _info_async_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+        event_type: Optional[SSEEvent] = None,
+    ) -> None:
+        """Log an info message with automatic INFO level (async version)."""
+        await self._log_entry(
+            message=message,
+            level=LogLevel.INFO,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            broadcast_sse=broadcast_sse,
+            correlation_id=correlation_id,
+            event_type=event_type or SSEEvent.LOG,
+        )
+
+    async def _debug_async_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: Optional[
+            bool
+        ] = None,  # If None, check user settings via debug storage gateway
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Log a debug message with automatic DEBUG level (async version).
+
+        Uses debug storage gateway to check user settings if store_in_db is None.
+        This allows users to control whether debug logs are stored in the database
+        via the 'debug_logs_store_in_db' setting.
+        """
+        # Apply debug storage gateway if store_in_db not explicitly set
+        if store_in_db is None:
+            store_in_db = await self._check_debug_storage_setting()
+
+        await self._log_entry(
+            message=message,
+            level=LogLevel.DEBUG,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            broadcast_sse=broadcast_sse,
+            correlation_id=correlation_id,
+        )
+
+    # =============================================================================
+    # SYNC CONVENIENCE METHODS
+    # =============================================================================
+
+    def _error_sync_internal(
+        self,
+        message: str,
+        *,
+        exception: Optional[Exception] = None,
+        error_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.ERROR_HANDLER,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        # broadcast_sse: bool = True,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Log an error message with automatic ERROR level (sync)."""
+        self.log_error_sync(
+            message=message,
+            error_context=error_context,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            store_in_db=store_in_db,
+            correlation_id=correlation_id,
+            exception=exception,
+        )
+
+    def _warning_sync_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        # broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """Log a warning message with automatic WARNING level (sync)."""
+        self._log_entry_sync(
+            message=message,
+            level=LogLevel.WARNING,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            correlation_id=correlation_id,
+        )
+
+    def _info_sync_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        # broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+        # event_type: Optional[SSEEvent] = None,
+    ) -> None:
+        """Log an info message with automatic INFO level (sync)."""
+        self._log_entry_sync(
+            message=message,
+            level=LogLevel.INFO,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            correlation_id=correlation_id,
+        )
+
+    def _debug_sync_internal(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: Optional[
+            bool
+        ] = None,  # If None, check user settings via debug storage gateway
+        # broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Log a debug message with automatic DEBUG level (sync).
+
+        Uses debug storage gateway to check user settings if store_in_db is None.
+        This allows users to control whether debug logs are stored in the database
+        via the 'debug_logs_store_in_db' setting.
+        """
+        # Apply debug storage gateway if store_in_db not explicitly set
+        if store_in_db is None:
+            store_in_db = self._check_debug_storage_setting_sync()
+
+        self._log_entry_sync(
+            message=message,
+            level=LogLevel.DEBUG,
+            source=source,
+            logger_name=logger_name,
+            emoji=emoji,
+            extra_context=extra_context or {},
+            store_in_db=store_in_db,
+            correlation_id=correlation_id,
+        )
+
+    # =============================================================================
+    # INTELLIGENT CONTEXT-AWARE METHODS - No more await/sync confusion!
+    # =============================================================================
+
+    def error(
+        self,
+        message: str,
+        *,
+        exception: Optional[Exception] = None,
+        error_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.ERROR_HANDLER,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = True,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Intelligent error logging that auto-detects sync vs async context.
+
+        This method can be called from both sync and async contexts without
+        needing to worry about await - it handles context detection automatically.
+
+        Usage:
+            logger.error("Something failed", exception=e)  # Works in sync or async!
+        """
+        import asyncio
+
+        try:
+            # Try to get running event loop - if successful, we're in async context
+            asyncio.get_running_loop()
+            # We're in async context - schedule the async version
+            asyncio.create_task(
+                self._error_async_internal(
+                    message=message,
+                    exception=exception,
+                    error_context=error_context,
+                    source=source,
+                    logger_name=logger_name,
+                    emoji=emoji,
+                    store_in_db=store_in_db,
+                    broadcast_sse=broadcast_sse,
+                    correlation_id=correlation_id,
+                )
+            )
+        except RuntimeError:
+            # No running loop - we're in sync context, use sync version
+            self._error_sync_internal(
+                message=message,
+                exception=exception,
+                error_context=error_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                # broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+            )
+
+    def warning(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Intelligent warning logging that auto-detects sync vs async context.
+
+        Usage:
+            logger.warning("Performance issue detected")  # Works in sync or async!
+        """
+
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(
+                self._warning_async_internal(
+                    message=message,
+                    extra_context=extra_context,
+                    source=source,
+                    logger_name=logger_name,
+                    emoji=emoji,
+                    store_in_db=store_in_db,
+                    broadcast_sse=broadcast_sse,
+                    correlation_id=correlation_id,
+                )
+            )
+        except RuntimeError:
+            self._warning_sync_internal(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                correlation_id=correlation_id,
+            )
+
+    def info(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: bool = True,
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+        event_type: Optional[SSEEvent] = None,
+    ) -> None:
+        """
+        Intelligent info logging that auto-detects sync vs async context.
+
+        Usage:
+            logger.info("Task completed successfully")  # Works in sync or async!
+        """
+
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(
+                self._info_async_internal(
+                    message=message,
+                    extra_context=extra_context,
+                    source=source,
+                    logger_name=logger_name,
+                    emoji=emoji,
+                    store_in_db=store_in_db,
+                    broadcast_sse=broadcast_sse,
+                    correlation_id=correlation_id,
+                    event_type=event_type,
+                )
+            )
+        except RuntimeError:
+            self._info_sync_internal(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                correlation_id=correlation_id,
+            )
+
+    def debug(
+        self,
+        message: str,
+        *,
+        extra_context: Optional[Dict[str, Any]] = None,
+        source: LogSource = LogSource.SYSTEM,
+        logger_name: LoggerName = LoggerName.SYSTEM,
+        emoji: Optional[LogEmoji] = None,
+        store_in_db: Optional[bool] = None,
+        broadcast_sse: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        """
+        Intelligent debug logging that auto-detects sync vs async context.
+
+        Uses debug storage gateway to check user settings if store_in_db is None.
+
+        Usage:
+            logger.debug("Processing step completed")  # Works in sync or async!
+        """
+
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(
+                self._debug_async_internal(
+                    message=message,
+                    extra_context=extra_context,
+                    source=source,
+                    logger_name=logger_name,
+                    emoji=emoji,
+                    store_in_db=store_in_db,
+                    broadcast_sse=broadcast_sse,
+                    correlation_id=correlation_id,
+                )
+            )
+        except RuntimeError:
+            self._debug_sync_internal(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                # broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+            )
+
+    # =============================================================================
+    # HTTP ENDPOINT METHODS FOR LOG ROUTERS
+    # =============================================================================
+
+    async def get_log_summary(self, hours: int = 24) -> LogSummaryModel:
+        """
+        Get comprehensive log statistics and summary.
+
+        Args:
+            hours: Number of hours to analyze
+
+        Returns:
+            LogSummaryModel with statistics
+        """
+        from ...database.log_operations import LogOperations
+        from ...models.log_summary_model import LogSummaryModel
+
+        if not self.async_db:
+            raise ValueError("Async database required for log summary")
+
+        log_ops = LogOperations(self.async_db)
+
+        # Get basic counts and statistics
+        # This is a placeholder - you may need to implement the actual
+        # statistics gathering based on what LogSummaryModel expects
+        return LogSummaryModel(
+            total_logs=0,
+            critical_count=0,
+            error_count=0,
+            warning_count=0,
+            info_count=0,
+            debug_count=0,
+            unique_sources=0,
+            unique_cameras=0,
+            first_log_at=None,
+            last_log_at=None,
+        )
+
+    async def get_logs(
+        self,
+        camera_id: Optional[int] = None,
+        level: Optional[str] = None,
+        source: Optional[str] = None,
+        search_query: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Dict[str, Any]:
+        """
+        Get logs with filtering and pagination.
+
+        Args:
+            camera_id: Filter by camera ID
+            level: Filter by log level
+            source: Filter by source
+            search_query: Search in messages
+            start_date: Start date filter
+            end_date: End date filter
+            page: Page number
+            page_size: Items per page
+
+        Returns:
+            Dictionary with logs and pagination info
+        """
+        from ...database.log_operations import LogOperations
+
+        if not self.async_db:
+            raise ValueError("Async database required for log retrieval")
+
+        log_ops = LogOperations(self.async_db)
+
+        # Use the existing get_logs method from log_operations
+        result = await log_ops.get_logs(
+            camera_id=camera_id,
+            level=level,
+            source=source,
+            search_query=search_query,
+            start_date=start_date,
+            end_date=end_date,
+            page=page,
+            page_size=page_size,
+        )
+
+        # Extract logs from result and convert to dict format
+        logs = result.get("logs", [])
+        pagination = result.get("pagination", {})
+
+        return {
+            "logs": [log.model_dump() for log in logs],
+            "total_count": pagination.get("total_count", 0),
+            "total_pages": pagination.get("total_pages", 0),
+            "page": pagination.get("current_page", page),
+            "page_size": pagination.get("page_size", page_size),
+        }
+
+    async def delete_old_logs(self, days_to_keep: int) -> int:
+        """
+        Delete old logs.
+
+        Args:
+            days_to_keep: Number of days to keep
+
+        Returns:
+            Number of deleted logs
+        """
+
+        if not self.async_db:
+            raise ValueError("Async database required for log deletion")
+
+        log_ops = LogOperations(self.async_db)
+        return await log_ops.delete_old_logs(days_to_keep)
+
+    async def get_logs_for_camera(self, camera_id: int, limit: int = 50) -> List[Log]:
+        """
+        Get recent logs for a specific camera.
+
+        Args:
+            camera_id: Camera ID
+            limit: Number of logs to return
+
+        Returns:
+            List of Log models
+        """
+        from ...database.log_operations import LogOperations
+
+        if not self.async_db:
+            raise ValueError("Async database required for camera logs")
+
+        log_ops = LogOperations(self.async_db)
+        result = await log_ops.get_logs(limit=limit, camera_id=camera_id)
+        return result.get("logs", [])
+
+    async def get_log_sources(self) -> List[LogSourceModel]:
+        """
+        Get available log sources and their statistics.
+
+        Returns:
+            List of LogSourceModel
+        """
+
+        # Return available log sources
+        # This is a simplified implementation - you may want to query actual sources from database
+        sources = []
+        for source in LogSource:
+            sources.append(
+                LogSourceModel(
+                    source=source.value,
+                    log_count=0,  # Placeholder - should query actual count
+                    last_log_at=None,
+                    error_count=0,
+                    warning_count=0,
+                )
+            )
+
+        return sources
+
+
+# =============================================================================
+# GLOBAL LOGGER INSTANCE AND FACTORY FUNCTIONS
+# =============================================================================
+
+# Global logger instance - will be initialized by application startup
+_global_logger_instance: Optional[LoggerService] = None
+
+
+async def initialize_global_logger(
+    async_db: AsyncDatabase,
+    sync_db: SyncDatabase,
+    enable_console: bool = True,
+    enable_file_logging: bool = True,
+    enable_sse_broadcasting: bool = True,
+    enable_batching: bool = True,
+    auto_initialize_settings: bool = True,
+) -> LoggerService:
+    """
+    Initialize the global logger instance with user settings support.
+
+    This should be called once during application startup.
+
+    Args:
+        async_db: Async database instance
+        sync_db: Sync database instance
+        enable_console: Enable console output handler
+        enable_file_logging: Enable file logging handler
+        enable_sse_broadcasting: Enable SSE broadcasting handler
+        enable_batching: Enable batching for high-frequency logging
+        auto_initialize_settings: Automatically create missing logging settings
+
+    Returns:
+        Initialized LoggerService instance
+    """
+    global _global_logger_instance
+
+    _global_logger_instance = LoggerService(
+        async_db=async_db,
+        sync_db=sync_db,
+        enable_console=enable_console,
+        enable_file_logging=enable_file_logging,
+        enable_sse_broadcasting=enable_sse_broadcasting,
+        enable_batching=enable_batching,
+    )
+
+    # Initialize logging settings in database if requested
+    if auto_initialize_settings:
+        try:
+            await _global_logger_instance.initialize_logging_settings()
+        except Exception as e:
+            # Don't fail startup if settings initialization fails
+            print(f"Warning: Failed to initialize logging settings: {e}")
+
+    return _global_logger_instance
+
+
+def log() -> LoggerService:
+    """
+    Get the global logger instance.
+
+    Returns:
+        Global LoggerService instance
+
+    Raises:
+        RuntimeError: If global logger not initialized
+    """
+    if _global_logger_instance is None:
+        raise RuntimeError(
+            "Global logger not initialized. Call initialize_global_logger() first."
+        )
+
+    return _global_logger_instance
+
+
+def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SYSTEM):
+    """
+    Factory function to create a pre-configured logger for a specific service.
+
+    Returns a logger with simplified methods that automatically include
+    the correct source and logger_name parameters while supporting all
+    the rich features of the logging system.
+
+    Default emojis are automatically assigned based on log level:
+    - error(): LogEmoji.ERROR
+    - warning(): LogEmoji.WARN
+    - info(): LogEmoji.INFO
+    - debug(): LogEmoji.DEBUG
+
+    Args:
+        logger_name: The logger name enum to use for all calls
+        source: The log source enum to use for all calls (defaults to SYSTEM)
+
+    Returns:
+        ServiceLogger instance with error, warning, info, debug methods
+
+    Example:
+        from ...services.logger import get_service_logger, LogEmoji
+        from ...enums import LoggerName
+
+        logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+
+        # Basic usage - emojis auto-assigned
+        logger.error("Something went wrong", exception=e)  # Uses LogEmoji.ERROR
+        logger.info("Processing completed")  # Uses LogEmoji.INFO
+
+        # Override default emojis when needed
+        logger.error("Critical failure", exception=e, emoji=LogEmoji.FIRE, broadcast_sse=True)
+        logger.info("Job completed", emoji=LogEmoji.PARTY, store_in_db=True, broadcast_sse=True)
+        logger.debug("Debug info", store_in_db=True, emoji=LogEmoji.MAGNIFYING_GLASS)
+    """
+
+    class ServiceLogger:
+        @staticmethod
+        def error(
+            message: str,
+            exception: Optional[Exception] = None,
+            error_context: Optional[Dict[str, Any]] = None,
+            emoji: Optional[LogEmoji] = None,
+            store_in_db: bool = True,
+            broadcast_sse: bool = True,
+            correlation_id: Optional[str] = None,
+            **kwargs,
+        ):
+            """Log an error with all supported parameters."""
+            # Default emoji for error level
+            if emoji is None:
+                emoji = LogEmoji.ERROR
+            return log().error(
+                message=message,
+                exception=exception,
+                error_context=error_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+            )
+
+        @staticmethod
+        def warning(
+            message: str,
+            extra_context: Optional[Dict[str, Any]] = None,
+            emoji: Optional[LogEmoji] = None,
+            store_in_db: bool = True,
+            broadcast_sse: bool = False,
+            correlation_id: Optional[str] = None,
+            **kwargs,
+        ):
+            """Log a warning with all supported parameters."""
+            # Default emoji for warning level
+            if emoji is None:
+                emoji = LogEmoji.WARNING
+            return log().warning(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+            )
+
+        @staticmethod
+        def info(
+            message: str,
+            extra_context: Optional[Dict[str, Any]] = None,
+            emoji: Optional[LogEmoji] = None,
+            store_in_db: bool = True,
+            broadcast_sse: bool = False,
+            correlation_id: Optional[str] = None,
+            event_type: Optional[SSEEvent] = None,
+            **kwargs,
+        ):
+            """Log an info message with all supported parameters."""
+            # Default emoji for info level
+            if emoji is None:
+                emoji = LogEmoji.INFO
+            return log().info(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+                event_type=event_type,
+            )
+
+        @staticmethod
+        def debug(
+            message: str,
+            extra_context: Optional[Dict[str, Any]] = None,
+            emoji: Optional[LogEmoji] = None,
+            store_in_db: Optional[
+                bool
+            ] = None,  # If None, debug storage gateway will check user settings
+            broadcast_sse: bool = False,
+            correlation_id: Optional[str] = None,
+            **kwargs,
+        ):
+            """
+            Log a debug message with all supported parameters.
+
+            Uses debug storage gateway to check user settings if store_in_db is None.
+            This allows users to control whether debug logs are stored in the database
+            via the 'debug_logs_store_in_db' setting.
+            """
+            # Default emoji for debug level
+            if emoji is None:
+                emoji = LogEmoji.DEBUG
+            return log().debug(
+                message=message,
+                extra_context=extra_context,
+                source=source,
+                logger_name=logger_name,
+                emoji=emoji,
+                store_in_db=store_in_db,
+                broadcast_sse=broadcast_sse,
+                correlation_id=correlation_id,
+            )
+
+    return ServiceLogger()

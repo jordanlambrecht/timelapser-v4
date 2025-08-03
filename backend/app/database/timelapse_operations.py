@@ -8,31 +8,54 @@ This module handles all timelapse-related database operations including:
 - Video settings inheritance
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-from pydantic import ValidationError
-from loguru import logger
+# COMPLETED: Exception-Based Logging Pattern Migration
+#   This file has been successfully migrated to use the
+#   exception-based logging architecture, eliminating
+#   circular imports and improving separation of concerns.
+#
+#   Completed changes:
+#   ✅ Imported TimelapseOperationError from app.database.exceptions
+#   ✅ Removed all logger imports and logger calls
+#   ✅ Replaced logger calls with appropriate exception raises
+#   ✅ Wrapped all database operations in try/except blocks
+#   ✅ Used proper exception chaining with 'from e'
+#
+#   Pattern implemented:
+#   try:
+#       # database operation
+#       return result
+#   except Exception as e:
+#       if isinstance(e, TimelapseOperationError):
+#           raise
+#       raise TimelapseOperationError(f"Error message: {e}",
+#           operation="method_name") from e
+#
+#   Service files should now catch TimelapseOperationError
+#   exceptions and handle logging appropriately.
 
-from .core import AsyncDatabase, SyncDatabase
-from ..models.timelapse_model import (
-    Timelapse,
-    TimelapseWithDetails,
-    TimelapseCreate,
-    TimelapseUpdate,
-)
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import psycopg
+from pydantic import ValidationError
+
 from ..models.shared_models import (
-    TimelapseStatistics,
-    TimelapseLibraryStatistics,
     TimelapseForCleanup,
+    TimelapseLibraryStatistics,
+    TimelapseStatistics,
     TimelapseVideoSettings,
 )
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
+from ..models.timelapse_model import (
+    Timelapse,
+    TimelapseCreate,
+    TimelapseUpdate,
+    TimelapseWithDetails,
 )
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
 from ..utils.time_utils import utc_now
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import TimelapseOperationError
 
 
 class TimelapseQueryBuilder:
@@ -115,7 +138,7 @@ class TimelapseQueryBuilder:
             FROM timelapses
         ),
         storage_stats AS NOT MATERIALIZED (
-            SELECT 
+            SELECT
                 COALESCE(SUM(file_size), 0) as total_storage_bytes
             FROM images
         )
@@ -204,19 +227,28 @@ class TimelapseOperations:
         FROM timelapses
         WHERE id = %s
         """
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
-                result = await cur.fetchone()
-                if result:
-                    try:
-                        return TimelapseVideoSettings.model_validate(dict(result))
-                    except ValidationError as e:
-                        logger.error(
-                            f"Error creating TimelapseVideoSettings model: {e}"
-                        )
-                        return None
-                return None
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id,))
+                    result = await cur.fetchone()
+                    if result:
+                        try:
+                            return TimelapseVideoSettings.model_validate(dict(result))
+                        except ValidationError as e:
+                            raise TimelapseOperationError(
+                                f"Error creating TimelapseVideoSettings model: {e}",
+                                operation="get_timelapse_video_settings",
+                            ) from e
+                    return None
+        except (psycopg.Error, KeyError, ValueError):
+            raise TimelapseOperationError(
+                f"Failed to get timelapse video settings: {timelapse_id}",
+                details={
+                    "operation": "get_timelapse_video_settings",
+                    "timelapse_id": timelapse_id,
+                },
+            )
 
     def _row_to_timelapse(self, row: Dict[str, Any]) -> Timelapse:
         """Convert database row to Timelapse model."""
@@ -255,11 +287,21 @@ class TimelapseOperations:
         query = TimelapseQueryBuilder.build_timelapses_query(camera_id)
         params = (camera_id,) if camera_id else ()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
-                return [self._row_to_timelapse_with_details(row) for row in results]
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
+                    return [self._row_to_timelapse_with_details(row) for row in results]
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Failed to get timelapses: {e}",
+                details={
+                    "operation": "get_timelapses",
+                    "camera_id": camera_id,
+                    "error": str(e),
+                },
+            ) from e
 
     @cached_response(ttl_seconds=180, key_prefix="timelapse")
     async def get_timelapse_by_id(
@@ -294,14 +336,21 @@ class TimelapseOperations:
         GROUP BY t.id, c.name
         """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
-                results = await cur.fetchall()
-                if results:
-                    row = results[0]
-                    return self._row_to_timelapse_with_details(dict(row))
-                return None
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id,))
+                    results = await cur.fetchall()
+                    if results:
+                        row = results[0]
+                        return self._row_to_timelapse_with_details(dict(row))
+                    return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapse {timelapse_id}: {e}",
+                operation="get_timelapse_by_id",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     async def create_new_timelapse(
         self, camera_id: int, timelapse_data: TimelapseCreate
@@ -341,30 +390,45 @@ class TimelapseOperations:
         ) RETURNING *
         """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, insert_data)
-                results = await cur.fetchall()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, insert_data)
+                    results = await cur.fetchall()
 
-                if results:
-                    row = results[0]
-                    new_timelapse = self._row_to_timelapse(row)
+                    if results:
+                        row = results[0]
+                        new_timelapse = self._row_to_timelapse(row)
 
-                    # Update camera's active_timelapse_id if status is running
-                    if row.get("status") in ("running", "paused"):
-                        await cur.execute(
-                            "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
-                            (row["id"], camera_id),
+                        # Update camera's active_timelapse_id if status is running
+                        if row.get("status") in ("running", "paused"):
+                            await cur.execute(
+                                "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
+                                (row["id"], camera_id),
+                            )
+
+                        # Clear related caches after successful creation
+                        await self._clear_timelapse_caches(
+                            row["id"], camera_id, updated_at=utc_now()
                         )
 
-                    # Clear related caches after successful creation
-                    await self._clear_timelapse_caches(
-                        row["id"], camera_id, updated_at=utc_now()
+                        return new_timelapse
+
+                    raise TimelapseOperationError(
+                        "Failed to create timelapse - no results returned",
+                        operation="create_new_timelapse",
                     )
-
-                    return new_timelapse
-
-                raise Exception("Failed to create timelapse")
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error creating timelapse: {e}",
+                operation="create_new_timelapse",
+                details={
+                    "camera_id": camera_id,
+                    "timelapse_data": timelapse_data.model_dump(),
+                },
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     async def update_timelapse(
         self, timelapse_id: int, timelapse_data: TimelapseUpdate
@@ -420,38 +484,50 @@ class TimelapseOperations:
         RETURNING *
         """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
 
-                if results:
-                    row = results[0]
-                    updated_timelapse = self._row_to_timelapse(row)
+                    if results:
+                        row = results[0]
+                        updated_timelapse = self._row_to_timelapse(row)
 
-                    # Update camera's active_timelapse_id if status changed
-                    if "status" in update_data:
-                        if row["status"] in ("running", "paused"):
-                            await cur.execute(
-                                "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
-                                (timelapse_id, row["camera_id"]),
-                            )
-                        elif row["status"] == "completed":
-                            await cur.execute(
-                                "UPDATE cameras SET active_timelapse_id = NULL WHERE id = %s",
-                                (row["camera_id"],),
-                            )
+                        # Update camera's active_timelapse_id if status changed
+                        if "status" in update_data:
+                            if row["status"] in ("running", "paused"):
+                                await cur.execute(
+                                    "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
+                                    (timelapse_id, row["camera_id"]),
+                                )
+                            elif row["status"] == "completed":
+                                await cur.execute(
+                                    "UPDATE cameras SET active_timelapse_id = NULL WHERE id = %s",
+                                    (row["camera_id"],),
+                                )
 
-                    # Clear related caches after successful update
-                    await self._clear_timelapse_caches(
-                        timelapse_id,
-                        row["camera_id"],
-                        updated_at=params.get("updated_at", utc_now()),
+                        # Clear related caches after successful update
+                        await self._clear_timelapse_caches(
+                            timelapse_id,
+                            row["camera_id"],
+                            updated_at=params.get("updated_at", utc_now()),
+                        )
+
+                        return updated_timelapse
+
+                    raise TimelapseOperationError(
+                        f"Failed to update timelapse {timelapse_id} - no results returned",
+                        operation="update_timelapse",
                     )
-
-                    return updated_timelapse
-
-                raise Exception(f"Failed to update timelapse {timelapse_id}")
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error updating timelapse {timelapse_id}: {e}",
+                operation="update_timelapse",
+                details={"timelapse_id": timelapse_id, "params": params},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     async def delete_timelapse(self, timelapse_id: int) -> bool:
         """
@@ -465,16 +541,23 @@ class TimelapseOperations:
         """
         query = "DELETE FROM timelapses WHERE id = %s"
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id,))
-                affected = cur.rowcount
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id,))
+                    affected = cur.rowcount
 
-                if affected and affected > 0:
-                    # Clear related caches after successful deletion
-                    await self._clear_timelapse_caches(timelapse_id)
-                    return True
-                return False
+                    if affected and affected > 0:
+                        # Clear related caches after successful deletion
+                        await self._clear_timelapse_caches(timelapse_id)
+                        return True
+                    return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error deleting timelapse {timelapse_id}: {e}",
+                operation="delete_timelapse",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     @cached_response(ttl_seconds=180, key_prefix="timelapse")
     async def get_timelapse_statistics(
@@ -492,17 +575,28 @@ class TimelapseOperations:
         # Use optimized CTE-based query
         query = TimelapseQueryBuilder.build_timelapse_statistics_query()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (timelapse_id, timelapse_id))
-                results = await cur.fetchall()
-                if results:
-                    try:
-                        return TimelapseStatistics.model_validate(dict(results[0]))
-                    except ValidationError as e:
-                        logger.error(f"Error creating TimelapseStatistics model: {e}")
-                        return None
-                return None
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (timelapse_id, timelapse_id))
+                    results = await cur.fetchall()
+                    if results:
+                        try:
+                            return TimelapseStatistics.model_validate(dict(results[0]))
+                        except ValidationError as e:
+                            raise TimelapseOperationError(
+                                f"Error creating TimelapseStatistics model: {e}",
+                                operation="get_timelapse_statistics",
+                            ) from e
+                    return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapse statistics: {e}",
+                operation="get_timelapse_statistics",
+                details={"timelapse_id": timelapse_id},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     @cached_response(ttl_seconds=240, key_prefix="timelapse")
     async def get_library_statistics(self) -> TimelapseLibraryStatistics:
@@ -515,21 +609,31 @@ class TimelapseOperations:
         # Use optimized CTE-based query
         query = TimelapseQueryBuilder.build_library_statistics_query()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query)
-                result = await cur.fetchone()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query)
+                    result = await cur.fetchone()
 
-                if result:
-                    try:
-                        return TimelapseLibraryStatistics.model_validate(dict(result))
-                    except ValidationError as e:
-                        logger.error(
-                            f"Error creating TimelapseLibraryStatistics model: {e}"
-                        )
-                        return TimelapseLibraryStatistics()
+                    if result:
+                        try:
+                            return TimelapseLibraryStatistics.model_validate(
+                                dict(result)
+                            )
+                        except ValidationError as e:
+                            raise TimelapseOperationError(
+                                f"Error creating TimelapseLibraryStatistics model: {e}",
+                                operation="get_library_statistics",
+                            ) from e
 
-                return TimelapseLibraryStatistics()
+                    return TimelapseLibraryStatistics()
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                "Database error getting library statistics",
+                operation="get_library_statistics",
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     @cached_response(ttl_seconds=60, key_prefix="timelapse")
     async def get_active_timelapse_for_camera(
@@ -545,17 +649,25 @@ class TimelapseOperations:
             Active Timelapse model instance, or None if no active timelapse
         """
         query = """
-        SELECT t.*
+        SELECT
+            t.*
         FROM timelapses t
         JOIN cameras c ON c.active_timelapse_id = t.id
         WHERE c.id = %s AND t.status IN ('running', 'paused')
         """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (camera_id,))
-                results = await cur.fetchall()
-                return self._row_to_timelapse(results[0]) if results else None
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (camera_id,))
+                    results = await cur.fetchall()
+                    return self._row_to_timelapse(results[0]) if results else None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting active timelapse for camera {camera_id}: {e}",
+                operation="get_active_timelapse_for_camera",
+                details={"camera_id": camera_id},
+            ) from e
 
     async def complete_timelapse(self, timelapse_id: int) -> Timelapse:
         """
@@ -577,31 +689,41 @@ class TimelapseOperations:
 
         now = utc_now()
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (now, timelapse_id))
-                results = await cur.fetchall()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (now, timelapse_id))
+                    results = await cur.fetchall()
 
-                if results:
-                    row = results[0]
-                    completed_timelapse = self._row_to_timelapse(row)
+                    if results:
+                        row = results[0]
+                        completed_timelapse = self._row_to_timelapse(row)
 
-                    # Clear camera's active_timelapse_id
-                    await cur.execute(
-                        "UPDATE cameras SET active_timelapse_id = NULL WHERE active_timelapse_id = %s",
-                        (timelapse_id,),
+                        # Clear camera's active_timelapse_id
+                        await cur.execute(
+                            "UPDATE cameras SET active_timelapse_id = NULL WHERE active_timelapse_id = %s",
+                            (timelapse_id,),
+                        )
+
+                        # Clear related caches after successful completion
+                        await self._clear_timelapse_caches(
+                            timelapse_id, row["camera_id"], updated_at=now
+                        )
+
+                        return completed_timelapse
+
+                    raise TimelapseOperationError(
+                        f"Timelapse {timelapse_id} not found or already completed",
+                        operation="complete_timelapse",
                     )
-
-                    # Clear related caches after successful completion
-                    await self._clear_timelapse_caches(
-                        timelapse_id, row["camera_id"], updated_at=now
-                    )
-
-                    return completed_timelapse
-
-                raise ValueError(
-                    f"Timelapse {timelapse_id} not found or already completed"
-                )
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error completing timelapse {timelapse_id}: {e}",
+                operation="complete_timelapse",
+                details={"timelapse_id": timelapse_id},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     async def cleanup_completed_timelapses(self, retention_days: int = 90) -> int:
         """
@@ -620,20 +742,29 @@ class TimelapseOperations:
         """
 
         current_time = utc_now()
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    query,
-                    {"current_time": current_time, "retention_days": retention_days},
-                )
-                affected = cur.rowcount
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        query,
+                        {
+                            "current_time": current_time,
+                            "retention_days": retention_days,
+                        },
+                    )
+                    affected = cur.rowcount
 
-                if affected and affected > 0:
-                    logger.info(f"Cleaned up {affected} completed timelapses")
-                    # Clear related caches after cleanup
-                    await self._clear_timelapse_caches()
+                    if affected and affected > 0:
+                        # Clear related caches after cleanup
+                        await self._clear_timelapse_caches()
 
-                return affected or 0
+                    return affected or 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error cleaning up completed timelapses: {e}",
+                operation="cleanup_completed_timelapses",
+                details={"retention_days": retention_days},
+            ) from e
 
     # ====================================================================
     # THUMBNAIL COUNT TRACKING METHODS (ASYNC VERSION)
@@ -689,11 +820,16 @@ class TimelapseOperations:
                         return True
                     return False
 
-        except Exception as e:
-            logger.error(
-                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}"
-            )
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}",
+                operation="increment_thumbnail_counts",
+                details={
+                    "timelapse_id": timelapse_id,
+                    "increment_thumbnail": increment_thumbnail,
+                    "increment_small": increment_small,
+                },
+            ) from e
 
     async def recalculate_thumbnail_counts(self, timelapse_id: int) -> bool:
         """
@@ -732,11 +868,12 @@ class TimelapseOperations:
                         return True
                     return False
 
-        except Exception as e:
-            logger.error(
-                f"Error recalculating thumbnail counts for timelapse {timelapse_id}: {e}"
-            )
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error recalculating thumbnail counts for timelapse {timelapse_id}: {e}",
+                operation="recalculate_thumbnail_counts",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
 
 class SyncTimelapseOperations:
@@ -763,17 +900,25 @@ class SyncTimelapseOperations:
             Active Timelapse model instance, or None if no active timelapse
         """
         query = """
-        SELECT t.*
+        SELECT
+            t.*
         FROM timelapses t
         JOIN cameras c ON c.active_timelapse_id = t.id
         WHERE c.id = %s AND t.status IN ('running', 'paused')
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (camera_id,))
-                results = cur.fetchall()
-                return self._row_to_timelapse(results[0]) if results else None
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (camera_id,))
+                    results = cur.fetchall()
+                    return self._row_to_timelapse(results[0]) if results else None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting active timelapse for camera {camera_id}: {e}",
+                operation="get_active_timelapse_for_camera",
+                details={"camera_id": camera_id},
+            ) from e
 
     def get_timelapse_by_id(self, timelapse_id: int) -> Optional[Timelapse]:
         """
@@ -787,11 +932,18 @@ class SyncTimelapseOperations:
         """
         query = "SELECT * FROM timelapses WHERE id = %s"
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (timelapse_id,))
-                results = cur.fetchall()
-                return self._row_to_timelapse(results[0]) if results else None
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    results = cur.fetchall()
+                    return self._row_to_timelapse(results[0]) if results else None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapse {timelapse_id}: {e}",
+                operation="get_timelapse_by_id",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def update_timelapse_status(self, timelapse_id: int, status: str) -> bool:
         """
@@ -810,11 +962,18 @@ class SyncTimelapseOperations:
         WHERE id = %s
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (status, utc_now(), timelapse_id))
-                affected = cur.rowcount
-                return affected and affected > 0
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (status, utc_now(), timelapse_id))
+                    affected = cur.rowcount
+                    return affected and affected > 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error updating timelapse status: {e}",
+                operation="update_timelapse_status",
+                details={"timelapse_id": timelapse_id, "status": status},
+            ) from e
 
     def increment_glitch_count(self, timelapse_id: int) -> bool:
         """
@@ -833,11 +992,18 @@ class SyncTimelapseOperations:
         WHERE id = %s
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (utc_now(), timelapse_id))
-                affected = cur.rowcount
-                return affected and affected > 0
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (utc_now(), timelapse_id))
+                    affected = cur.rowcount
+                    return affected and affected > 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error incrementing glitch count: {e}",
+                operation="increment_glitch_count",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def update_timelapse_last_activity(self, timelapse_id: int) -> bool:
         """
@@ -857,11 +1023,18 @@ class SyncTimelapseOperations:
         WHERE id = %s
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (now, now, timelapse_id))
-                affected = cur.rowcount
-                return affected and affected > 0
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (now, now, timelapse_id))
+                    affected = cur.rowcount
+                    return affected and affected > 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error updating timelapse last activity: {e}",
+                operation="update_timelapse_last_activity",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def get_timelapses_for_cleanup(
         self, retention_days: int = 90
@@ -885,24 +1058,38 @@ class SyncTimelapseOperations:
         """
 
         current_time = utc_now()
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    query,
-                    {"current_time": current_time, "retention_days": retention_days},
-                )
-                results = cur.fetchall()
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        query,
+                        {
+                            "current_time": current_time,
+                            "retention_days": retention_days,
+                        },
+                    )
+                    results = cur.fetchall()
 
-                timelapses = []
-                for row in results:
-                    try:
-                        timelapse = TimelapseForCleanup.model_validate(dict(row))
-                        timelapses.append(timelapse)
-                    except ValidationError as e:
-                        logger.error(f"Error creating TimelapseForCleanup model: {e}")
-                        continue
+                    timelapses = []
+                    for row in results:
+                        try:
+                            timelapse = TimelapseForCleanup.model_validate(dict(row))
+                            timelapses.append(timelapse)
+                        except ValidationError as e:
+                            raise TimelapseOperationError(
+                                f"Error creating TimelapseForCleanup model: {e}",
+                                operation="get_timelapses_for_cleanup",
+                            ) from e
 
-                return timelapses
+                    return timelapses
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapses for cleanup: {e}",
+                operation="get_timelapses_for_cleanup",
+                details={"retention_days": retention_days},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     def cleanup_completed_timelapses(self, retention_days: int = 90) -> int:
         """
@@ -921,18 +1108,25 @@ class SyncTimelapseOperations:
         """
 
         current_time = utc_now()
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    query,
-                    {"current_time": current_time, "retention_days": retention_days},
-                )
-                affected = cur.rowcount
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        query,
+                        {
+                            "current_time": current_time,
+                            "retention_days": retention_days,
+                        },
+                    )
+                    affected = cur.rowcount
 
-                if affected and affected > 0:
-                    logger.info(f"Cleaned up {affected} completed timelapses")
-
-                return affected or 0
+                    return affected or 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error cleaning up completed timelapses: {e}",
+                operation="cleanup_completed_timelapses",
+                details={"retention_days": retention_days},
+            ) from e
 
     def get_timelapse_image_count(self, timelapse_id: int) -> int:
         """
@@ -946,11 +1140,18 @@ class SyncTimelapseOperations:
         """
         query = "SELECT COUNT(*) as count FROM images WHERE timelapse_id = %s"
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (timelapse_id,))
-                result = cur.fetchone()
-                return result["count"] if result else 0
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    result = cur.fetchone()
+                    return result["count"] if result else 0
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapse image count: {e}",
+                operation="get_timelapse_image_count",
+                details={"timelapse_id": timelapse_id},
+            ) from e
 
     def get_timelapse_settings(
         self, timelapse_id: int
@@ -978,19 +1179,28 @@ class SyncTimelapseOperations:
         WHERE id = %s
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (timelapse_id,))
-                result = cur.fetchone()
-                if result:
-                    try:
-                        return TimelapseVideoSettings.model_validate(dict(result))
-                    except ValidationError as e:
-                        logger.error(
-                            f"Error creating TimelapseVideoSettings model: {e}"
-                        )
-                        return None
-                return None
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (timelapse_id,))
+                    result = cur.fetchone()
+                    if result:
+                        try:
+                            return TimelapseVideoSettings.model_validate(dict(result))
+                        except ValidationError as e:
+                            raise TimelapseOperationError(
+                                f"Error creating TimelapseVideoSettings model: {e}",
+                                operation="get_timelapse_settings",
+                            ) from e
+                    return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error getting timelapse settings: {e}",
+                operation="get_timelapse_settings",
+                details={"timelapse_id": timelapse_id},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     def create_timelapse(self, timelapse_data: TimelapseCreate) -> Timelapse:
         """
@@ -1025,25 +1235,37 @@ class SyncTimelapseOperations:
         ) RETURNING *
         """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, insert_data)
-                results = cur.fetchall()
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, insert_data)
+                    results = cur.fetchall()
 
-                if results:
-                    row = results[0]
-                    new_timelapse = self._row_to_timelapse(row)
+                    if results:
+                        row = results[0]
+                        new_timelapse = self._row_to_timelapse(row)
 
-                    # Update camera's active_timelapse_id if status is running
-                    if row.get("status") in ("running", "paused"):
-                        cur.execute(
-                            "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
-                            (row["id"], insert_data["camera_id"]),
-                        )
+                        # Update camera's active_timelapse_id if status is running
+                        if row.get("status") in ("running", "paused"):
+                            cur.execute(
+                                "UPDATE cameras SET active_timelapse_id = %s WHERE id = %s",
+                                (row["id"], insert_data["camera_id"]),
+                            )
 
-                    return new_timelapse
+                        return new_timelapse
 
-                raise Exception("Failed to create timelapse")
+                    raise TimelapseOperationError(
+                        "Failed to create timelapse - no results returned",
+                        operation="create_timelapse",
+                    )
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Database error creating timelapse: {e}",
+                operation="create_timelapse",
+                details={"timelapse_data": timelapse_data.model_dump()},
+            ) from e
+        except TimelapseOperationError:
+            raise
 
     # ====================================================================
     # THUMBNAIL COUNT TRACKING METHODS (SYNC VERSION)
@@ -1095,11 +1317,16 @@ class SyncTimelapseOperations:
                     cur.execute(query, (timelapse_id,))
                     return cur.rowcount > 0
 
-        except Exception as e:
-            logger.error(
-                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}"
-            )
-            return False
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error incrementing thumbnail counts for timelapse {timelapse_id}: {e}",
+                operation="increment_thumbnail_counts_sync",
+                details={
+                    "timelapse_id": timelapse_id,
+                    "increment_thumbnail": increment_thumbnail,
+                    "increment_small": increment_small,
+                },
+            ) from e
 
     def get_running_and_paused_timelapses(self) -> List[Dict[str, Any]]:
         """
@@ -1113,7 +1340,7 @@ class SyncTimelapseOperations:
         try:
             query = """
             SELECT id, name, camera_id, status, capture_interval_seconds
-            FROM timelapses 
+            FROM timelapses
             WHERE status IN ('running', 'paused')
             ORDER BY id
             """
@@ -1124,9 +1351,12 @@ class SyncTimelapseOperations:
                     results = cur.fetchall()
                     return [dict(row) for row in results]
 
-        except Exception as e:
-            logger.error(f"Error getting running and paused timelapses: {e}")
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error getting running and paused timelapses: {e}",
+                operation="get_running_and_paused_timelapses",
+                details={},
+            ) from e
 
     def get_active_timelapses_with_milestone_automation(self) -> List[Timelapse]:
         """
@@ -1148,11 +1378,12 @@ class SyncTimelapseOperations:
                     cur.execute(query)
                     results = cur.fetchall()
                     return [self._row_to_timelapse(dict(row)) for row in results]
-        except Exception as e:
-            logger.error(
-                f"Error getting active timelapses with milestone automation: {e}"
-            )
-            return []
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error getting active timelapses with milestone automation: {e}",
+                operation="get_active_timelapses_with_milestone_automation",
+                details={},
+            ) from e
 
     def get_active_timelapses_with_scheduled_automation(self) -> List[Timelapse]:
         """
@@ -1163,7 +1394,7 @@ class SyncTimelapseOperations:
         """
         try:
             query = """
-            SELECT * FROM timelapses 
+            SELECT * FROM timelapses
             WHERE status IN ('running', 'paused')
             AND video_automation_mode = 'scheduled'
             AND generation_schedule IS NOT NULL
@@ -1174,10 +1405,9 @@ class SyncTimelapseOperations:
                     cur.execute(query)
                     results = cur.fetchall()
                     return [self._row_to_timelapse(dict(row)) for row in results]
-        except Exception as e:
-            logger.error(
-                f"Error getting active timelapses with scheduled automation: {e}"
-            )
-            return []
-
-    # ===================================================================
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise TimelapseOperationError(
+                f"Error getting active timelapses with scheduled automation: {e}",
+                operation="get_active_timelapses_with_scheduled_automation",
+                details={},
+            ) from e

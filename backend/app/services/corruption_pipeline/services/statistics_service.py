@@ -16,7 +16,10 @@ Responsibilities:
 
 from typing import Dict, Any
 from datetime import datetime, timedelta
-from loguru import logger
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 from ....database.core import AsyncDatabase, SyncDatabase
 
@@ -125,7 +128,11 @@ class CorruptionStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting system statistics: {e}")
+            logger.error(
+                f"Error getting system statistics: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def get_camera_statistics(self, camera_id: int) -> Dict[str, Any]:
@@ -197,7 +204,11 @@ class CorruptionStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting camera {camera_id} statistics: {e}")
+            logger.error(
+                f"Error getting camera {camera_id} statistics: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def get_timelapse_quality_statistics(
@@ -245,7 +256,9 @@ class CorruptionStatisticsService:
 
         except Exception as e:
             logger.error(
-                f"Error getting timelapse {timelapse_id} quality statistics: {e}"
+                f"Error getting timelapse {timelapse_id} quality statistics: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
             )
             raise
 
@@ -313,7 +326,11 @@ class CorruptionStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting detection trends: {e}")
+            logger.error(
+                f"Error getting detection trends: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def get_performance_metrics(self) -> Dict[str, Any]:
@@ -363,7 +380,11 @@ class CorruptionStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting performance metrics: {e}")
+            logger.error(
+                f"Error getting performance metrics: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
     async def export_statistics_report(self, format: str = "json") -> Dict[str, Any]:
@@ -405,7 +426,11 @@ class CorruptionStatisticsService:
             return report
 
         except Exception as e:
-            logger.error(f"Error exporting statistics report: {e}")
+            logger.error(
+                f"Error exporting statistics report: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             raise
 
 
@@ -450,7 +475,11 @@ class SyncCorruptionStatisticsService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting basic camera {camera_id} stats: {e}")
+            logger.error(
+                f"Error getting basic camera {camera_id} stats: {e}",
+                exception=e,
+                emoji=LogEmoji.FAILED,
+            )
             return {
                 "camera_id": camera_id,
                 "consecutive_failures": 0,

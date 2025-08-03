@@ -42,3 +42,6 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning"
 ]
+
+[tool.isort]
+profile = "black"

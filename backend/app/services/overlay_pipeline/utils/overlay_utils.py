@@ -15,13 +15,17 @@ from pathlib import Path
 import json
 
 from PIL import Image, ImageDraw, ImageFont, ImageColor
-from loguru import logger
+from ....services.logger import get_service_logger, LogEmoji
+from ....enums import LoggerName
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
 from ....utils.time_utils import utc_now
 from .font_cache import get_font_fast, get_text_size_fast
 from .overlay_template_cache import get_overlay_template
 
-from ....models.overlay_model import OverlayConfiguration, OverlayItem, GridPosition
+from ....models.overlay_model import OverlayConfiguration, OverlayItem
+from ....enums import OverlayGridPosition
 from ....models.image_model import Image as ImageModel
 from ....models.timelapse_model import Timelapse as TimelapseModel
 from ....constants import OVERLAY_TYPE_WATERMARK
@@ -86,7 +90,7 @@ class OverlayRenderer:
                         )
                 except Exception as e:
                     logger.warning(
-                        f"Template caching failed, using fallback rendering: {e}"
+                        "Template caching failed, using fallback rendering", exception=e
                     )
                     # Fallback to standard rendering without template caching
                     result_image = self._render_overlay_fallback(
@@ -96,11 +100,14 @@ class OverlayRenderer:
                 # Save as PNG to preserve transparency
                 result_image.save(output_path, "PNG", optimize=True)
 
-                logger.debug(f"Successfully rendered overlay to {output_path}")
+                logger.debug(
+                    f"Successfully rendered overlay to {output_path}",
+                    emoji=LogEmoji.SUCCESS,
+                )
                 return True
 
         except Exception as e:
-            logger.error(f"Failed to render overlay: {e}")
+            logger.error("Failed to render overlay", exception=e)
             return False
 
     async def render_overlay_fast(
@@ -127,7 +134,8 @@ class OverlayRenderer:
 
         except Exception as e:
             logger.warning(
-                f"Template rendering failed, falling back to standard rendering: {e}"
+                "Template rendering failed, falling back to standard rendering",
+                exception=e,
             )
             return self._render_overlay_fallback(base_image, context_data)
 
@@ -165,7 +173,7 @@ class OverlayRenderer:
         self,
         draw: ImageDraw.ImageDraw,
         overlay_layer: Image.Image,
-        position: GridPosition,
+        position: OverlayGridPosition,
         overlay_item: OverlayItem,
         context_data: Dict[str, Any],
     ) -> None:
@@ -215,7 +223,8 @@ class OverlayRenderer:
 
         except Exception as e:
             logger.error(
-                f"Failed to generate overlay content for type {overlay_item.type}: {e}"
+                f"Failed to generate overlay content for type {overlay_item.type}",
+                exception=e,
             )
             return ""  # Graceful fallback
 
@@ -352,10 +361,10 @@ class OverlayRenderer:
                 overlay_layer.paste(img, (adjusted_x, adjusted_y), img)
 
         except Exception as e:
-            logger.error(f"Failed to render image overlay: {e}")
+            logger.error("Failed to render image overlay", exception=e)
 
     def _calculate_position(
-        self, position: GridPosition, image_size: Tuple[int, int]
+        self, position: OverlayGridPosition, image_size: Tuple[int, int]
     ) -> Tuple[int, int]:
         """Calculate x,y coordinates for grid position."""
 
@@ -420,7 +429,7 @@ class OverlayRenderer:
             )
 
         except Exception as e:
-            logger.warning(f"Failed to draw text background: {e}")
+            logger.warning("Failed to draw text background", exception=e)
 
     # Note: Font loading now handled by global font cache (font_cache.py)
     # Previous font loading methods removed in favor of global cache
@@ -522,7 +531,7 @@ def validate_overlay_configuration(config: OverlayConfiguration) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to validate overlay configuration: {e}")
+        logger.error("Failed to validate overlay configuration", exception=e)
         return False
 
 
@@ -570,11 +579,14 @@ async def render_overlay_with_caching(
             # Save as PNG to preserve transparency
             result_image.save(output_path, "PNG", optimize=True)
 
-            logger.debug(f"Successfully rendered overlay with caching to {output_path}")
+            logger.debug(
+                f"Successfully rendered overlay with caching to {output_path}",
+                emoji=LogEmoji.SUCCESS,
+            )
             return True
 
     except Exception as e:
-        logger.error(f"Failed to render overlay with caching: {e}")
+        logger.error("Failed to render overlay with caching", exception=e)
         # Fallback to standard rendering
         renderer = OverlayRenderer(config)
         return renderer.render_overlay(base_image_path, output_path, context_data)

@@ -11,35 +11,28 @@ This module handles all camera-related database operations including:
 All operations return proper Pydantic models directly, eliminating Dict[str, Any] conversions.
 """
 
+
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-from loguru import logger
-from pydantic import ValidationError
 import psycopg
+from pydantic import ValidationError
 
-from .core import AsyncDatabase, SyncDatabase
-from ..utils.database_helpers import CameraDataProcessor, DatabaseQueryBuilder
-from ..utils.cache_manager import (
-    cache,
-    cached_response,
-    generate_composite_etag,
-)
-from ..utils.cache_invalidation import CacheInvalidationService
-
-from ..models.camera_model import (
-    Camera,
-    ImageForCamera,
-)
+from ..models.camera_model import Camera, ImageForCamera
 from ..models.corruption_model import CorruptionSettingsModel
 from ..models.shared_models import CameraHealthStatus, CameraStatistics
-from .settings_operations import SyncSettingsOperations
+from ..services.settings_service import SettingsService
+from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.cache_manager import cache, cached_response, generate_composite_etag
+from ..utils.database_helpers import CameraDataProcessor, DatabaseQueryBuilder
 from ..utils.time_utils import (
-    utc_now,
     get_timezone_from_cache_async,
     get_timezone_from_cache_sync,
+    utc_now,
 )
+from .core import AsyncDatabase, SyncDatabase
+from .exceptions import CameraOperationError
 
 
 class CameraQueryBuilder:
@@ -112,11 +105,11 @@ class CameraQueryBuilder:
             COUNT(cl.id) as corruption_logs_count,
             AVG(cl.corruption_score) as avg_corruption_score
         FROM cameras c
-        LEFT JOIN corruption_logs cl ON c.id = cl.camera_id 
+        LEFT JOIN corruption_logs cl ON c.id = cl.camera_id
             AND cl.created_at > %(twenty_four_hours_ago)s
         WHERE c.id = %(camera_id)s
         GROUP BY c.lifetime_glitch_count, c.consecutive_corruption_failures,
-                 c.degraded_mode_active, c.last_degraded_at, c.corruption_detection_heavy
+                c.degraded_mode_active, c.last_degraded_at, c.corruption_detection_heavy
         """
 
     @staticmethod
@@ -200,20 +193,25 @@ class AsyncCameraOperations:
         Returns:
             List of enabled Camera model instances
         """
-        query = CameraQueryBuilder.build_active_cameras_query()
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query)
-                results = await cur.fetchall()
-                cameras = []
-                for row in results:
-                    camera_data = await self._prepare_camera_data(row)
-                    try:
-                        cameras.append(Camera.model_validate(camera_data))
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model for row {row}: {e}")
-                        continue
-                return cameras
+        try:
+            query = CameraQueryBuilder.build_active_cameras_query()
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query)
+                    results = await cur.fetchall()
+                    cameras = []
+                    for row in results:
+                        camera_data = await self._prepare_camera_data(row)
+                        try:
+                            cameras.append(Camera.model_validate(camera_data))
+                        except ValidationError:
+                            # Skip invalid camera data but don't fail entire operation
+                            continue
+                    return cameras
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                "Failed to retrieve active cameras", operation="get_active_cameras"
+            ) from e
 
     async def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -276,14 +274,22 @@ class AsyncCameraOperations:
                             "small_size": row.get("last_image_small_size"),
                         }
                     )
-                except ValidationError as e:
-                    logger.error(f"Error creating ImageForCamera model: {e}")
+                except ValidationError:
+                    # Skip invalid image data but don't fail camera creation
                     camera.last_image = None
 
             return camera
         except ValidationError as e:
-            logger.error(f"Error creating Camera model: {e}")
-            raise
+            raise CameraOperationError(
+                f"Failed to create camera model for camera {row.get('id')}",
+                operation="_create_camera_from_row",
+                details={
+                    "camera_id": row.get("id"),
+                    "validation_errors": (
+                        str(e.errors()) if hasattr(e, "errors") else None
+                    ),
+                },
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="camera")
     async def get_cameras(self) -> List[Camera]:
@@ -301,76 +307,80 @@ class AsyncCameraOperations:
         Usage:
             cameras = await db.get_cameras()
         """
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                # Step 1: Get basic camera data with active timelapse info (optimized)
-                camera_query = """
-                SELECT
-                    c.*,
-                    t.status as timelapse_status,
-                    t.id as timelapse_id,
-                    t.name as timelapse_name
-                FROM cameras c
-                LEFT JOIN timelapses t ON c.id = t.camera_id AND t.status IN ('running', 'paused')
-                ORDER BY c.created_at ASC
-                """
-                await cur.execute(camera_query)
-                camera_rows = await cur.fetchall()
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Step 1: Get basic camera data with active timelapse info (optimized)
+                    camera_query = """
+                    SELECT
+                        c.*,
+                        t.status as timelapse_status,
+                        t.id as timelapse_id,
+                        t.name as timelapse_name
+                    FROM cameras c
+                    LEFT JOIN timelapses t ON c.id = t.camera_id AND t.status IN ('running', 'paused')
+                    ORDER BY c.created_at ASC
+                    """
+                    await cur.execute(camera_query)
+                    camera_rows = await cur.fetchall()
 
-                if not camera_rows:
-                    return []
+                    if not camera_rows:
+                        return []
 
-                # Step 2: Get aggregated statistics for all cameras in one query
-                camera_ids = [row["id"] for row in camera_rows]
+                    # Step 2: Get aggregated statistics for all cameras in one query
+                    camera_ids = [row["id"] for row in camera_rows]
 
-                stats_query = CameraQueryBuilder.build_camera_statistics_query(
-                    camera_ids
-                )
-                await cur.execute(stats_query, {"camera_ids": camera_ids})
-                stats_rows = await cur.fetchall()
-                stats_dict = {row["camera_id"]: row for row in stats_rows}
+                    stats_query = CameraQueryBuilder.build_camera_statistics_query(
+                        camera_ids
+                    )
+                    await cur.execute(stats_query, {"camera_ids": camera_ids})
+                    stats_rows = await cur.fetchall()
+                    stats_dict = {row["camera_id"]: row for row in stats_rows}
 
-                # Step 3: Get timelapse counts for all cameras in one query
-                timelapse_query = CameraQueryBuilder.build_timelapse_counts_query(
-                    camera_ids
-                )
-                await cur.execute(timelapse_query, {"camera_ids": camera_ids})
-                timelapse_rows = await cur.fetchall()
-                timelapse_dict = {
-                    row["camera_id"]: row["total_timelapses"] for row in timelapse_rows
-                }
+                    # Step 3: Get timelapse counts for all cameras in one query
+                    timelapse_query = CameraQueryBuilder.build_timelapse_counts_query(
+                        camera_ids
+                    )
+                    await cur.execute(timelapse_query, {"camera_ids": camera_ids})
+                    timelapse_rows = await cur.fetchall()
+                    timelapse_dict = {
+                        row["camera_id"]: row["total_timelapses"]
+                        for row in timelapse_rows
+                    }
 
-                # Step 4: Build Camera objects with batched data
-                cameras = []
-                for row in camera_rows:
-                    camera_id = row["id"]
-                    # Merge statistics
-                    if camera_id in stats_dict:
-                        stats = stats_dict[camera_id]
-                        row = dict(row)
-                        row["total_images"] = stats["total_images"] or 0
-                        row["active_timelapse_images"] = (
-                            stats["active_timelapse_images"] or 0
-                        )
-                        row["last_capture_at"] = stats["last_capture_at"]
-                    else:
-                        row = dict(row)
-                        row["total_images"] = 0
-                        row["active_timelapse_images"] = 0
-                        row["last_capture_at"] = None
+                    # Step 4: Build Camera objects with batched data
+                    cameras = []
+                    for row in camera_rows:
+                        camera_id = row["id"]
+                        # Merge statistics
+                        if camera_id in stats_dict:
+                            stats = stats_dict[camera_id]
+                            row = dict(row)
+                            row["total_images"] = stats["total_images"] or 0
+                            row["active_timelapse_images"] = (
+                                stats["active_timelapse_images"] or 0
+                            )
+                            row["last_capture_at"] = stats["last_capture_at"]
+                        else:
+                            row = dict(row)
+                            row["total_images"] = 0
+                            row["active_timelapse_images"] = 0
+                            row["last_capture_at"] = None
 
-                    row["total_timelapses"] = timelapse_dict.get(camera_id, 0)
+                        row["total_timelapses"] = timelapse_dict.get(camera_id, 0)
 
-                    try:
-                        camera = await self._create_camera_from_row(row)
-                        cameras.append(camera)
-                    except Exception as e:
-                        logger.error(
-                            f"Error creating Camera model for camera {camera_id}: {e}"
-                        )
-                        continue
+                        try:
+                            camera = await self._create_camera_from_row(row)
+                            cameras.append(camera)
+                        except Exception:
+                            # Skip invalid cameras but don't fail entire operation
+                            continue
 
-                return cameras
+                    return cameras
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                "Failed to retrieve cameras", operation="get_cameras"
+            ) from e
 
     @cached_response(ttl_seconds=60, key_prefix="camera")
     async def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
@@ -423,10 +433,10 @@ class AsyncCameraOperations:
                 FROM images i
                 WHERE i.camera_id = %(camera_id)s
                 """
-                await cur.execute(stats_query, {
-                    "camera_id": camera_id,
-                    "camera_id_subquery": camera_id
-                })
+                await cur.execute(
+                    stats_query,
+                    {"camera_id": camera_id, "camera_id_subquery": camera_id},
+                )
                 stats_row = await cur.fetchone()
 
                 if stats_row:
@@ -482,10 +492,11 @@ class AsyncCameraOperations:
                 try:
                     return await self._create_camera_from_row(camera_data)
                 except Exception as e:
-                    logger.error(
-                        f"Error creating Camera model for camera {camera_id}: {e}"
-                    )
-                    return None
+                    raise CameraOperationError(
+                        f"Failed to create camera model for camera {camera_id}",
+                        operation="get_camera_by_id",
+                        details={"camera_id": camera_id},
+                    ) from e
 
     @cached_response(ttl_seconds=30, key_prefix="camera")
     async def get_camera_comprehensive_status(
@@ -502,44 +513,51 @@ class AsyncCameraOperations:
         Returns:
             Dictionary containing comprehensive status information, or None if camera not found
         """
-        query = """
-        SELECT
-            c.id,
-            c.status,
-            c.health_status,
-            c.last_capture_at,
-            c.last_capture_success,
-            c.consecutive_failures,
-            c.next_capture_at,
-            c.active_timelapse_id,
-            c.corruption_score,
-            c.is_flagged,
-            c.consecutive_corruption_failures,
-            c.updated_at,
-            t.status as timelapse_status
-        FROM cameras c
-        LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
-        WHERE c.id = %(camera_id)s
-        """
+        try:
+            query = """
+            SELECT
+                c.id,
+                c.status,
+                c.health_status,
+                c.last_capture_at,
+                c.last_capture_success,
+                c.consecutive_failures,
+                c.next_capture_at,
+                c.active_timelapse_id,
+                c.corruption_score,
+                c.is_flagged,
+                c.consecutive_corruption_failures,
+                c.updated_at,
+                t.status as timelapse_status
+            FROM cameras c
+            LEFT JOIN timelapses t ON c.active_timelapse_id = t.id
+            WHERE c.id = %(camera_id)s
+            """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, {"camera_id": camera_id})
-                results = await cur.fetchall()
-                if results:
-                    row = results[0]
-                    data = await self._prepare_camera_data(row)
-                    # Add connectivity placeholders (would be filled by service layer)
-                    data.update(
-                        {
-                            "connectivity_status": "unknown",
-                            "last_connectivity_test": None,
-                            "connectivity_message": None,
-                            "response_time_ms": None,
-                        }
-                    )
-                    return data
-                return None
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, {"camera_id": camera_id})
+                    results = await cur.fetchall()
+                    if results:
+                        row = results[0]
+                        data = await self._prepare_camera_data(row)
+                        # Add connectivity placeholders (would be filled by service layer)
+                        data.update(
+                            {
+                                "connectivity_status": "unknown",
+                                "last_connectivity_test": None,
+                                "connectivity_message": None,
+                                "response_time_ms": None,
+                            }
+                        )
+                        return data
+                    return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                f"Failed to get comprehensive status for camera {camera_id}",
+                operation="get_camera_comprehensive_status",
+                details={"camera_id": camera_id},
+            ) from e
 
     async def create_camera(self, camera_data: Dict[str, Any]) -> Camera:
         """
@@ -559,46 +577,64 @@ class AsyncCameraOperations:
                 'source_resolution': {'width': 2688, 'height': 1512}
             })
         """
+        try:
+            query = """
+            INSERT INTO cameras (
+                name, rtsp_url, status, rotation,
+                crop_rotation_enabled, crop_rotation_settings, source_resolution,
+                corruption_detection_heavy, corruption_score, is_flagged,
+                lifetime_glitch_count, consecutive_corruption_failures,
+                degraded_mode_active, last_degraded_at, enabled, is_connected,
+                last_error, last_error_message
+            ) VALUES (
+                %(name)s, %(rtsp_url)s, %(status)s, %(rotation)s,
+                %(crop_rotation_enabled)s, %(crop_rotation_settings)s, %(source_resolution)s,
+                %(corruption_detection_heavy)s, %(corruption_score)s, %(is_flagged)s,
+                %(lifetime_glitch_count)s, %(consecutive_corruption_failures)s,
+                %(degraded_mode_active)s, %(last_degraded_at)s, %(enabled)s, %(is_connected)s,
+                %(last_error)s, %(last_error_message)s
+            ) RETURNING *
+            """
 
-        query = """
-        INSERT INTO cameras (
-            name, rtsp_url, status, rotation,
-            crop_rotation_enabled, crop_rotation_settings, source_resolution,
-            corruption_detection_heavy, corruption_score, is_flagged,
-            lifetime_glitch_count, consecutive_corruption_failures,
-            degraded_mode_active, last_degraded_at, enabled, is_connected,
-            last_error, last_error_message
-        ) VALUES (
-            %(name)s, %(rtsp_url)s, %(status)s, %(rotation)s,
-            %(crop_rotation_enabled)s, %(crop_rotation_settings)s, %(source_resolution)s,
-            %(corruption_detection_heavy)s, %(corruption_score)s, %(is_flagged)s,
-            %(lifetime_glitch_count)s, %(consecutive_corruption_failures)s,
-            %(degraded_mode_active)s, %(last_degraded_at)s, %(enabled)s, %(is_connected)s,
-            %(last_error)s, %(last_error_message)s
-        ) RETURNING *
-        """
+            # Ensure all required fields are present with sensible defaults
+            camera_data.setdefault("enabled", True)
+            camera_data.setdefault("is_connected", True)
+            camera_data.setdefault("last_error", None)
+            camera_data.setdefault("last_error_message", None)
+            camera_data.setdefault("is_flagged", False)
 
-        # Ensure all required fields are present with sensible defaults
-        camera_data.setdefault("enabled", True)
-        camera_data.setdefault("is_connected", True)
-        camera_data.setdefault("last_error", None)
-        camera_data.setdefault("last_error_message", None)
-        camera_data.setdefault("is_flagged", False)
-
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, camera_data)
-                results = await cur.fetchall()
-                if results:
-                    row = results[0]
-                    camera_data = await self._prepare_camera_data(row)
-                    try:
-                        created_camera = Camera.model_validate(camera_data)
-                        return created_camera
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model: {e}")
-                        raise
-                raise psycopg.DatabaseError("Failed to create camera")
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, camera_data)
+                    results = await cur.fetchall()
+                    if results:
+                        row = results[0]
+                        camera_data = await self._prepare_camera_data(row)
+                        try:
+                            created_camera = Camera.model_validate(camera_data)
+                            return created_camera
+                        except ValidationError as e:
+                            raise CameraOperationError(
+                                "Failed to validate created camera data",
+                                operation="create_camera",
+                                details={
+                                    "validation_errors": (
+                                        str(e.errors())
+                                        if hasattr(e, "errors")
+                                        else None
+                                    )
+                                },
+                            ) from e
+                    raise CameraOperationError(
+                        "Failed to create camera - no results returned",
+                        operation="create_camera",
+                    )
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                "Failed to create camera",
+                operation="create_camera",
+                details={"camera_name": camera_data.get("name")},
+            ) from e
 
     async def update_camera(
         self, camera_id: int, camera_data: Dict[str, Any]
@@ -616,65 +652,90 @@ class AsyncCameraOperations:
         Usage:
             camera = await db.update_camera(1, {'enabled': False})
         """
-        # Build dynamic update query based on provided fields
-        update_fields = []
-        params: Dict[str, Any] = {"camera_id": camera_id}
+        try:
+            # Build dynamic update query based on provided fields
+            update_fields = []
+            params: Dict[str, Any] = {"camera_id": camera_id}
 
-        # Dynamically determine updateable fields from Camera model, excluding immutable fields
-        updateable_fields = [
-            field
-            for field in Camera.model_fields.keys()
-            if field not in {"id", "created_at", "updated_at"}
-        ]
+            # Dynamically determine updateable fields from Camera model, excluding immutable fields
+            updateable_fields = [
+                field
+                for field in Camera.model_fields.keys()
+                if field not in {"id", "created_at", "updated_at"}
+            ]
 
-        for field in updateable_fields:
-            if field in camera_data:
-                update_fields.append(f"{field} = %({field})s")
-                params[field] = camera_data[field]
+            for field in updateable_fields:
+                if field in camera_data:
+                    update_fields.append(f"{field} = %({field})s")
+                    params[field] = camera_data[field]
 
-        if not update_fields:
-            # If no fields to update, just return current camera
-            current_camera = await self.get_camera_by_id(camera_id)
-            if current_camera is None:
-                raise ValueError(f"Camera {camera_id} not found")
-            # Return the Camera model
-            return Camera(
-                **{
-                    k: v
-                    for k, v in current_camera.model_dump().items()
-                    if k in Camera.model_fields.keys()
-                }
-            )
+            if not update_fields:
+                # If no fields to update, just return current camera
+                current_camera = await self.get_camera_by_id(camera_id)
+                if current_camera is None:
+                    raise CameraOperationError(
+                        f"Camera {camera_id} not found",
+                        operation="update_camera",
+                        details={"camera_id": camera_id},
+                    )
+                # Return the Camera model
+                return Camera(
+                    **{
+                        k: v
+                        for k, v in current_camera.model_dump().items()
+                        if k in Camera.model_fields.keys()
+                    }
+                )
 
-        # Add timezone-aware timestamp for updated_at
-        now = utc_now()
-        update_fields.append("updated_at = %(updated_at)s")
-        params["updated_at"] = now
+            # Add timezone-aware timestamp for updated_at
+            now = utc_now()
+            update_fields.append("updated_at = %(updated_at)s")
+            params["updated_at"] = now
 
-        query = f"""
-        UPDATE cameras
-        SET {', '.join(update_fields)}
-        WHERE id = %(camera_id)s
-        RETURNING *
-        """
+            query = f"""
+            UPDATE cameras
+            SET {', '.join(update_fields)}
+            WHERE id = %(camera_id)s
+            RETURNING *
+            """
 
-        async with self.db.get_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                results = await cur.fetchall()
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    results = await cur.fetchall()
 
-                if results:
-                    row = results[0]
-                    camera_data = await self._prepare_camera_data(row)
-                    try:
-                        updated_camera = Camera.model_validate(camera_data)
-                        # Clear related caches after successful update
-                        await self._clear_camera_caches(camera_id, updated_at=now)
-                        return updated_camera
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model: {e}")
-                        raise
-                raise psycopg.DatabaseError(f"Failed to update camera {camera_id}")
+                    if results:
+                        row = results[0]
+                        camera_data = await self._prepare_camera_data(row)
+                        try:
+                            updated_camera = Camera.model_validate(camera_data)
+                            # Clear related caches after successful update
+                            await self._clear_camera_caches(camera_id, updated_at=now)
+                            return updated_camera
+                        except ValidationError as e:
+                            raise CameraOperationError(
+                                f"Failed to validate updated camera data for camera {camera_id}",
+                                operation="update_camera",
+                                details={
+                                    "camera_id": camera_id,
+                                    "validation_errors": (
+                                        str(e.errors())
+                                        if hasattr(e, "errors")
+                                        else None
+                                    ),
+                                },
+                            ) from e
+                    raise CameraOperationError(
+                        f"Failed to update camera {camera_id} - no results returned",
+                        operation="update_camera",
+                        details={"camera_id": camera_id},
+                    )
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                f"Failed to update camera {camera_id}",
+                operation="update_camera",
+                details={"camera_id": camera_id},
+            ) from e
 
     async def delete_camera(self, camera_id: int) -> bool:
         """
@@ -742,8 +803,16 @@ class AsyncCameraOperations:
                     try:
                         return CameraHealthStatus.model_validate(dict(results[0]))
                     except ValidationError as e:
-                        logger.error(f"Error creating CameraHealthStatus model: {e}")
-                        return None
+                        raise CameraOperationError(
+                            f"Failed to validate camera health status for camera {camera_id}",
+                            operation="get_camera_health_status",
+                            details={
+                                "camera_id": camera_id,
+                                "validation_errors": (
+                                    str(e.errors()) if hasattr(e, "errors") else None
+                                ),
+                            },
+                        ) from e
                 return None
 
     @cached_response(ttl_seconds=300, key_prefix="camera")
@@ -787,8 +856,16 @@ class AsyncCameraOperations:
                     try:
                         return CameraStatistics.model_validate(dict(results[0]))
                     except ValidationError as e:
-                        logger.error(f"Error creating CameraStatistics model: {e}")
-                        return None
+                        raise CameraOperationError(
+                            f"Failed to validate camera statistics for camera {camera_id}",
+                            operation="get_camera_stats",
+                            details={
+                                "camera_id": camera_id,
+                                "validation_errors": (
+                                    str(e.errors()) if hasattr(e, "errors") else None
+                                ),
+                            },
+                        ) from e
                 return None
 
     async def _update_camera_fields(
@@ -829,8 +906,11 @@ class AsyncCameraOperations:
                     return success
 
         except (psycopg.Error, KeyError, ValueError) as e:
-            logger.error(f"Failed to update camera fields: {e}")
-            return False
+            raise CameraOperationError(
+                f"Failed to update camera fields for camera {camera_id}",
+                operation="_update_camera_fields",
+                details={"camera_id": camera_id, "updates": str(updates)},
+            ) from e
 
     async def update_camera_next_capture_time(
         self, camera_id: int, next_capture_at: datetime
@@ -853,7 +933,9 @@ class AsyncCameraOperations:
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, {"next_capture_at": next_capture_at, "camera_id": camera_id})
+                await cur.execute(
+                    query, {"next_capture_at": next_capture_at, "camera_id": camera_id}
+                )
                 affected = cur.rowcount
                 success = bool(affected and affected > 0)
                 if success:
@@ -956,12 +1038,15 @@ class AsyncCameraOperations:
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, {
-                    "status": status,
-                    "error_message": error_message,
-                    "now": now,
-                    "camera_id": camera_id
-                })
+                await cur.execute(
+                    query,
+                    {
+                        "status": status,
+                        "error_message": error_message,
+                        "now": now,
+                        "camera_id": camera_id,
+                    },
+                )
                 affected = cur.rowcount
 
                 if affected and affected > 0:
@@ -1008,7 +1093,7 @@ class AsyncCameraOperations:
                 "now": now,
                 "health_status": health_status,
                 "now_updated": now,
-                "camera_id": camera_id
+                "camera_id": camera_id,
             }
         else:
             # Increment consecutive failures - health status determined by service layer
@@ -1023,7 +1108,7 @@ class AsyncCameraOperations:
             params = {
                 "health_status": health_status,
                 "now": now,
-                "camera_id": camera_id
+                "camera_id": camera_id,
             }
 
         async with self.db.get_connection() as conn:
@@ -1043,8 +1128,6 @@ class AsyncCameraOperations:
 
         NOTE: Business logic for capture readiness moved to CameraService.
         This method now only retrieves cameras due by schedule.
-
-        Uses sophisticated caching with 10s TTL for frequent polling.
 
         Returns cameras that are:
         - Due for capture (next_capture_at <= now)
@@ -1076,8 +1159,8 @@ class AsyncCameraOperations:
                     try:
                         camera_data = await self._prepare_camera_data(row)
                         cameras.append(Camera.model_validate(camera_data))
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model for row {row}: {e}")
+                    except ValidationError:
+                        # Skip invalid camera data but don't fail entire operation
                         continue
 
                 return cameras
@@ -1108,13 +1191,15 @@ class AsyncCameraOperations:
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, {
-                    "settings": settings,
-                    "enabled": enabled,
-                    "now": now,
-                    "camera_id": camera_id
-                })
-            logger.debug(f"Updated crop/rotation settings for camera {camera_id}")
+                await cur.execute(
+                    query,
+                    {
+                        "settings": settings,
+                        "enabled": enabled,
+                        "now": now,
+                        "camera_id": camera_id,
+                    },
+                )
             # Clear related caches after successful update
             await self._clear_camera_caches(camera_id, updated_at=now)
             return True
@@ -1143,12 +1228,10 @@ class AsyncCameraOperations:
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, {
-                    "resolution": resolution,
-                    "now": now,
-                    "camera_id": camera_id
-                })
-            logger.debug(f"Updated source resolution for camera {camera_id}")
+                await cur.execute(
+                    query,
+                    {"resolution": resolution, "now": now, "camera_id": camera_id},
+                )
             # Clear related caches after successful update
             await self._clear_camera_caches(camera_id, updated_at=now)
             return True
@@ -1185,11 +1268,12 @@ class AsyncCameraOperations:
 class SyncCameraOperations:
     """Sync camera database operations for worker processes."""
 
-    def __init__(self, db: SyncDatabase) -> None:
+    def __init__(self, db: SyncDatabase, async_db: AsyncDatabase) -> None:
         # Import moved to top of file to avoid import-outside-toplevel
 
         self.db = db
-        self.settings_ops = SyncSettingsOperations(db)
+        self.async_db = async_db
+        self.settings_service = SettingsService(self.async_db)
 
     def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1201,7 +1285,7 @@ class SyncCameraOperations:
         camera_data = dict(row)
 
         # Get timezone from database cache (sync)
-        tz_str = get_timezone_from_cache_sync(self.settings_ops)
+        tz_str = get_timezone_from_cache_sync(self.settings_service)
         tz = ZoneInfo(tz_str)
 
         # Use shared helper for common processing logic
@@ -1217,23 +1301,28 @@ class SyncCameraOperations:
         Usage:
             cameras = db.get_active_cameras()
         """
-        query = CameraQueryBuilder.build_active_cameras_query()
+        try:
+            query = CameraQueryBuilder.build_active_cameras_query()
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query)
-                results = cur.fetchall()
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
 
-                cameras = []
-                for row in results:
-                    try:
-                        camera_data = self._prepare_camera_data(row)
-                        cameras.append(Camera.model_validate(camera_data))
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model for row {row}: {e}")
-                        continue
+                    cameras = []
+                    for row in results:
+                        try:
+                            camera_data = self._prepare_camera_data(row)
+                            cameras.append(Camera.model_validate(camera_data))
+                        except ValidationError:
+                            # Skip invalid camera data but don't fail entire operation
+                            continue
 
-                return cameras
+                    return cameras
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                "Failed to retrieve active cameras", operation="get_active_cameras"
+            ) from e
 
     def get_cameras_with_running_timelapses(self) -> List[Camera]:
         """
@@ -1245,32 +1334,38 @@ class SyncCameraOperations:
         Usage:
             cameras = db.get_cameras_with_running_timelapses()
         """
-        query = """
-        SELECT
-            c.*,
-            t.id as active_timelapse_id,
-            t.status as timelapse_status
-        FROM cameras c
-        INNER JOIN timelapses t ON c.id = t.camera_id AND t.status = 'running'
-        WHERE c.enabled = true
-        ORDER BY c.id
-        """
+        try:
+            query = """
+            SELECT
+                c.*,
+                t.id as active_timelapse_id,
+                t.status as timelapse_status
+            FROM cameras c
+            INNER JOIN timelapses t ON c.id = t.camera_id AND t.status = 'running'
+            WHERE c.enabled = true
+            ORDER BY c.id
+            """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query)
-                results = cur.fetchall()
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
 
-                cameras = []
-                for row in results:
-                    try:
-                        camera_data = self._prepare_camera_data(row)
-                        cameras.append(Camera.model_validate(camera_data))
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model for row {row}: {e}")
-                        continue
+                    cameras = []
+                    for row in results:
+                        try:
+                            camera_data = self._prepare_camera_data(row)
+                            cameras.append(Camera.model_validate(camera_data))
+                        except ValidationError:
+                            # Skip invalid camera data but don't fail entire operation
+                            continue
 
-                return cameras
+                    return cameras
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                "Failed to retrieve cameras with running timelapses",
+                operation="get_cameras_with_running_timelapses",
+            ) from e
 
     def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
         """
@@ -1285,30 +1380,47 @@ class SyncCameraOperations:
         Usage:
             camera = db.get_camera_by_id(1)
         """
-        query = """
-        SELECT
-            c.*,
-            t.id as active_timelapse_id,
-            t.status as timelapse_status
-        FROM cameras c
-        LEFT JOIN timelapses t ON c.id = t.camera_id AND t.status IN ('running', 'paused')
-        WHERE c.id = %(camera_id)s
-        """
+        try:
+            query = """
+            SELECT
+                c.*,
+                t.id as active_timelapse_id,
+                t.status as timelapse_status
+            FROM cameras c
+            LEFT JOIN timelapses t ON c.id = t.camera_id AND t.status IN ('running', 'paused')
+            WHERE c.id = %(camera_id)s
+            """
 
-        with self.db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, {"camera_id": camera_id})
-                results = cur.fetchall()
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, {"camera_id": camera_id})
+                    results = cur.fetchall()
 
-                if results:
-                    try:
-                        camera_data = self._prepare_camera_data(results[0])
-                        return Camera.model_validate(camera_data)
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model: {e}")
-                        return None
+                    if results:
+                        try:
+                            camera_data = self._prepare_camera_data(results[0])
+                            return Camera.model_validate(camera_data)
+                        except ValidationError as e:
+                            raise CameraOperationError(
+                                f"Failed to validate camera data for camera {camera_id}",
+                                operation="get_camera_by_id",
+                                details={
+                                    "camera_id": camera_id,
+                                    "validation_errors": (
+                                        str(e.errors())
+                                        if hasattr(e, "errors")
+                                        else None
+                                    ),
+                                },
+                            ) from e
 
-                return None
+                    return None
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise CameraOperationError(
+                f"Failed to retrieve camera {camera_id}",
+                operation="get_camera_by_id",
+                details={"camera_id": camera_id},
+            ) from e
 
     def update_camera_connectivity(
         self, camera_id: int, is_connected: bool, error_message: Optional[str] = None
@@ -1340,12 +1452,15 @@ class SyncCameraOperations:
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, {
-                    "is_connected": is_connected,
-                    "error_message": error_message,
-                    "now": now,
-                    "camera_id": camera_id
-                })
+                cur.execute(
+                    query,
+                    {
+                        "is_connected": is_connected,
+                        "error_message": error_message,
+                        "now": now,
+                        "camera_id": camera_id,
+                    },
+                )
                 affected = cur.rowcount
                 return bool(affected and affected > 0)
 
@@ -1370,7 +1485,9 @@ class SyncCameraOperations:
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, {"next_capture_at": next_capture_at, "camera_id": camera_id})
+                cur.execute(
+                    query, {"next_capture_at": next_capture_at, "camera_id": camera_id}
+                )
                 affected = cur.rowcount
                 return bool(affected and affected > 0)
 
@@ -1407,8 +1524,16 @@ class SyncCameraOperations:
                     try:
                         return CorruptionSettingsModel.model_validate(dict(results[0]))
                     except ValidationError as e:
-                        logger.error(f"Error creating CorruptionSettingsModel: {e}")
-                        return None
+                        raise CameraOperationError(
+                            f"Failed to validate corruption settings for camera {camera_id}",
+                            operation="get_camera_corruption_settings",
+                            details={
+                                "camera_id": camera_id,
+                                "validation_errors": (
+                                    str(e.errors()) if hasattr(e, "errors") else None
+                                ),
+                            },
+                        ) from e
                 return None
 
     def update_camera_corruption_failure_count(
@@ -1543,7 +1668,7 @@ class SyncCameraOperations:
                 "now": now,
                 "health_status": health_status,
                 "now_updated": now,
-                "camera_id": camera_id
+                "camera_id": camera_id,
             }
         else:
             # Increment consecutive failures - health status determined by service layer
@@ -1558,7 +1683,7 @@ class SyncCameraOperations:
             params = {
                 "health_status": health_status,
                 "now": now,
-                "camera_id": camera_id
+                "camera_id": camera_id,
             }
 
         with self.db.get_connection() as conn:
@@ -1607,8 +1732,8 @@ class SyncCameraOperations:
                     try:
                         camera_data = self._prepare_camera_data(row)
                         cameras.append(Camera.model_validate(camera_data))
-                    except ValidationError as e:
-                        logger.error(f"Error creating Camera model for row {row}: {e}")
+                    except ValidationError:
+                        # Skip invalid camera data but don't fail entire operation
                         continue
 
                 return cameras
