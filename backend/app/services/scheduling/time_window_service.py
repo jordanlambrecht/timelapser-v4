@@ -26,36 +26,36 @@ Business Rules:
 - Configurable grace periods and validation timeouts
 """
 
-from datetime import datetime, time, date, timedelta
-from typing import Optional, Tuple, TYPE_CHECKING
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
+from datetime import date, datetime, time, timedelta
+from typing import TYPE_CHECKING, Optional, Tuple
 
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
+from ...enums import LoggerName
+from ...services.logger import get_service_logger
+
 
 from ...database.core import AsyncDatabase, SyncDatabase
 
 if TYPE_CHECKING:
     pass  # No TYPE_CHECKING imports needed
+from ...constants import (
+    DEFAULT_TIME_WINDOW_GRACE_PERIOD_SECONDS,
+    DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS,
+)
 from ...models.shared_models import (
-    TimeWindowStatus,
-    TimeWindowValidationResult,
-    TimeWindowCalculationRequest,
-    CaptureCountEstimateRequest,
     ActiveTimePeriodRequest,
     ActiveTimePeriodResult,
+    CaptureCountEstimateRequest,
+    TimeWindowCalculationRequest,
+    TimeWindowStatus,
+    TimeWindowValidationResult,
 )
 from ...utils.time_utils import (
-    parse_time_string,
     create_time_delta,
+    format_time_object_for_display,
+    parse_time_string,
 )
-from ...constants import (
-    DEFAULT_TIME_WINDOW_VALIDATION_TIMEOUT_SECONDS,
-    DEFAULT_TIME_WINDOW_GRACE_PERIOD_SECONDS,
-    EVENT_TIME_WINDOW_VALIDATED,
-    EVENT_TIME_WINDOW_STATUS_CALCULATED,
-    EVENT_CAPTURE_COUNT_ESTIMATED,
-)
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 
 class TimeWindowService:
@@ -102,9 +102,7 @@ class TimeWindowService:
             validation_timeout = await self._get_setting(
                 "time_window_validation_timeout_seconds"
             )
-            grace_period = await self._get_setting(
-                "time_window_grace_period_seconds"
-            )
+            grace_period = await self._get_setting("time_window_grace_period_seconds")
 
             return {
                 "validation_timeout_seconds": (
@@ -288,8 +286,8 @@ class TimeWindowService:
 
                 result = TimeWindowValidationResult(
                     is_valid=True,
-                    start_time=start_time_obj.strftime("%H:%M:%S"),
-                    end_time=end_time_obj.strftime("%H:%M:%S"),
+                    start_time=format_time_object_for_display(start_time_obj),
+                    end_time=format_time_object_for_display(end_time_obj),
                     is_overnight=is_overnight,
                     duration_seconds=int(duration.total_seconds()),
                 )
@@ -698,9 +696,7 @@ class SyncTimeWindowService:
             validation_timeout = self._get_setting(
                 "time_window_validation_timeout_seconds"
             )
-            grace_period = self._get_setting(
-                "time_window_grace_period_seconds"
-            )
+            grace_period = self._get_setting("time_window_grace_period_seconds")
 
             return {
                 "validation_timeout_seconds": (
@@ -785,7 +781,7 @@ class SyncTimeWindowService:
         start_dt = parse_time_string(start_time)
         end_dt = parse_time_string(end_time)
         if start_dt is None or end_dt is None:
-            raise ValueError(f"Invalid time window: could not parse start or end time.")
+            raise ValueError("Invalid time window: could not parse start or end time.")
         return start_dt.time(), end_dt.time()
 
     def calculate_next_window_start(

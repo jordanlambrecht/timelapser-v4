@@ -7,25 +7,27 @@ Responsibilities: Database-driven SSE streaming, event delivery, connection mana
 Interactions: Uses SSEEventsOperations for database access, streams events to clients
 """
 
-import json
 import asyncio
+import json
 from typing import AsyncGenerator
-from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from ..services.logger import get_service_logger
+
 from ..enums import LoggerName
+from ..services.logger import get_service_logger
+from ..utils.time_utils import utc_now
 
-logger = get_service_logger(LoggerName.API)
 
-from ..dependencies import AsyncDatabaseDep
 from ..database.sse_events_operations import SSEEventsOperations
-from ..utils.router_helpers import handle_exceptions
-from ..utils.response_helpers import ResponseFormatter
+from ..dependencies import AsyncDatabaseDep
 from ..utils.cache_invalidation import CacheInvalidationService
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.router_helpers import handle_exceptions
 
 router = APIRouter(tags=["sse"])
+
+logger = get_service_logger(LoggerName.API)
 
 
 @router.get("/events")
@@ -55,15 +57,15 @@ async def sse_event_stream(db: AsyncDatabaseDep):
             test_event = {
                 "type": "stream_started",
                 "data": {"message": "SSE stream initialized"},
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": utc_now().isoformat(),
             }
             yield f"data: {json.dumps(test_event)}\n\n"
             logger.info("🔄 Sent initial test event")
-            
+
             # Initialize SSE operations after first yield
             sse_ops = SSEEventsOperations(db)
-            last_heartbeat = datetime.utcnow()
-            
+            last_heartbeat = utc_now()
+
             # Process any existing events first
             existing_events = await sse_ops.get_pending_events(limit=50)
             if existing_events:
@@ -82,7 +84,8 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         )
                     except Exception as cache_error:
                         logger.warning(
-                            f"Cache invalidation failed for {event['type']}", exception=cache_error
+                            f"Cache invalidation failed for {event['type']}",
+                            exception=cache_error,
                         )
 
                     # Yield SSE-formatted data
@@ -119,7 +122,8 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                                 )
                             except Exception as cache_error:
                                 logger.warning(
-                                    f"Cache invalidation failed for {event['type']}", exception=cache_error
+                                    f"Cache invalidation failed for {event['type']}",
+                                    exception=cache_error,
                                 )
 
                             # Log events for debugging
@@ -136,7 +140,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         logger.debug(f"Streamed {len(events)} SSE events to client")
 
                     # Send heartbeat every 5 seconds (temporarily for debugging)
-                    now = datetime.utcnow()
+                    now = utc_now()
                     if (now - last_heartbeat).total_seconds() > 5:
                         heartbeat_event = {
                             "type": "heartbeat",
@@ -156,7 +160,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                     error_event = {
                         "type": "error",
                         "data": {"message": "Event stream error occurred"},
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": utc_now().isoformat(),
                     }
                     yield f"data: {json.dumps(error_event)}\n\n"
                     await asyncio.sleep(5)  # Wait longer on error

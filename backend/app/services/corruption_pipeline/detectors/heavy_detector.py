@@ -7,13 +7,15 @@ More CPU-intensive but catches subtle corruption that fast detection misses.
 Can be disabled per-camera for performance optimization.
 """
 
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
 import cv2
 import numpy as np
-import time
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
-from ....services.logger import get_service_logger, LogEmoji
+
 from ....enums import LoggerName
+from ....services.logger import LogEmoji, get_service_logger
 
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 

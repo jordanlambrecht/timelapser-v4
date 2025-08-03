@@ -9,19 +9,20 @@ This adapter bridges the gap between frontend and backend data structures:
 Provides backward compatibility with existing overlay configurations.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
 
-from ....services.logger import get_service_logger
 from ....enums import LoggerName, LogSource, OverlayGridPosition
+from ....services.logger import get_service_logger
 from ....utils.enum_helpers import parse_enum
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 from ....models.overlay_model import (
+    GlobalOverlayOptions,
     OverlayConfiguration,
     OverlayItem,
-    GlobalOverlayOptions,
 )
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class FrontendOverlayAdapter:

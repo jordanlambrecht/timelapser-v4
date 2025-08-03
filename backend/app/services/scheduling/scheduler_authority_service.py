@@ -15,17 +15,16 @@ Architecture:
 """
 
 import asyncio
-from typing import Optional, Dict, Any
-from ...services.logger import get_service_logger, LogEmoji
-from ...enums import LoggerName
-
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
+from typing import Any, Dict, Optional
 
 from ...database.core import AsyncDatabase
+from ...enums import LoggerName, SSEPriority
+from ...services.logger import get_service_logger
 from ...services.settings_service import SettingsService
-from .capture_timing_service import CaptureTimingService
 from ...workers.scheduler_worker import SchedulerWorker
-from ...enums import SSEPriority
+from .capture_timing_service import CaptureTimingService
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 
 class SchedulerAuthorityService:

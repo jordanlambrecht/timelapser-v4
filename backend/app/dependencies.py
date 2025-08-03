@@ -6,61 +6,62 @@ Provides proper dependency injection for services following the target architect
 All services receive database instances via dependency injection using FastAPI's Depends system.
 """
 
-from typing import Annotated, TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
 from fastapi import Depends
 
 # Basic imports that don't cause circular dependencies
 from .database import async_db, sync_db
 from .database.core import AsyncDatabase, SyncDatabase
-
-# Factory function imports (safe - no circular dependencies)
-from .services.corruption_pipeline import create_corruption_pipeline
-from .services.capture_pipeline import create_capture_pipeline
-from .services.capture_pipeline.rtsp_service import RTSPService
-from .services.video_pipeline import (
-    create_video_pipeline,
-    create_video_job_service,
-    create_overlay_integration_service,
-)
+from .database.scheduled_job_operations import ScheduledJobOperations
 
 # Database operations imports (safe - no circular dependencies)
 from .database.weather_operations import SyncWeatherOperations
-from .database.scheduled_job_operations import ScheduledJobOperations
+from .services.capture_pipeline import create_capture_pipeline
+from .services.capture_pipeline.rtsp_service import RTSPService
+
+# Factory function imports (safe - no circular dependencies)
+from .services.corruption_pipeline import create_corruption_pipeline
+from .services.video_pipeline import (
+    create_overlay_integration_service,
+    create_video_job_service,
+    create_video_pipeline,
+)
 
 # Use TYPE_CHECKING for imports that might cause circular dependencies
 if TYPE_CHECKING:
-    from .services.video_pipeline.video_workflow_service import VideoWorkflowService
-    from .services.camera_service import CameraService
-    from .services.video_service import VideoService, SyncVideoService
-    from .services.timelapse_service import TimelapseService
-    from .services.image_service import ImageService
-    from .services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
-    from .services.capture_pipeline import WorkflowOrchestratorService
-    from .services.settings_service import SettingsService, SyncSettingsService
-    from .services.statistics_service import StatisticsService
-    from .services.logger.logger_service import LoggerService
-    from .services.weather.service import WeatherManager
-    from .services.health_service import HealthService
+    from .database.image_operations import AsyncImageOperations
+    from .database.overlay_job_operations import OverlayJobOperations
+    from .database.sse_events_operations import SSEEventsOperations
+    from .database.thumbnail_job_operations import ThumbnailJobOperations
     from .services.admin_service import AdminService
+    from .services.camera_service import CameraService
+    from .services.capture_pipeline import WorkflowOrchestratorService
+    from .services.health_service import HealthService
+    from .services.image_service import ImageService
+    from .services.logger.logger_service import LoggerService
     from .services.overlay_pipeline import AsyncOverlayService
     from .services.overlay_pipeline.services.job_service import AsyncOverlayJobService
     from .services.scheduling.capture_timing_service import (
         CaptureTimingService,
         SyncCaptureTimingService,
     )
-    from .services.scheduling.time_window_service import (
-        TimeWindowService,
-        SyncTimeWindowService,
-    )
     from .services.scheduling.job_queue_service import (
         JobQueueService,
         SyncJobQueueService,
     )
     from .services.scheduling.scheduler_authority_service import SchedulerService
-    from .database.thumbnail_job_operations import ThumbnailJobOperations
-    from .database.overlay_job_operations import OverlayJobOperations
-    from .database.sse_events_operations import SSEEventsOperations
-    from .database.image_operations import AsyncImageOperations
+    from .services.scheduling.time_window_service import (
+        SyncTimeWindowService,
+        TimeWindowService,
+    )
+    from .services.settings_service import SettingsService, SyncSettingsService
+    from .services.statistics_service import StatisticsService
+    from .services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
+    from .services.timelapse_service import TimelapseService
+    from .services.video_pipeline.video_workflow_service import VideoWorkflowService
+    from .services.video_service import SyncVideoService, VideoService
+    from .services.weather.service import WeatherManager
 
 # Global scheduler worker instance (set by main worker on startup)
 _scheduler_worker_instance = None
@@ -144,10 +145,10 @@ async def get_video_service():
 async def get_timelapse_service():
     """Get TimelapseService with async database dependency injection"""
     # Inline imports to avoid circular dependencies
-    from .services.timelapse_service import TimelapseService
     from .services.health_service import HealthService
     from .services.image_service import ImageService
     from .services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
+    from .services.timelapse_service import TimelapseService
 
     # Use singleton settings service
     settings_service = await get_settings_service()
@@ -243,8 +244,6 @@ async def get_weather_manager():
 
 async def get_statistics_service():
     """Get StatisticsService with async database dependency injection"""
-    # Inline import to avoid circular dependencies
-    from .services.statistics_service import StatisticsService
 
     return StatisticsService(async_db)
 
@@ -252,8 +251,6 @@ async def get_statistics_service():
 # get_log_service removed - use get_logger_service instead
 async def get_logger_service():
     """Get LoggerService with async and sync database dependency injection"""
-    # Inline import to avoid circular dependencies
-    from .services.logger.logger_service import LoggerService
 
     return LoggerService(
         async_db=async_db,

@@ -14,24 +14,24 @@ Responsibilities:
 - Data export and reporting capabilities
 """
 
-from typing import Dict, Any
-from datetime import datetime, timedelta
-from ....services.logger import get_service_logger, LogEmoji
+from datetime import timedelta
+from typing import Any, Dict
+
 from ....enums import LoggerName
-
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
-
-from ....database.core import AsyncDatabase, SyncDatabase
+from ....services.logger import LogEmoji, get_service_logger
+from ....utils.time_utils import utc_now
 
 from ....constants import (
-    DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
 )
-
+from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
 class CorruptionStatisticsService:
@@ -124,7 +124,7 @@ class CorruptionStatisticsService:
                     }
                     for cam in degraded_cameras
                 ],
-                "generated_at": datetime.utcnow(),
+                "generated_at": utc_now(),
             }
 
         except Exception as e:
@@ -200,7 +200,7 @@ class CorruptionStatisticsService:
                     ),
                 },
                 "most_recent_detection": stats.most_recent_detection,
-                "generated_at": datetime.utcnow(),
+                "generated_at": utc_now(),
             }
 
         except Exception as e:
@@ -251,7 +251,7 @@ class CorruptionStatisticsService:
                     "avg_corruption_score": stats.get("avg_score", 100.0),
                     "quality_score": quality_score,
                 },
-                "generated_at": datetime.utcnow(),
+                "generated_at": utc_now(),
             }
 
         except Exception as e:
@@ -283,7 +283,7 @@ class CorruptionStatisticsService:
             )
 
             # Filter logs within the time window
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+            cutoff_time = utc_now() - timedelta(hours=hours)
             recent_logs = [
                 log
                 for log in logs_page.logs
@@ -295,7 +295,7 @@ class CorruptionStatisticsService:
                     "trend_period_hours": hours,
                     "trend_direction": "insufficient_data",
                     "detection_count": 0,
-                    "generated_at": datetime.utcnow(),
+                    "generated_at": utc_now(),
                 }
 
             # Basic trend analysis
@@ -322,7 +322,7 @@ class CorruptionStatisticsService:
                 "avg_corruption_score": avg_score,
                 "discard_rate_percent": discard_rate,
                 "hourly_detection_rate": total_detections / hours,
-                "generated_at": datetime.utcnow(),
+                "generated_at": utc_now(),
             }
 
         except Exception as e:
@@ -376,7 +376,7 @@ class CorruptionStatisticsService:
                     ),
                     "false_positive_rate": 0.0,  # Would need manual verification data
                 },
-                "generated_at": datetime.utcnow(),
+                "generated_at": utc_now(),
             }
 
         except Exception as e:
@@ -406,7 +406,7 @@ class CorruptionStatisticsService:
             # Compile comprehensive report
             report = {
                 "report_metadata": {
-                    "generated_at": datetime.utcnow(),
+                    "generated_at": utc_now(),
                     "format": format,
                     "report_type": "corruption_detection_statistics",
                     "version": "1.0",

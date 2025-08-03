@@ -9,39 +9,45 @@ Interactions: Uses OverlayService for business logic, returns Pydantic models, h
 Architecture: API Layer - delegates all business logic to services
 """
 
-from typing import List, Optional, Dict, Any
-
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
-    HTTPException,
-    status,
-    Path as FastAPIPath,
     File,
-    UploadFile,
     Form,
+    HTTPException,
+)
+from fastapi import Path as FastAPIPath
+from fastapi import (
     Query,
+    UploadFile,
+    status,
 )
 from fastapi.responses import FileResponse
 
+# from ..database.overlay_job_operations import OverlayJobOperations
+# from ..database.overlay_operations import OverlayOperations
 from ..dependencies import (
-    OverlayServiceDep,
     OverlayJobServiceDep,
+    OverlayServiceDep,
     SchedulerServiceDep,
 )
 from ..models.overlay_model import (
+    OverlayAsset,
+    # OverlayAssetCreate,
+    # OverlayConfiguration,
     OverlayPreset,
     OverlayPresetCreate,
     OverlayPresetUpdate,
+    OverlayPreviewRequest,
+    OverlayPreviewResponse,
     TimelapseOverlay,
     TimelapseOverlayCreate,
     TimelapseOverlayUpdate,
-    OverlayAsset,
-    OverlayAssetCreate,
-    OverlayPreviewRequest,
-    OverlayPreviewResponse,
-    OverlayConfiguration,
+)
+from ..utils.file_helpers import (
+    validate_file_path,
 )
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import (
@@ -49,14 +55,6 @@ from ..utils.router_helpers import (
     validate_entity_exists,
 )
 from ..utils.validation_helpers import process_overlay_asset_upload
-from ..utils.response_helpers import ResponseFormatter
-from ..utils.file_helpers import (
-    validate_file_path,
-    ensure_directory_exists,
-)
-from ..database.overlay_operations import OverlayOperations
-from ..database.overlay_job_operations import OverlayJobOperations
-
 
 router = APIRouter(tags=["overlays"])
 
@@ -172,7 +170,7 @@ async def update_overlay_preset(
         )
 
     preset = await overlay_service.update_overlay_preset(preset_id, preset_data)
-    if not preset:
+    if not isinstance(preset, OverlayPreset):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to update overlay preset",
@@ -414,7 +412,7 @@ async def delete_overlay_asset(
     asset_id: int = FastAPIPath(..., description="Asset ID", ge=1),
 ):
     """Delete an overlay asset and its associated file."""
-    asset = await validate_entity_exists(
+    await validate_entity_exists(
         overlay_service.get_overlay_asset_by_id, asset_id, "Overlay asset not found"
     )
 
@@ -546,6 +544,12 @@ async def get_overlay_system_status(
     # Get asset counts
     assets = await overlay_service.get_overlay_assets()
 
+    # Provide default values if job_stats is None
+    pending_jobs = getattr(job_stats, "pending_jobs", 0) if job_stats else 0
+    processing_jobs = getattr(job_stats, "processing_jobs", 0) if job_stats else 0
+    completed_jobs_24h = getattr(job_stats, "completed_jobs_24h", 0) if job_stats else 0
+    failed_jobs_24h = getattr(job_stats, "failed_jobs_24h", 0) if job_stats else 0
+
     return {
         "status": "healthy",
         "presets": {
@@ -557,10 +561,10 @@ async def get_overlay_system_status(
             "total": len(assets),
         },
         "job_queue": {
-            "pending": job_stats.pending_jobs,
-            "processing": job_stats.processing_jobs,
-            "completed_today": job_stats.completed_jobs_24h,
-            "failed_today": job_stats.failed_jobs_24h,
+            "pending": pending_jobs,
+            "processing": processing_jobs,
+            "completed_today": completed_jobs_24h,
+            "failed_today": failed_jobs_24h,
         },
         "system_health": "operational",
     }

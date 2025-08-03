@@ -5,18 +5,18 @@ This module provides context extraction and enrichment utilities that
 gather additional metadata and context information for log entries.
 """
 
-import inspect
-import traceback
-from typing import Dict, Any, Optional
-
 import asyncio
-import threading
+import inspect
 import os
 import sys
+import threading
+import traceback
 import uuid
+from typing import Any, Dict, Optional
 
 try:
     import psutil
+
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -24,11 +24,16 @@ except ImportError:
 
 from ....utils.time_utils import utc_now, utc_timestamp
 from ..constants import (
-    DEFAULT_MAX_STACK_DEPTH, MAX_CONTEXT_STRING_LENGTH, 
-    CONTEXT_STRING_TRUNCATE_LENGTH, CONTEXT_TRUNCATE_SUFFIX,
-    MEMORY_USAGE_DECIMAL_PLACES, CPU_PERCENT_DECIMAL_PLACES,
-    STACK_FILTER_PATTERNS, DOCKER_ENV_FILE, DOCKER_CONTAINER_ENV_VAR,
-    TIMELAPSER_MODULE_INDICATOR
+    CONTEXT_STRING_TRUNCATE_LENGTH,
+    CONTEXT_TRUNCATE_SUFFIX,
+    CPU_PERCENT_DECIMAL_PLACES,
+    DEFAULT_MAX_STACK_DEPTH,
+    DOCKER_CONTAINER_ENV_VAR,
+    DOCKER_ENV_FILE,
+    MAX_CONTEXT_STRING_LENGTH,
+    MEMORY_USAGE_DECIMAL_PLACES,
+    STACK_FILTER_PATTERNS,
+    TIMELAPSER_MODULE_INDICATOR,
 )
 
 # Note: Using UTC timestamps for consistency across async/sync contexts
@@ -194,15 +199,19 @@ class ContextExtractor:
     def _get_performance_context(self) -> Dict[str, Any]:
         """Get performance-related context information."""
         try:
-            if not PSUTIL_AVAILABLE:
+            if not PSUTIL_AVAILABLE or psutil is None:
                 return {"performance_unavailable": "psutil_not_installed"}
 
             # Memory usage
             process = psutil.Process()
             memory_info = process.memory_info()
             return {
-                "memory_usage_mb": round(memory_info.rss / 1024 / 1024, MEMORY_USAGE_DECIMAL_PLACES),
-                "memory_percent": round(process.memory_percent(), MEMORY_USAGE_DECIMAL_PLACES),
+                "memory_usage_mb": round(
+                    memory_info.rss / 1024 / 1024, MEMORY_USAGE_DECIMAL_PLACES
+                ),
+                "memory_percent": round(
+                    process.memory_percent(), MEMORY_USAGE_DECIMAL_PLACES
+                ),
                 "cpu_percent": round(process.cpu_percent(), CPU_PERCENT_DECIMAL_PLACES),
                 "thread_count": process.num_threads(),
             }
@@ -279,7 +288,9 @@ class ContextExtractor:
                     continue
                 # Limit string length
                 case str() as s if len(s) > MAX_CONTEXT_STRING_LENGTH:
-                    cleaned[key] = s[:CONTEXT_STRING_TRUNCATE_LENGTH] + CONTEXT_TRUNCATE_SUFFIX
+                    cleaned[key] = (
+                        s[:CONTEXT_STRING_TRUNCATE_LENGTH] + CONTEXT_TRUNCATE_SUFFIX
+                    )
                 case _:
                     cleaned[key] = value
 

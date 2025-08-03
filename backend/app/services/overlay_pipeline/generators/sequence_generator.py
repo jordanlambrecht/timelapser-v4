@@ -5,17 +5,20 @@ Sequence Overlay Generator - Handles frame and day number overlay content genera
 Supports sequence-based overlays with formatting options.
 """
 
+from datetime import datetime
 from typing import Union
+
 from PIL import Image as PILImage
-from datetime import datetime, timedelta
+
+from ....enums import LogSource, LoggerName
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.validation_helpers import validate_boolean_property
+from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class SequenceGenerator(BaseOverlayGenerator):
@@ -101,7 +104,7 @@ class SequenceGenerator(BaseOverlayGenerator):
         logger.debug(f"🔢 Current frame number: {frame_number}")
 
         # Apply leading zeros if requested
-        if overlay_item.leadingZeros:
+        if overlay_item.leading_zeros:
             logger.debug("🔢 Applying leading zeros (6-digit padding)")
             # Estimate total frames for proper padding
             # For now, use 6 digits which handles up to 999,999 frames
@@ -110,14 +113,14 @@ class SequenceGenerator(BaseOverlayGenerator):
             formatted_number = str(frame_number)
 
         # Add prefix unless hidden
-        if overlay_item.hidePrefix:
+        if overlay_item.hide_prefix:
             logger.debug("Prefix hidden, returning number only")
             result = formatted_number
         else:
             logger.debug("🔢 Including 'Frame' prefix")
             result = f"Frame {formatted_number}"
 
-        logger.debug(f"✅ Frame number overlay generated successfully")
+        logger.debug("✅ Frame number overlay generated successfully")
         return result
 
     def _generate_day_number(
@@ -139,7 +142,7 @@ class SequenceGenerator(BaseOverlayGenerator):
         logger.debug(f"🔢 Current day number: {day_number}")
 
         # Apply leading zeros if requested
-        if overlay_item.leadingZeros:
+        if overlay_item.leading_zeros:
             logger.debug("🔢 Applying leading zeros (3-digit padding)")
             # Most timelapses won't exceed 999 days, so use 3 digits
             formatted_number = f"{day_number:03d}"
@@ -147,7 +150,7 @@ class SequenceGenerator(BaseOverlayGenerator):
             formatted_number = str(day_number)
 
         # Add prefix unless hidden
-        if overlay_item.hidePrefix:
+        if overlay_item.hide_prefix:
             logger.debug("Prefix hidden, returning number only")
             result = formatted_number
         else:
@@ -158,7 +161,7 @@ class SequenceGenerator(BaseOverlayGenerator):
             else:
                 result = f"Day {formatted_number}"
 
-        logger.debug(f"✅ Day number overlay generated successfully")
+        logger.debug("✅ Day number overlay generated successfully")
         return result
 
     def _calculate_day_number_from_dates(
@@ -207,17 +210,17 @@ class SequenceGenerator(BaseOverlayGenerator):
         # Use validation helpers for consistent boolean validation
         try:
             # Validate boolean properties
-            validated_leading_zeros = validate_boolean_property(
-                overlay_item.leadingZeros, "leadingZeros"
+            validated_leading_zeross = validate_boolean_property(
+                overlay_item.leading_zeros, "leading_zeros"
             )
             validated_hide_prefix = validate_boolean_property(
-                overlay_item.hidePrefix, "hidePrefix"
+                overlay_item.hide_prefix, "hide_prefix"
             )
 
-            if validated_leading_zeros is not None:
-                logger.debug(f"🔢 Validated leadingZeros: {validated_leading_zeros}")
+            if validated_leading_zeross is not None:
+                logger.debug(f"🔢 Validated leading_zeros: {validated_leading_zeross}")
             if validated_hide_prefix is not None:
-                logger.debug(f"🔢 Validated hidePrefix: {validated_hide_prefix}")
+                logger.debug(f"🔢 Validated hide_prefix: {validated_hide_prefix}")
 
         except ValueError as e:
             logger.error(f"❌ Sequence validation failed: {e}")
@@ -226,7 +229,7 @@ class SequenceGenerator(BaseOverlayGenerator):
         logger.debug(
             f"✅ Sequence overlay validation completed for type: {overlay_item.type}"
         )
-        if overlay_item.leadingZeros:
+        if overlay_item.leading_zeros:
             logger.debug("🔢 Leading zeros enabled")
-        if overlay_item.hidePrefix:
+        if overlay_item.hide_prefix:
             logger.debug("🔢 Prefix hiding enabled")

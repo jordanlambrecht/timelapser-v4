@@ -14,23 +14,23 @@ Related Files:
     and caching decorators. Both work together to maintain cache coherency.
 """
 
-from typing import Dict, Any, Optional, Union
 from datetime import datetime
+from typing import Any, Dict, Optional, Union
 
 from ..enums import SSEEvent
-
-# from ..services.logger import get_service_logger, LogEmoji  # Commented out to avoid circular import
 
 # logger = get_service_logger(LoggerName.SYSTEM)  # Commented out to avoid circular import
 from .cache_manager import (
     cache,
     delete_cache_by_prefix,
-    get_setting_cached,
-    generate_timestamp_etag,
-    generate_composite_etag,
     generate_collection_etag,
+    generate_composite_etag,
+    generate_timestamp_etag,
+    get_setting_cached,
     validate_etag_match,
 )
+
+# from ..services.logger import get_service_logger, LogEmoji  # Commented out to avoid circular import
 
 
 class CacheInvalidationService:
@@ -194,7 +194,7 @@ class CacheInvalidationService:
                 # logger.info(f"🔄 Invalidated settings cache: {key}")
                 pass
             return success
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Failed to invalidate settings cache '{key}': {e}")
             pass
             return False
@@ -222,7 +222,7 @@ class CacheInvalidationService:
             pass
             return value
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Failed to refresh settings cache '{key}': {e}")
             pass
             return None
@@ -300,7 +300,7 @@ class CacheInvalidationService:
                 if camera_id:
                     await cls.invalidate_latest_image_cache(camera_id)
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Cache invalidation failed for event {event_type}: {e}")
             pass
 
@@ -361,7 +361,7 @@ class CacheInvalidationService:
 
             return invalidated, cached_etag
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
             return False, None
 
@@ -406,7 +406,7 @@ class CacheInvalidationService:
                     pass
                 return invalidated
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Image metadata cache invalidation failed: {e}")
             return False
 
@@ -450,7 +450,7 @@ class CacheInvalidationService:
 
                 return invalidated_count
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Settings ETag invalidation failed: {e}")
             return 0
 
@@ -515,13 +515,13 @@ class CacheInvalidationService:
                         invalidated_any = True
 
             if invalidated_any:
-                camera_info = f" for camera {camera_id}" if camera_id else ""
+                # camera_info = f" for camera {camera_id}" if camera_id else ""
                 # logger.info(f"🔄 Image collection cache invalidated{camera_info}")
                 pass
 
             return invalidated_any
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ Image collection cache invalidation failed: {e}")
             return False
 
@@ -566,7 +566,7 @@ class CacheInvalidationService:
 
             return is_current, cached_data, cached_etag
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ ETag validation failed for {cache_key}: {e}")
             return False, None, None
 
@@ -618,7 +618,7 @@ class CacheInvalidationService:
                 # Fallback to regular invalidation for other events
                 await cls.handle_sse_event(event_type, event_data)
 
-        except Exception as e:
+        except Exception:
             # logger.error(f"❌ ETag-aware cache invalidation failed for event {event_type}: {e}")
             pass
             # Fallback to regular invalidation

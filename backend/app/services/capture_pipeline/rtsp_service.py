@@ -27,28 +27,24 @@ providing a clean interface for frame capture without external dependencies.
 import asyncio
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
-
-from ...services.settings_service import SettingsService
-from ...services.logger import get_service_logger
-from ...enums import LogSource, LoggerName
-
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
+from ...constants import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RTSP_QUALITY,
+    DEFAULT_RTSP_TIMEOUT_SECONDS,
+)
+from ...database.camera_operations import SyncCameraOperations
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...enums import LoggerName, LogSource
+from ...models.camera_model import Camera, CropRotationSettings, SourceResolution
+from ...models.shared_models import CameraConnectivityTestResult, RTSPCaptureResult
+from ...services.logger import get_service_logger
 from ...utils.time_utils import get_timezone_aware_timestamp_sync
 from . import rtsp_utils
 
-from ...database.core import AsyncDatabase, SyncDatabase
-from ...models.shared_models import RTSPCaptureResult, CameraConnectivityTestResult
-from ...models.camera_model import CropRotationSettings, SourceResolution, Camera
-from ...constants import (
-    DEFAULT_RTSP_QUALITY,
-    DEFAULT_RTSP_TIMEOUT_SECONDS,
-    DEFAULT_MAX_RETRIES,
-)
-
-from ...database.camera_operations import SyncCameraOperations
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 # Use standard logger pattern (already imported at top)

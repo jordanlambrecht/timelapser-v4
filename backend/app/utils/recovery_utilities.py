@@ -8,9 +8,8 @@ without any database dependencies, following CLAUDE.md architecture guidelines.
 All database operations have been moved to recovery_operations.py in the database layer.
 """
 
-from typing import Dict, Any, Optional
 from datetime import timedelta
-from ..utils.time_utils import utc_now
+from typing import Any, Dict
 
 
 def calculate_recovery_cutoff_time(
@@ -222,9 +221,9 @@ def log_recovery_completion(
     )
 
     if recovered_count > 0:
-        pass
+        print(message)  # Log the recovery message for successful recovery
     else:
-        pass
+        print(message)  # Log the recovery message for failed recovery
 
 
 def log_recovery_error(job_type_name: str, error: Exception) -> None:

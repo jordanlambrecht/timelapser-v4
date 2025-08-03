@@ -8,10 +8,11 @@ and memory management improvements.
 """
 
 import time
-from typing import Dict, Any, List, Optional, Callable, Tuple
-from datetime import datetime
-from .database_helpers import DatabaseConnectionBatcher
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
 from ..database.core import AsyncDatabase
+from .database_helpers import DatabaseConnectionBatcher
+from .time_utils import utc_now
 
 
 class QueryOptimizer:
@@ -103,7 +104,7 @@ class QueryOptimizer:
 
         return {
             "query": query,
-            "analysis_timestamp": datetime.now().isoformat(),
+            "analysis_timestamp": utc_now().isoformat(),
             "suggestions": suggestions,
             "complexity_score": len(suggestions),
         }
@@ -197,7 +198,7 @@ class ConnectionOptimizer:
                 await operation()
                 execution_time = (time.time() - start_time) * 1000
                 individual_times.append(execution_time)
-            except Exception as e:
+            except Exception:
                 pass
 
         # Test batched execution
@@ -236,7 +237,7 @@ class ConnectionOptimizer:
                             "recommendation": "Use connection batching for these operations",
                         }
                     )
-            except Exception as e:
+            except Exception:
                 pass
 
         return results
@@ -345,7 +346,7 @@ class DatabaseMicroOptimizer:
         """
         analysis = {
             "operation_name": operation_name,
-            "analysis_timestamp": datetime.now().isoformat(),
+            "analysis_timestamp": utc_now().isoformat(),
             "query_optimization": self.query_optimizer.analyze_query_plan(query),
             "index_suggestions": self.query_optimizer.suggest_index_opportunities(
                 query, self.table_schemas
@@ -383,7 +384,7 @@ class DatabaseMicroOptimizer:
             Comprehensive optimization report
         """
         report = {
-            "report_timestamp": datetime.now().isoformat(),
+            "report_timestamp": utc_now().isoformat(),
             "operations_analyzed": len(operations),
             "individual_analyses": [],
             "summary": {

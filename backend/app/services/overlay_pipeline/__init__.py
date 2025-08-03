@@ -13,12 +13,14 @@ from .overlay_pipeline import (
     get_overlay_pipeline_health,
 )
 from .services.integration_service import (
-    SyncOverlayIntegrationService as OverlayService,
     OverlayIntegrationService as AsyncOverlayService,
+)
+from .services.integration_service import (
+    SyncOverlayIntegrationService as OverlayService,
 )
 
 __all__ = [
-    "OverlayPipeline", 
+    "OverlayPipeline",
     "create_overlay_pipeline",
     "create_sync_overlay_pipeline",
     "get_overlay_pipeline_health",

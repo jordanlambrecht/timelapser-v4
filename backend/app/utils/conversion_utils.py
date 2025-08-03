@@ -13,7 +13,7 @@ Features:
 - Type hints for better development experience
 """
 
-from typing import Optional, Any
+from typing import Any, Optional
 
 
 def safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:

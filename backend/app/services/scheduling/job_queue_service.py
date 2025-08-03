@@ -27,47 +27,49 @@ Business Rules:
 - Priority-based job queuing is supported
 """
 
-from typing import Dict, Any, Optional, TYPE_CHECKING
-from ...services.logger import get_service_logger
+from typing import Any, Dict, Optional
+
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...database.overlay_job_operations import (
+    OverlayJobOperations,
+    SyncOverlayJobOperations,
+)
+from ...database.sse_events_operations import (
+    SSEEventsOperations,
+    SyncSSEEventsOperations,
+)
+from ...database.thumbnail_job_operations import (
+    SyncThumbnailJobOperations,
+    ThumbnailJobOperations,
+)
+from ...database.video_operations import SyncVideoOperations, VideoOperations
 from ...enums import (
+    JobPriority,
+    JobStatus,
     JobTypes,
     LogEmoji,
     LoggerName,
     SSEEvent,
     SSEEventSource,
+    SSEPriority,
     ThumbnailJobPriority,
     ThumbnailJobStatus,
     ThumbnailJobType,
 )
-
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
-
-from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.thumbnail_job_operations import (
-    ThumbnailJobOperations,
-    SyncThumbnailJobOperations,
-)
-from ...database.overlay_job_operations import (
-    OverlayJobOperations,
-    SyncOverlayJobOperations,
-)
-from ...database.video_operations import VideoOperations, SyncVideoOperations
-from ...database.sse_events_operations import (
-    SSEEventsOperations,
-    SyncSSEEventsOperations,
+from ...models.overlay_model import (
+    OverlayGenerationJobCreate,
 )
 from ...models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
     VideoGenerationJob,
 )
-from ...models.overlay_model import (
-    OverlayGenerationJobCreate,
-)
+from ...services.logger import get_service_logger
 from ...utils.time_utils import (
     get_timezone_aware_timestamp_async,
 )
-from ...enums import SSEPriority, JobPriority, JobStatus
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
 
 class JobQueueService:

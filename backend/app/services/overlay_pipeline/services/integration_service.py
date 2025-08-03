@@ -6,56 +6,59 @@ Migrated from proven overlay_service.py logic to use existing OverlayRenderer
 instead of custom generators.
 """
 
-from typing import Dict, Any, Optional, List
 from pathlib import Path
-from ....services.logger import get_service_logger
+from typing import Any, Dict, List, Optional
+
 from ....enums import (
     LogEmoji,
     LoggerName,
     LogSource,
     OverlayJobPriority,
     SSEEvent,
-    SSEPriority,
     SSEEventSource,
+    SSEPriority,
 )
+from ....services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 from ....database.core import SyncDatabase
 from ....database.sse_events_operations import SSEEventsOperations
-from ....services.image_service import ImageService
-from .job_service import SyncOverlayJobService, AsyncOverlayJobService
-from .preset_service import SyncOverlayPresetService, OverlayPresetService
-from ....services.capture_pipeline.rtsp_service import RTSPService, AsyncRTSPService
+from ....models.image_model import Image as ImageModel
 from ....models.overlay_model import (
+    GlobalOverlayOptions,
     OverlayConfiguration,
+    OverlayJobStatistics,
     OverlayPreset,
-    TimelapseOverlay,
     OverlayPreviewRequest,
     OverlayPreviewResponse,
-    GlobalOverlayOptions,
-    OverlayJobStatistics,
+    TimelapseOverlay,
 )
-from ....models.image_model import Image as ImageModel
-from ....utils.time_utils import (
-    utc_now,
-    utc_timestamp,
-    get_timezone_aware_timestamp_sync,
-    get_timezone_aware_timestamp_string_sync,
-    get_timezone_aware_timestamp_async,
-    get_timezone_aware_timestamp_string_async,
-)
+from ....services.capture_pipeline.rtsp_service import AsyncRTSPService, RTSPService
+from ....services.image_service import ImageService
 from ....utils.file_helpers import (
     ensure_directory_exists,
-    validate_file_path,
     get_overlay_path_for_image,
+    validate_file_path,
 )
+from ....utils.time_utils import (
+    format_filename_timestamp,
+    get_timezone_aware_timestamp_async,
+    get_timezone_aware_timestamp_string_async,
+    get_timezone_aware_timestamp_string_sync,
+    get_timezone_aware_timestamp_sync,
+    utc_now,
+    utc_timestamp,
+)
+from ..utils.overlay_helpers import OverlaySettingsResolver
 from ..utils.overlay_utils import (
     OverlayRenderer,
     render_overlay_with_caching,
     validate_overlay_configuration,
 )
-from ..utils.overlay_helpers import OverlaySettingsResolver
+from .job_service import SyncOverlayJobService
+from .preset_service import OverlayPresetService, SyncOverlayPresetService
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class SyncOverlayIntegrationService:
@@ -244,7 +247,7 @@ class SyncOverlayIntegrationService:
                 )
 
             # Generate preview overlay
-            logger.debug(f"Rendering preview overlay", emoji=LogEmoji.OVERLAY)
+            logger.debug("Rendering preview overlay", emoji=LogEmoji.OVERLAY)
             preview_path = self._generate_preview_overlay(
                 test_image_path, request.overlay_config
             )
@@ -502,9 +505,7 @@ class SyncOverlayIntegrationService:
                 )
                 preview_filename = f"preview_{timestamp_str}.png"
             else:
-                preview_filename = (
-                    f"preview_{preview_timestamp.strftime('%Y%m%d_%H%M%S')}.png"
-                )
+                preview_filename = f"preview_{format_filename_timestamp(preview_timestamp, self.settings_service)}.png"
 
             preview_path = preview_dir / preview_filename
             context_data = {
@@ -677,18 +678,18 @@ class SyncOverlayIntegrationService:
                     preset_config = preset.overlay_config
 
                     # Create merged configuration
-                    merged_positions = preset_config.overlayPositions.copy()
+                    merged_positions = preset_config.overlay_positions.copy()
 
                     # Apply timelapse-specific position overrides
-                    if base_config and base_config.overlayPositions:
-                        merged_positions.update(base_config.overlayPositions)
+                    if base_config and base_config.overlay_positions:
+                        merged_positions.update(base_config.overlay_positions)
 
                     # Apply timelapse-specific global option overrides
-                    merged_global_options = preset_config.globalOptions
-                    if base_config and base_config.globalOptions:
+                    merged_global_options = preset_config.global_options
+                    if base_config and base_config.global_options:
                         # Override global options with timelapse-specific values
                         global_options_dict = merged_global_options.model_dump()
-                        timelapse_global_dict = base_config.globalOptions.model_dump()
+                        timelapse_global_dict = base_config.global_options.model_dump()
 
                         # Only override non-default values from timelapse config
                         for key, value in timelapse_global_dict.items():
@@ -701,8 +702,8 @@ class SyncOverlayIntegrationService:
 
                     # Create final merged configuration
                     return OverlayConfiguration(
-                        overlayPositions=merged_positions,
-                        globalOptions=merged_global_options,
+                        overlay_positions=merged_positions,
+                        global_options=merged_global_options,
                     )
                 else:
                     logger.warning(
@@ -1273,18 +1274,18 @@ class OverlayIntegrationService:
                     preset_config = preset.overlay_config
 
                     # Create merged configuration
-                    merged_positions = preset_config.overlayPositions.copy()
+                    merged_positions = preset_config.overlay_positions.copy()
 
                     # Apply timelapse-specific position overrides
-                    if base_config and base_config.overlayPositions:
-                        merged_positions.update(base_config.overlayPositions)
+                    if base_config and base_config.overlay_positions:
+                        merged_positions.update(base_config.overlay_positions)
 
                     # Apply timelapse-specific global option overrides
-                    merged_global_options = preset_config.globalOptions
-                    if base_config and base_config.globalOptions:
+                    merged_global_options = preset_config.global_options
+                    if base_config and base_config.global_options:
                         # Override global options with timelapse-specific values
                         global_options_dict = merged_global_options.model_dump()
-                        timelapse_global_dict = base_config.globalOptions.model_dump()
+                        timelapse_global_dict = base_config.global_options.model_dump()
 
                         # Only override non-default values from timelapse config
                         for key, value in timelapse_global_dict.items():
@@ -1297,8 +1298,8 @@ class OverlayIntegrationService:
 
                     # Create final merged configuration
                     return OverlayConfiguration(
-                        overlayPositions=merged_positions,
-                        globalOptions=merged_global_options,
+                        overlay_positions=merged_positions,
+                        global_options=merged_global_options,
                     )
                 else:
                     logger.warning(
@@ -1691,9 +1692,7 @@ class OverlayIntegrationService:
                 )
                 preview_filename = f"preview_{timestamp_str}.png"
             else:
-                preview_filename = (
-                    f"preview_{preview_timestamp.strftime('%Y%m%d_%H%M%S')}.png"
-                )
+                preview_filename = f"preview_{format_filename_timestamp(preview_timestamp, self.settings_service)}.png"
 
             preview_path = preview_dir / preview_filename
             context_data = {

@@ -6,22 +6,16 @@ for database operations, providing type-safe Pydantic model interfaces.
 """
 
 # Standard library imports
+
 import io
 import zipfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from .logger import get_service_logger
-
-from ..enums import SSEEvent, SSEEventSource, SSEPriority, LoggerName
-
-from ..exceptions import (
-    ImageNotFoundError,
-    InvalidImageSizeError,
-)
+from ..config import settings
 
 # Local imports
 from ..constants import (
@@ -38,31 +32,34 @@ from ..database.image_operations import (
     SyncImageOperations,
 )
 from ..database.sse_events_operations import SSEEventsOperations
+from ..enums import LoggerName, SSEEvent, SSEEventSource, SSEPriority
+from ..exceptions import (
+    ImageNotFoundError,
+    InvalidImageSizeError,
+)
+from ..models.health_model import HealthStatus
 from ..models.image_model import Image
-from ..models.shared_models import (
+from ..models.shared_models import (  # ThumbnailOperationResponse,; ThumbnailRegenerationStatus,; NOTE: ThumbnailGenerationResult removed - thumbnail generation handled by ThumbnailPipeline
     PaginatedImagesResponse,
-    # ThumbnailOperationResponse,
-    # ThumbnailRegenerationStatus,
-    # NOTE: ThumbnailGenerationResult removed - thumbnail generation handled by ThumbnailPipeline
 )
 
 # NOTE: thumbnail_utils removed - thumbnail generation handled by ThumbnailPipeline
 from ..utils.cache_manager import cached_response
 from ..utils.conversion_utils import sanitize_error_message
-from ..utils.router_helpers import validate_entity_exists
 from ..utils.file_helpers import (
     clean_filename,
     prepare_image_metadata_for_serving,
     serve_image_with_metadata,
     validate_file_path,
 )
+from ..utils.router_helpers import validate_entity_exists
 from ..utils.time_utils import (
+    format_date_string,
+    format_filename_timestamp,
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_string_async,
 )
-
-from ..models.health_model import HealthStatus
-from ..config import settings
+from .logger import get_service_logger
 
 logger = get_service_logger(LoggerName.IMAGE_SERVICE)
 
@@ -311,9 +308,12 @@ class ImageService:
         Returns:
             List of Image models
         """
-        # Convert dates to strings for the database query
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
+        # Convert dates to datetime for the database query
+
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        start_str = format_date_string(start_dt)
+        end_str = format_date_string(end_dt)
 
         # Use the date range method from ImageOperations
         images = await self.image_ops.get_images_by_date_range(start_str, end_str)
@@ -564,7 +564,7 @@ class ImageService:
             return comprehensive_stats
 
         except Exception as e:
-            logger.error(f"Image statistics calculation failed", exception=e)
+            logger.error("Image statistics calculation failed", exception=e)
             return {
                 "basic_statistics": None,
                 "quality_statistics": None,
@@ -705,7 +705,7 @@ class ImageService:
                 timestamp_dt = await get_timezone_aware_timestamp_async(
                     self.settings_service
                 )
-                timestamp = timestamp_dt.strftime("%Y%m%d_%H%M%S")
+                timestamp = format_filename_timestamp(timestamp_dt)
                 filename = zip_filename or f"timelapser_images_{timestamp}.zip"
                 filename = clean_filename(filename)
                 return {
@@ -761,7 +761,7 @@ class ImageService:
             timestamp_dt = await get_timezone_aware_timestamp_async(
                 self.settings_service
             )
-            timestamp = timestamp_dt.strftime("%Y%m%d_%H%M%S")
+            timestamp = format_filename_timestamp(timestamp_dt)
             filename = zip_filename or f"timelapser_images_{timestamp}.zip"
             filename = clean_filename(filename)
 

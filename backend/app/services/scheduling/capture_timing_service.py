@@ -24,37 +24,40 @@ Business Rules:
 """
 
 from datetime import datetime, time
-from typing import Optional, TYPE_CHECKING
-from ...services.logger import get_service_logger
+from typing import TYPE_CHECKING, Optional
+
 from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
+from ...constants import (
+    CAMERA_HEALTH_OFFLINE,
+    DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS,
+    MAX_CAPTURE_INTERVAL_SECONDS,
+    MIN_CAPTURE_INTERVAL_SECONDS,
+)
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...models.shared_models import (
-    NextCaptureResult,
-    CaptureValidationResult,
-    CaptureReadinessValidationResult,
-    CaptureDueCheckResult,
     CaptureCountEstimate,
+    CaptureDueCheckResult,
+    CaptureReadinessValidationResult,
+    CaptureValidationResult,
+    NextCaptureResult,
 )
-
 from ...utils.time_utils import (
+    create_time_delta,
+    format_time_object_for_display,
+    get_safe_capture_time,
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
-    create_time_delta,
+    get_timezone_from_cache_async,
 )
-from ...constants import (
-    MIN_CAPTURE_INTERVAL_SECONDS,
-    MAX_CAPTURE_INTERVAL_SECONDS,
-    DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS,
-    EVENT_CAMERA_STATUS_UPDATED,
-    CAMERA_HEALTH_OFFLINE,
-)
-from .time_window_service import TimeWindowService, SyncTimeWindowService
+from .time_window_service import SyncTimeWindowService, TimeWindowService
 
 if TYPE_CHECKING:
     pass
+
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
 
 class CaptureTimingService:
@@ -154,10 +157,13 @@ class CaptureTimingService:
         end_time: Optional[time] = None,
     ) -> datetime:
         """
-        Calculate next capture time considering interval and optional time window.
+        Calculate next capture time considering interval, time windows, and DST transitions.
 
         Business logic: Determines when the next camera capture should occur
         based on the configured interval and any time window restrictions.
+
+        DST Safety: Automatically adjusts for daylight saving time transitions
+        to prevent captures during non-existent times or duplicate captures.
 
         Args:
             current_time: Current timezone-aware datetime
@@ -166,10 +172,20 @@ class CaptureTimingService:
             end_time: Optional window end time
 
         Returns:
-            Next capture datetime
+            Next capture datetime (safe for DST transitions)
         """
         # Calculate base next capture time
         next_capture = current_time + create_time_delta(seconds=interval_seconds)
+
+        # Check for DST transitions and get safe capture time
+        try:
+            timezone_str = await get_timezone_from_cache_async(self.settings_service)
+            safe_capture_time = get_safe_capture_time(next_capture, timezone_str)
+            if safe_capture_time:
+                next_capture = safe_capture_time
+        except Exception:
+            # If DST check fails, proceed with original time
+            pass
 
         # If no time window, return the calculated time
         if start_time is None or end_time is None:
@@ -242,10 +258,14 @@ class CaptureTimingService:
             estimated_captures=estimated_captures,
             total_period_seconds=total_seconds,
             time_window_start=(
-                time_window_start.strftime("%H:%M:%S") if time_window_start else None
+                format_time_object_for_display(time_window_start)
+                if time_window_start
+                else None
             ),
             time_window_end=(
-                time_window_end.strftime("%H:%M:%S") if time_window_end else None
+                format_time_object_for_display(time_window_end)
+                if time_window_end
+                else None
             ),
             window_restricted=True,
             captures_per_day=float(captures_per_day),
@@ -365,10 +385,14 @@ class CaptureTimingService:
             last_capture_time=last_capture_time,
             interval_seconds=interval_seconds,
             time_window_start=(
-                time_window_start.strftime("%H:%M:%S") if time_window_start else None
+                format_time_object_for_display(time_window_start)
+                if time_window_start
+                else None
             ),
             time_window_end=(
-                time_window_end.strftime("%H:%M:%S") if time_window_end else None
+                format_time_object_for_display(time_window_end)
+                if time_window_end
+                else None
             ),
             is_due=is_due,
             time_until_next_seconds=time_until_next_seconds,

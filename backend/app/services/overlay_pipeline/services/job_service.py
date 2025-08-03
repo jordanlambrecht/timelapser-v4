@@ -7,30 +7,31 @@ following the architecture pattern of service -> operations -> database.
 """
 
 from typing import List, Optional
+
+from ....enums import LogEmoji, LoggerName, LogSource
 from ....services.logger import get_service_logger
-from ....enums import LoggerName, LogSource, LogEmoji
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
-from ....database.core import AsyncDatabase, SyncDatabase
-from ....utils.time_utils import utc_timestamp
-
-from ....database.overlay_job_operations import (
-    SyncOverlayJobOperations,
-    OverlayJobOperations,
+from ....constants import (
+    DEFAULT_OVERLAY_JOB_BATCH_SIZE,
 )
-from ....models.overlay_model import (
-    OverlayGenerationJob,
-    OverlayGenerationJobCreate,
+from ....database.core import AsyncDatabase, SyncDatabase
+from ....database.overlay_job_operations import (
+    OverlayJobOperations,
+    SyncOverlayJobOperations,
 )
 from ....enums import (
     OverlayJobPriority,
     OverlayJobStatus,
     OverlayJobType,
 )
-from ....constants import (
-    DEFAULT_OVERLAY_JOB_BATCH_SIZE,
+from ....models.overlay_model import (
+    OverlayGenerationJob,
+    OverlayGenerationJobCreate,
 )
+from ....utils.time_utils import utc_timestamp
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class SyncOverlayJobService:
@@ -116,7 +117,7 @@ class SyncOverlayJobService:
         try:
             return self.overlay_job_ops.get_pending_jobs(batch_size)
         except Exception as e:
-            logger.error(f"Failed to get pending overlay jobs", exception=e)
+            logger.error("Failed to get pending overlay jobs", exception=e)
             return []
 
     def mark_job_processing(self, job_id: int) -> bool:
@@ -266,12 +267,28 @@ class SyncOverlayJobService:
                 "timestamp": utc_timestamp(),
             }
 
+    def cleanup_completed_jobs(self, hours_to_keep: int) -> int:
+        """
+        Clean up completed overlay jobs older than specified hours.
+
+        Args:
+            hours_to_keep: Number of hours of completed jobs to keep
+
+        Returns:
+            Number of jobs cleaned up
+        """
+        try:
+            return self.overlay_job_ops.cleanup_completed_jobs(hours_to_keep)
+        except Exception as e:
+            logger.error("Failed to cleanup completed overlay jobs", exception=e)
+            return 0
+
     def get_job_statistics(self):
         """Get comprehensive job queue statistics for monitoring (sync)."""
         try:
             return self.overlay_job_ops.get_job_statistics()
         except Exception as e:
-            logger.error(f"Failed to get overlay job statistics", exception=e)
+            logger.error("Failed to get overlay job statistics", exception=e)
             return None
 
 
@@ -327,7 +344,7 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.get_pending_jobs(batch_size)
         except Exception as e:
-            logger.error(f"Failed to get pending overlay jobs", exception=e)
+            logger.error("Failed to get pending overlay jobs", exception=e)
             return []
 
     async def get_job_statistics(self):
@@ -335,7 +352,7 @@ class AsyncOverlayJobService:
         try:
             return await self.overlay_job_ops.get_job_statistics()
         except Exception as e:
-            logger.error(f"Failed to get overlay job statistics", exception=e)
+            logger.error("Failed to get overlay job statistics", exception=e)
             return None
 
     async def get_jobs_by_image_id(self, image_id: int) -> List[OverlayGenerationJob]:

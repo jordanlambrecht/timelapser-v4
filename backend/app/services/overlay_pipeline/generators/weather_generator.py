@@ -5,19 +5,22 @@ Weather Overlay Generator - Handles weather-related overlay content generation.
 Supports temperature and weather condition overlays with formatting options.
 """
 
-from typing import Union, Optional
+from typing import Union
+
 from PIL import Image as PILImage
+
+from ....enums import LoggerName, LogSource
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.validation_helpers import (
-    validate_temperature_unit,
     validate_display_format,
+    validate_temperature_unit,
 )
+from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class WeatherGenerator(BaseOverlayGenerator):
@@ -219,7 +222,7 @@ class WeatherGenerator(BaseOverlayGenerator):
             logger.debug("🌤️ Both components available, combining")
             result = f"{temp_str}, {conditions_str}"
 
-        logger.debug(f"✅ Combined weather overlay generated successfully")
+        logger.debug("✅ Combined weather overlay generated successfully")
         return result
 
     def _convert_temperature(

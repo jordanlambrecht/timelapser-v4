@@ -5,12 +5,11 @@ This handler properly stores log entries in the database with correct message
 extraction and context handling.
 """
 
-from typing import Dict, Any, Optional
-
-
-from ....enums import LogLevel, LogSource, LoggerName
+import re
+from typing import Any, Dict, Optional
 
 from ....database.log_operations import LogOperations, SyncLogOperations
+from ....enums import LoggerName, LogLevel, LogSource
 from ....models.log_model import Log
 from ..constants import FALLBACK_LOG_LEVEL, FALLBACK_LOG_SOURCE, FALLBACK_LOGGER_NAME
 
@@ -292,32 +291,31 @@ class LegacyLoguruDatabaseHandler:
                 # Strip ANSI color codes and extract just the message part
                 formatted = record.formatted
                 # Basic ANSI color code removal
-                import re
 
                 ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
                 clean_formatted = ansi_escape.sub("", formatted)
                 return clean_formatted.strip()
-        except:
+        except Exception:
             pass
 
         # Method 2: Try record.message (may be template)
         try:
             if hasattr(record, "message") and record.message:
                 return str(record.message)
-        except:
+        except Exception:
             pass
 
         # Method 3: Try to reconstruct from record data
         try:
             if hasattr(record, "record") and "message" in record.record:
                 return str(record.record["message"])
-        except:
+        except Exception:
             pass
 
         # Method 4: Fallback to string representation
         try:
             return str(record)
-        except:
+        except Exception:
             pass
 
         # Last resort

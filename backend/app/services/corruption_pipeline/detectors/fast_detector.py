@@ -7,14 +7,16 @@ Designed to run in 1-5ms per image with minimal performance impact.
 These are basic sanity checks that catch obvious corruption.
 """
 
-import cv2
-import numpy as np
 import os
 import time
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from ....services.logger import get_service_logger, LogEmoji
+from typing import Any, Dict, Optional
+
+import cv2
+import numpy as np
+
 from ....enums import LoggerName
+from ....services.logger import LogEmoji, get_service_logger
 
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 

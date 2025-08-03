@@ -5,17 +5,20 @@ DateTime Overlay Generator - Handles date, time, and datetime overlay content ge
 Supports various date/time formats with timezone-aware rendering.
 """
 
-from typing import Union
 from datetime import datetime
+from typing import Union
+
 from PIL import Image as PILImage
+
+from ....enums import LogSource, LoggerName
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.time_utils import convert_to_db_timezone_sync
+from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class DateTimeGenerator(BaseOverlayGenerator):
@@ -79,7 +82,7 @@ class DateTimeGenerator(BaseOverlayGenerator):
                 )
 
             # Get date format from overlay item
-            date_format = overlay_item.dateFormat or self._get_default_format(
+            date_format = overlay_item.date_format or self._get_default_format(
                 overlay_item.type
             )
             logger.debug(f"Using date format: {date_format}")
@@ -144,7 +147,7 @@ class DateTimeGenerator(BaseOverlayGenerator):
 
         try:
             return timestamp.strftime(python_format)
-        except ValueError as e:
+        except ValueError:
             # Fallback to default format if custom format fails
             default_format = "%m/%d/%Y %H:%M"
             return timestamp.strftime(default_format)
@@ -215,12 +218,14 @@ class DateTimeGenerator(BaseOverlayGenerator):
         super().validate_overlay_item(overlay_item)
 
         # Validate date format if provided
-        if overlay_item.dateFormat:
+        if overlay_item.date_format:
             try:
-                # Test format with a sample date
-                test_date = datetime(2025, 1, 15, 14, 30, 45)
-                self._apply_format(test_date, overlay_item.dateFormat)
+                # Test format with a sample date (naive datetime is intentional for format testing)
+                test_date = datetime(
+                    2025, 1, 15, 14, 30, 45
+                )  # Test data - timezone-irrelevant
+                self._apply_format(test_date, overlay_item.date_format)
             except Exception as e:
                 raise ValueError(
-                    f"Invalid date format '{overlay_item.dateFormat}': {e}"
+                    f"Invalid date format '{overlay_item.date_format}': {e}"
                 )

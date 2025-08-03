@@ -21,57 +21,53 @@ Version: 4.0
 License: Private
 """
 
-import traceback
-import requests
 import inspect
-import json
-from datetime import datetime, date, timedelta
-from typing import Dict, Any, Optional, Tuple
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
+import traceback
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from ...database import sync_db
+import requests
 
-logger = get_service_logger(LoggerName.WEATHER_SERVICE)
-from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import SSEPriority
-
-
-# Import centralized time utilities (AI-CONTEXT compliant)
-from ...utils.time_utils import (
-    create_timezone_aware_datetime,
-    utc_now,
-    get_timezone_from_settings,
+# Import weather constants
+from ...constants import (
+    DEFAULT_TIMEZONE,
+    EVENT_WEATHER_UPDATED,
+    OPENWEATHER_API_BASE_URL,
+    OPENWEATHER_API_TIMEOUT,
+    OPENWEATHER_API_UNITS,
+    WEATHER_API_KEY_INVALID,
+    WEATHER_API_KEY_VALID,
+    WEATHER_CONNECTION_ERROR,
+    WEATHER_LOCATION_INVALID,
+    WEATHER_REFRESH_SKIPPED_LOCATION,
 )
+from ...database import sync_db
+from ...database.sse_events_operations import SyncSSEEventsOperations
+from ...enums import LoggerName, SSEPriority
 
 # Import new weather models
 from ...models.weather_model import (
     OpenWeatherApiData,
     SunTimeWindow,
-    WeatherDataRecord,
-    WeatherConfiguration,
+    WeatherApiStatus,
     WeatherApiValidationResponse,
     WeatherRefreshResult,
-    WeatherApiStatus,
 )
-
-# Import weather constants
-from ...constants import (
-    EVENT_WEATHER_UPDATED,
-    OPENWEATHER_API_BASE_URL,
-    OPENWEATHER_API_TIMEOUT,
-    OPENWEATHER_API_UNITS,
-    WEATHER_MAX_CONSECUTIVE_FAILURES,
-    WEATHER_API_KEY_VALID,
-    WEATHER_API_KEY_INVALID,
-    WEATHER_LOCATION_INVALID,
-    WEATHER_CONNECTION_ERROR,
-    WEATHER_REFRESH_SKIPPED_LOCATION,
-)
+from ...services.logger import get_service_logger
 
 # Import conversion utilities
 from ...utils.conversion_utils import safe_int
+
+# Import centralized time utilities (AI-CONTEXT compliant)
+from ...utils.time_utils import (
+    create_timezone_aware_datetime,
+    format_time_object_for_display,
+    get_timezone_from_cache_async,
+    utc_now,
+)
+
+logger = get_service_logger(LoggerName.WEATHER_SERVICE)
 
 
 class OpenWeatherService:
@@ -182,7 +178,7 @@ class OpenWeatherService:
                 description=weather["description"],
                 sunrise_timestamp=sys["sunrise"],
                 sunset_timestamp=sys["sunset"],
-                date_fetched=date.today(),
+                date_fetched=utc_now().date(),  # Use timezone-aware current date
             )
 
         except requests.exceptions.RequestException as e:
@@ -198,7 +194,7 @@ class OpenWeatherService:
         sunset_timestamp: int,
         sunrise_offset_minutes: int = 0,
         sunset_offset_minutes: int = 0,
-        timezone_str: str = "UTC",
+        timezone_str: str = DEFAULT_TIMEZONE,
     ) -> SunTimeWindow:
         """
         Calculate time window based on sunrise/sunset with offsets.
@@ -221,7 +217,7 @@ class OpenWeatherService:
             sunset_dt = datetime.fromtimestamp(sunset_timestamp, tz=tz)
         except Exception:
             # Fallback to UTC if timezone is invalid
-            tz = ZoneInfo("UTC")
+            tz = ZoneInfo(DEFAULT_TIMEZONE)
             sunrise_dt = datetime.fromtimestamp(sunrise_timestamp, tz=tz)
             sunset_dt = datetime.fromtimestamp(sunset_timestamp, tz=tz)
 
@@ -246,7 +242,7 @@ class OpenWeatherService:
         sunrise_offset_minutes: int = 0,
         sunset_offset_minutes: int = 0,
         check_time: Optional[datetime] = None,
-        timezone_str: str = "UTC",
+        timezone_str: str = DEFAULT_TIMEZONE,
     ) -> bool:
         """
         Check if current time (or specified time) is within sun-based window.
@@ -300,8 +296,8 @@ class OpenWeatherService:
         Returns:
             Tuple[str, str]: (start_time_str, end_time_str) in HH:MM:SS format
         """
-        start_str = window.start_time.strftime("%H:%M:%S")
-        end_str = window.end_time.strftime("%H:%M:%S")
+        start_str = format_time_object_for_display(window.start_time)
+        end_str = format_time_object_for_display(window.end_time)
         return start_str, end_str
 
 
@@ -446,8 +442,8 @@ class WeatherManager:
             else:
                 settings_dict = await self._get_settings_from_db()
 
-            # Get timezone and create timezone-aware timestamp
-            timezone_str = get_timezone_from_settings(settings_dict)
+            # Get timezone and create timezone-aware timestamp using cached approach
+            timezone_str = await get_timezone_from_cache_async(self.settings_service)
 
             # Convert weather data for weather table storage
             # Use current timestamp in configured timezone to show when data was actually fetched
@@ -589,15 +585,17 @@ class WeatherManager:
             else:
                 settings_dict = await self._get_settings_from_db()
 
-            # Get today's date in the configured timezone
-            timezone_str = get_timezone_from_settings(settings_dict)
+            # Get today's date in the configured timezone using cached approach
             try:
-
-                tz = ZoneInfo(timezone_str)
-                today = datetime.now(tz).date().isoformat()
+                timezone_str = await get_timezone_from_cache_async(
+                    self.settings_service
+                )
+                timezone_aware_dt = create_timezone_aware_datetime(timezone_str)
+                today = timezone_aware_dt.date().isoformat()
             except Exception as e:
                 logger.warning(f"Failed to get timezone aware date: {e}")
-                today = datetime.now().date().isoformat()
+                # Use centralized UTC fallback instead of system datetime.now()
+                today = utc_now().date().isoformat()
 
             # Check if we have current weather data
             if latest_weather and latest_weather.get("weather_date_fetched"):
@@ -640,7 +638,7 @@ class WeatherManager:
                             or "",
                             sunrise_timestamp=sunrise_timestamp,
                             sunset_timestamp=sunset_timestamp,
-                            date_fetched=date.today(),
+                            date_fetched=utc_now().date(),  # Use timezone-aware current date
                         )
 
             # Data is stale or missing, fetch new data
@@ -707,7 +705,7 @@ class WeatherManager:
             else:
                 settings_dict = await self._get_settings_from_db()
 
-            timezone_str = settings_dict.get("timezone", "UTC")
+            timezone_str = await get_timezone_from_cache_async(self.settings_service)
 
             return service.calculate_sun_time_window(
                 sunrise_timestamp=settings["sunrise_timestamp"],
@@ -761,8 +759,10 @@ class WeatherManager:
             weather_date_fetched = weather_data.get("weather_date_fetched")
             if weather_date_fetched:
 
-                # Get configured timezone
-                timezone_str = get_timezone_from_settings(settings_dict)
+                # Get configured timezone using cached approach
+                timezone_str = await get_timezone_from_cache_async(
+                    self.settings_service
+                )
 
                 # Convert UTC timestamp to configured timezone
                 try:

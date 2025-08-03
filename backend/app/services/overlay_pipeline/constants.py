@@ -7,7 +7,7 @@ constants without needing to know the utils structure.
 """
 
 # Re-export all constants from utils for backwards compatibility
-from .utils.constants import *
+# Star import removed - specific imports should be used instead
 
 # Additional overlay pipeline constants
 OVERLAY_PIPELINE_VERSION = "1.0.0"

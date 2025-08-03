@@ -6,8 +6,8 @@ Provides centralized error handling, request logging, and performance monitoring
 """
 
 from .error_handler import ErrorHandlerMiddleware
-from .request_logger import RequestLoggerMiddleware
 from .rate_limit_middleware import RateLimitMiddleware
+from .request_logger import RequestLoggerMiddleware
 
 __all__ = [
     "ErrorHandlerMiddleware",

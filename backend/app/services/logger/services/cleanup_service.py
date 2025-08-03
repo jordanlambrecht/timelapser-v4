@@ -6,12 +6,12 @@ for the centralized logging system. It integrates with worker cleanup systems
 and provides statistics for monitoring.
 """
 
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
 import asyncio
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 
+from ....constants import LOG_CLEANUP_BATCH_SIZE
 from ....database.log_operations import LogOperations, SyncLogOperations
-from ....constants import LOG_CLEANUP_BATCH_SIZE, LOG_CLEANUP_INTERVAL_HOURS
 from ....utils.time_utils import utc_now
 from ..utils.settings_cache import LoggerSettingsCache
 
@@ -58,46 +58,50 @@ class LogCleanupService:
         self._total_logs_cleaned = 0
         self._last_cleanup_error = None
 
-    async def _get_retention_days_async(self, override_days: Optional[int] = None) -> int:
+    async def _get_retention_days_async(
+        self, override_days: Optional[int] = None
+    ) -> int:
         """
         Get retention days from user settings or override.
-        
+
         Args:
             override_days: Explicit override (takes precedence)
-            
+
         Returns:
             Number of days to retain logs
         """
         if override_days is not None:
             return override_days
-            
+
         if self.settings_cache:
             try:
-                return await self.settings_cache.get_setting_async("db_log_retention_days")
+                return await self.settings_cache.get_setting_async(
+                    "db_log_retention_days"
+                )
             except Exception:
                 pass
-        
+
         return self.default_retention_days
 
     def _get_retention_days_sync(self, override_days: Optional[int] = None) -> int:
         """
         Get retention days from user settings or override (sync version).
-        
+
         Args:
             override_days: Explicit override (takes precedence)
-            
+
         Returns:
             Number of days to retain logs
         """
         if override_days is not None:
             return override_days
-            
+
         if self.settings_cache:
             try:
                 return self.settings_cache.get_setting_sync("db_log_retention_days")
             except Exception:
                 pass
-        
+
         return self.default_retention_days
 
     async def cleanup_old_logs(

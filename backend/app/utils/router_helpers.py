@@ -8,15 +8,15 @@ Provides standardized error handling, entity validation, and response patterns.
 
 
 from functools import wraps
-from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable
-from fastapi import HTTPException
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
-logger = get_service_logger(LoggerName.SYSTEM)
-from app.utils.response_helpers import ResponseFormatter
+from fastapi import HTTPException
+
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
 
 T = TypeVar("T")
+logger = get_service_logger(LoggerName.SYSTEM)
 
 
 def handle_exceptions(operation_name: str):
@@ -400,7 +400,7 @@ async def run_sync_service_method(func, *args, **kwargs):
     try:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, func, *args, **kwargs)
-    except Exception as e:
+    except Exception:
         # Let the @handle_exceptions decorator handle logging
         # Router layer should not do direct logging
         raise

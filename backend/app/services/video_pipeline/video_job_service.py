@@ -6,37 +6,36 @@ Consolidates job coordination, queue management, and lifecycle.
 Replaces separate JobCoordinationService with integrated functionality.
 """
 import json
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from ...models.health_model import HealthStatus
-from ...services.logger import get_service_logger
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...database.sse_events_operations import SyncSSEEventsOperations
+from ...database.timelapse_operations import SyncTimelapseOperations
+from ...database.video_operations import SyncVideoOperations
 from ...enums import (
     JobPriority,
     JobStatus,
-    SSEPriority,
+    LoggerName,
     SSEEvent,
     SSEEventSource,
-    LoggerName,
+    SSEPriority,
 )
-
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
-
-from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.video_operations import SyncVideoOperations
-from ...database.timelapse_operations import SyncTimelapseOperations
-from ...database.sse_events_operations import SyncSSEEventsOperations
+from ...models.health_model import HealthStatus
 from ...models.shared_models import (
     VideoGenerationJobWithDetails,
 )
+from ...services.logger import get_service_logger
 from ...utils.time_utils import get_timezone_aware_timestamp_sync
 from .constants import (
     DEFAULT_VIDEO_CLEANUP_DAYS,
 )
 from .utils import (
-    validate_trigger_type,
-    validate_job_status,
     create_video_job_metadata,
+    validate_job_status,
+    validate_trigger_type,
 )
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 
 
 class VideoJobService:
@@ -128,7 +127,7 @@ class VideoJobService:
             try:
                 job_id = self.video_ops.create_video_generation_job(job_data)
                 if not job_id:
-                    logger.error(f"Failed to create video generation job in database")
+                    logger.error("Failed to create video generation job in database")
                     return None
             except Exception as e:
                 logger.error(f"Database error creating video generation job: {e}")
@@ -274,9 +273,6 @@ class VideoJobService:
         """
         try:
             logger.debug(f"Completing video job {job_id}, success: {success}")
-
-            # Determine final status
-            final_status = JobStatus.COMPLETED if success else JobStatus.FAILED
 
             # Update job record
             job_update_success = self.video_ops.complete_video_generation_job(

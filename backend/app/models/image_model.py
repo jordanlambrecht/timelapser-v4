@@ -1,7 +1,8 @@
 # backend/app/models/image.py
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ImageBase(BaseModel):
@@ -52,10 +53,14 @@ class ImageBase(BaseModel):
 
 class ImageCreate(ImageBase):
     """Model for creating a new image record"""
-    
+
     captured_at: datetime = Field(..., description="When the image was captured")
-    corruption_detected: bool = Field(default=False, description="Whether corruption was detected during capture")
-    thumbnail_path: Optional[str] = Field(None, description="Path to the thumbnail image file")
+    corruption_detected: bool = Field(
+        default=False, description="Whether corruption was detected during capture"
+    )
+    thumbnail_path: Optional[str] = Field(
+        None, description="Path to the thumbnail image file"
+    )
 
 
 class Image(ImageBase):
@@ -64,7 +69,7 @@ class Image(ImageBase):
     id: int
     captured_at: datetime
     created_at: datetime
-    
+
     # Optional computed/joined fields
     camera_name: Optional[str] = None
     timelapse_status: Optional[str] = None

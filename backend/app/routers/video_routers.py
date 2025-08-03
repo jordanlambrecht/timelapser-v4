@@ -10,68 +10,64 @@ Interactions: Uses VideoService for business logic, coordinates with VideoAutoma
 
 # Standard library imports
 import asyncio
-import re
 from typing import List, Optional
 
 # Third party imports
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, status, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
+
+from ..enums import JobStatus, LoggerName, LogSource
 from ..services.logger import get_service_logger
-from ..enums import LogSource, LoggerName
 
-logger = get_service_logger(LoggerName.API, LogSource.API)
 
+# Local application imports
+from ..config import settings
+
+from ..dependencies import (
+    SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: For timing operations
+)
+from ..dependencies import VideoPipelineDep  # For video generation workflow
+from ..dependencies import VideoServiceDep  # For video CRUD operations
+from ..dependencies import (
+    CameraServiceDep,
+    HealthServiceDep,
+    SettingsServiceDep,
+    TimelapseServiceDep,
+)
+from ..enums import SSEPriority
+from ..models import VideoCreate, VideoWithDetails
+from ..models.video_model import Progress, VideoGenerationStatus
 from ..services.video_pipeline.constants import (
     ERROR_VIDEO_FILE_NOT_FOUND,
     ERROR_VIDEO_GENERATION_FAILED,
 )
-
-# Local application imports
-from ..config import settings
 from ..utils.cache_manager import (
     generate_collection_etag,
     generate_composite_etag,
     generate_content_hash_etag,
 )
-from ..constants import (
-    JOB_PRIORITY,
-    JOB_STATUS,
-    DEFAULT_FPS,
-    VIDEO_QUALITIES,
+from ..utils.file_helpers import (
+    clean_filename,
+    create_file_response,
+    validate_file_path,
 )
-from ..enums import SSEPriority
-from ..dependencies import (
-    VideoPipelineDep,  # For video generation workflow
-    VideoServiceDep,  # For video CRUD operations
-    SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: For timing operations
-    CameraServiceDep,
-    TimelapseServiceDep,
-    SettingsServiceDep,
-    HealthServiceDep,
-    AsyncDatabaseDep,
-)
-from ..models import VideoCreate, VideoWithDetails
-from ..models.video_model import Progress, VideoGenerationStatus
+from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import (
+    get_active_timelapse_for_camera,
     handle_exceptions,
     validate_entity_exists,
-    get_active_timelapse_for_camera,
+)
+from ..utils.time_utils import (
+    format_filename_timestamp,
+    get_timezone_aware_timestamp_async,
+    parse_iso_timestamp_safe,
 )
 from ..utils.validation_helpers import (
     create_default_video_settings,
     validate_video_settings,
 )
-from ..utils.response_helpers import ResponseFormatter
-from ..utils.file_helpers import (
-    validate_file_path,
-    create_file_response,
-    clean_filename,
-)
-from ..utils.time_utils import parse_iso_timestamp_safe
-from ..utils.time_utils import (
-    get_timezone_aware_timestamp_async,
-    format_filename_timestamp,
-)
+
+logger = get_service_logger(LoggerName.API, LogSource.API)
 
 # NOTE: CACHING STRATEGY - OPTIMAL MIXED APPROACH (EXCELLENT IMPLEMENTATION)
 # Video operations use optimal caching strategy perfectly aligned with content types:
@@ -93,7 +89,7 @@ class VideoGenerationRequest(BaseModel):
 
     @field_validator("video_name")
     @classmethod
-    def validate_video_name(_cls, v: Optional[str]) -> Optional[str]:
+    def validate_video_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate video name using centralized helper"""
         if v is None:
             return v
@@ -249,7 +245,7 @@ async def download_video(
         video_service.get_video_by_id, video_id, "video"
     )
 
-    if not video.file_path or video.status != JOB_STATUS.COMPLETED:
+    if not video.file_path or video.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=404, detail=ERROR_VIDEO_FILE_NOT_FOUND)
 
     # Generate ETag based on video ID and file size for immutable content cache validation
@@ -286,7 +282,9 @@ async def download_video(
             )
 
             # Use format_filename_timestamp for consistent formatting
-            timestamp_str = format_filename_timestamp(timezone_aware_timestamp)
+            timestamp_str = format_filename_timestamp(
+                timezone_aware_timestamp, settings_service
+            )
             filename = f"{safe_video_name}_{timestamp_str}.mp4"
         except Exception:
             # Fallback filename without timestamp if timestamp processing fails

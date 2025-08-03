@@ -6,15 +6,14 @@ This module provides utilities for managing overlay configuration inheritance,
 merging preset settings with timelapse overrides, and validating overlay configurations.
 """
 
-from typing import Dict, Any, Optional
-
+from typing import Any, Dict, Optional
 
 from ....models.overlay_model import (
+    GlobalOverlayOptions,
     OverlayConfiguration,
+    OverlayItem,
     OverlayPreset,
     TimelapseOverlay,
-    OverlayItem,
-    GlobalOverlayOptions,
 )
 
 

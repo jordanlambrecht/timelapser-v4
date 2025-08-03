@@ -15,18 +15,17 @@ Architecture: Service Layer - contains business logic separated from HTTP layer
 - Provides consistent admin data formatting
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from ..utils.time_utils import utc_now
+from ..database.scheduled_job_operations import ScheduledJobOperations
+from ..enums import JobPriority, LoggerName, ScheduledJobStatus, ScheduledJobType
+from ..models.health_model import HealthStatus
+from ..models.scheduled_job_model import ScheduledJobSummary, ScheduledJobUpdate
 from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from ..utils.pagination_helpers import calculate_pagination_params
+from ..utils.time_utils import utc_now
 
 logger = get_service_logger(LoggerName.ADMIN)
-from ..database.scheduled_job_operations import ScheduledJobOperations
-from ..models.scheduled_job_model import ScheduledJobUpdate, ScheduledJobSummary
-from ..models.health_model import HealthStatus
-from ..enums import JobPriority, ScheduledJobStatus, ScheduledJobType
-from ..utils.pagination_helpers import calculate_pagination_params
 
 
 class AdminService:
@@ -132,7 +131,7 @@ class AdminService:
 
         except Exception as e:
             logger.error(
-                f"Error getting paginated jobs",
+                "Error getting paginated jobs",
                 exception=e,
                 extra_context={
                     "operation": "get_paginated_jobs",

@@ -6,16 +6,17 @@ Handles overlay availability checking and fallback coordination.
 Simplified version of OverlayManagementService focused on integration only.
 """
 
-from typing import Dict, Any
 from pathlib import Path
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
+from typing import Any, Dict
 
 from ...database.core import SyncDatabase
+from ...enums import LogSource, LoggerName
+from ...services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
-from ...database.timelapse_operations import SyncTimelapseOperations
 from ...config import settings
+from ...database.timelapse_operations import SyncTimelapseOperations
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 
 class OverlayIntegrationService:

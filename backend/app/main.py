@@ -15,8 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
-from .services.logger.logger_service import LoggerService
-from .services.logger import get_service_logger
+from .services.logger import get_service_logger, initialize_global_logger
 from .enums import LoggerName, LogEmoji
 from .constants import DEFAULT_TIMEZONE
 
@@ -50,12 +49,33 @@ from app.routers import overlay_routers as overlay
 
 from app.utils.ascii_text import print_welcome_message
 
-logger = get_service_logger(LoggerName.SYSTEM)
+# Logger will be initialized during lifespan startup
+logger = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Handle application startup and shutdown"""
+    global logger
+
+    # Initialize the global logger first
+    await initialize_global_logger(
+        async_db=async_db,
+        sync_db=sync_db,
+        enable_console=True,
+        enable_file_logging=True,
+        enable_sse_broadcasting=True,
+        enable_batching=True,
+    )
+
+    # Get the system logger
+    logger = get_service_logger(LoggerName.SYSTEM)
+
+    # Get the global logger service instance for app state
+    from .services.logger.logger_service import log
+
+    _app.state.logger_service = log()
+
     # Startup
     logger.info(
         "Starting FastAPI application",
@@ -124,45 +144,22 @@ async def lifespan(_app: FastAPI):
         )
         raise RuntimeError(f"Cannot start application: {e}") from e
 
-    # Initialize centralized LoggerService for application logging
-    try:
+    # Log successful logger initialization
+    logger.info(
+        "Centralized LoggerService initialized with batching enabled",
+        extra_context={
+            "operation": "logger_service_initialization",
+            "batching_enabled": True,
+        },
+    )
 
-        # Create global logger service instance with batching enabled
-        global_logger_service = LoggerService(
-            async_db=async_db,
-            sync_db=sync_db,
-            enable_console=True,
-            enable_file_logging=True,
-            enable_sse_broadcasting=True,
-            enable_batching=True,  # Enable batching for performance
-        )
-
-        # Store in app state for access by middleware and routes
-        _app.state.logger_service = global_logger_service
-
-        # Log startup success with the new system
-        global_logger_service.info(
-            message="FastAPI application started with centralized logging system",
-            emoji=LogEmoji.STARTUP,
-            store_in_db=True,
-            broadcast_sse=True,
-        )
-
-        logger.info(
-            "Centralized LoggerService initialized with batching enabled",
-            extra_context={
-                "operation": "logger_service_initialization",
-                "batching_enabled": True,
-            },
-        )
-    except Exception as e:
-        logger.error(
-            f"Failed to initialize LoggerService: {e}",
-            extra_context={
-                "operation": "logger_service_initialization",
-                "error_type": type(e).__name__,
-            },
-        )
+    # Log startup success with the new system
+    _app.state.logger_service.info(
+        message="FastAPI application started with centralized logging system",
+        emoji=LogEmoji.STARTUP,
+        store_in_db=True,
+        broadcast_sse=True,
+    )
 
     # ⚠️ IMPORTANT: DO NOT START WORKERS HERE! ⚠️
     # Background workers (ThumbnailWorker, OverlayWorker, CaptureWorker, etc.)

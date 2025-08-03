@@ -9,26 +9,26 @@ while maintaining security by not exposing internal details.
 import traceback
 import uuid
 
-from datetime import datetime, timezone
+from fastapi import HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_from_settings,
     utc_now,
     utc_timestamp,
 )
 
-from fastapi import Request, Response, HTTPException
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
-
-logger = get_service_logger(LoggerName.ERROR_HANDLER)
 
 import psycopg
 from pydantic import ValidationError
 
 from ..config import settings
+
+logger = get_service_logger(LoggerName.ERROR_HANDLER)
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):
@@ -104,7 +104,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     "log_error": str(log_error),
                     "original_exception": str(exc),
                     "original_exception_type": type(exc).__name__,
-                }
+                },
             )
 
     async def _create_error_response(
@@ -170,7 +170,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = utc_now().isoformat()
         response_data = {
             "error": {
                 "type": "validation_error",
@@ -205,7 +205,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = utc_now().isoformat()
         response_data = {
             "error": {
                 "type": "database_error",
@@ -235,7 +235,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 settings.dict() if hasattr(settings, "dict") else dict(settings)
             )
         except Exception:
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = utc_now().isoformat()
         response_data = {
             "error": {
                 "type": "internal_error",

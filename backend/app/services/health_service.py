@@ -19,44 +19,45 @@ Follows architectural patterns:
 """
 
 import asyncio
-import psutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
-from app.database.core import AsyncDatabase
-from app.database.health_operations import HealthOperations
-from app.database.statistics_operations import StatisticsOperations
-from app.services.logger import Log
-from app.enums import LogLevel, LogSource, LoggerName
-from app.models.health_model import (
-    HealthStatus,
-    BasicHealthCheck,
-    DetailedHealthCheck,
-    ComponentHealth,
-    DatabaseHealth,
-    FilesystemHealth,
-    SystemMetrics,
-    ApplicationMetrics,
-)
-from app.utils.time_utils import get_timezone_aware_timestamp_async
-from .logger import get_service_logger
-from .video_pipeline import ffmpeg_utils
+import psutil
+
 from app.config import settings
 from app.constants import (
     APPLICATION_NAME,
     APPLICATION_VERSION,
-    HEALTH_DB_LATENCY_WARNING,
-    HEALTH_DB_LATENCY_ERROR,
-    HEALTH_CPU_WARNING,
     HEALTH_CPU_ERROR,
-    HEALTH_MEMORY_WARNING,
-    HEALTH_MEMORY_ERROR,
-    HEALTH_DISK_WARNING,
+    HEALTH_CPU_WARNING,
+    HEALTH_DB_LATENCY_ERROR,
+    HEALTH_DB_LATENCY_WARNING,
     HEALTH_DISK_ERROR,
-    HEALTH_VIDEO_QUEUE_WARNING,
+    HEALTH_DISK_WARNING,
+    HEALTH_MEMORY_ERROR,
+    HEALTH_MEMORY_WARNING,
     HEALTH_VIDEO_QUEUE_ERROR,
+    HEALTH_VIDEO_QUEUE_WARNING,
 )
+from app.database.core import AsyncDatabase
+from app.database.health_operations import HealthOperations
+from app.database.statistics_operations import StatisticsOperations
+from app.enums import LoggerName, LogSource
+from app.models.health_model import (
+    ApplicationMetrics,
+    BasicHealthCheck,
+    ComponentHealth,
+    DatabaseHealth,
+    DetailedHealthCheck,
+    FilesystemHealth,
+    HealthStatus,
+    SystemMetrics,
+)
+from app.utils.time_utils import get_timezone_aware_timestamp_async
+
+from .logger import get_service_logger
+from .video_pipeline import ffmpeg_utils
 
 logger = get_service_logger(LoggerName.HEALTH_WORKER, LogSource.HEALTH)
 
@@ -106,7 +107,7 @@ class HealthService:
 
         except Exception as e:
             logger.error(
-                f"Basic health check failed",
+                "Basic health check failed",
                 extra_context={"operation": "basic_health_check"},
                 exception=e,
             )
@@ -214,7 +215,7 @@ class HealthService:
 
         except Exception as e:
             logger.error(
-                f"Detailed health check failed",
+                "Detailed health check failed",
                 extra_context={"operation": "detailed_health_check"},
                 exception=e,
             )

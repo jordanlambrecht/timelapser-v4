@@ -6,28 +6,25 @@ Pure RTSP stream capture functions using OpenCV.
 Handles RTSP connections, frame capture, and connection testing.
 """
 
-import cv2
 import os
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Any
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
+from typing import Any, Optional, Tuple
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+import cv2
 
 from ...constants import (
     DEFAULT_MAX_RETRIES,
-    RETRY_BACKOFF_BASE,
-    DEFAULT_IMAGE_EXTENSION,
     DEFAULT_RTSP_QUALITY,
     DEFAULT_RTSP_TIMEOUT_SECONDS,
+    RETRY_BACKOFF_BASE,
 )
-from ...exceptions import RTSPConnectionError, RTSPCaptureError
-from .constants import (
-    DEFAULT_RTSP_TIMEOUT_SECONDS as PIPELINE_TIMEOUT,
-    DEFAULT_CAPTURE_RETRIES,
-)
+from ...enums import LoggerName
+from ...exceptions import RTSPCaptureError, RTSPConnectionError
+from ...services.logger import get_service_logger
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+# Default capture retries imported but not used
 
 
 def configure_opencv_logging() -> None:
@@ -165,7 +162,7 @@ def capture_frame_from_rtsp(
                 return _capture_frame_rtsps_fallback(
                     rtsp_url, timeout_seconds, skip_frames
                 )
-            except:
+            except Exception:
                 pass
         raise RTSPCaptureError(f"Exception during frame capture: {e}")
     finally:

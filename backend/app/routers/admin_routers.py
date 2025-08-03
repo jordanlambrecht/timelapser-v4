@@ -21,25 +21,23 @@ Architecture: API Layer - delegates all business logic to services
 - Follows same pattern as other routers
 """
 
-from fastapi import APIRouter, Query, HTTPException, Path, Body
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from app.dependencies import (
-    ScheduledJobOperationsDep,
     AdminServiceDep,
-    get_scheduler_worker,
+    ScheduledJobOperationsDep,
     get_health_service,
+    get_scheduler_worker,
 )
-from app.models.scheduled_job_model import (
-    ScheduledJob,
-    ScheduledJobSummary,
-    ScheduledJobUpdate,
-    ScheduledJobStatistics,
-    ScheduledJobExecution,
-)
-from app.models.health_model import HealthStatus
 from app.enums import ScheduledJobStatus, ScheduledJobType
-from app.utils.router_helpers import handle_exceptions, ResponseFormatter
+
+from app.models.scheduled_job_model import (
+    ScheduledJobUpdate,
+)
+from app.utils.response_helpers import ResponseFormatter
+from app.utils.router_helpers import handle_exceptions
 from app.utils.time_utils import utc_now
 
 router = APIRouter(tags=["admin"], prefix="/admin")

@@ -7,15 +7,21 @@ Creates 3 core services with dependency injection.
 """
 
 from typing import Optional
+
+from ...services.settings_service import SyncSettingsService
+from ...services.timelapse_service import SyncTimelapseService
+from ...services.video_service import SyncVideoService
+
+from ...enums import LogSource, LoggerName
 from ...services.logger import get_service_logger
-from ...enums import LoggerName
 
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 
-from ...database.core import SyncDatabase
-from .video_workflow_service import VideoWorkflowService
-from .video_job_service import VideoJobService
+from ...database.core import AsyncDatabase, SyncDatabase
 from .overlay_integration_service import OverlayIntegrationService
+from .video_job_service import VideoJobService
+from .video_workflow_service import VideoWorkflowService
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 
 def create_video_pipeline(
@@ -43,13 +49,11 @@ def create_video_pipeline(
             logger.debug("Created new database instance for video pipeline")
 
         # Create async database for services that need it
-        from ...database.core import AsyncDatabase
 
         async_db = AsyncDatabase()
 
         # Create settings service if not provided
         if settings_service is None:
-            from ...services.settings_service import SyncSettingsService
 
             settings_service = SyncSettingsService(db)
             logger.debug("Created settings service for video pipeline")
@@ -64,8 +68,6 @@ def create_video_pipeline(
         logger.debug("OverlayIntegrationService created")
 
         # Create video and timelapse services for workflow service
-        from ...services.video_service import SyncVideoService
-        from ...services.timelapse_service import SyncTimelapseService
 
         video_service = SyncVideoService(db, settings_service)
         timelapse_service = SyncTimelapseService(db)
@@ -109,12 +111,10 @@ def create_video_job_service(
 
         # Create missing dependencies
         if async_db is None:
-            from ...database.core import AsyncDatabase
 
             async_db = AsyncDatabase()
 
         if settings_service is None:
-            from ...services.settings_service import SyncSettingsService
 
             settings_service = SyncSettingsService(db)
 

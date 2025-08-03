@@ -7,21 +7,25 @@ Handles individual thumbnail generation with quality and performance optimizatio
 """
 
 from pathlib import Path
-from typing import Tuple, Dict, Any
-from PIL import Image
-from ....services.logger import get_service_logger
-from ....enums import LoggerName
+from typing import Any, Dict, Tuple
 
-logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
+from PIL import Image
+
+from ....enums import LogSource, LoggerName
+from ....services.logger import get_service_logger
+
 
 from ..utils.constants import (
-    THUMBNAIL_SIZE,
-    THUMBNAIL_QUALITY,
     SUPPORTED_IMAGE_FORMATS,
+    THUMBNAIL_QUALITY,
+    THUMBNAIL_SIZE,
 )
 from ..utils.thumbnail_utils import (
     validate_image_file,
 )
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE, LogSource.PIPELINE)
 
 
 class ThumbnailGenerator:

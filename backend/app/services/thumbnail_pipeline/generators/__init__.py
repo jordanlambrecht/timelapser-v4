@@ -8,9 +8,9 @@ Specialized components for different types of thumbnail generation:
 - BatchThumbnailGenerator: Bulk processing operations
 """
 
-from .thumbnail_generator import ThumbnailGenerator
-from .small_image_generator import SmallImageGenerator
 from .batch_thumbnail_generator import BatchThumbnailGenerator
+from .small_image_generator import SmallImageGenerator
+from .thumbnail_generator import ThumbnailGenerator
 
 __all__ = [
     "ThumbnailGenerator",

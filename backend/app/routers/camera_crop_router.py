@@ -6,30 +6,31 @@ API endpoints for camera crop, rotation, and aspect ratio settings.
 Provides REST interface for crop configuration and testing.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
+
 from fastapi import APIRouter, HTTPException
-from ..services.logger import get_service_logger
+
 from ..enums import LoggerName
+from ..services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.API)
 
-from ..dependencies import CameraServiceDep, AsyncRTSPServiceDep
+from ..dependencies import AsyncRTSPServiceDep, CameraServiceDep
+from ..exceptions import CameraNotFoundError, RTSPConnectionError
 from ..models.camera_model import (
     CropRotationSettings,
     CropRotationUpdate,
 )
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
-from ..exceptions import CameraNotFoundError, RTSPConnectionError
+
+logger = get_service_logger(LoggerName.API)
 
 router = APIRouter(prefix="/api/cameras", tags=["camera-crop"])
 
 
 @router.get("/{camera_id}/crop-settings", response_model=Dict[str, Any])
 @handle_exceptions("get camera crop settings")
-async def get_camera_crop_settings(
-    camera_id: int, camera_service: CameraServiceDep
-):
+async def get_camera_crop_settings(camera_id: int, camera_service: CameraServiceDep):
     """
     Get crop/rotation settings for a camera.
 
@@ -134,9 +135,7 @@ async def get_camera_source_resolution(
 @router.post("/{camera_id}/detect-resolution", response_model=Dict[str, Any])
 @handle_exceptions("detect camera source resolution")
 async def detect_camera_source_resolution(
-    camera_id: int, 
-    camera_service: CameraServiceDep,
-    rtsp_service: AsyncRTSPServiceDep
+    camera_id: int, camera_service: CameraServiceDep, rtsp_service: AsyncRTSPServiceDep
 ):
     """
     Detect and store the source resolution for a camera.
@@ -156,7 +155,7 @@ async def detect_camera_source_resolution(
 
         # Store the resolution using CameraService
         # Note: The RTSPService already handles detection, we may want to store it separately
-        
+
         return ResponseFormatter.success(
             data=resolution.model_dump(),
             message=f"Source resolution detected: {resolution.width}x{resolution.height}",

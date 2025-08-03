@@ -6,10 +6,7 @@ This module contains utility classes that support the logger system:
 - ContextExtractor: Context data extraction and enrichment
 """
 
-from .formatters import LogMessageFormatter
 from .context_extractor import ContextExtractor
+from .formatters import LogMessageFormatter
 
-__all__ = [
-    "LogMessageFormatter",
-    "ContextExtractor"
-]
+__all__ = ["LogMessageFormatter", "ContextExtractor"]

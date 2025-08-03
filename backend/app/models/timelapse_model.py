@@ -1,17 +1,21 @@
 # backend/app/models/timelapse.py
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import Optional, Literal, Union
-from datetime import datetime, date, time
+from datetime import date, datetime, time
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ..enums import TimelapseStatus
 
 # Import shared components to eliminate duplication
 from .shared_models import (
-    VideoGenerationMode,
-    VideoAutomationMode,
     GenerationSchedule,
     MilestoneConfig,
+    VideoAutomationMode,
+    VideoGenerationMode,
 )
-from ..enums import TimelapseStatus
+
+# Import moved to method level to avoid circular import
 
 
 class TimelapseBase(BaseModel):
@@ -196,7 +200,10 @@ class Timelapse(TimelapseBase):
         if v is None:
             return v
         if isinstance(v, time):
-            return v.strftime("%H:%M")
+            # Import here to avoid circular import
+            from ..utils.time_utils import format_time_object_short
+
+            return format_time_object_short(v)
         if isinstance(v, str):
             return v
         return str(v)

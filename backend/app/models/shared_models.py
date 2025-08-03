@@ -3,22 +3,22 @@
 Shared model components to eliminate duplication across models.
 """
 
-from typing import Optional, Dict, Any, Literal, List, TYPE_CHECKING
-from enum import Enum
-from datetime import datetime, date
-from pydantic import BaseModel, Field, ConfigDict
+from datetime import date, datetime
+
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from .image_model import Image
-    
+
 from ..enums import (
-    VideoAutomationMode, 
-    VideoGenerationMode, 
-    VideoQuality,
+    JobPriority,
     ThumbnailJobPriority,
     ThumbnailJobStatus,
     ThumbnailJobType,
-    JobPriority
+    VideoAutomationMode,
+    VideoGenerationMode,
 )
 
 
@@ -74,8 +74,6 @@ class ThumbnailRegenerationResponse(BaseModel):
     timestamp: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
 
 
 class ImageCapturedEvent(BaseModel):
@@ -323,7 +321,7 @@ class GenerationSchedule(BaseModel):
 
     type: Literal["daily", "weekly", "custom"] = "daily"
     time: str = "18:00"  # HH:MM format
-    timezone: str = "UTC"
+    timezone: str = "UTC"  # Keep as literal for Pydantic default
     enabled: bool = True
     model_config = ConfigDict(from_attributes=True)
 
@@ -860,7 +858,9 @@ class ThumbnailRepairRequest(BaseModel):
     timelapse_ids: Optional[List[int]] = None  # All images from specific timelapses
     repair_missing_thumbnails: bool = True
     repair_missing_small: bool = True
-    priority: JobPriority = Field(default=JobPriority.MEDIUM, description="Job priority for repair jobs")
+    priority: JobPriority = Field(
+        default=JobPriority.MEDIUM, description="Job priority for repair jobs"
+    )
     force_regenerate: bool = False  # Regenerate even if files exist
 
     model_config = ConfigDict(from_attributes=True)

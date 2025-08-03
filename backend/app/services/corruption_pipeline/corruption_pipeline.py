@@ -6,21 +6,21 @@ Provides unified interface for all corruption detection functionality
 with proper dependency injection and backward compatibility.
 """
 
-from typing import Optional, Dict, Any, Union
-from ...services.logger import get_service_logger, LogEmoji
-from ...enums import LoggerName
-
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
+from typing import Any, Dict, Optional
 
 from ...database.core import AsyncDatabase, SyncDatabase
+from ...enums import LoggerName
+from ...services.logger import get_service_logger
 from .services import (
     CorruptionEvaluationService,
-    SyncCorruptionEvaluationService,
     CorruptionHealthService,
-    SyncCorruptionHealthService,
     CorruptionStatisticsService,
+    SyncCorruptionEvaluationService,
+    SyncCorruptionHealthService,
     SyncCorruptionStatisticsService,
 )
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
 class CorruptionPipeline:

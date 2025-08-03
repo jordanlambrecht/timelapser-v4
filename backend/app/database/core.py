@@ -197,7 +197,7 @@ class AsyncDatabaseCore:
         if not self._pool:
             return {"status": "unhealthy", "error": "Pool not initialized"}
 
-        start_time = time.time()
+        start_time = time.time()  # Performance timing - timezone-irrelevant
 
         try:
             # Test connection with timeout - wrap the entire async context manager usage
@@ -212,7 +212,7 @@ class AsyncDatabaseCore:
                         await cur.execute("SELECT NOW()")
                         result = await cur.fetchone()
 
-            connection_time = time.time() - start_time
+            connection_time = time.time() - start_time  # Performance timing - timezone-irrelevant
             self._last_health_check = utc_now()
 
             return {
@@ -226,13 +226,13 @@ class AsyncDatabaseCore:
             return {
                 "status": "unhealthy",
                 "error": f"Health check timed out after {timeout}s",
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),
+                "response_time_ms": round((time.time() - start_time) * 1000, 2),  # Performance timing - timezone-irrelevant
             }
         except (psycopg.Error, ConnectionError, RuntimeError) as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),
+                "response_time_ms": round((time.time() - start_time) * 1000, 2),  # Performance timing - timezone-irrelevant
             }
 
 

@@ -3,13 +3,21 @@ Settings Cache Manager for Logger Service.
 
 This module provides efficient caching and retrieval of user-configurable logging
 settings from the database, with intelligent fallbacks and performance optimizations.
+
+Now integrates with the global settings cache for TTL-based caching as requested.
 """
 
-import time
 import threading
-from typing import Dict, Any, Optional, Union
-from ....enums import LogLevel
+import time
+from typing import Any, Dict, Optional
+
 from ....database.core import AsyncDatabase, SyncDatabase
+from ....enums import LogLevel
+from ....services.settings_cache import (
+    get_settings_cache,
+    get_cached_logger_settings,
+    cache_logger_settings,
+)
 
 
 class LoggerSettingsCache:
@@ -361,7 +369,7 @@ class LoggerSettingsCache:
                         # Insert setting if it doesn't exist
                         await cur.execute(
                             """
-                            INSERT INTO settings (key, value, description, type, category) 
+                            INSERT INTO settings (key, value, description, type, category)
                             VALUES (%s, %s, %s, %s, %s)
                             ON CONFLICT (key) DO NOTHING
                             """,
@@ -405,6 +413,10 @@ class LoggerSettingsCache:
             if (current_time - timestamp) < self._cache_ttl
         )
 
+        # Get global cache statistics
+        global_cache = get_settings_cache()
+        global_stats = global_cache.get_statistics()
+
         return {
             "total_cached_settings": len(self._cache),
             "valid_cached_entries": valid_entries,
@@ -414,4 +426,46 @@ class LoggerSettingsCache:
                 current_time - self._batch_cache_timestamp if self._batch_loaded else 0
             ),
             "cached_settings": list(self._cache.keys()),
+            "global_cache_stats": global_stats,
         }
+
+    def get_all_logger_settings_with_global_cache(self) -> Dict[str, Any]:
+        """
+        Get all 8 user-configurable logger settings using global cache with TTL.
+
+        This method implements the originally requested functionality to cache
+        the logger settings with TTL for performance optimization.
+
+        Returns:
+            Dictionary with all 8 logger settings
+        """
+        # Try to get from global cache first
+        cached_settings = get_cached_logger_settings()
+        if cached_settings is not None:
+            return cached_settings
+
+        # Cache miss - load settings and cache them
+        settings = {}
+        for key in self.DEFAULT_SETTINGS.keys():
+            settings[key] = self.get_setting_sync(key)
+
+        # Cache in global cache with TTL
+        cache_logger_settings(settings)
+
+        return settings
+
+    def invalidate_global_cache(self) -> None:
+        """
+        Invalidate the global settings cache when settings are updated.
+
+        This ensures the cache reflects the latest values immediately
+        when settings are changed.
+        """
+        cache = get_settings_cache()
+        cache.invalidate("logger_settings")
+
+        # Also clear local cache
+        with self._lock:
+            self._cache.clear()
+            self._cache_timestamps.clear()
+            self._batch_loaded = False

@@ -7,7 +7,7 @@ corruption detection, file management, conversion utilities, and other helper fu
 
 # Corruption detection utilities moved to corruption_pipeline/detectors/
 # Conversion utilities for safe type conversions
-from .conversion_utils import safe_int, safe_float, safe_bool, safe_str
+from .conversion_utils import safe_bool, safe_float, safe_int, safe_str
 
 # Make commonly used utilities easily available
 __all__ = [

@@ -6,20 +6,21 @@ in bulk operations for improved performance with high-frequency logging.
 """
 
 import asyncio
-from typing import Dict, Any, Optional, List
 import threading
 from queue import Queue
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
-from ....database.log_operations import LogOperations, SyncLogOperations
-from ....models.log_model import LogCreate
-from ....enums import LogEmoji, LogLevel, LogSource, LoggerName
 from ....constants import (
-    LOG_BATCH_SIZE,
-    LOG_BATCH_TIMEOUT_SECONDS,
     LOG_BATCH_MAX_RETRIES,
     LOG_BATCH_RETRY_DELAY,
+    LOG_BATCH_SIZE,
+    LOG_BATCH_TIMEOUT_SECONDS,
 )
+from ....database.log_operations import LogOperations, SyncLogOperations
+from ....enums import LogEmoji, LoggerName, LogLevel, LogSource
+from ....models.log_model import LogCreate
 
 
 class BatchingDatabaseHandler:

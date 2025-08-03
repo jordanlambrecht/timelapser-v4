@@ -14,6 +14,8 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..database.core import AsyncDatabase
 
+from ..utils.time_utils import utc_now
+
 from .base_worker import BaseWorker
 from ..database import SyncDatabase
 from ..services.settings_service import SyncSettingsService
@@ -29,12 +31,14 @@ from ..services.timelapse_service import SyncTimelapseService
 from ..database.image_operations import SyncImageOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.statistics_operations import SyncStatisticsOperations
+from ..database.overlay_job_operations import SyncOverlayJobOperations
 from ..constants import (
     DEFAULT_LOG_RETENTION_DAYS,
     DEFAULT_IMAGE_RETENTION_DAYS,
     DEFAULT_VIDEO_CLEANUP_DAYS,
     DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
     DEFAULT_STATISTICS_RETENTION_DAYS,
+    DEFAULT_OVERLAY_CLEANUP_HOURS,
 )
 from ..utils.temp_file_manager import cleanup_temporary_files
 
@@ -92,6 +96,7 @@ class CleanupWorker(BaseWorker):
         self.timelapse_service: Optional[SyncTimelapseService] = None
         self.image_ops: Optional[SyncImageOperations] = None
         self.statistics_ops: Optional[SyncStatisticsOperations] = None
+        self.overlay_job_ops: Optional[SyncOverlayJobOperations] = None
 
         # Track cleanup stats
         self.last_cleanup_time: Optional[datetime] = None
@@ -120,6 +125,7 @@ class CleanupWorker(BaseWorker):
             # Initialize database operations
             self.image_ops = SyncImageOperations(self.sync_db)
             self.statistics_ops = SyncStatisticsOperations(self.sync_db)
+            self.overlay_job_ops = SyncOverlayJobOperations(self.sync_db)
 
             logger.info(
                 "🧹 Cleanup worker initialized successfully", emoji=LogEmoji.SUCCESS
@@ -160,7 +166,7 @@ class CleanupWorker(BaseWorker):
 
     async def _run_cleanup_cycle(self) -> None:
         """Run a complete cleanup cycle for all data types."""
-        start_time = datetime.now()
+        start_time = utc_now()
         logger.info("🧹 Starting cleanup cycle...", emoji=LogEmoji.CLEANUP)
 
         # Get retention settings from user configuration
@@ -217,11 +223,18 @@ class CleanupWorker(BaseWorker):
                 )
                 cleanup_results["statistics"] = stats_deleted
 
-            # 8. Clean up rate limiter data
+            # 8. Clean up overlay generation jobs
+            if retention_settings.get("overlay_cleanup_hours"):
+                overlay_jobs_deleted = await self._cleanup_overlay_jobs(
+                    retention_settings["overlay_cleanup_hours"]
+                )
+                cleanup_results["overlay_jobs"] = overlay_jobs_deleted
+
+            # 9. Clean up rate limiter data
             rate_limiter_cleaned = await self._cleanup_rate_limiter_data()
             cleanup_results["rate_limiter"] = rate_limiter_cleaned
 
-            # 9. Clean up temporary files (preview images, test captures)
+            # 10. Clean up temporary files (preview images, test captures)
             temp_files_cleaned = await self._cleanup_temporary_files()
             cleanup_results["temp_files"] = temp_files_cleaned
 
@@ -229,14 +242,14 @@ class CleanupWorker(BaseWorker):
             self.last_cleanup_time = start_time
             self.cleanup_stats = {
                 "last_run": start_time.isoformat(),
-                "duration_seconds": (datetime.now() - start_time).total_seconds(),
+                "duration_seconds": (utc_now() - start_time).total_seconds(),
                 "results": cleanup_results,
                 "total_items_cleaned": sum(cleanup_results.values()),
             }
 
             # Log summary
             total_cleaned = sum(cleanup_results.values())
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
 
             logger.info(
                 f"🧹 Cleanup cycle completed in {duration:.1f}s - "
@@ -246,6 +259,7 @@ class CleanupWorker(BaseWorker):
                 f"video_jobs: {cleanup_results.get('video_jobs', 0)}, "
                 f"timelapses: {cleanup_results.get('timelapses', 0)}, "
                 f"corruption_logs: {cleanup_results.get('corruption_logs', 0)}, "
+                f"overlay_jobs: {cleanup_results.get('overlay_jobs', 0)}, "
                 f"sse_events: {cleanup_results.get('sse_events', 0)}, "
                 f"statistics: {cleanup_results.get('statistics', 0)}, "
                 f"rate_limiter: {cleanup_results.get('rate_limiter', 0)})",
@@ -297,6 +311,9 @@ class CleanupWorker(BaseWorker):
                 "statistics_retention_days": get_int_setting(
                     "statistics_retention_days", DEFAULT_STATISTICS_RETENTION_DAYS
                 ),
+                "overlay_cleanup_hours": get_int_setting(
+                    "overlay_cleanup_hours", DEFAULT_OVERLAY_CLEANUP_HOURS
+                ),
             }
         except Exception as e:
             logger.warning(
@@ -310,6 +327,7 @@ class CleanupWorker(BaseWorker):
                 "timelapse_retention_days": 90,
                 "corruption_logs_retention_days": DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
                 "statistics_retention_days": DEFAULT_STATISTICS_RETENTION_DAYS,
+                "overlay_cleanup_hours": DEFAULT_OVERLAY_CLEANUP_HOURS,
             }
 
     async def _cleanup_logs(self, days_to_keep: int) -> int:
@@ -398,6 +416,16 @@ class CleanupWorker(BaseWorker):
             logger.error(f"Failed to cleanup statistics: {e}", exception=e)
             return 0
 
+    async def _cleanup_overlay_jobs(self, hours_to_keep: int) -> int:
+        """Clean up old overlay generation jobs."""
+        try:
+            if self.overlay_job_ops:
+                return self.overlay_job_ops.cleanup_completed_jobs(hours_to_keep)
+            return 0
+        except Exception as e:
+            logger.error(f"Failed to cleanup overlay jobs: {e}", exception=e)
+            return 0
+
     async def _cleanup_rate_limiter_data(self) -> int:
         """Clean up old rate limiter tracking data."""
         try:
@@ -459,6 +487,9 @@ class CleanupWorker(BaseWorker):
                 "image_ops_status": "healthy" if self.image_ops else "unavailable",
                 "statistics_ops_status": (
                     "healthy" if self.statistics_ops else "unavailable"
+                ),
+                "overlay_job_ops_status": (
+                    "healthy" if self.overlay_job_ops else "unavailable"
                 ),
             }
         )
@@ -538,6 +569,12 @@ class CleanupWorker(BaseWorker):
                 ):
                     cleanup_results["statistics"] = await self._cleanup_statistics(
                         retention_settings["statistics_retention_days"]
+                    )
+                elif cleanup_type == "overlay_jobs" and retention_settings.get(
+                    "overlay_cleanup_hours"
+                ):
+                    cleanup_results["overlay_jobs"] = await self._cleanup_overlay_jobs(
+                        retention_settings["overlay_cleanup_hours"]
                     )
                 elif cleanup_type == "rate_limiter":
                     cleanup_results["rate_limiter"] = (

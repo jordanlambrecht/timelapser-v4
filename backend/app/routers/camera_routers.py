@@ -9,28 +9,30 @@ Interactions: Uses CameraService for business logic, returns Pydantic models, ha
 Architecture: API Layer - delegates all business logic to services
 """
 
-from typing import List, Optional
 import asyncio
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
-    HTTPException,
-    status,
-    Path as FastAPIPath,
-    Response,
-    Request,
     Body,
+    HTTPException,
+)
+from fastapi import Path as FastAPIPath
+from fastapi import (
+    Request,
+    Response,
+    status,
 )
 from fastapi.responses import FileResponse
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
 
-logger = get_service_logger(LoggerName.API)
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
+
 
 from ..constants import (
-    CAMERA_NOT_FOUND,
     CAMERA_CAPTURE_FAILED,
     CAMERA_DELETED_SUCCESS,
+    CAMERA_NOT_FOUND,
     CAMERA_STATUS_UPDATED_SUCCESS,
     NO_IMAGES_FOUND,
 )
@@ -40,40 +42,41 @@ from ..dependencies import (
     SettingsServiceDep,
 )
 from ..models import Camera, CameraCreate, CameraUpdate
+from ..models.camera_action_models import (
+    CameraStatusResponse,
+    TimelapseActionRequest,
+    TimelapseActionResponse,
+)
 
 # Removed: CameraDetailsResponse import - no longer needed after endpoint removal
 from ..models.shared_models import (
-    CameraHealthStatus,
-    CameraConnectivityTestResult,
-    CameraCaptureWorkflowResult,
-    CameraHealthMonitoringResult,
     CameraCaptureScheduleResult,
-    ImageStatisticsResponse,
-    CameraLatestImageResponse,
+    CameraCaptureWorkflowResult,
+    CameraConnectivityTestResult,
+    CameraHealthMonitoringResult,
     CameraLatestImageData,
-    CameraLatestImageUrls,
     CameraLatestImageMetadata,
+    CameraLatestImageResponse,
+    CameraLatestImageUrls,
 )
-from ..models.camera_action_models import (
-    TimelapseActionRequest,
-    TimelapseActionResponse,
-    CameraStatusResponse,
+from ..utils.cache_manager import (
+    generate_composite_etag,
+    generate_content_hash_etag,
+    generate_timestamp_etag,
+    validate_etag_match,
 )
-from ..utils.file_helpers import clean_filename, build_camera_image_urls
+from ..utils.file_helpers import build_camera_image_urls, clean_filename
+from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import (
     handle_exceptions,
     validate_entity_exists,
 )
-from ..utils.response_helpers import ResponseFormatter
 from ..utils.time_utils import (
+    format_filename_timestamp,
     get_timezone_aware_timestamp_async,
 )
-from ..utils.cache_manager import (
-    generate_timestamp_etag,
-    generate_composite_etag,
-    generate_content_hash_etag,
-    validate_etag_match,
-)
+
+logger = get_service_logger(LoggerName.API)
 
 # NOTE: CACHING STRATEGY - IMPLEMENTED THROUGHOUT THIS FILE
 # Camera operations use mixed caching strategy implemented across endpoints:
@@ -117,9 +120,10 @@ async def execute_timelapse_action(
 
         # Execute the timelapse action using camera service
         logger.info(
-            f"Executing timelapse action '{action_request.action}' for camera {camera_id}",
+            f"Executing timelapse action '{action_request.action}' for camera {camera.name} (ID: {camera_id})",
             extra_context={
                 "camera_id": camera_id,
+                "camera_name": camera.name,
                 "action": action_request.action,
                 "operation": "execute_timelapse_action",
             },
@@ -224,9 +228,6 @@ async def create_camera(
 ):
     """Create a new camera with timezone-aware timestamp"""
 
-    # Get timezone-aware timestamp for audit trail
-    current_timestamp = await get_timezone_aware_timestamp_async(settings_service)
-
     # Delegate to service - no business logic in router
     new_camera = await camera_service.create_camera(camera)
 
@@ -247,9 +248,6 @@ async def update_camera(
 
     # Validate camera exists
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
-
-    # Get timezone-aware timestamp for audit trail
-    current_timestamp = await get_timezone_aware_timestamp_async(settings_service)
 
     # Delegate to service
     updated_camera = await camera_service.update_camera(camera_id, camera)
@@ -273,7 +271,7 @@ async def delete_camera(
         camera_service.get_camera_by_id, camera_id, "camera"
     )
 
-    success = await camera_service.delete_camera(camera_id)
+    success = await camera_service.delete_camera(camera_to_delete.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -736,7 +734,7 @@ async def download_camera_latest_image(
     file_path = serving_data["file_path"]
 
     # Create clean filename with camera name and timestamp
-    timestamp = latest_image.captured_at.strftime("%Y%m%d_%H%M%S")
+    timestamp = format_filename_timestamp(latest_image.captured_at)
     filename = clean_filename(
         f"{camera.name}_day{latest_image.day_number}_{timestamp}.jpg"
     )

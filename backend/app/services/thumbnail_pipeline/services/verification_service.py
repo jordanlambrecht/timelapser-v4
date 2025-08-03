@@ -3,13 +3,13 @@
 Thumbnail Verification Service - File existence and integrity checks.
 """
 
-from typing import Dict, Any, Optional
-from ....services.logger import get_service_logger
+from typing import Any, Dict
+
+from ....database.core import AsyncDatabase, SyncDatabase
 from ....enums import LoggerName
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
-
-from ....database.core import SyncDatabase, AsyncDatabase
 
 
 class SyncThumbnailVerificationService:

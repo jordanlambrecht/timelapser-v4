@@ -5,15 +5,17 @@ Overlay Template Service - Read-only access to built-in overlay templates.
 Templates are just built-in presets (is_builtin = true) that users can't delete.
 """
 
-from typing import Optional, List
+from typing import List, Optional
+
+from ....enums import LoggerName, LogSource
 from ....services.logger import get_service_logger
-from ....enums import LogSource, LoggerName
+
+
+from ....database.core import AsyncDatabase, SyncDatabase
+from ....database.overlay_operations import OverlayOperations, SyncOverlayOperations
+from ....models.overlay_model import OverlayPreset
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
-
-from ....database.core import SyncDatabase, AsyncDatabase
-from ....database.overlay_operations import SyncOverlayOperations, OverlayOperations
-from ....models.overlay_model import OverlayPreset
 
 
 class SyncOverlayTemplateService:

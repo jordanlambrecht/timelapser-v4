@@ -7,14 +7,13 @@ Completely separate from other settings to avoid confusion.
 """
 
 from typing import Optional
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
 
-from ...database.settings_operations import SettingsOperations, SyncSettingsOperations
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...enums import LoggerName
+from ...services.logger import get_service_logger
+from ...utils.hashing import hash_api_key
 
 logger = get_service_logger(LoggerName.WEATHER_SERVICE)
-from ...database.core import AsyncDatabase, SyncDatabase
-from ...utils.hashing import hash_api_key, mask_api_key
 
 
 class APIKeyService:

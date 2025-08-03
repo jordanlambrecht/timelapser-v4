@@ -7,17 +7,18 @@ Identifies bottlenecks, provides optimization recommendations, and tracks perfor
 """
 
 import time
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-from ..services.logger import get_service_logger
+from typing import Any, Dict, List, Optional
+
 from ..enums import LoggerName
+from ..services.logger import get_service_logger
+from .time_utils import utc_now
+
+from ..database.camera_operations import AsyncCameraOperations
+from ..database.core import AsyncDatabase
+from ..database.image_operations import AsyncImageOperations
+from .database_helpers import DatabaseBenchmark
 
 logger = get_service_logger(LoggerName.SYSTEM)
-
-from .database_helpers import DatabaseBenchmark
-from ..database.core import AsyncDatabase
-from ..database.camera_operations import AsyncCameraOperations
-from ..database.image_operations import AsyncImageOperations
 
 
 class DatabasePerformanceProfiler:
@@ -210,7 +211,7 @@ class DatabasePerformanceProfiler:
             # Generate comprehensive analysis
             analysis = {
                 "profile_summary": {
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": utc_now().isoformat(),
                     "total_profile_time_seconds": round(total_time, 2),
                     "categories_analyzed": [
                         "cameras",

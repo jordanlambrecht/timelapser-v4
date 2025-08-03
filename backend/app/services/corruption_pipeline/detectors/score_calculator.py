@@ -7,10 +7,11 @@ Implements weighted scoring and decision thresholds for determining
 whether an image should be considered corrupted.
 """
 
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from ....services.logger import get_service_logger, LogEmoji
+from typing import Any, Dict, Optional
+
 from ....enums import LoggerName
+from ....services.logger import LogEmoji, get_service_logger
 
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 

@@ -1,9 +1,10 @@
 # backend/app/models/video.py
 
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import Optional, Literal, Dict, Any
-from datetime import datetime, date
+from datetime import date, datetime
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Video generation status models
@@ -52,7 +53,7 @@ class VideoBase(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(_cls, v: str) -> str:
+    def validate_name(cls, v: str) -> str:
         """Validate video name"""
         if not v.strip():
             raise ValueError("Video name cannot be empty or just whitespace")
@@ -61,18 +62,24 @@ class VideoBase(BaseModel):
 
 class VideoCreate(VideoBase):
     """Model for creating a new video"""
-    
+
     timelapse_id: int = Field(..., description="ID of the associated timelapse")
     file_path: Optional[str] = Field(None, description="Path to the video file")
-    status: Literal["generating", "completed", "failed"] = Field(default="generating", description="Initial video status")
-    trigger_type: Optional[Literal["manual", "per_capture", "scheduled", "milestone"]] = Field(default="manual", description="How the video generation was triggered")
+    status: Literal["generating", "completed", "failed"] = Field(
+        default="generating", description="Initial video status"
+    )
+    trigger_type: Optional[
+        Literal["manual", "per_capture", "scheduled", "milestone"]
+    ] = Field(default="manual", description="How the video generation was triggered")
 
 
 class VideoUpdate(BaseModel):
     """Model for updating a video"""
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    timelapse_id: Optional[int] = Field(None, description="ID of the associated timelapse")
+    timelapse_id: Optional[int] = Field(
+        None, description="ID of the associated timelapse"
+    )
     file_path: Optional[str] = None
     status: Optional[Literal["generating", "completed", "failed"]] = None
     settings: Optional[Dict[str, Any]] = None
@@ -81,11 +88,13 @@ class VideoUpdate(BaseModel):
     duration_seconds: Optional[float] = None
     images_start_date: Optional[date] = None
     images_end_date: Optional[date] = None
-    trigger_type: Optional[Literal["manual", "per_capture", "scheduled", "milestone"]] = None
+    trigger_type: Optional[
+        Literal["manual", "per_capture", "scheduled", "milestone"]
+    ] = None
 
     @field_validator("name")
     @classmethod
-    def validate_name(_cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate video name"""
         if v is None:
             return v
@@ -98,7 +107,9 @@ class Video(VideoBase):
     """Full video model with all database fields"""
 
     id: int
-    timelapse_id: Optional[int] = Field(None, description="ID of the associated timelapse")
+    timelapse_id: Optional[int] = Field(
+        None, description="ID of the associated timelapse"
+    )
     file_path: Optional[str] = None
     status: Literal["generating", "completed", "failed"] = "generating"
     image_count: Optional[int] = None

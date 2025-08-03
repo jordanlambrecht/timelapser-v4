@@ -28,42 +28,41 @@ Separation of Concerns:
 - No job queue or scheduling decisions
 """
 
-from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-# from ..services import settings_service
-
-from ..models.health_model import HealthStatus
-from .logger import get_service_logger
-
-from ..enums import (
-    LogEmoji,
-    LogSource,
-    LoggerName,
-    SSEEvent,
-    SSEEventSource,
-    SSEPriority,
-)
+from ..config import settings
 from ..database.core import AsyncDatabase, SyncDatabase
-from ..database.video_operations import VideoOperations, SyncVideoOperations
 from ..database.sse_events_operations import (
     SSEEventsOperations,
     SyncSSEEventsOperations,
 )
-from ..models.video_model import Video, VideoCreate, VideoUpdate, VideoWithDetails
+from ..database.video_operations import SyncVideoOperations, VideoOperations
+from ..enums import (
+    LogEmoji,
+    LoggerName,
+    LogSource,
+    SSEEvent,
+    SSEEventSource,
+    SSEPriority,
+)
+from ..models.health_model import HealthStatus
 from ..models.shared_models import VideoStatistics
+from ..models.video_model import Video, VideoCreate, VideoUpdate, VideoWithDetails
+from ..utils.file_helpers import (
+    get_file_size,
+    get_relative_path,
+    validate_file_path,
+)
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
 )
-from ..utils.file_helpers import (
-    get_relative_path,
-    get_file_size,
-    validate_file_path,
-    ensure_directory_exists,
-)
-from ..config import settings
+from .logger import get_service_logger
+
+# from ..services import settings_service
+
 
 logger = get_service_logger(LoggerName.VIDEO_SERVICE, LogSource.SYSTEM)
 
@@ -141,7 +140,7 @@ class VideoService:
 
         except Exception as e:
             logger.error(
-                f"Failed to get videos",
+                "Failed to get videos",
                 exception=e,
                 extra_context={
                     "operation": "get_videos",
@@ -232,7 +231,7 @@ class VideoService:
 
                 except Exception as e:
                     logger.warning(
-                        f"File path validation failed",
+                        "File path validation failed",
                         exception=e,
                         extra_context={
                             "operation": "file_path_validation",
@@ -288,7 +287,7 @@ class VideoService:
 
         except Exception as e:
             logger.error(
-                f"Error creating video record",
+                "Error creating video record",
                 exception=e,
                 extra_context={
                     "operation": "create_video_record",
@@ -586,7 +585,7 @@ class VideoService:
 
         except Exception as e:
             logger.error(
-                f"Failed to search videos",
+                "Failed to search videos",
                 exception=e,
                 extra_context={
                     "operation": "search_videos",
@@ -727,8 +726,8 @@ class VideoService:
             Dictionary with queue statistics and health status
         """
         from ..constants import (
-            VIDEO_QUEUE_WARNING_THRESHOLD,
             VIDEO_QUEUE_ERROR_THRESHOLD,
+            VIDEO_QUEUE_WARNING_THRESHOLD,
         )
         from ..utils.router_helpers import run_sync_service_method
 
@@ -1126,8 +1125,8 @@ class SyncVideoService:
             Dictionary with queue statistics and health status
         """
         from ..constants import (
-            VIDEO_QUEUE_WARNING_THRESHOLD,
             VIDEO_QUEUE_ERROR_THRESHOLD,
+            VIDEO_QUEUE_WARNING_THRESHOLD,
         )
 
         try:
@@ -1160,7 +1159,7 @@ class SyncVideoService:
 
         except Exception as e:
             logger.error(
-                f"Failed to get queue statistics",
+                "Failed to get queue statistics",
                 exception=e,
                 extra_context={"operation": "get_queue_statistics_with_health_sync"},
             )

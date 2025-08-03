@@ -34,51 +34,45 @@ while preparing for future architectural evolution.
 
 
 from datetime import datetime, timedelta
-from ...utils.time_utils import (
-    utc_now,
-    format_date_string,
-)  # Using timezone-aware system
-from PIL import Image
-from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+from PIL import Image
+
+from ...config import settings
+from ...constants import (
+    BOOLEAN_TRUE_STRING,
+    DEFAULT_GENERATE_OVERLAYS,
+    SETTING_KEY_GENERATE_OVERLAYS,
+)
+from ...database.core import SyncDatabase
+from ...database.image_operations import SyncImageOperations
+from ...database.overlay_operations import SyncOverlayOperations
+from ...enums import LoggerName, LogSource
+from ...models.overlay_model import OverlayConfiguration
 from ...services.logger import get_service_logger
-from ...enums import LogSource, LoggerName
+from ...services.overlay_pipeline import OverlayService
+from ...services.overlay_pipeline.utils.overlay_helpers import (  # Used for overlay configuration validation
+    OverlaySettingsResolver,
+)
+from ...services.overlay_pipeline.utils.overlay_utils import OverlayRenderer
+from ...services.settings_service import SyncSettingsService
+from ...services.weather.service import WeatherManager
+from ...utils import file_helpers
+from ...utils.time_utils import (  # Using timezone-aware system
+    format_date_string,
+    utc_now,
+)
+from .constants import (
+    DEFAULT_OVERLAY_HEIGHT,
+    DEFAULT_OVERLAY_WIDTH,
+    MAX_OVERLAY_HEIGHT,
+    MAX_OVERLAY_WIDTH,
+    MIN_OVERLAY_HEIGHT,
+    MIN_OVERLAY_WIDTH,
+)
 
 logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
-
-# Core dependencies
-from ...database.core import SyncDatabase
-from ...utils import file_helpers
-from ...config import settings
-
-# Local module constants
-from .constants import (
-    DEFAULT_OVERLAY_WIDTH,
-    DEFAULT_OVERLAY_HEIGHT,
-    MIN_OVERLAY_WIDTH,
-    MIN_OVERLAY_HEIGHT,
-    MAX_OVERLAY_WIDTH,
-    MAX_OVERLAY_HEIGHT,
-)
-
-# Global constants
-from ...constants import (
-    SETTING_KEY_GENERATE_OVERLAYS,
-    DEFAULT_GENERATE_OVERLAYS,
-    BOOLEAN_TRUE_STRING,
-)
-
-# Initialize overlay services and dependencies
-from ...services.overlay_pipeline import OverlayService
-from ...services.weather.service import WeatherManager
-from ...services.settings_service import SyncSettingsService
-from ...database.overlay_operations import SyncOverlayOperations
-from ...database.image_operations import SyncImageOperations
-from ...models.overlay_model import OverlayConfiguration
-from ...services.overlay_pipeline.utils.overlay_utils import OverlayRenderer
-from ...services.overlay_pipeline.utils.overlay_helpers import (
-    OverlaySettingsResolver,
-)  # Used for overlay configuration validation
 
 
 class OverlayBridgeService:

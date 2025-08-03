@@ -19,22 +19,19 @@ Consolidated from multiple corruption services with improved architecture:
 
 from .evaluation_service import (
     CorruptionEvaluationService,
-    SyncCorruptionEvaluationService
+    SyncCorruptionEvaluationService,
 )
-from .health_service import (
-    CorruptionHealthService,
-    SyncCorruptionHealthService
-)
+from .health_service import CorruptionHealthService, SyncCorruptionHealthService
 from .statistics_service import (
     CorruptionStatisticsService,
-    SyncCorruptionStatisticsService
+    SyncCorruptionStatisticsService,
 )
 
 __all__ = [
     "CorruptionEvaluationService",
     "SyncCorruptionEvaluationService",
-    "CorruptionHealthService", 
+    "CorruptionHealthService",
     "SyncCorruptionHealthService",
     "CorruptionStatisticsService",
-    "SyncCorruptionStatisticsService"
+    "SyncCorruptionStatisticsService",
 ]

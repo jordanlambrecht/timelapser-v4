@@ -19,7 +19,6 @@ import time
 from typing import List, Dict, Any, Optional
 
 from .mixins.job_processing_mixin import JobProcessingMixin
-from ..utils.time_utils import utc_now
 from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
 from ..services.overlay_pipeline import OverlayService
 from ..database.sse_events_operations import SyncSSEEventsOperations
@@ -117,10 +116,18 @@ class OverlayWorker(JobProcessingMixin[OverlayGenerationJob]):
         self.overlay_job_service = SyncOverlayJobService(
             db=db, settings_service=settings_service
         )
+
+        # Create SyncImageService required by OverlayService
+        from ..services.image_service import SyncImageService
+
+        sync_image_service = SyncImageService(db)
+
         self.overlay_service = OverlayService(
-            db=db,
-            settings_service=settings_service,
-            weather_manager=weather_manager,
+            db,
+            sync_image_service,
+            settings_service,
+            None,  # overlay_preset_service - will be created internally
+            self.overlay_job_service,
         )
         self.weather_manager = weather_manager
 
@@ -282,6 +289,7 @@ class OverlayWorker(JobProcessingMixin[OverlayGenerationJob]):
             self.log_error(f"Error marking overlay job {job_id} as failed", e)
             return False
 
+    # TODO: Implement retry
     def schedule_job_retry(
         self, job_id: int, retry_count: int, delay_minutes: int
     ) -> bool:
@@ -315,7 +323,7 @@ class OverlayWorker(JobProcessingMixin[OverlayGenerationJob]):
         try:
             return self.overlay_job_service.cleanup_completed_jobs(hours_to_keep)
         except Exception as e:
-            self.log_error(f"Error cleaning up overlay jobs", e)
+            self.log_error(f"Error cleaning up overlay jobs: {e}")
             return 0
 
     def get_queue_statistics(self) -> Dict[str, int]:
@@ -334,7 +342,7 @@ class OverlayWorker(JobProcessingMixin[OverlayGenerationJob]):
                 "completed_jobs": int(getattr(stats, "completed_jobs", 0)),
             }
         except Exception as e:
-            self.log_error(f"Error getting overlay queue statistics", e)
+            self.log_error(f"Error getting overlay queue statistics: {e}")
             return {"pending_jobs": 0, "processing_jobs": 0, "completed_jobs": 0}
 
     # Overlay-specific helper methods

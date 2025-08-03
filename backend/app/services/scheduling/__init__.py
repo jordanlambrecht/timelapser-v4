@@ -15,9 +15,9 @@ interfaces where appropriate.
 """
 
 from .capture_timing_service import SchedulingService, SyncSchedulingService
-from .scheduler_authority_service import SchedulerService
-from .time_window_service import TimeWindowService, SyncTimeWindowService
 from .job_queue_service import JobQueueService, SyncJobQueueService
+from .scheduler_authority_service import SchedulerService
+from .time_window_service import SyncTimeWindowService, TimeWindowService
 
 # Export all services
 __all__ = [

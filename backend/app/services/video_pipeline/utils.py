@@ -7,32 +7,29 @@ Pure functions with no external dependencies.
 """
 
 import re
-from typing import Dict, Any, Optional, List
-from pathlib import Path
-from datetime import datetime, timedelta
 import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from ...constants import (
-    VIDEO_AUTOMATION_MODE,
     VIDEO_AUTOMATION_MODES_LIST,
-    VIDEO_QUALITY_LEVEL,
     VIDEO_GENERATION_MODE,
+    VIDEO_QUALITY_LEVEL,
 )
-
-
+from ...utils.time_utils import format_filename_timestamp, utc_now
 from .constants import (
-    DEFAULT_VIDEO_TARGET_DURATION,
-    VIDEO_TRIGGER_TYPES,
-    VIDEO_JOB_STATUSES,
     DEFAULT_VIDEO_FPS,
-    DEFAULT_VIDEO_QUALITY,
-    DEFAULT_VIDEO_MIN_DURATION,
     DEFAULT_VIDEO_MAX_DURATION,
+    DEFAULT_VIDEO_MIN_DURATION,
+    DEFAULT_VIDEO_QUALITY,
+    DEFAULT_VIDEO_TARGET_DURATION,
     VIDEO_FILE_SIZE_OVERHEAD_PERCENT,
-    VIDEO_PROCESSING_OVERHEAD_SECONDS,
-    VIDEO_PROCESSING_MIN_TIME_SECONDS,
-    VIDEO_PROCESSING_MAX_TIME_SECONDS,
     VIDEO_FILENAME_MAX_LENGTH,
+    VIDEO_JOB_STATUSES,
+    VIDEO_PROCESSING_MAX_TIME_SECONDS,
+    VIDEO_PROCESSING_MIN_TIME_SECONDS,
+    VIDEO_PROCESSING_OVERHEAD_SECONDS,
 )
 
 
@@ -178,8 +175,8 @@ def generate_video_filename(
         # Sanitize trigger type
         clean_trigger = sanitize_filename(trigger_type) or "video"
 
-        # Format timestamp
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+        # Format timestamp using timezone-aware utility
+        timestamp_str = format_filename_timestamp(timestamp)
 
         # Build base filename
         base_filename = f"{clean_camera_name}_{clean_trigger}_{timestamp_str}"
@@ -205,7 +202,7 @@ def generate_video_filename(
         return f"{base_filename}.mp4"
     except Exception:
         # Fallback to simple filename
-        return f"video_{timestamp.strftime('%Y%m%d_%H%M%S')}.mp4"
+        return f"video_{format_filename_timestamp(timestamp)}.mp4"
 
 
 def sanitize_filename(filename: str) -> str:
@@ -687,7 +684,7 @@ def create_video_job_metadata(
     """
     try:
         # Get current timestamp
-        created_at = datetime.now().isoformat()
+        created_at = utc_now().isoformat()
 
         # Validate and clean inputs
         clean_timelapse_id = int(timelapse_id) if timelapse_id is not None else 0
@@ -721,7 +718,7 @@ def create_video_job_metadata(
         return {
             "timelapse_id": timelapse_id or 0,
             "trigger_type": trigger_type or "unknown",
-            "created_at": datetime.now().isoformat(),
+            "created_at": utc_now().isoformat(),
             "estimated_duration_seconds": 60,
             "video_settings": {},
             "metadata_version": "1.0",

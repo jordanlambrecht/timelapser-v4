@@ -6,20 +6,20 @@ with consistent formatting, emoji support, and context integration.
 """
 
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from ....enums import LogLevel, LogSource, LoggerName, LogEmoji
+from ....enums import LogEmoji, LoggerName, LogLevel, LogSource
 from ..constants import (
+    CONTEXT_CAMERA_ID_KEY,
+    CONTEXT_ERROR_KEY,
+    CONTEXT_JOB_ID_KEY,
     FORMATTER_ERROR_MESSAGE_MAX_LENGTH,
+    PERFORMANCE_DURATION_DECIMAL_PLACES,
     PERFORMANCE_DURATION_MS_THRESHOLD_FAST,
     PERFORMANCE_DURATION_MS_THRESHOLD_SLOW,
-    PERFORMANCE_DURATION_DECIMAL_PLACES,
-    CONTEXT_CAMERA_ID_KEY,
-    CONTEXT_JOB_ID_KEY,
-    CONTEXT_ERROR_KEY,
-    WORKER_NAME_SUFFIX_PATTERN,
-    WORKER_NAME_SEPARATOR,
     WORKER_MESSAGE_PREFIX_PATTERN,
+    WORKER_NAME_SEPARATOR,
+    WORKER_NAME_SUFFIX_PATTERN,
 )
 
 

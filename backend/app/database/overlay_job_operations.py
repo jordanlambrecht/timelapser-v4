@@ -806,6 +806,42 @@ class SyncOverlayJobOperations:
             sse_broadcaster=sse_broadcaster,
         )
 
+    def cleanup_completed_jobs(self, hours: int = 24) -> int:
+        """
+        Clean up completed/failed jobs older than specified hours (sync version).
+
+        Args:
+            hours: Age threshold in hours for job cleanup
+
+        Returns:
+            Number of jobs cleaned up
+        """
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM overlay_generation_jobs
+                        WHERE status IN (%(completed)s, %(failed)s, %(cancelled)s)
+                            AND completed_at < %(now)s - INTERVAL %(hours)s * INTERVAL '1 hour'
+                        """,
+                        {
+                            "completed": JobStatus.COMPLETED,
+                            "failed": JobStatus.FAILED,
+                            "cancelled": JobStatus.CANCELLED,
+                            "now": utc_now(),
+                            "hours": hours,
+                        },
+                    )
+
+                    return cur.rowcount
+
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise OverlayOperationError(
+                f"Failed to cleanup completed jobs: {e}",
+                operation="cleanup_completed_jobs",
+            ) from e
+
     def get_job_statistics(self) -> OverlayJobStatistics:
         """Get overlay job queue statistics for monitoring (sync version)."""
 

@@ -6,12 +6,17 @@ This module provides specialized generators for each overlay type, replacing
 the monolithic if-elif chain approach with maintainable, testable modules.
 """
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext, overlay_generator_registry
+from .base_generator import (
+    BaseOverlayGenerator,
+    OverlayGenerationContext,
+    overlay_generator_registry,
+)
 from .datetime_generator import DateTimeGenerator
-from .text_generator import TextGenerator
 from .sequence_generator import SequenceGenerator
-from .weather_generator import WeatherGenerator
+from .text_generator import TextGenerator
 from .watermark_generator import WatermarkGenerator
+from .weather_generator import WeatherGenerator
+
 
 # Register all generators
 def register_all_generators():
@@ -22,6 +27,7 @@ def register_all_generators():
     overlay_generator_registry.register(WeatherGenerator())
     overlay_generator_registry.register(WatermarkGenerator())
 
+
 # Auto-register on import
 register_all_generators()
 
@@ -30,7 +36,7 @@ __all__ = [
     "OverlayGenerationContext",
     "overlay_generator_registry",
     "DateTimeGenerator",
-    "TextGenerator", 
+    "TextGenerator",
     "SequenceGenerator",
     "WeatherGenerator",
     "WatermarkGenerator",

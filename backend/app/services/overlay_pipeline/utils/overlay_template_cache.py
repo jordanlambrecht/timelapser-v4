@@ -9,26 +9,41 @@ for consistent caching behavior across the application.
 
 import hashlib
 import json
-from typing import Dict, Any, Optional, Tuple
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
+import time
+from typing import Any, Dict, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageColor
 
-from ....utils.time_utils import utc_now
-from ....services.logger import get_service_logger
 from ....enums import LoggerName
+from ....services.logger import get_service_logger
+from ....utils.time_utils import (
+    format_date_string,
+    format_datetime_string,
+    format_time_object_for_display,
+    utc_now,
+)
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
+from ....constants import (
+    OVERLAY_TYPE_CUSTOM_TEXT,
+    OVERLAY_TYPE_DATE,
+    OVERLAY_TYPE_DATE_TIME,
+    OVERLAY_TYPE_DAY_NUMBER,
+    OVERLAY_TYPE_FRAME_NUMBER,
+    OVERLAY_TYPE_TEMPERATURE,
+    OVERLAY_TYPE_TIME,
+    OVERLAY_TYPE_TIMELAPSE_NAME,
+    OVERLAY_TYPE_WATERMARK,
+    OVERLAY_TYPE_WEATHER_CONDITIONS,
+    OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
+)
 
 from ....models.overlay_model import OverlayConfiguration, OverlayItem
 from ....utils.cache_manager import cached_response
 from .font_cache import get_font_fast, get_text_size_fast
-from ..constants import (
-    OVERLAY_TYPE_WATERMARK,
-    OVERLAY_TYPE_CUSTOM_TEXT,
-    OVERLAY_TYPE_TIMELAPSE_NAME,
-)
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
 
 @dataclass
@@ -91,7 +106,7 @@ class OverlayTemplate:
     def _analyze_overlay_elements(self) -> None:
         """Analyze overlay configuration to separate static and dynamic elements."""
 
-        for position, overlay_item in self.config.overlayPositions.items():
+        for position, overlay_item in self.config.overlay_positions.items():
             if self._is_static_overlay(overlay_item):
                 self.static_positions[position] = overlay_item
             else:
@@ -152,8 +167,8 @@ class OverlayTemplate:
         """Calculate x,y coordinates for grid position."""
 
         width, height = self.image_size
-        margin_x = self.config.globalOptions.xMargin
-        margin_y = self.config.globalOptions.yMargin
+        margin_x = self.config.global_options.x_margin
+        margin_y = self.config.global_options.y_margin
 
         # Define grid positions
         positions = {
@@ -177,7 +192,7 @@ class OverlayTemplate:
 
         # Get overlay text content
         if overlay_item.type == OVERLAY_TYPE_CUSTOM_TEXT:
-            text = overlay_item.customText or ""
+            text = overlay_item.custom_text or ""
         elif overlay_item.type == OVERLAY_TYPE_TIMELAPSE_NAME:
             text = "Timelapse"  # Placeholder - will be updated during frame rendering
         else:
@@ -187,27 +202,27 @@ class OverlayTemplate:
             return
 
         # Get font using global cache
-        font = get_font_fast(self.config.globalOptions.font, overlay_item.textSize)
+        font = get_font_fast(self.config.global_options.font, overlay_item.text_size)
 
         # Calculate text dimensions
         text_width, text_height = get_text_size_fast(
-            text, self.config.globalOptions.font, overlay_item.textSize
+            text, self.config.global_options.font, overlay_item.text_size
         )
 
         # Draw background if specified
-        if overlay_item.backgroundOpacity > 0 and overlay_item.backgroundColor:
+        if overlay_item.background_opacity > 0 and overlay_item.background_color:
             self._draw_text_background(
                 draw,
                 x,
                 y,
                 text_width,
                 text_height,
-                overlay_item.backgroundColor,
-                overlay_item.backgroundOpacity,
+                overlay_item.background_color,
+                overlay_item.background_opacity,
             )
 
         # Draw text
-        text_color = overlay_item.textColor or "#FFFFFF"
+        text_color = overlay_item.text_color or "#FFFFFF"
         draw.text((x, y), text, font=font, fill=text_color)
 
     def _render_static_image_overlay(
@@ -215,7 +230,7 @@ class OverlayTemplate:
     ) -> None:
         """Render static image overlay (watermarks)."""
 
-        if not overlay_item.imageUrl:
+        if not overlay_item.image_url:
             return
 
         try:
@@ -224,9 +239,9 @@ class OverlayTemplate:
                 self.background_layer = Image.new("RGBA", self.image_size, (0, 0, 0, 0))
 
             # Load overlay image
-            overlay_image_path = Path(overlay_item.imageUrl)
+            overlay_image_path = Path(overlay_item.image_url)
             if not overlay_image_path.exists():
-                logger.warning(f"Overlay image not found: {overlay_item.imageUrl}")
+                logger.warning(f"Overlay image not found: {overlay_item.image_url}")
                 return
 
             with Image.open(overlay_image_path) as img:
@@ -235,8 +250,8 @@ class OverlayTemplate:
                     img = img.convert("RGBA")
 
                 # Scale image if needed
-                if overlay_item.imageScale != 100:
-                    scale_factor = overlay_item.imageScale / 100.0
+                if overlay_item.image_scale != 100:
+                    scale_factor = overlay_item.image_scale / 100.0
                     new_size = (
                         int(img.width * scale_factor),
                         int(img.height * scale_factor),
@@ -262,8 +277,6 @@ class OverlayTemplate:
         """Draw semi-transparent background rectangle for text."""
 
         try:
-            from PIL import ImageColor
-
             # Parse color and apply opacity
             color = ImageColor.getrgb(background_color)
             alpha = int(255 * (opacity / 100.0))
@@ -292,7 +305,6 @@ class OverlayTemplate:
         Returns:
             Composited image with overlays applied
         """
-        import time
 
         start_time = time.time()
 
@@ -323,7 +335,7 @@ class OverlayTemplate:
                 result_image = Image.alpha_composite(result_image, dynamic_layer)
 
             # Apply global opacity if needed
-            if self.config.globalOptions.opacity < 100:
+            if self.config.global_options.opacity < 100:
                 result_image = self._apply_global_opacity(result_image)
 
             # Update performance tracking
@@ -355,27 +367,27 @@ class OverlayTemplate:
         x, y = self._calculate_position(position)
 
         # Get font using global cache
-        font = get_font_fast(self.config.globalOptions.font, overlay_item.textSize)
+        font = get_font_fast(self.config.global_options.font, overlay_item.text_size)
 
         # Calculate text dimensions
         text_width, text_height = get_text_size_fast(
-            content_text, self.config.globalOptions.font, overlay_item.textSize
+            content_text, self.config.global_options.font, overlay_item.text_size
         )
 
         # Draw background if specified
-        if overlay_item.backgroundOpacity > 0 and overlay_item.backgroundColor:
+        if overlay_item.background_opacity > 0 and overlay_item.background_color:
             self._draw_text_background(
                 draw,
                 x,
                 y,
                 text_width,
                 text_height,
-                overlay_item.backgroundColor,
-                overlay_item.backgroundOpacity,
+                overlay_item.background_color,
+                overlay_item.background_opacity,
             )
 
         # Draw text
-        text_color = overlay_item.textColor or "#FFFFFF"
+        text_color = overlay_item.text_color or "#FFFFFF"
         draw.text((x, y), content_text, font=font, fill=text_color)
 
     def _get_dynamic_content(
@@ -383,30 +395,23 @@ class OverlayTemplate:
     ) -> str:
         """Generate dynamic content text based on overlay type and context."""
 
-        from ..constants import (
-            OVERLAY_TYPE_DATE,
-            OVERLAY_TYPE_DATE_TIME,
-            OVERLAY_TYPE_TIME,
-            OVERLAY_TYPE_FRAME_NUMBER,
-            OVERLAY_TYPE_DAY_NUMBER,
-            OVERLAY_TYPE_TEMPERATURE,
-            OVERLAY_TYPE_WEATHER_CONDITIONS,
-            OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
-        )
-
         overlay_type = overlay_item.type
 
         if overlay_type == OVERLAY_TYPE_DATE:
             timestamp = context_data.get("timestamp", utc_now())
-            return timestamp.strftime(overlay_item.dateFormat or "%m/%d/%Y")
+            # Use custom date format if provided, otherwise default format
+            date_format = overlay_item.date_format or "%m/%d/%Y"
+            return format_date_string(timestamp, date_format)
 
         elif overlay_type == OVERLAY_TYPE_TIME:
             timestamp = context_data.get("timestamp", utc_now())
-            return timestamp.strftime("%H:%M:%S")
+            return format_time_object_for_display(timestamp.time())
 
         elif overlay_type == OVERLAY_TYPE_DATE_TIME:
             timestamp = context_data.get("timestamp", utc_now())
-            return timestamp.strftime(overlay_item.dateFormat or "%m/%d/%Y %H:%M:%S")
+            # Use custom datetime format if provided, otherwise default format
+            datetime_format = overlay_item.date_format or "%m/%d/%Y %H:%M:%S"
+            return format_datetime_string(timestamp, datetime_format)
 
         elif overlay_type == OVERLAY_TYPE_FRAME_NUMBER:
             frame_number = context_data.get("frame_number", 0)
@@ -442,11 +447,11 @@ class OverlayTemplate:
     def _apply_global_opacity(self, image: Image.Image) -> Image.Image:
         """Apply global opacity to the overlay layers."""
 
-        if self.config.globalOptions.opacity >= 100:
+        if self.config.global_options.opacity >= 100:
             return image
 
         # Create alpha mask
-        alpha = int(255 * (self.config.globalOptions.opacity / 100.0))
+        alpha = int(255 * (self.config.global_options.opacity / 100.0))
 
         # Apply opacity
         image_array = image.split()
@@ -517,25 +522,25 @@ class OverlayTemplateManager:
 
         # Create hashable representation of config
         config_dict = {
-            "overlayPositions": {
+            "overlay_positions": {
                 pos: {
                     "type": item.type,
-                    "textSize": item.textSize,
-                    "textColor": item.textColor,
-                    "backgroundColor": item.backgroundColor,
-                    "backgroundOpacity": item.backgroundOpacity,
-                    "imageUrl": item.imageUrl,
-                    "imageScale": item.imageScale,
-                    "customText": item.customText,
-                    "dateFormat": item.dateFormat,
+                    "text_size": item.text_size,
+                    "text_color": item.text_color,
+                    "background_color": item.background_color,
+                    "background_opacity": item.background_opacity,
+                    "image_url": item.image_url,
+                    "image_scale": item.image_scale,
+                    "custom_text": item.custom_text,
+                    "date_format": item.date_format,
                 }
-                for pos, item in config.overlayPositions.items()
+                for pos, item in config.overlay_positions.items()
             },
-            "globalOptions": {
-                "opacity": config.globalOptions.opacity,
-                "font": config.globalOptions.font,
-                "xMargin": config.globalOptions.xMargin,
-                "yMargin": config.globalOptions.yMargin,
+            "global_options": {
+                "opacity": config.global_options.opacity,
+                "font": config.global_options.font,
+                "x_margin": config.global_options.x_margin,
+                "y_margin": config.global_options.y_margin,
             },
             "imageSize": image_size,
         }

@@ -2,9 +2,10 @@
 """
 Pydantic models for system health and statistics data.
 """
-from pydantic import BaseModel, field_validator
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, field_validator
 
 
 class SystemOverviewModel(BaseModel):

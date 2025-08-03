@@ -9,16 +9,16 @@ Interactions: Uses StatisticsService for aggregated data, coordinates multiple s
 
 from fastapi import APIRouter, Response
 
-from ..dependencies import StatisticsServiceDep, HealthServiceDep
-from ..utils.cache_manager import (
-    generate_content_hash_etag,
-)
+from ..dependencies import HealthServiceDep, StatisticsServiceDep
 from ..models.statistics_model import (
     DashboardStatsModel,
     EnhancedDashboardStatsModel,
 )
-from ..utils.router_helpers import handle_exceptions
+from ..utils.cache_manager import (
+    generate_content_hash_etag,
+)
 from ..utils.response_helpers import ResponseFormatter
+from ..utils.router_helpers import handle_exceptions
 
 # NOTE: CACHING STRATEGY - ETAG + SHORT CACHE
 # Dashboard is perfect use case for ETag + short cache strategy:

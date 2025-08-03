@@ -6,15 +6,18 @@ Supports custom user text and timelapse name overlays.
 """
 
 from typing import Union
+
 from PIL import Image as PILImage
+
+from ....enums import LogSource, LoggerName
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.validation_helpers import validate_custom_text
+from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class TextGenerator(BaseOverlayGenerator):
@@ -99,17 +102,17 @@ class TextGenerator(BaseOverlayGenerator):
         """
         logger.debug("Processing custom text overlay generation")
 
-        if not overlay_item.customText:
-            logger.error("Custom text overlay missing customText property")
-            raise ValueError("Custom text overlay requires customText property")
+        if not overlay_item.custom_text:
+            logger.error("Custom text overlay missing custom_text property")
+            raise ValueError("Custom text overlay requires custom_text property")
 
         logger.debug(
-            f"Custom text content: '{overlay_item.customText[:50]}{'...' if len(overlay_item.customText) > 50 else ''}'"
+            f"Custom text content: '{overlay_item.custom_text[:50]}{'...' if len(overlay_item.custom_text) > 50 else ''}'"
         )
 
         # Return the text as-is
         # Future enhancement: Could support text templating/variables here
-        result = overlay_item.customText.strip()
+        result = overlay_item.custom_text.strip()
         logger.debug("Custom text overlay generated successfully")
         return result
 
@@ -167,7 +170,7 @@ class TextGenerator(BaseOverlayGenerator):
 
             try:
                 # Use validation helper for consistent validation
-                validated_text = validate_custom_text(overlay_item.customText)
+                validated_text = validate_custom_text(overlay_item.custom_text)
                 logger.debug(
                     f"Custom text overlay validation passed: {len(validated_text)} characters"
                 )

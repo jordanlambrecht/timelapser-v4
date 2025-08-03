@@ -7,16 +7,16 @@ lookups and improve overlay rendering performance. Designed for multi-worker sce
 with memory-efficient caching.
 """
 
-import os
 import time
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 from PIL import ImageFont
-from ....services.logger import get_service_logger
+
 from ....enums import LoggerName
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 

@@ -7,29 +7,27 @@ that will be composited onto timelapse frames. All overlay rendering is done usi
 for high-quality text and image composition.
 """
 
-import os
 import asyncio
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
 from pathlib import Path
-import json
+from typing import Any, Dict, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont, ImageColor
-from ....services.logger import get_service_logger, LogEmoji
-from ....enums import LoggerName
+from PIL import Image, ImageColor, ImageDraw
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
+from ....enums import LogSource, LoggerName
+from ....services.logger import LogEmoji, get_service_logger
 
+
+from ....constants import OVERLAY_TYPE_WATERMARK
+from ....enums import OverlayGridPosition
+from ....models.image_model import Image as ImageModel
+from ....models.overlay_model import OverlayConfiguration, OverlayItem
+from ....models.timelapse_model import Timelapse as TimelapseModel
 from ....utils.time_utils import utc_now
+from ..generators import OverlayGenerationContext, overlay_generator_registry
 from .font_cache import get_font_fast, get_text_size_fast
 from .overlay_template_cache import get_overlay_template
 
-from ....models.overlay_model import OverlayConfiguration, OverlayItem
-from ....enums import OverlayGridPosition
-from ....models.image_model import Image as ImageModel
-from ....models.timelapse_model import Timelapse as TimelapseModel
-from ....constants import OVERLAY_TYPE_WATERMARK
-from ..generators import overlay_generator_registry, OverlayGenerationContext
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class OverlayRenderer:
@@ -155,13 +153,13 @@ class OverlayRenderer:
         draw = ImageDraw.Draw(overlay_layer)
 
         # Render each positioned overlay
-        for position, overlay_item in self.config.overlayPositions.items():
+        for position, overlay_item in self.config.overlay_positions.items():
             self._render_overlay_item(
                 draw, overlay_layer, position, overlay_item, context_data
             )
 
         # Apply global opacity
-        if self.config.globalOptions.opacity < 100:
+        if self.config.global_options.opacity < 100:
             overlay_layer = self._apply_global_opacity(overlay_layer)
 
         # Composite overlay onto base image
@@ -277,12 +275,12 @@ class OverlayRenderer:
             weather_conditions=context_data.get("weather_conditions"),
             temperature_unit=context_data.get("temperature_unit", "F"),
             settings_service=context_data.get("settings_service"),
-            global_font=self.config.globalOptions.font,
+            global_font=self.config.global_options.font,
             global_fill_color=getattr(
-                self.config.globalOptions, "fillColor", "#FFFFFF"
+                self.config.global_options, "fillColor", "#FFFFFF"
             ),
             global_background_color=getattr(
-                self.config.globalOptions, "backgroundColor", "#000000"
+                self.config.global_options, "background_color", "#000000"
             ),
         )
 
@@ -297,11 +295,11 @@ class OverlayRenderer:
         """Render text overlay with background and styling."""
 
         # Get font using global cache
-        font = get_font_fast(self.config.globalOptions.font, overlay_item.textSize)
+        font = get_font_fast(self.config.global_options.font, overlay_item.text_size)
 
         # Calculate text dimensions using cached font
         text_width, text_height = get_text_size_fast(
-            text, self.config.globalOptions.font, overlay_item.textSize
+            text, self.config.global_options.font, overlay_item.text_size
         )
 
         # Adjust position based on text dimensions (for proper positioning)
@@ -310,19 +308,19 @@ class OverlayRenderer:
         )
 
         # Draw background if specified
-        if overlay_item.backgroundOpacity > 0 and overlay_item.backgroundColor:
+        if overlay_item.background_opacity > 0 and overlay_item.background_color:
             self._draw_text_background(
                 draw,
                 adjusted_x,
                 adjusted_y,
                 text_width,
                 text_height,
-                overlay_item.backgroundColor,
-                overlay_item.backgroundOpacity,
+                overlay_item.background_color,
+                overlay_item.background_opacity,
             )
 
         # Draw text
-        text_color = overlay_item.textColor or "#FFFFFF"
+        text_color = overlay_item.text_color or "#FFFFFF"
         draw.text((adjusted_x, adjusted_y), text, font=font, fill=text_color)
 
     def _render_image_overlay(
@@ -330,14 +328,14 @@ class OverlayRenderer:
     ) -> None:
         """Render image overlay (watermark) at specified position."""
 
-        if not overlay_item.imageUrl:
+        if not overlay_item.image_url:
             return
 
         try:
             # Load overlay image
-            overlay_image_path = Path(overlay_item.imageUrl)
+            overlay_image_path = Path(overlay_item.image_url)
             if not overlay_image_path.exists():
-                logger.warning(f"Overlay image not found: {overlay_item.imageUrl}")
+                logger.warning(f"Overlay image not found: {overlay_item.image_url}")
                 return
 
             with Image.open(overlay_image_path) as img:
@@ -346,8 +344,8 @@ class OverlayRenderer:
                     img = img.convert("RGBA")
 
                 # Scale image if needed
-                if overlay_item.imageScale != 100:
-                    scale_factor = overlay_item.imageScale / 100.0
+                if overlay_item.image_scale != 100:
+                    scale_factor = overlay_item.image_scale / 100.0
                     new_size = (
                         int(img.width * scale_factor),
                         int(img.height * scale_factor),
@@ -369,8 +367,8 @@ class OverlayRenderer:
         """Calculate x,y coordinates for grid position."""
 
         width, height = image_size
-        margin_x = self.config.globalOptions.xMargin
-        margin_y = self.config.globalOptions.yMargin
+        margin_x = self.config.global_options.x_margin
+        margin_y = self.config.global_options.y_margin
 
         # Define grid positions
         positions = {
@@ -437,11 +435,11 @@ class OverlayRenderer:
     def _apply_global_opacity(self, overlay_layer: Image.Image) -> Image.Image:
         """Apply global opacity to the overlay layer."""
 
-        if self.config.globalOptions.opacity >= 100:
+        if self.config.global_options.opacity >= 100:
             return overlay_layer
 
         # Create alpha mask
-        alpha = int(255 * (self.config.globalOptions.opacity / 100.0))
+        alpha = int(255 * (self.config.global_options.opacity / 100.0))
 
         # Apply opacity
         overlay_array = overlay_layer.split()
@@ -498,34 +496,34 @@ def validate_overlay_configuration(config: OverlayConfiguration) -> bool:
     """
     try:
         # Check for at least one overlay position
-        if not config.overlayPositions:
+        if not config.overlay_positions:
             return False
 
         # Validate each overlay item
-        for position, overlay_item in config.overlayPositions.items():
+        for position, overlay_item in config.overlay_positions.items():
             if not overlay_item.type:
                 return False
 
             # Validate text size range
-            if not (8 <= overlay_item.textSize <= 72):
+            if not (8 <= overlay_item.text_size <= 72):
                 return False
 
             # Validate opacity range
-            if not (0 <= overlay_item.backgroundOpacity <= 100):
+            if not (0 <= overlay_item.background_opacity <= 100):
                 return False
 
             # Validate image scale range
-            if not (10 <= overlay_item.imageScale <= 500):
+            if not (10 <= overlay_item.image_scale <= 500):
                 return False
 
         # Validate global options
-        if not (0 <= config.globalOptions.opacity <= 100):
+        if not (0 <= config.global_options.opacity <= 100):
             return False
 
-        if not (0 <= config.globalOptions.xMargin <= 200):
+        if not (0 <= config.global_options.x_margin <= 200):
             return False
 
-        if not (0 <= config.globalOptions.yMargin <= 200):
+        if not (0 <= config.global_options.y_margin <= 200):
             return False
 
         return True

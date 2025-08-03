@@ -3,13 +3,14 @@
 Thumbnail Repair Service - Orphaned file management and cleanup.
 """
 
-from typing import Dict, Any
-from ....services.logger import get_service_logger
+from typing import Any, Dict
+
 from ....enums import LoggerName
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
 
-from ....database.core import SyncDatabase, AsyncDatabase
+from ....database.core import AsyncDatabase, SyncDatabase
 
 
 class SyncThumbnailRepairService:

@@ -5,19 +5,23 @@ Watermark Overlay Generator - Handles image-based overlay content generation.
 Supports watermark and logo overlays with scaling and positioning.
 """
 
-from typing import Union
 from pathlib import Path
+from typing import Union
+
 from PIL import Image as PILImage
 
-from ....routers.settings_routers import get_settings
+from ....enums import LoggerName, LogSource
+
+# Import moved to function level to avoid circular import
+# from ....routers.settings_routers import get_settings
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
-from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.validation_helpers import validate_image_path, validate_image_scale
+from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class WatermarkGenerator(BaseOverlayGenerator):
@@ -99,23 +103,23 @@ class WatermarkGenerator(BaseOverlayGenerator):
         """
         logger.debug("Processing watermark image generation")
 
-        if not overlay_item.imageUrl:
-            logger.error("Watermark overlay missing imageUrl property")
-            raise ValueError("Watermark overlay requires imageUrl property")
+        if not overlay_item.image_url:
+            logger.error("Watermark overlay missing image_url property")
+            raise ValueError("Watermark overlay requires image_url property")
 
-        logger.debug(f"Loading watermark from: {overlay_item.imageUrl}")
+        logger.debug(f"Loading watermark from: {overlay_item.image_url}")
 
         # Load the image
-        watermark_image = self._load_image(overlay_item.imageUrl)
+        watermark_image = self._load_image(overlay_item.image_url)
         logger.debug(
             f"Watermark loaded: {watermark_image.size} pixels, mode: {watermark_image.mode}"
         )
 
         # Apply scaling if specified
-        if overlay_item.imageScale != 100:
-            logger.debug(f"Scaling watermark: {overlay_item.imageScale}%")
+        if overlay_item.image_scale != 100:
+            logger.debug(f"Scaling watermark: {overlay_item.image_scale}%")
             watermark_image = self._scale_image(
-                watermark_image, overlay_item.imageScale
+                watermark_image, overlay_item.image_scale
             )
             logger.debug(f"Watermark scaled to: {watermark_image.size} pixels")
         else:
@@ -220,6 +224,9 @@ class WatermarkGenerator(BaseOverlayGenerator):
         # This path should be configurable via settings
         # For now, assume assets are stored relative to the data directory
 
+        # Import here to avoid circular import
+        from ....routers.settings_routers import get_settings
+
         settings = get_settings()
 
         # Construct full path to assets
@@ -291,11 +298,11 @@ class WatermarkGenerator(BaseOverlayGenerator):
         # Use validation helpers for consistent validation
         try:
             # Validate image path (handles security and format checks)
-            validated_path = validate_image_path(overlay_item.imageUrl)
+            validated_path = validate_image_path(overlay_item.image_url)
             logger.debug(f"Validated image path: {validated_path}")
 
             # Validate image scale
-            validated_scale = validate_image_scale(overlay_item.imageScale)
+            validated_scale = validate_image_scale(overlay_item.image_scale)
             logger.debug(f"Validated image scale: {validated_scale}%")
 
         except ValueError as e:

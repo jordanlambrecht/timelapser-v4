@@ -6,10 +6,16 @@ Orchestrates the complete image capture workflow by coordinating existing servic
 This is the main entry point for capture operations.
 """
 
-from pathlib import Path
-from typing import Dict, Any, Optional
 import time
-from ...services.logger import get_service_logger
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from ...constants import (
+    CAMERA_CAPTURE_FAILED,
+    CAMERA_CAPTURE_SUCCESS,
+)
+from ...database.core import SyncDatabase
+from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
     LogEmoji,
     LoggerName,
@@ -18,38 +24,27 @@ from ...enums import (
     SSEPriority,
     ThumbnailJobPriority,
 )
-
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
-
-
-from ...models.shared_models import RTSPCaptureResult
 from ...exceptions import RTSPCaptureError
-from ...constants import (
-    CAMERA_CAPTURE_SUCCESS,
-    CAMERA_CAPTURE_FAILED,
-)
-
-from ...services.image_service import SyncImageService
+from ...models.shared_models import RTSPCaptureResult
 from ...services.camera_service import SyncCameraService
+from ...services.image_service import SyncImageService
+from ...services.logger import get_service_logger
 from ...services.timelapse_service import SyncTimelapseService
 from ...services.weather.service import WeatherManager
-from ..corruption_pipeline.services.evaluation_service import (
-    SyncCorruptionEvaluationService,
-)
-
-from ...database.core import SyncDatabase
-from ...database.sse_events_operations import SyncSSEEventsOperations
-from .rtsp_service import RTSPService
-from .job_coordination_service import JobCoordinationService
-
-
+from ...utils.database_helpers import DatabaseUtilities
+from ...utils.file_helpers import ensure_entity_directory, get_relative_path
 from ...utils.time_utils import (
     get_timezone_aware_timestamp_sync,
     utc_now,
 )
+from ..corruption_pipeline.services.evaluation_service import (
+    SyncCorruptionEvaluationService,
+)
+from .job_coordination_service import JobCoordinationService
+from .rtsp_service import RTSPService
 from .utils import generate_capture_filename
-from ...utils.file_helpers import ensure_entity_directory, get_relative_path
-from ...utils.database_helpers import DatabaseUtilities
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 
 
 class WorkflowOrchestratorService:
@@ -114,6 +109,16 @@ class WorkflowOrchestratorService:
         # Backward compatibility aliases for tests
         self.job_coordination_service = job_coordinator  # Alias for test compatibility
         self.sse_service = sse_ops  # Alias for test compatibility
+
+    @property
+    def timelapse_ops(self):
+        """
+        Access to timelapse database operations.
+
+        Provides compatibility interface for workers that expect timelapse_ops
+        from the workflow orchestrator.
+        """
+        return self.timelapse_service.timelapse_ops
 
     def execute_capture_workflow(
         self,

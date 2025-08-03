@@ -7,25 +7,23 @@ handling stuck jobs across all job queues and providing comprehensive
 recovery statistics.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from .logger import get_service_logger
-
-from ..utils.time_utils import utc_now, utc_timestamp
-from ..enums import LogEmoji, LogLevel, LogSource, LoggerName
-from ..services.logger.logger_service import LoggerService
-
-from ..database.core import SyncDatabase, AsyncDatabase
-from ..database.thumbnail_job_operations import (
-    ThumbnailJobOperations,
-    SyncThumbnailJobOperations,
-)
-from ..database.video_operations import VideoOperations, SyncVideoOperations
+from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.overlay_job_operations import (
     OverlayJobOperations,
     SyncOverlayJobOperations,
 )
+from ..database.thumbnail_job_operations import (
+    SyncThumbnailJobOperations,
+    ThumbnailJobOperations,
+)
+from ..database.video_operations import SyncVideoOperations, VideoOperations
+from ..enums import LogEmoji, LoggerName, LogSource
+from ..services.logger.logger_service import LoggerService
 from ..utils.startup_cleanup import StartupCleanupService
+from ..utils.time_utils import utc_now, utc_timestamp
+from .logger import get_service_logger
 
 logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
@@ -264,7 +262,10 @@ class SyncRecoveryService:
             Dictionary with comprehensive recovery statistics
         """
         recovery_start_time = utc_now()
-        logger.info("Starting startup recovery for all job types (sync)...", emoji=LogEmoji.STARTUP)
+        logger.info(
+            "Starting startup recovery for all job types (sync)...",
+            emoji=LogEmoji.STARTUP,
+        )
 
         try:
             # Recovery results for each job type

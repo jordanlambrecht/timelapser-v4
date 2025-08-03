@@ -7,12 +7,12 @@ throughout the codebase.
 """
 
 from typing import Set
-from enum import Enum
 
 from .models.health_model import HealthStatus
 from .enums import (
     # Priority Systems
     JobPriority,
+    LogLevel,
     SSEPriority,
     # Job Systems
     JobStatus,
@@ -40,6 +40,25 @@ from .enums import (
 # =====================================================================
 
 APP_VERSION = "4.0.0"
+
+# =====================================================================
+#  SETTINGS KEYS
+# =====================================================================
+
+# Weather settings keys
+SETTING_KEY_WEATHER_ENABLED = "weather_enabled"
+SETTING_KEY_TEMPERATURE_UNIT = "temperature_unit"
+
+# Overlays setting keys
+SETTING_KEY_GENERATE_OVERLAYS = "generate_overlays"
+SETTING_KEY_OVERLAY_GENERATION_ENABLED = "overlay_generation_enabled"
+# Thumbnail setting keys
+SETTING_KEY_GENERATE_THUMBNAILS = "generate_thumbnails"
+SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
+    " thumbnail_purge_smalls_on_completion"
+)
+SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
+SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
 
 # =============================================================================
 # JOB COORDINATION - ALIASES FOR IMPORTED ENUMS
@@ -75,6 +94,7 @@ TIMELAPSE_ACTION = TimelapseAction
 
 # ====================================================================
 # FILE TYPE CONSTANTS
+# ====================================================================
 
 # Overlay asset file types
 ALLOWED_OVERLAY_ASSET_TYPES = {
@@ -82,7 +102,20 @@ ALLOWED_OVERLAY_ASSET_TYPES = {
     "image/jpeg",
     "image/jpg",
     "image/webp",
-    "image/gif",
+    # TODO: svg support
+}
+
+ASSET_TYPE_MAP = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".avi": "video/avi",
+    ".mov": "video/quicktime",
+    ".zip": "application/zip",
+    ".pdf": "application/pdf",
 }
 
 # Overlay asset size limits
@@ -299,7 +332,6 @@ DEFAULT_TIME_WINDOW_GRACE_PERIOD_SECONDS = (
 )
 
 # Time window event types
-EVENT_TIME_WINDOW_VALIDATED = "time_window_validated"
 EVENT_TIME_WINDOW_STATUS_CALCULATED = "time_window_status_calculated"
 EVENT_CAPTURE_COUNT_ESTIMATED = "capture_count_estimated"
 
@@ -426,7 +458,7 @@ HEALTH_VIDEO_QUEUE_ERROR = 100  # Error if pending jobs exceed this
 
 
 # Log levels (using centralized enum from enums.py)
-from .enums import LogLevel
+
 
 LOG_LEVELS = LogLevel
 LOG_LEVELS_LIST = [level.value for level in LogLevel]
@@ -549,15 +581,15 @@ RETRY_BACKOFF_BASE = 2
 # TIMEZONE CONSTANTS
 # ====================================================================
 
-# Default timezone
+# Default timezone - this is the authoritative timezone constant
 DEFAULT_TIMEZONE = "UTC"
 
-# Common timezone aliases
+# Common timezone aliases - these are legitimate constant definitions
 TIMEZONE_ALIASES = {
-    "EST": "America/New_York",
-    "CST": "America/Chicago",
-    "MST": "America/Denver",
-    "PST": "America/Los_Angeles",
+    "EST": "America/New_York",  # Eastern Standard Time
+    "CST": "America/Chicago",  # Central Standard Time
+    "MST": "America/Denver",  # Mountain Standard Time
+    "PST": "America/Los_Angeles",  # Pacific Standard Time
 }
 
 # ====================================================================
@@ -612,7 +644,6 @@ EVENT_WEATHER_UPDATED = "weather_updated"
 EVENT_AUDIT_TRAIL_CREATED = "audit_trail_created"
 
 # Time window events
-EVENT_TIME_WINDOW_VALIDATED = "time_window_validated"
 EVENT_TIME_WINDOW_STATUS_CALCULATED = "time_window_status_calculated"
 EVENT_CAPTURE_COUNT_ESTIMATED = "capture_count_estimated"
 EVENT_LOG_CLEANUP_COMPLETED = "log_cleanup_completed"
@@ -677,16 +708,7 @@ WEATHER_DATA_STALE_THRESHOLD_HOURS = 25
 DATE_STRING_LENGTH = 10
 DUMMY_API_KEY = "dummy"
 
-# Setting keys and defaults
-SETTING_KEY_WEATHER_ENABLED = "weather_enabled"
-SETTING_KEY_TEMPERATURE_UNIT = "temperature_unit"
-SETTING_KEY_GENERATE_THUMBNAILS = "generate_thumbnails"
-SETTING_KEY_GENERATE_OVERLAYS = "generate_overlays"
-SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
-    "thumbnail_purge_smalls_on_completion"
-)
-SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
-SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE = "thumbnail_small_generation_mode"
+
 DEFAULT_WEATHER_ENABLED = "false"
 DEFAULT_TEMPERATURE_UNIT = "celsius"
 DEFAULT_GENERATE_THUMBNAILS = "true"
@@ -862,11 +884,6 @@ EVENT_TIMELAPSE_HEALTH_MONITORED = "timelapse_health_monitored"
 EVENT_TIMELAPSE_STATISTICS_UPDATED = "timelapse_statistics_updated"
 EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
 
-# Timelapse setting keys
-SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION = (
-    "thumbnail_purge_smalls_on_completion"
-)
-SETTING_KEY_THUMBNAIL_GENERATION_ENABLED = "thumbnail_generation_enabled"
 
 # ====================================================================
 # RTSP SERVICE CONSTANTS

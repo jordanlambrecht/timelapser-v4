@@ -11,14 +11,16 @@ from typing import Optional, Dict, Any, Union
 from zoneinfo import ZoneInfo
 from ...services.logger import get_service_logger
 from ...enums import LogSource, LoggerName
+from ...constants import DEFAULT_TIMEZONE
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 from ...utils.time_utils import (
     get_timezone_from_cache_sync,
     get_timezone_aware_timestamp_sync,
 )
 from ...services.settings_service import SyncSettingsService
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class SchedulerTimeUtils:
@@ -59,7 +61,7 @@ class SchedulerTimeUtils:
             logger.debug(f"Updated timezone cache: {timezone_str}")
         except Exception as e:
             logger.warning(f"Failed to get timezone from settings, using UTC: {e}")
-            self._cached_timezone = ZoneInfo("UTC")
+            self._cached_timezone = ZoneInfo(DEFAULT_TIMEZONE)
             self._cache_timestamp = current_time
 
         return self._cached_timezone

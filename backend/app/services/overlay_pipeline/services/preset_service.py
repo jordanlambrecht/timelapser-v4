@@ -3,19 +3,21 @@
 Overlay Preset Service - Management of system-wide overlay presets.
 """
 
-from typing import List, Optional, Dict, Any
-from ....services.logger import get_service_logger
+from typing import Any, Dict, List, Optional
+
 from ....enums import LoggerName, LogSource
+from ....services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
-from ....database.core import SyncDatabase, AsyncDatabase
-from ....database.overlay_operations import SyncOverlayOperations, OverlayOperations
+from ....database.core import AsyncDatabase, SyncDatabase
+from ....database.overlay_operations import OverlayOperations, SyncOverlayOperations
 from ....models.overlay_model import (
     OverlayPreset,
     OverlayPresetCreate,
     OverlayPresetUpdate,
 )
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 class SyncOverlayPresetService:
@@ -34,7 +36,7 @@ class SyncOverlayPresetService:
         try:
             return self.overlay_ops.get_all_presets()
         except Exception as e:
-            logger.error(f"Failed to get overlay presets", exception=e)
+            logger.error("Failed to get overlay presets", exception=e)
             return []
 
     def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:
@@ -65,7 +67,7 @@ class SyncOverlayPresetService:
         try:
             return self.overlay_ops.create_preset(preset_data)
         except Exception as e:
-            logger.error(f"Failed to create overlay preset", exception=e)
+            logger.error("Failed to create overlay preset", exception=e)
             return None
 
     def update_preset(self, preset_id: int, updates: Dict[str, Any]) -> bool:
@@ -94,7 +96,7 @@ class SyncOverlayPresetService:
             all_presets = self.overlay_ops.get_all_presets(include_builtin=True)
             return [p for p in all_presets if p.is_builtin]
         except Exception as e:
-            logger.error(f"Failed to get built-in overlay presets", exception=e)
+            logger.error("Failed to get built-in overlay presets", exception=e)
             return []
 
     def get_custom_presets(self) -> List[OverlayPreset]:
@@ -104,7 +106,7 @@ class SyncOverlayPresetService:
             all_presets = self.overlay_ops.get_all_presets(include_builtin=True)
             return [p for p in all_presets if not p.is_builtin]
         except Exception as e:
-            logger.error(f"Failed to get custom overlay presets", exception=e)
+            logger.error("Failed to get custom overlay presets", exception=e)
             return []
 
     def duplicate_preset(
@@ -147,7 +149,7 @@ class OverlayPresetService:
         try:
             return await self.overlay_ops.get_all_presets()
         except Exception as e:
-            logger.error(f"Failed to get overlay presets", exception=e)
+            logger.error("Failed to get overlay presets", exception=e)
             return []
 
     async def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:
@@ -173,7 +175,7 @@ class OverlayPresetService:
         try:
             return await self.overlay_ops.create_preset(preset_data)
         except Exception as e:
-            logger.error(f"Failed to create overlay preset", exception=e)
+            logger.error("Failed to create overlay preset", exception=e)
             return None
 
     async def update_preset(self, preset_id: int, updates: Dict[str, Any]) -> bool:
@@ -202,7 +204,7 @@ class OverlayPresetService:
             all_presets = await self.overlay_ops.get_all_presets(include_builtin=True)
             return [p for p in all_presets if p.is_builtin]
         except Exception as e:
-            logger.error(f"Failed to get built-in overlay presets", exception=e)
+            logger.error("Failed to get built-in overlay presets", exception=e)
             return []
 
     async def get_custom_presets(self) -> List[OverlayPreset]:
@@ -212,7 +214,7 @@ class OverlayPresetService:
             all_presets = await self.overlay_ops.get_all_presets(include_builtin=True)
             return [p for p in all_presets if not p.is_builtin]
         except Exception as e:
-            logger.error(f"Failed to get custom overlay presets", exception=e)
+            logger.error("Failed to get custom overlay presets", exception=e)
             return []
 
     async def duplicate_preset(

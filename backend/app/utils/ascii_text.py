@@ -1,6 +1,7 @@
-import shutil
 import random
+import shutil
 from typing import Optional
+
 from ..constants import APP_VERSION
 
 label_ascii_title_text = r"""

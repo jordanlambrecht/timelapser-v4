@@ -47,33 +47,26 @@ class CaptureWorker:
 ```
 """
 
-from typing import Optional, Dict, Any
-from ...services.logger import get_service_logger
+from typing import Any, Dict, Optional
+
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...database.sse_events_operations import (  # Still needed for workflow orchestrator
+    SyncSSEEventsOperations,
+)
 from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
+from ..camera_service import SyncCameraService
+from ..image_service import SyncImageService
+from ..scheduling import SyncJobQueueService
+from ..settings_service import SyncSettingsService
+from ..timelapse_service import SyncTimelapseService
+from .capture_transaction_manager import CaptureTransaction, CaptureTransactionManager
+from .job_coordination_service import JobCoordinationService
+from .overlay_bridge_service import OverlayBridgeService
+from .rtsp_service import AsyncRTSPService, RTSPService
+from .workflow_orchestrator_service import WorkflowOrchestratorService
 
 logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
-
-# Import database layer
-from ...database.core import SyncDatabase, AsyncDatabase
-from ...database.sse_events_operations import (
-    SyncSSEEventsOperations,
-)  # Still needed for workflow orchestrator
-
-# Import business services
-from ..image_service import SyncImageService
-from ..camera_service import SyncCameraService
-from ..timelapse_service import SyncTimelapseService
-from ..settings_service import SyncSettingsService
-from ..scheduling import SyncJobQueueService
-
-# Main service imports with descriptive names
-from .workflow_orchestrator_service import WorkflowOrchestratorService
-from .rtsp_service import RTSPService, AsyncRTSPService
-
-# Corruption bridge service removed - using direct corruption pipeline integration
-from .overlay_bridge_service import OverlayBridgeService
-from .job_coordination_service import JobCoordinationService
-from .capture_transaction_manager import CaptureTransactionManager, CaptureTransaction
 
 
 def create_capture_pipeline(
@@ -113,8 +106,7 @@ def create_capture_pipeline(
             settings_service = SyncSettingsService(db)
 
         # Create scheduling service for validation
-        from ..scheduling import SyncTimeWindowService
-        from ..scheduling import SyncSchedulingService
+        from ..scheduling import SyncSchedulingService, SyncTimeWindowService
 
         time_window_service = SyncTimeWindowService(db)
         scheduling_service = SyncSchedulingService(
@@ -164,9 +156,9 @@ def create_capture_pipeline(
         # job_coordinator.video_workflow_service = video_workflow_service  # REMOVED: scheduler-centric
 
         # Create additional services expected by tests
-        from ..weather.service import WeatherManager
-        from ..overlay_pipeline import OverlayService
         from ...database.weather_operations import SyncWeatherOperations
+        from ..overlay_pipeline import OverlayService
+        from ..weather.service import WeatherManager
 
         weather_ops = SyncWeatherOperations(db)
         weather_service = WeatherManager(weather_ops, settings_service)

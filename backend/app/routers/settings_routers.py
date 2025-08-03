@@ -7,29 +7,28 @@ Responsibilities: Global settings CRUD, validation, inheritance resolution
 Interactions: Uses SettingsService for business logic, handles settings validation and broadcasting changes
 """
 
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Response
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
 
-logger = get_service_logger(LoggerName.API)
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
 
 from ..dependencies import SettingsServiceDep, WeatherManagerDep
 from ..models import (
+    BulkSettingsUpdate,
     Setting,
     SettingCreate,
     SettingUpdate,
-    BulkSettingsUpdate,
     WeatherSettingUpdate,
 )
-from ..utils.router_helpers import handle_exceptions
-from ..utils.response_helpers import ResponseFormatter
 from ..utils.cache_manager import (
     generate_collection_etag,
-    generate_composite_etag,
     generate_content_hash_etag,
 )
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.router_helpers import handle_exceptions
+
 # No constants needed - all logic delegated to services
 
 # NOTE: CACHING STRATEGY - ETAG + CACHE (IMPLEMENTED)
@@ -38,6 +37,8 @@ from ..utils.cache_manager import (
 # - Write operations: SSE broadcasting - immediate real-time updates across system
 # - Different cache durations based on setting type (weather, system, user preferences)
 # Individual endpoint implementations are complete throughout this file.
+logger = get_service_logger(LoggerName.API)
+
 router = APIRouter(tags=["settings"])
 
 
@@ -48,9 +49,9 @@ router = APIRouter(tags=["settings"])
 @router.get("")  # Add this line to handle /api/settings without trailing slash
 @handle_exceptions("get settings")
 async def get_settings(
-    response: Response, 
-    settings_service: SettingsServiceDep, 
-    weather_manager: WeatherManagerDep
+    response: Response,
+    settings_service: SettingsServiceDep,
+    weather_manager: WeatherManagerDep,
 ):
     """Get all settings as a dictionary"""
     # Get all settings from service
@@ -225,9 +226,7 @@ async def update_multiple_settings(
 # ETag based on weather settings updated_at timestamps
 @router.get("/settings/weather")
 @handle_exceptions("get weather settings")
-async def get_weather_settings(
-    response: Response, weather_manager: WeatherManagerDep
-):
+async def get_weather_settings(response: Response, weather_manager: WeatherManagerDep):
     """Get weather-related settings"""
     # Delegate all weather settings logic to weather service
     weather_settings = await weather_manager.get_weather_settings()
@@ -272,14 +271,14 @@ async def refresh_weather_data(weather_manager: WeatherManagerDep):
     """Manually refresh weather data immediately"""
     # Delegate all weather refresh logic to weather service
     result = await weather_manager.manual_weather_refresh()
-    
+
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
-    
+
     # Check if weather data is available
     if not result.weather_data:
         raise HTTPException(status_code=500, detail="Weather data not available")
-    
+
     # Return success response with weather data
     weather_data = result.weather_data
     return ResponseFormatter.success(

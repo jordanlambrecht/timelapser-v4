@@ -10,35 +10,34 @@ Domain-specific statistics should be handled by their respective services:
 - Corruption statistics → CorruptionService
 """
 
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
 
+from ..constants import (
+    DEFAULT_DASHBOARD_QUALITY_TREND_DAYS,
+)
 from ..database.core import AsyncDatabase, SyncDatabase
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource
-
-logger = get_service_logger(LoggerName.STATISTICS_SERVICE, LogSource.SYSTEM)
 from ..database.statistics_operations import (
     StatisticsOperations,
     SyncStatisticsOperations,
 )
-from .settings_service import SettingsService, SyncSettingsService
+from ..enums import LoggerName, LogSource
 from ..models.statistics_model import (
-    DashboardStatsModel,
     CameraPerformanceModel,
+    DashboardStatsModel,
+    EnhancedDashboardStatsModel,
     QualityTrendDataPoint,
     StorageStatsModel,
     SystemHealthScoreModel,
-    EnhancedDashboardStatsModel,
     SystemOverviewModel,
 )
+from ..services.logger import get_service_logger
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
 )
-from ..constants import (
-    DEFAULT_DASHBOARD_QUALITY_TREND_DAYS,
-    EVENT_HEALTH_CHECK_COMPLETED,
-)
+from .settings_service import SettingsService, SyncSettingsService
+
+logger = get_service_logger(LoggerName.STATISTICS_SERVICE, LogSource.SYSTEM)
 
 
 class StatisticsService:

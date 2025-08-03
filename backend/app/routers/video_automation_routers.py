@@ -17,53 +17,51 @@ Follows AI-CONTEXT patterns:
 """
 
 # Standard library imports
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 # Third party imports
 from fastapi import APIRouter, HTTPException
 
+from ..constants import (
+    DEFAULT_PAGE_SIZE,
+    JOB_STATUS_LIST,
+    MAX_PAGE_SIZE,
+)
+from ..database.sse_events_operations import SSEEventsOperations
 
 # Local application imports
 from ..dependencies import (
-    AsyncDatabaseDep,
-    SettingsServiceDep,
-    VideoPipelineDep,  # Still used by queue/stats endpoints
-    VideoServiceDep,  # For queue statistics delegation
     SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: New scheduler dependency
+)
+from ..dependencies import VideoPipelineDep  # Still used by queue/stats endpoints
+from ..dependencies import VideoServiceDep  # For queue statistics delegation
+from ..dependencies import (
+    AsyncDatabaseDep,
     CameraServiceDep,
+    SettingsServiceDep,
     TimelapseServiceDep,
 )
+
+# Constants and enums for consistency
+from ..enums import JobPriority, SSEEvent, SSEEventSource, SSEPriority
 from ..models.shared_models import (
-    VideoAutomationMode,
-    VideoGenerationMode,
-    VideoGenerationSettingsOptional,
-    VideoAutomationSettingsOptional,
-    GenerationSchedule,
-    MilestoneConfig,
-    VideoGenerationJobWithDetails,
     ManualGenerationRequest,
     QueueStatsResponse,
+    VideoAutomationMode,
+    VideoAutomationSettingsOptional,
+    VideoGenerationJobWithDetails,
+    VideoGenerationSettingsOptional,
 )
-
 from ..models.timelapse_model import TimelapseUpdate
+
+# Response formatting
+from ..utils.response_helpers import ResponseFormatter
 
 # Router and validation helpers
 from ..utils.router_helpers import (
     handle_exceptions,
-    validate_entity_exists,
     run_sync_service_method,
-)
-
-# Response formatting
-from ..utils.response_helpers import ResponseFormatter
-from ..database.sse_events_operations import SSEEventsOperations
-
-# Video settings validation helpers
-from ..utils.validation_helpers import (
-    validate_video_settings,
-    get_effective_automation_settings,
-    create_timelapse_automation_response,
-    validate_automation_mode_updates,
+    validate_entity_exists,
 )
 
 # Timezone utilities for proper time handling
@@ -71,18 +69,12 @@ from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
 )
 
-# Constants and enums for consistency
-from ..enums import JobPriority, SSEEvent, SSEEventSource, SSEPriority
-from ..constants import (
-    JOB_PRIORITIES_LIST,
-    JOB_STATUS_LIST,
-    VIDEO_AUTOMATION_MODE,
-    VIDEO_AUTOMATION_MODES_LIST,
-    VIDEO_GENERATION_MODES_LIST,
-    VIDEO_QUEUE_WARNING_THRESHOLD,
-    VIDEO_QUEUE_ERROR_THRESHOLD,
-    DEFAULT_PAGE_SIZE,
-    MAX_PAGE_SIZE,
+# Video settings validation helpers
+from ..utils.validation_helpers import (
+    create_timelapse_automation_response,
+    get_effective_automation_settings,
+    validate_automation_mode_updates,
+    validate_video_settings,
 )
 
 # NOTE: CACHING STRATEGY - MINIMAL CACHE + SSE
@@ -244,10 +236,10 @@ async def trigger_manual_generation(
     )
 
     # Validate priority if provided
-    if request.priority and request.priority not in JOB_PRIORITIES_LIST:
+    if request.priority and request.priority not in JobPriority:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid priority. Must be one of: {', '.join(JOB_PRIORITIES_LIST)}",
+            detail=f"Invalid priority. Must be one of: {', '.join([priority.value for priority in JobPriority])}",
         )
 
     try:
@@ -270,7 +262,7 @@ async def trigger_manual_generation(
             event_type=SSEEvent.VIDEO_JOB_CREATED,
             event_data={
                 "timelapse_id": request.timelapse_id,
-                "trigger_type": VIDEO_AUTOMATION_MODE.MANUAL,
+                "trigger_type": VideoAutomationMode.MANUAL,
                 "priority": request.priority or JobPriority.HIGH,
                 "video_name": request.video_name,
                 "scheduled_via": "scheduler_authority",
@@ -284,7 +276,7 @@ async def trigger_manual_generation(
             "Video generation scheduled successfully through scheduler authority",
             data={
                 "timelapse_id": request.timelapse_id,
-                "trigger_type": VIDEO_AUTOMATION_MODE.MANUAL,
+                "trigger_type": VideoAutomationMode.MANUAL,
                 "video_name": request.video_name,
                 "scheduled_via": "scheduler_authority",
                 "priority": request.priority or JobPriority.HIGH,

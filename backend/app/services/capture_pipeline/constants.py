@@ -9,8 +9,7 @@ Domain-specific constants for the complete capture workflow orchestration.
 # WORKFLOW STEP IDENTIFIERS
 # =============================================================================
 
-from ...constants import JOB_PRIORITY, JOB_STATUS
-
+from ...constants import JOB_PRIORITY
 
 STEP_SCHEDULER_TRIGGER = "scheduler_trigger"
 STEP_WORKER_RECEIVES = "worker_receives"

@@ -8,6 +8,7 @@ Follows the same pattern as capture_pipeline/constants.py
 
 # Video Generation Job Statuses
 from enum import Enum
+
 from ...constants import (
     JOB_PRIORITY,
     JOB_STATUS_LIST,
@@ -16,8 +17,7 @@ from ...constants import (
     VIDEO_GENERATION_MODE,
     VIDEO_QUALITY_LEVEL,
 )
-from ...enums import SSEEvent, SSEEventSource
-
+from ...enums import SSEEvent
 
 # Video Generation Trigger Types
 VIDEO_TRIGGER_MANUAL = VIDEO_AUTOMATION_MODE.MANUAL

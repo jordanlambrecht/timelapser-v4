@@ -11,15 +11,14 @@ Provides transaction safety for capture operations to prevent:
 """
 
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Callable, Any, Protocol
+from typing import Callable, List, Optional, Protocol
+
 from ...database.core import SyncDatabase
 from ...database.image_operations import SyncImageOperations
-
-from dataclasses import dataclass, field
-
-from ...services.logger import get_service_logger, LogEmoji
 from ...enums import LoggerName
+from ...services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 

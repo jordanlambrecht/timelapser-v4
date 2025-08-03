@@ -10,47 +10,49 @@ Interactions: Uses corruption pipeline services for business logic, provides qua
 """
 
 from typing import Optional
-from fastapi import APIRouter, Query, UploadFile, File, HTTPException, Response
-from ..services.logger import get_service_logger
+
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
+
 from ..enums import LoggerName
+from ..services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.API)
-
-from ..dependencies import (
-    CameraServiceDep,
-    SettingsServiceDep,
-    AsyncDatabaseDep,
-)
-from ..services.corruption_pipeline.services.evaluation_service import (
-    CorruptionEvaluationService,
-)
-from ..services.corruption_pipeline.services.statistics_service import (
-    CorruptionStatisticsService,
-)
-from ..services.corruption_pipeline.services.health_service import (
-    CorruptionHealthService,
-)
-
-# NOTE: Some operations still use database operations directly until
-# they are moved into the corruption pipeline services
-from ..database.corruption_operations import CorruptionOperations
-from ..utils.cache_manager import (
-    generate_content_hash_etag,
-)
-from ..models.corruption_model import (
-    CorruptionHistoryResponse,
-    CorruptionSettings,
-    CorruptionLogEntry,
-    CorruptionTestResponse,
-)
-from ..utils.response_helpers import ResponseFormatter
-from ..utils.router_helpers import validate_entity_exists, handle_exceptions
-from ..utils.validation_helpers import process_uploaded_image_for_corruption_test
 from ..constants import (
     DEFAULT_CORRUPTION_HISTORY_HOURS,
     DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
     MAX_CORRUPTION_LOGS_PAGE_SIZE,
 )
+
+# NOTE: Some operations still use database operations directly until
+# they are moved into the corruption pipeline services
+from ..database.corruption_operations import CorruptionOperations
+from ..dependencies import (
+    AsyncDatabaseDep,
+    CameraServiceDep,
+    SettingsServiceDep,
+)
+from ..models.corruption_model import (
+    CorruptionHistoryResponse,
+    CorruptionSettings,
+    CorruptionTestResponse,
+)
+
+# from ..services.corruption_pipeline.services.evaluation_service import (
+#     CorruptionEvaluationService,
+# )
+from ..services.corruption_pipeline.services.health_service import (
+    CorruptionHealthService,
+)
+from ..services.corruption_pipeline.services.statistics_service import (
+    CorruptionStatisticsService,
+)
+from ..utils.cache_manager import (
+    generate_content_hash_etag,
+)
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.router_helpers import handle_exceptions, validate_entity_exists
+from ..utils.validation_helpers import process_uploaded_image_for_corruption_test
+
+logger = get_service_logger(LoggerName.API)
 
 router = APIRouter()
 

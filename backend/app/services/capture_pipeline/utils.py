@@ -30,22 +30,39 @@ Example Usage:
         pass
 """
 
-from typing import Dict, Any, Optional, List
-from datetime import datetime
-from pathlib import Path
 import os
 import traceback
-from ...services.logger import get_service_logger, LogEmoji
-from ...enums import LoggerName
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 import cv2
 
-
-from .constants import *
-from ...utils.time_utils import format_filename_timestamp
+from ...enums import LoggerName
+from ...services.logger import get_service_logger
 from ...utils.file_helpers import clean_filename
-from ...utils.temp_file_manager import cleanup_temporary_files
+from ...utils.time_utils import format_filename_timestamp, utc_now
+from .constants import (
+    DEFAULT_CAPTURE_RETRIES,
+    DEFAULT_RTSP_TIMEOUT_SECONDS,
+    STEP_CAPTURE_COMPLETE,
+    STEP_CORRUPTION_EVALUATION,
+    STEP_CORRUPTION_FAST,
+    STEP_CORRUPTION_HEAVY,
+    STEP_OVERLAY_GENERATION,
+    STEP_RECORD_CREATION,
+    STEP_RTSP_CAPTURE,
+    STEP_SCHEDULER_TRIGGER,
+    STEP_SSE_BROADCASTING,
+    STEP_THUMBNAIL_QUEUEING,
+    STEP_VIDEO_AUTOMATION,
+    STEP_WORKER_RECEIVES,
+    WORKFLOW_STEP_TIMEOUT_SECONDS,
+    WORKFLOW_TOTAL_STEPS,
+    WORKFLOW_VERSION,
+)
+
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
 
 
 def create_workflow_context(
@@ -70,7 +87,7 @@ def create_workflow_context(
         "workflow_id": f"wf_{camera_id}_{timelapse_id}_{format_filename_timestamp()}",
         "workflow_version": WORKFLOW_VERSION,
         "total_steps": WORKFLOW_TOTAL_STEPS,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": utc_now().isoformat(),
         "current_step": 0,
         "step_results": [],
         "errors": [],
@@ -166,7 +183,6 @@ def generate_capture_filename(timelapse_id: int, timestamp: datetime) -> str:
     return clean_filename(filename)
 
 
-
 def calculate_workflow_step_timeout(step_name: str) -> int:
     """
     Calculate appropriate timeout for specific workflow step.
@@ -221,7 +237,7 @@ def create_error_context(
         "step_number": context.get("current_step", 0),
         "total_steps": context.get("total_steps", WORKFLOW_TOTAL_STEPS),
         "workflow_version": context.get("workflow_version", WORKFLOW_VERSION),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utc_now().isoformat(),
         "previous_steps": [
             result.get("step_name") for result in context.get("step_results", [])
         ],
@@ -690,26 +706,26 @@ def validate_workflow_step_result(step_name: str, result: Any) -> bool:
     # Step-specific validations
     if step_name == STEP_RTSP_CAPTURE:
         if result.get("success") and not result.get("image_path"):
-            logger.error(f"RTSP capture step succeeded but no image_path provided")
+            logger.error("RTSP capture step succeeded but no image_path provided")
             return False
 
     elif step_name == STEP_CORRUPTION_EVALUATION:
         if result.get("success") and "corruption_score" not in result:
             logger.error(
-                f"Corruption evaluation step succeeded but no corruption_score provided"
+                "Corruption evaluation step succeeded but no corruption_score provided"
             )
             return False
 
     elif step_name == STEP_RECORD_CREATION:
         if result.get("success") and not result.get("image_id"):
-            logger.error(f"Record creation step succeeded but no image_id provided")
+            logger.error("Record creation step succeeded but no image_id provided")
             return False
 
     elif step_name == STEP_OVERLAY_GENERATION:
         if result.get("success") and result.get("overlay_enabled", False):
             if not result.get("overlay_path"):
                 logger.error(
-                    f"Overlay generation step succeeded but no overlay_path provided"
+                    "Overlay generation step succeeded but no overlay_path provided"
                 )
                 return False
 

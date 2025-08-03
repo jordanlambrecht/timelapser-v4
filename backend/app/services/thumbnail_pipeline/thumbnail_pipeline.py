@@ -12,41 +12,40 @@ PERFORMANCE OPTIMIZATION:
 - Reduces database load during bulk thumbnail operations by 99%
 """
 
-from pathlib import Path
-from typing import Optional, Dict, Any
 import time
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-from ...services.logger import get_service_logger
-from ...enums import LoggerName, ThumbnailJobPriority
+from ...constants import (
+    DEFAULT_THUMBNAIL_SMALL_GENERATION_MODE,
+    SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE,
+)
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...database.image_operations import AsyncImageOperations, SyncImageOperations
 from ...database.thumbnail_job_operations import ThumbnailJobOperations
-from ...database.timelapse_operations import TimelapseOperations
+from ...enums import LoggerName, ThumbnailJobPriority
 from ...models.shared_models import (
+    ThumbnailGenerationResult,
     ThumbnailOperationResponse,
     ThumbnailRegenerationStatus,
-    ThumbnailGenerationResult,
 )
-from ...utils.time_utils import utc_now
+from ...services.logger import get_service_logger
 from ...utils.file_helpers import ensure_entity_directory
-from ...constants import (
-    SETTING_KEY_THUMBNAIL_SMALL_GENERATION_MODE,
-    DEFAULT_THUMBNAIL_SMALL_GENERATION_MODE,
+from ...utils.time_utils import utc_now
+from .generators import (
+    BatchThumbnailGenerator,
+    SmallImageGenerator,
+    ThumbnailGenerator,
 )
 from .services import (
-    ThumbnailJobService,
     SyncThumbnailJobService,
-    ThumbnailPerformanceService,
     SyncThumbnailPerformanceService,
-    ThumbnailVerificationService,
-    SyncThumbnailVerificationService,
-    ThumbnailRepairService,
     SyncThumbnailRepairService,
-)
-from .generators import (
-    ThumbnailGenerator,
-    SmallImageGenerator,
-    BatchThumbnailGenerator,
+    SyncThumbnailVerificationService,
+    ThumbnailJobService,
+    ThumbnailPerformanceService,
+    ThumbnailRepairService,
+    ThumbnailVerificationService,
 )
 
 logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
@@ -443,7 +442,7 @@ class ThumbnailPipeline:
                 return
 
             # Use direct database operations for thumbnail-specific functionality
-            image_ops = SyncImageOperations(self.database)
+            # image_ops = SyncImageOperations(self.database)
 
             # Get all images with small thumbnails for this timelapse
             images_with_smalls = (
@@ -504,7 +503,7 @@ class ThumbnailPipeline:
                 ).__dict__
 
             # Use direct database operations for thumbnail-specific functionality
-            image_ops = SyncImageOperations(self.database)
+            # image_ops = SyncImageOperations(self.database)
             image = self._get_image_by_id_safe(image_id)
 
             if not image:

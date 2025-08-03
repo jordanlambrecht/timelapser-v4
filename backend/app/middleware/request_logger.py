@@ -11,12 +11,14 @@ import time
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from ..services.logger import get_service_logger
-from ..enums import LogEmoji, LoggerName
 
-logger = get_service_logger(LoggerName.MIDDLEWARE)
+from ..enums import LogEmoji, LoggerName
+from ..services.logger import get_service_logger
+
 
 from ..config import settings
+
+logger = get_service_logger(LoggerName.MIDDLEWARE)
 
 
 class RequestLoggerMiddleware(BaseHTTPMiddleware):

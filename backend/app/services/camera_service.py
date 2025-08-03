@@ -27,28 +27,36 @@ but delegates all actual capture actions to RTSPService.
 Architecture: Composition-based with dependency injection for type-safe operations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-# from ..services.capture_pipeline.rtsp_utils import detect_source_resolution
-
-from ..enums import (
-    SSEPriority,
-    JobPriority,
-    LogSource,
-    LoggerName,
-    TimelapseStatus,
-    TimelapseAction,
-    SSEEvent,
+from ..constants import (  # Camera health constants
+    CAMERA_CAPTURE_READY_STATUSES,
+    CAMERA_HEALTH_DEGRADED,
+    CAMERA_HEALTH_DEGRADED_THRESHOLD,
+    CAMERA_HEALTH_FAILURE_THRESHOLD,
+    CAMERA_HEALTH_OFFLINE,
+    CAMERA_HEALTH_ONLINE,
+    CAMERA_NOT_FOUND,
+    CAMERA_STATUSES,
+    CAMERA_TIMELAPSE_READY_STATUSES,
 )
-
-from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.camera_operations import AsyncCameraOperations, SyncCameraOperations
+from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.exceptions import CameraOperationError
-from ..services.logger import get_service_logger
-from ..database.timelapse_operations import TimelapseOperations, SyncTimelapseOperations
+from ..database.sse_events_operations import SSEEventsOperations
+from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
+from ..enums import (
+    JobPriority,
+    LoggerName,
+    LogSource,
+    SSEEvent,
+    SSEPriority,
+    TimelapseAction,
+    TimelapseStatus,
+)
+from ..models.camera_action_models import TimelapseActionRequest
 
 # SettingsOperations import removed - using injected SettingsService instead
-from ..utils.cache_manager import cached_response
 from ..models.camera_model import (
     Camera,
     CameraCreate,
@@ -57,50 +65,26 @@ from ..models.camera_model import (
     CropRotationUpdate,
     SourceResolution,
 )
-from ..models.timelapse_model import TimelapseCreate, TimelapseUpdate
+from ..models.corruption_model import CorruptionSettingsModel
 from ..models.shared_models import (
+    CameraCaptureScheduleResult,
+    CameraCaptureWorkflowResult,
+    CameraConnectivityTestResult,
+    CameraHealthMonitoringResult,
     CameraHealthStatus,
     CameraStatistics,
-    VideoGenerationJob,
-    VideoGenerationJobCreate,
-    ThumbnailGenerationResult,
-    CameraHealthMonitoringResult,
-    CameraCaptureScheduleResult,
-    CameraConnectivityTestResult,
-    CameraCaptureWorkflowResult,
 )
-from ..models.corruption_model import CorruptionSettingsModel
-from ..models.health_model import (
-    HealthStatus,
-    ComponentHealth,
-)
+from ..models.timelapse_model import TimelapseCreate, TimelapseUpdate
+from ..services.logger import get_service_logger
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     get_timezone_aware_timestamp_sync,
-    get_timezone_aware_timestamp_string_async,
 )
-
-from ..utils.file_helpers import validate_file_path, ensure_directory_exists
-from ..utils.database_helpers import DatabaseUtilities, CommonQueries
 from ..utils.validation_helpers import (
     validate_camera_exists,
-    validate_camera_name,
-    validate_rtsp_url,
 )
-from ..database.sse_events_operations import SSEEventsOperations
-from ..models.camera_action_models import TimelapseActionRequest
-from ..constants import (
-    CAMERA_STATUSES,
-    CAMERA_NOT_FOUND,
-    # Camera health constants
-    CAMERA_HEALTH_FAILURE_THRESHOLD,
-    CAMERA_HEALTH_DEGRADED_THRESHOLD,
-    CAMERA_HEALTH_ONLINE,
-    CAMERA_HEALTH_DEGRADED,
-    CAMERA_HEALTH_OFFLINE,
-    CAMERA_CAPTURE_READY_STATUSES,
-    CAMERA_TIMELAPSE_READY_STATUSES,
-)
+
+# from ..services.capture_pipeline.rtsp_utils import detect_source_resolution
 
 
 # Use recommended service logger factory pattern
@@ -976,9 +960,7 @@ class CameraService:
 
         # Delegate to TimelapseService if available, otherwise use direct database operations
         if self.timelapse_service:
-            updated_timelapse = await self.timelapse_service.pause_timelapse(
-                timelapse_id
-            )
+            await self.timelapse_service.pause_timelapse(timelapse_id)
             logger.info(
                 f"Successfully paused timelapse {timelapse_id} via TimelapseService"
             )
@@ -1026,9 +1008,7 @@ class CameraService:
 
         # Delegate to TimelapseService if available, otherwise use direct database operations
         if self.timelapse_service:
-            updated_timelapse = await self.timelapse_service.start_timelapse(
-                timelapse_id
-            )
+            await self.timelapse_service.start_timelapse(timelapse_id)
             logger.info(
                 f"Successfully resumed timelapse {timelapse_id} via TimelapseService"
             )
@@ -1075,9 +1055,7 @@ class CameraService:
 
         # Delegate to TimelapseService if available, otherwise use direct database operations
         if self.timelapse_service:
-            updated_timelapse = await self.timelapse_service.complete_timelapse(
-                timelapse_id
-            )
+            await self.timelapse_service.complete_timelapse(timelapse_id)
             logger.info(
                 f"Successfully completed timelapse {timelapse_id} via TimelapseService"
             )
@@ -1152,7 +1130,7 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Health monitoring coordination failed",
+                "Health monitoring coordination failed",
                 extra_context={
                     "camera_id": camera_id,
                     "operation": "coordinate_health_monitoring",
@@ -1222,7 +1200,7 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Capture scheduling failed",
+                "Capture scheduling failed",
                 extra_context={
                     "camera_id": camera_id,
                     "operation": "schedule_capture",
@@ -1279,7 +1257,7 @@ class CameraService:
                     )
 
                     logger.info(
-                        f"Connectivity test completed",
+                        "Connectivity test completed",
                         extra_context={
                             "camera_id": camera_id,
                             "success": rtsp_result.success,
@@ -1294,7 +1272,7 @@ class CameraService:
 
                 except Exception as rtsp_error:
                     logger.error(
-                        f"RTSP connectivity test failed",
+                        "RTSP connectivity test failed",
                         extra_context={
                             "camera_id": camera_id,
                             "operation": "test_connectivity",
@@ -1317,7 +1295,7 @@ class CameraService:
                     )
             else:
                 logger.warning(
-                    f"RTSPService not configured, cannot test connectivity",
+                    "RTSPService not configured, cannot test connectivity",
                     extra_context={
                         "camera_id": camera_id,
                         "operation": "test_connectivity",
@@ -1337,7 +1315,7 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Connectivity test failed",
+                "Connectivity test failed",
                 extra_context={
                     "camera_id": camera_id,
                     "operation": "test_connectivity",
@@ -1738,7 +1716,7 @@ class CameraService:
             return ready_cameras
         except Exception as e:
             logger.error(
-                f"Failed to get cameras ready for capture",
+                "Failed to get cameras ready for capture",
                 exception=e,
                 extra_context={"operation": "get_cameras_ready_for_capture"},
             )
@@ -1775,7 +1753,7 @@ class CameraService:
 
             if result:
                 logger.debug(
-                    f"Updated capture stats for camera",
+                    "Updated capture stats for camera",
                     extra_context={
                         "camera_id": camera_id,
                         "capture_success": success,
@@ -1787,7 +1765,7 @@ class CameraService:
             return result
         except Exception as e:
             logger.error(
-                f"Failed to update camera capture stats",
+                "Failed to update camera capture stats",
                 exception=e,
                 extra_context={
                     "camera_id": camera_id,
@@ -2055,7 +2033,7 @@ class SyncCameraService:
 
                 except Exception as rtsp_error:
                     logger.error(
-                        f"RTSP connectivity test failed",
+                        "RTSP connectivity test failed",
                         exception=rtsp_error,
                         extra_context={
                             "camera_id": camera_id,
@@ -2126,7 +2104,7 @@ class SyncCameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to update next capture time",
+                "Failed to update next capture time",
                 exception=e,
                 extra_context={
                     "camera_id": camera_id,
@@ -2211,7 +2189,7 @@ class SyncCameraService:
                 raise ValueError(CAMERA_NOT_FOUND)
 
             logger.info(
-                f"Reset corruption failures for camera",
+                "Reset corruption failures for camera",
                 extra_context={
                     "camera_id": camera_id,
                     "operation": "reset_corruption_failures",
@@ -2224,7 +2202,7 @@ class SyncCameraService:
             raise
         except Exception as e:
             logger.error(
-                f"Failed to reset corruption failures",
+                "Failed to reset corruption failures",
                 exception=e,
                 extra_context={
                     "camera_id": camera_id,
@@ -2269,7 +2247,7 @@ class SyncCameraService:
             return ready_cameras
         except Exception as e:
             logger.error(
-                f"Failed to get cameras ready for capture",
+                "Failed to get cameras ready for capture",
                 exception=e,
                 extra_context={"operation": "get_cameras_ready_for_capture"},
             )
@@ -2312,7 +2290,7 @@ class SyncCameraService:
             return ready_cameras
         except Exception as e:
             logger.error(
-                f"Failed to get cameras ready for capture",
+                "Failed to get cameras ready for capture",
                 exception=e,
                 extra_context={
                     "operation": "get_cameras_ready_for_capture_sync",
@@ -2359,7 +2337,7 @@ class SyncCameraService:
 
             if success_result:
                 logger.debug(
-                    f"Updated capture stats for camera",
+                    "Updated capture stats for camera",
                     extra_context={
                         "camera_id": camera_id,
                         "capture_success": success,
@@ -2371,7 +2349,7 @@ class SyncCameraService:
 
         except Exception as e:
             logger.error(
-                f"Failed to update capture stats",
+                "Failed to update capture stats",
                 exception=e,
                 extra_context={
                     "camera_id": camera_id,

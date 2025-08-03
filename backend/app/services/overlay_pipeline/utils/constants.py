@@ -5,27 +5,27 @@ Overlay Pipeline Constants - Additional constants specific to pipeline implement
 This supplements the main constants.py with pipeline-specific values.
 """
 
-# Import main overlay constants
-from ....constants import (
-    # Overlay types
-    OVERLAY_TYPE_DATE,
-    OVERLAY_TYPE_DATE_TIME,
-    OVERLAY_TYPE_TIME,
-    OVERLAY_TYPE_FRAME_NUMBER,
-    OVERLAY_TYPE_DAY_NUMBER,
-    OVERLAY_TYPE_CUSTOM_TEXT,
-    OVERLAY_TYPE_TIMELAPSE_NAME,
-    OVERLAY_TYPE_TEMPERATURE,
-    OVERLAY_TYPE_WEATHER_CONDITIONS,
-    OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
-    OVERLAY_TYPE_WATERMARK,
-    # Positions
-    OVERLAY_POSITION_TOP_LEFT,
-    OVERLAY_POSITION_TOP_RIGHT,
-    OVERLAY_POSITION_BOTTOM_LEFT,
-    OVERLAY_POSITION_BOTTOM_RIGHT,
-    OVERLAY_POSITION_CENTER,
-)
+# Import main overlay constants - commented out unused imports
+# from ....constants import (
+#     # Overlay types
+#     OVERLAY_TYPE_DATE,
+#     OVERLAY_TYPE_DATE_TIME,
+#     OVERLAY_TYPE_TIME,
+#     OVERLAY_TYPE_FRAME_NUMBER,
+#     OVERLAY_TYPE_DAY_NUMBER,
+#     OVERLAY_TYPE_CUSTOM_TEXT,
+#     OVERLAY_TYPE_TIMELAPSE_NAME,
+#     OVERLAY_TYPE_TEMPERATURE,
+#     OVERLAY_TYPE_WEATHER_CONDITIONS,
+#     OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
+#     OVERLAY_TYPE_WATERMARK,
+#     # Positions
+#     OVERLAY_POSITION_TOP_LEFT,
+#     OVERLAY_POSITION_TOP_RIGHT,
+#     OVERLAY_POSITION_BOTTOM_LEFT,
+#     OVERLAY_POSITION_BOTTOM_RIGHT,
+#     OVERLAY_POSITION_CENTER,
+# )
 
 # Grid position mapping (kebab-case to camelCase for model compatibility)
 POSITION_MAPPING = {

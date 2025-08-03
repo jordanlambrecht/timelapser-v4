@@ -9,25 +9,26 @@ improvements for long timelapses.
 
 import asyncio
 import hashlib
-import time
-from typing import Dict, Optional, Tuple, Set
-from dataclasses import dataclass, field
 import json
 import threading
+import time
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Set, Tuple
+
 from PIL import Image
 
-from ..utils.overlay_utils import OverlayRenderer
+from ....enums import LoggerName, LogSource
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
+from ..utils.overlay_utils import OverlayRenderer
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)
 
 from ....models.overlay_model import (
     OverlayConfiguration,
-    OverlayItem,
     OverlayGridPosition,
 )
-from ..generators import overlay_generator_registry, OverlayGenerationContext
+from ..generators import OverlayGenerationContext, overlay_generator_registry
+
+logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
 @dataclass
@@ -237,7 +238,7 @@ class StaticOverlayTemplateCache:
         # Extract only static overlay positions and their configurations
         static_config = {}
 
-        for position, overlay_item in config.overlayPositions.items():
+        for position, overlay_item in config.overlay_positions.items():
             # Check if this overlay type is static
             if overlay_generator_registry.has_generator(overlay_item.type):
                 generator = overlay_generator_registry.get_generator(overlay_item.type)
@@ -245,28 +246,30 @@ class StaticOverlayTemplateCache:
                     # Include only properties that affect static rendering
                     static_item_config = {
                         "type": overlay_item.type,
-                        "customText": overlay_item.customText,
-                        "textSize": overlay_item.textSize,
-                        "textColor": overlay_item.textColor,
-                        "backgroundColor": overlay_item.backgroundColor,
-                        "backgroundOpacity": overlay_item.backgroundOpacity,
-                        "enableBackground": overlay_item.enableBackground,
-                        "imageUrl": overlay_item.imageUrl,
-                        "imageScale": overlay_item.imageScale,
+                        "custom_text": overlay_item.custom_text,
+                        "text_size": overlay_item.text_size,
+                        "text_color": overlay_item.text_color,
+                        "background_color": overlay_item.background_color,
+                        "background_opacity": overlay_item.background_opacity,
+                        "enable_background": overlay_item.enable_background,
+                        "image_url": overlay_item.image_url,
+                        "image_scale": overlay_item.image_scale,
                     }
                     static_config[position] = static_item_config
 
         # Include global options that affect static rendering
         global_config = {
-            "font": config.globalOptions.font,
-            "xMargin": config.globalOptions.xMargin,
-            "yMargin": config.globalOptions.yMargin,
-            "backgroundColor": getattr(
-                config.globalOptions, "backgroundColor", "#000000"
+            "font": config.global_options.font,
+            "x_margin": config.global_options.x_margin,
+            "y_margin": config.global_options.y_margin,
+            "background_color": getattr(
+                config.global_options, "background_color", "#000000"
             ),
-            "backgroundOpacity": getattr(config.globalOptions, "backgroundOpacity", 50),
-            "fillColor": getattr(config.globalOptions, "fillColor", "#FFFFFF"),
-            "dropShadow": getattr(config.globalOptions, "dropShadow", 2),
+            "background_opacity": getattr(
+                config.global_options, "background_opacity", 50
+            ),
+            "fillColor": getattr(config.global_options, "fillColor", "#FFFFFF"),
+            "dropShadow": getattr(config.global_options, "dropShadow", 2),
         }
 
         # Include base image dimensions
@@ -286,7 +289,7 @@ class StaticOverlayTemplateCache:
         """Identify which overlay positions contain static content."""
         static_positions = set()
 
-        for position, overlay_item in config.overlayPositions.items():
+        for position, overlay_item in config.overlay_positions.items():
             if overlay_generator_registry.has_generator(overlay_item.type):
                 generator = overlay_generator_registry.get_generator(overlay_item.type)
                 if generator.is_static:
@@ -313,7 +316,7 @@ class StaticOverlayTemplateCache:
 
         # Create temporary config with only static overlays
         static_config_positions = dict()
-        for pos, item in config.overlayPositions.items():
+        for pos, item in config.overlay_positions.items():
             if pos in static_positions:
                 static_config_positions[pos] = item
 
@@ -322,7 +325,8 @@ class StaticOverlayTemplateCache:
             return template_image
 
         static_config = OverlayConfiguration(
-            overlayPositions=static_config_positions, globalOptions=config.globalOptions
+            overlay_positions=static_config_positions,
+            global_options=config.global_options,
         )
 
         # Render static overlays onto template

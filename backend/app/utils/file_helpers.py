@@ -6,15 +6,17 @@ Common functions for file operations, path validation, and security checks.
 Provides standardized file serving, path resolution, and security validation.
 """
 
-from pathlib import Path
 import re
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, Response
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogEmoji
-from ..constants import ALLOWED_IMAGE_EXTENSIONS
+
 from ..config import settings
+from ..constants import ALLOWED_IMAGE_EXTENSIONS, ASSET_TYPE_MAP
+from ..enums import LogEmoji, LoggerName
+from ..services.logger import get_service_logger
 
 # Initialize logger
 logger = get_service_logger(LoggerName.UTILITY)
@@ -319,20 +321,8 @@ def validate_media_type(file_path: Path, allowed_types: set) -> str:
         )
 
     # Map extensions to media types
-    media_type_map = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".mp4": "video/mp4",
-        ".avi": "video/avi",
-        ".mov": "video/quicktime",
-        ".zip": "application/zip",
-        ".pdf": "application/pdf",
-    }
 
-    return media_type_map.get(extension, "application/octet-stream")
+    return ASSET_TYPE_MAP.get(extension, "application/octet-stream")
 
 
 class FileOperationMixin:

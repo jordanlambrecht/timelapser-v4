@@ -23,20 +23,34 @@ pipeline workflow, ensuring proper queuing, prioritization, and status tracking
 while maintaining clean separation from job execution logic.
 """
 
+from enum import Enum
 import json
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast
-
-from ...services.logger import get_service_logger
-from ...utils.enum_helpers import parse_enum
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from ...models.health_model import HealthStatus
-
+from ...services.logger import get_service_logger
+from ...utils.enum_helpers import parse_enum
 
 if TYPE_CHECKING:
     from ..scheduling import SyncJobQueueService
 
+# Global constants
+from ...constants import (
+    BOOLEAN_TRUE_STRING,
+    DEFAULT_GENERATE_THUMBNAILS,
+    SETTING_KEY_THUMBNAIL_GENERATION_ENABLED,
+    VIDEO_QUEUE_ERROR_THRESHOLD,
+    VIDEO_QUEUE_WARNING_THRESHOLD,
+)
 
+# Initialize database operations
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...database.sse_events_operations import SyncSSEEventsOperations
+from ...database.thumbnail_job_operations import SyncThumbnailJobOperations
+from ...database.timelapse_operations import SyncTimelapseOperations
+from ...database.video_operations import SyncVideoOperations
 from ...enums import (
+    JobPriority,
     JobStatus,
     JobTypes,
     LogEmoji,
@@ -49,40 +63,20 @@ from ...enums import (
     ThumbnailJobPriority,
     ThumbnailJobStatus,
     ThumbnailJobType,
-    JobPriority,
     VideoAutomationMode,
 )
-
-
+from ...models.shared_models import ThumbnailGenerationJobCreate
 from ...utils.time_utils import (
     get_timezone_aware_timestamp_sync,
     utc_timestamp,
 )
 
-from ...models.shared_models import ThumbnailGenerationJobCreate
-
-# Initialize database operations
-from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.thumbnail_job_operations import SyncThumbnailJobOperations
-from ...database.video_operations import SyncVideoOperations
-from ...database.timelapse_operations import SyncTimelapseOperations
-from ...database.sse_events_operations import SyncSSEEventsOperations
-
 # Module constants
 from .constants import (
-    JOB_VALIDATION_RESULT_VALID,
     JOB_VALIDATION_ERRORS_KEY,
-    JOB_VALIDATION_WARNINGS_KEY,
+    JOB_VALIDATION_RESULT_VALID,
     JOB_VALIDATION_SANITIZED_KEY,
-)
-
-# Global constants
-from ...constants import (
-    BOOLEAN_TRUE_STRING,
-    DEFAULT_GENERATE_THUMBNAILS,
-    SETTING_KEY_THUMBNAIL_GENERATION_ENABLED,
-    VIDEO_QUEUE_ERROR_THRESHOLD,
-    VIDEO_QUEUE_WARNING_THRESHOLD,
+    JOB_VALIDATION_WARNINGS_KEY,
 )
 
 logger = get_service_logger(
@@ -325,7 +319,7 @@ class JobCoordinationService:
         self,
         timelapse_id: int,
         trigger_type: str,
-        priority: str = JobPriority.MEDIUM,
+        priority: JobPriority = JobPriority.MEDIUM,
         job_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -474,7 +468,7 @@ class JobCoordinationService:
     def coordinate_overlay_job(
         self,
         image_id: int,
-        priority: str = JobPriority.MEDIUM,
+        priority: JobPriority = JobPriority.MEDIUM,
         job_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -545,20 +539,24 @@ class JobCoordinationService:
         Returns:
             True if thumbnail generation enabled, False otherwise
         """
-        try:
+        thumbnail_enabled = self.settings_service.get_setting(
+            SETTING_KEY_THUMBNAIL_GENERATION_ENABLED
+        )
+        if thumbnail_enabled is None:
+            thumbnail_enabled = DEFAULT_GENERATE_THUMBNAILS
 
-            thumbnail_enabled = self.settings_service.get_setting(
-                SETTING_KEY_THUMBNAIL_GENERATION_ENABLED
-            )
-            if thumbnail_enabled is None:
-                thumbnail_enabled = DEFAULT_GENERATE_THUMBNAILS
-            return str(thumbnail_enabled).lower() == BOOLEAN_TRUE_STRING
+        # Handle different value types properly
+        if isinstance(thumbnail_enabled, bool):
+            return thumbnail_enabled
+        if isinstance(thumbnail_enabled, str):
+            return thumbnail_enabled.lower() == BOOLEAN_TRUE_STRING
 
-        except Exception as e:
-            logger.warning(f"Failed to check thumbnail generation setting: {e}")
-            return True  # Default to enabled
+        # For any other type, convert to bool
+        return bool(thumbnail_enabled)
 
-    def get_JobPriority_for_trigger(self, trigger_type: VideoAutomationMode) -> str:
+    def get_job_priority_for_trigger(
+        self, trigger_type: VideoAutomationMode
+    ) -> JobPriority:
         """
         Get appropriate job priority for trigger type.
 
@@ -568,18 +566,17 @@ class JobCoordinationService:
             trigger_type: Type of automation trigger
 
         Returns:
-            Job priority string for trigger type
+            Job priority enum for trigger type
         """
-
         trigger_priority_map = {
-            str(VideoAutomationMode.IMMEDIATE): JobPriority.HIGH,
-            str(VideoAutomationMode.MILESTONE): JobPriority.MEDIUM,
-            str(VideoAutomationMode.PER_CAPTURE): JobPriority.LOW,
-            str(VideoAutomationMode.SCHEDULED): JobPriority.MEDIUM,
-            str(VideoAutomationMode.MANUAL): JobPriority.HIGH,
-            str(VideoAutomationMode.THUMBNAIL): JobPriority.MEDIUM,
+            VideoAutomationMode.IMMEDIATE: JobPriority.HIGH,
+            VideoAutomationMode.MILESTONE: JobPriority.MEDIUM,
+            VideoAutomationMode.PER_CAPTURE: JobPriority.LOW,
+            VideoAutomationMode.SCHEDULED: JobPriority.MEDIUM,
+            VideoAutomationMode.MANUAL: JobPriority.HIGH,
+            VideoAutomationMode.THUMBNAIL: JobPriority.MEDIUM,
         }
-        return trigger_priority_map.get(str(trigger_type), JobPriority.MEDIUM)
+        return trigger_priority_map.get(trigger_type, JobPriority.MEDIUM)
 
     def get_video_automation_settings(self, timelapse_id: int) -> Dict[str, Any]:
         """
@@ -656,7 +653,7 @@ class JobCoordinationService:
             return []
 
     # Track job status across different job types
-    def track_job_status(self, job_id: str, JobTypes: JobTypes) -> Dict[str, Any]:
+    def track_job_status(self, job_id: str, job_types: JobTypes) -> Dict[str, Any]:
         """
         Track status of coordinated background job.
 
@@ -681,7 +678,7 @@ class JobCoordinationService:
                 "error_message": None,
             }
 
-            if JobTypes == JobTypes.THUMBNAIL:
+            if job_types == JobTypes.THUMBNAIL:
                 # Track thumbnail job status
                 try:
                     thumbnail_job = self.thumbnail_job_ops.get_job_by_id(int(job_id))
@@ -734,7 +731,7 @@ class JobCoordinationService:
                     )
                     job_status["error_message"] = f"tracking_error: {thumb_error}"
 
-            elif JobTypes == JobTypes.VIDEO_GENERATION:
+            elif job_types == JobTypes.VIDEO_GENERATION:
                 # Track video job status
                 try:
                     video_job = self.video_ops.get_video_generation_job_by_id(
@@ -783,7 +780,7 @@ class JobCoordinationService:
                     logger.warning(f"Error tracking video job {job_id}: {video_error}")
                     job_status["error_message"] = f"tracking_error: {video_error}"
 
-            elif JobTypes == JobTypes.OVERLAY:
+            elif job_types == JobTypes.OVERLAY:
                 # TODO: Finish writing this method
                 # Track overlay job status (if overlay jobs are implemented)
                 try:
@@ -812,16 +809,17 @@ class JobCoordinationService:
             job_status["tracked_at"] = utc_timestamp()
 
             logger.debug(
-                f"📊 Job status tracking - {JobTypes} {job_id}: {job_status['status']}"
+                f" Job status tracking - {job_types} {job_id}: {job_status['status']}",
+                emoji=LogEmoji.CHART,
             )
 
             return job_status
 
         except Exception as e:
-            logger.error(f"Error tracking job status for {JobTypes} {job_id}: {e}")
+            logger.error(f"Error tracking job status for {job_types} {job_id}: {e}")
             return {
                 "job_id": job_id,
-                "JobTypes": JobTypes,
+                "job_types": job_types,
                 "status": JobStatus.TRACKING_ERROR,
                 "error_message": str(e),
                 "tracked_at": utc_timestamp(),
@@ -831,7 +829,7 @@ class JobCoordinationService:
         self,
         camera_id: Optional[int] = None,
         timelapse_id: Optional[int] = None,
-        JobTypes: JobTypes = JobTypes.UNKNOWN,
+        job_type: JobTypes = JobTypes.UNKNOWN,
     ) -> Dict[str, Any]:
         """
         Cancel pending background jobs based on criteria.
@@ -856,16 +854,17 @@ class JobCoordinationService:
                 "criteria": {
                     "camera_id": camera_id,
                     "timelapse_id": timelapse_id,
-                    "JobTypes": JobTypes,
+                    "job_type": job_type,
                 },
             }
 
             logger.info(
-                f"🚫 Cancelling pending jobs - Camera: {camera_id}, Timelapse: {timelapse_id}, Type: {JobTypes}"
+                f"🚫 Cancelling pending jobs - Camera: {camera_id}, Timelapse: {timelapse_id}, Type: {job_type}",
+                emoji=LogEmoji.CANCELED,
             )
 
             # Cancel thumbnail jobs
-            if not JobTypes or JobTypes == JobTypes.THUMBNAIL:
+            if not job_type or job_type == JobTypes.THUMBNAIL:
                 try:
                     if camera_id:
                         # Cancel thumbnail jobs by camera (via images)
@@ -890,7 +889,7 @@ class JobCoordinationService:
                     if cancelled_thumbnails > 0:
                         cancellation_results["cancelled_jobs"].append(
                             {
-                                "JobTypes": JobTypes.THUMBNAIL,
+                                "job_type": JobTypes.THUMBNAIL,
                                 "count": cancelled_thumbnails,
                             }
                         )
@@ -899,11 +898,11 @@ class JobCoordinationService:
                 except Exception as thumb_error:
                     logger.warning(f"Error cancelling thumbnail jobs: {thumb_error}")
                     cancellation_results["failed_cancellations"].append(
-                        {"JobTypes": JobTypes.THUMBNAIL, "error": str(thumb_error)}
+                        {"job_type": JobTypes.THUMBNAIL, "error": str(thumb_error)}
                     )
 
             # Cancel video jobs
-            if not JobTypes or JobTypes == JobTypes.VIDEO_GENERATION:
+            if not job_type or job_type == JobTypes.VIDEO_GENERATION:
                 try:
                     if timelapse_id:
                         # Cancel video jobs by timelapse
@@ -924,7 +923,7 @@ class JobCoordinationService:
                     if cancelled_videos > 0:
                         cancellation_results["cancelled_jobs"].append(
                             {
-                                "JobTypes": JobTypes.VIDEO_GENERATION,
+                                "job_type": JobTypes.VIDEO_GENERATION,
                                 "count": cancelled_videos,
                             }
                         )
@@ -934,13 +933,13 @@ class JobCoordinationService:
                     logger.warning(f"Error cancelling video jobs: {video_error}")
                     cancellation_results["failed_cancellations"].append(
                         {
-                            "JobTypes": JobTypes.VIDEO_GENERATION,
+                            "job_type": JobTypes.VIDEO_GENERATION,
                             "error": str(video_error),
                         }
                     )
 
             # Handle overlay jobs (if implemented)
-            if not JobTypes or JobTypes == JobTypes.OVERLAY:
+            if not job_type or job_type == JobTypes.OVERLAY:
                 try:
                     # Placeholder for overlay job cancellation
                     # Note: Overlay jobs might be handled differently
@@ -961,8 +960,9 @@ class JobCoordinationService:
             cancellation_results["cancelled_at"] = utc_timestamp()
 
             logger.info(
-                f"✅ Job cancellation completed: {cancellation_results['total_cancelled']} jobs cancelled, "
-                f"{len(cancellation_results['failed_cancellations'])} failures"
+                f"Job cancellation completed: {cancellation_results['total_cancelled']} jobs cancelled, "
+                f"{len(cancellation_results['failed_cancellations'])} failures",
+                emoji=LogEmoji.SUCCESS,
             )
 
             return cancellation_results
@@ -976,7 +976,7 @@ class JobCoordinationService:
                 "criteria": {
                     "camera_id": camera_id,
                     "timelapse_id": timelapse_id,
-                    "JobTypes": JobTypes,
+                    "job_types": JobTypes,
                 },
             }
 
@@ -1139,7 +1139,8 @@ class JobCoordinationService:
             }
 
             logger.debug(
-                f"📊 Job queue status: {queue_status['overall_health']} - {queue_status['total_pending']} pending"
+                f"Job queue status: {queue_status['overall_health']} - {queue_status['total_pending']} pending",
+                emoji=LogEmoji.QUEUE,
             )
 
             return queue_status
@@ -1194,8 +1195,9 @@ class JobCoordinationService:
             Disabled result indicating scheduler handles this
         """
         logger.debug(
-            f"🎯 Per-capture trigger for timelapse {timelapse_id} - "
-            f"delegated to SchedulerWorker (scheduler-centric architecture)"
+            f"Per-capture trigger for timelapse {timelapse_id} - "
+            f"delegated to SchedulerWorker (scheduler-centric architecture)",
+            emoji=LogEmoji.SCHEDULER,
         )
 
         return {
@@ -1300,26 +1302,28 @@ class JobCoordinationService:
 
         return triggered_jobs
 
-    def _calculate_job_progress(self, JobStatus: JobStatus, JobTypes: JobTypes) -> int:
+    def _calculate_job_progress(
+        self, job_status: JobStatus, job_types: JobTypes
+    ) -> int:
         """
         Calculate job progress percentage based on status.
 
         Args:
-            JobStatus: Current job status
-            JobTypes: Type of job
+            job_status: Current job status
+            job_types: Type of job
 
         Returns:
             Progress percentage (0-100)
         """
 
-        if JobTypes == JobTypes.THUMBNAIL:
+        if job_types == JobTypes.THUMBNAIL:
             status_progress_map = {
                 JobStatus.PENDING: 0,
                 JobStatus.PROCESSING: 50,
                 JobStatus.COMPLETED: 100,
                 JobStatus.FAILED: 0,
             }
-        elif JobTypes == JobTypes.VIDEO_GENERATION:
+        elif job_types == JobTypes.VIDEO_GENERATION:
             status_progress_map = {
                 JobStatus.PENDING: 0,
                 JobStatus.PROCESSING: 25,
@@ -1336,10 +1340,10 @@ class JobCoordinationService:
                 JobStatus.FAILED: 0,
             }
 
-        return status_progress_map.get(JobStatus, 0)
+        return status_progress_map.get(job_status, 0)
 
     def _validate_job_parameters(
-        self, JobTypes: JobTypes, job_parameters: Dict[str, Any]
+        self, job_types: JobTypes, job_parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Validate job parameters before coordination.
@@ -1362,7 +1366,7 @@ class JobCoordinationService:
                 JOB_VALIDATION_SANITIZED_KEY: job_parameters.copy(),
             }
 
-            if JobTypes == JobTypes.THUMBNAIL:
+            if job_types == JobTypes.THUMBNAIL:
                 # Validate thumbnail job parameters
                 if "image_id" not in job_parameters:
                     validation_result["errors"].append(
@@ -1374,9 +1378,6 @@ class JobCoordinationService:
                     validation_result["valid"] = False
 
                 # Validate priority
-                from typing import cast, List
-                from enum import Enum
-
                 valid_priorities = cast(List[Enum], list(JobPriority))
                 priority = job_parameters.get("priority", JobPriority.MEDIUM)
                 sanitized_priority = parse_enum(
@@ -1393,7 +1394,7 @@ class JobCoordinationService:
                     "priority"
                 ] = sanitized_priority
 
-            elif JobTypes == JobTypes.VIDEO_GENERATION:
+            elif job_types == JobTypes.VIDEO_GENERATION:
                 # Validate video job parameters
                 if "timelapse_id" not in job_parameters:
                     validation_result["errors"].append(
@@ -1426,7 +1427,7 @@ class JobCoordinationService:
                 #     "trigger_type"
                 # ] = sanitized_trigger_type
 
-            elif JobTypes == JobTypes.OVERLAY:
+            elif job_types == JobTypes.OVERLAY:
                 # Validate overlay job parameters (if implemented)
                 validation_result["warnings"].append(
                     "Overlay job validation not fully implemented"
@@ -1469,9 +1470,9 @@ class JobCoordinationService:
                     if not job_result.get("success", False):
                         continue  # Skip failed job results
 
-                    JobTypes_value = job_result.get("JobTypes")
-                    if JobTypes_value is None:
-                        JobTypes_value = JobTypes.UNKNOWN
+                    job_types_value = job_result.get("JobTypes")
+                    if job_types_value is None:
+                        job_types_value = JobTypes.UNKNOWN
                     job_id = job_result.get("job_id")
 
                     if not job_id:
@@ -1480,7 +1481,7 @@ class JobCoordinationService:
                     # Create event data for SSE
                     event_data = {
                         "job_id": job_id,
-                        "JobTypes": JobTypes_value,
+                        "job_types": job_types_value,
                         "priority": job_result.get("priority", JobPriority.MEDIUM),
                         "trigger_type": job_result.get(
                             "trigger_type", "workflow_coordination"
@@ -1490,9 +1491,9 @@ class JobCoordinationService:
                     }
 
                     # Add type-specific data
-                    if JobTypes == JobTypes.THUMBNAIL:
+                    if job_types_value == JobTypes.THUMBNAIL:
                         event_data["image_id"] = job_result.get("image_id")
-                    elif JobTypes == JobTypes.VIDEO_GENERATION:
+                    elif job_types_value == JobTypes.VIDEO_GENERATION:
                         event_data["timelapse_id"] = job_result.get("timelapse_id")
 
                     # Broadcast SSE event using operations

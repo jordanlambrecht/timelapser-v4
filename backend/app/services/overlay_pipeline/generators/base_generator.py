@@ -7,13 +7,14 @@ shared utilities for content generation.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Union, Optional
-from datetime import datetime
-from PIL import Image as PILImage
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, Optional, Union
 
-from ....models.overlay_model import OverlayItem, OverlayType
+from PIL import Image as PILImage
+
 from ....models.image_model import Image
+from ....models.overlay_model import OverlayItem, OverlayType
 from ....models.timelapse_model import Timelapse as TimelapseModel
 
 
@@ -124,20 +125,20 @@ class BaseOverlayGenerator(ABC):
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
     ) -> str:
         """Get effective text color, preferring item-specific over global."""
-        return overlay_item.textColor or context.global_fill_color
+        return overlay_item.text_color or context.global_fill_color
 
     def get_effective_background_color(
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
     ) -> str:
         """Get effective background color, preferring item-specific over global."""
-        return overlay_item.backgroundColor or context.global_background_color
+        return overlay_item.background_color or context.global_background_color
 
     def should_render_background(self, overlay_item: OverlayItem) -> bool:
         """Check if background should be rendered for this overlay item."""
         # Use item-specific setting if available, otherwise check if backgroundOpacity > 0
-        if overlay_item.enableBackground is not None:
-            return overlay_item.enableBackground
-        return overlay_item.backgroundOpacity > 0
+        if overlay_item.enable_background is not None:
+            return overlay_item.enable_background
+        return overlay_item.background_opacity > 0
 
 
 class OverlayGeneratorRegistry:

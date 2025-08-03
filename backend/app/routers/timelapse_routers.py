@@ -11,23 +11,27 @@ from typing import List, Optional
 
 from fastapi import (
     APIRouter,
-    HTTPException,
-    Query,
-    Path,
-    status,
     Depends,
+    HTTPException,
+    Path,
+    Query,
     Response,
+    status,
 )
+
 from ..dependencies import (
-    TimelapseServiceDep,
-    VideoServiceDep,
     ImageServiceDep,
     SchedulerServiceDep,
+    TimelapseServiceDep,
+    VideoServiceDep,
 )
-from ..utils.cache_manager import (
-    generate_collection_etag,
-    generate_composite_etag,
-    generate_content_hash_etag,
+from ..enums import JobPriority
+from ..models import VideoWithDetails
+from ..models.image_model import Image
+from ..models.shared_models import (
+    BulkThumbnailResponse,
+    TimelapseLibraryStatistics,
+    TimelapseStatistics,
 )
 from ..models.timelapse_model import (
     Timelapse,
@@ -35,17 +39,18 @@ from ..models.timelapse_model import (
     TimelapseUpdate,
     TimelapseWithDetails,
 )
-from ..models import VideoWithDetails
-from ..models.image_model import Image
-from ..models.shared_models import (
-    TimelapseStatistics,
-    TimelapseLibraryStatistics,
-    BulkThumbnailResponse,
+from ..utils.cache_manager import (
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
 )
-from ..utils.router_helpers import handle_exceptions, validate_entity_exists
 from ..utils.response_helpers import ResponseFormatter
-from ..utils.validation_helpers import create_default_timelapse_data, validate_camera_id_match, calculate_thumbnail_percentages
-from ..enums import JobPriority
+from ..utils.router_helpers import handle_exceptions, validate_entity_exists
+from ..utils.validation_helpers import (
+    calculate_thumbnail_percentages,
+    create_default_timelapse_data,
+    validate_camera_id_match,
+)
 
 # NOTE: CACHING STRATEGY - MIXED APPROACH (EXCELLENT IMPLEMENTATION)
 # Timelapse operations use optimal mixed caching strategy:
@@ -96,7 +101,7 @@ async def create_new_timelapse(
     except ValueError as e:
         # Handle business logic errors (e.g., camera not found, invalid settings)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Error logging handled in service layer
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -122,7 +127,9 @@ async def create_timelapse(
     """
 
     # Validate camera_id matches using helper function
-    is_valid, error_message = validate_camera_id_match(camera_id, timelapse_data.camera_id)
+    is_valid, error_message = validate_camera_id_match(
+        camera_id, timelapse_data.camera_id
+    )
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -140,7 +147,7 @@ async def create_timelapse(
     except ValueError as e:
         # Handle business logic errors (e.g., camera not found, invalid settings)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Error logging handled in service layer
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -291,7 +298,7 @@ async def update_timelapse(
     except ValueError as e:
         # Handle validation errors
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Error logging handled in service layer
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -325,10 +332,10 @@ async def delete_timelapse(
         # 🎯 SCHEDULER-CENTRIC: Remove any scheduled jobs for this timelapse before deletion
         try:
             await scheduler_service.remove_timelapse_job(timelapse_id)
-        except Exception as e:
+        except Exception:
             # Log but don't fail - timelapse might not have been scheduled
             pass
-        
+
         success = await timelapse_service.delete_timelapse(timelapse_id)
         if not success:
             raise HTTPException(
@@ -349,7 +356,7 @@ async def delete_timelapse(
     except ValueError as e:
         # Handle business logic errors (e.g., cannot delete running timelapse)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Error logging handled in service layer
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -567,11 +574,9 @@ async def get_timelapse_thumbnail_stats(
 
     # Extract thumbnail statistics from timelapse model
     percentages = calculate_thumbnail_percentages(
-        timelapse.thumbnail_count, 
-        timelapse.small_count, 
-        timelapse.image_count
+        timelapse.thumbnail_count, timelapse.small_count, timelapse.image_count
     )
-    
+
     stats = {
         "timelapse_id": timelapse_id,
         "thumbnail_count": timelapse.thumbnail_count,
@@ -603,14 +608,16 @@ async def regenerate_timelapse_thumbnails(
     scheduler_service: SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: Add scheduler dependency
     timelapse_service: TimelapseServiceDep,
     timelapse_id: int = Depends(valid_timelapse_id),
-    priority: str = Query(JobPriority.MEDIUM, description="Job priority: high, medium, low"),
+    priority: str = Query(
+        JobPriority.MEDIUM, description="Job priority: high, medium, low"
+    ),
     force: bool = Query(
         False, description="Force regeneration even if thumbnails exist"
     ),
 ):
     """
     🎯 SCHEDULER-CENTRIC: Regenerate all thumbnails for a specific timelapse through scheduler authority.
-    
+
     ALL timing operations must flow through SchedulerWorker. This bulk operation
     will be coordinated by the scheduler to prevent conflicts with other thumbnail jobs.
 
@@ -666,26 +673,28 @@ async def regenerate_timelapse_thumbnails(
         # 🎯 SCHEDULER-CENTRIC: Route bulk thumbnail generation through scheduler authority
         # NOTE: Using individual scheduling calls until bulk method is implemented
         # Each thumbnail is scheduled individually through scheduler for proper coordination
-        
+
         created_job_ids = []
         failed_image_ids = []
-        
+
         for image_id in image_ids:
             try:
                 # Schedule individual thumbnail generation through scheduler
-                scheduler_result = await scheduler_service.schedule_immediate_thumbnail_generation(
-                    image_id=image_id,
-                    priority=priority if priority else JobPriority.MEDIUM
+                scheduler_result = (
+                    await scheduler_service.schedule_immediate_thumbnail_generation(
+                        image_id=image_id,
+                        priority=priority if priority else JobPriority.MEDIUM,
+                    )
                 )
-                
+
                 if scheduler_result.get("success"):
                     created_job_ids.append(f"scheduled_{image_id}")
                 else:
                     failed_image_ids.append(image_id)
-                    
-            except Exception as e:
+
+            except Exception:
                 failed_image_ids.append(image_id)
-        
+
         return BulkThumbnailResponse(
             total_requested=len(image_ids),
             jobs_created=len(created_job_ids),
@@ -724,7 +733,7 @@ async def verify_timelapse_thumbnails(
         return {
             "success": False,
             "message": "Thumbnail verification not yet implemented",
-            "timelapse_id": timelapse_id
+            "timelapse_id": timelapse_id,
         }
 
     except ValueError as e:
@@ -770,7 +779,7 @@ async def remove_timelapse_thumbnails(
             "message": "Thumbnail removal not yet implemented",
             "timelapse_id": timelapse_id,
             "deleted_files": 0,
-            "cleared_database_records": 0
+            "cleared_database_records": 0,
         }
 
     except Exception as e:

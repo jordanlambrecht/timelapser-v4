@@ -14,8 +14,10 @@ import sqlalchemy as sa
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent.parent / "app"))
 from app.enums import JobPriority, JobStatus, ThumbnailJobType
+
+sys.path.append(str(Path(__file__).parent.parent.parent / "app"))
+
 
 # revision identifiers, used by Alembic.
 revision = "022_thumbnail_jobs"

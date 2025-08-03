@@ -5,15 +5,16 @@ Handles weather data refresh and management for sunrise/sunset calculations.
 """
 
 from datetime import datetime
-from typing import Optional, TypedDict, Dict, Any
+from typing import Optional, Dict, Any
 from zoneinfo import ZoneInfo
 
-from .base_worker import BaseWorker, WorkerErrorResponse
+from .base_worker import BaseWorker
+from ..utils.time_utils import utc_now
 from ..services.weather.service import WeatherManager
 from ..models.weather_model import OpenWeatherApiData
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..services.settings_service import SyncSettingsService
-from ..utils.time_utils import get_timezone_from_settings
+from ..utils.time_utils import get_timezone_from_cache_sync
 from ..enums import SSEPriority
 from ..constants import (
     WEATHER_REFRESH_MISSING_SETTINGS,
@@ -21,11 +22,9 @@ from ..constants import (
     SETTING_KEY_WEATHER_ENABLED,
     DEFAULT_WEATHER_ENABLED,
     BOOLEAN_TRUE_STRING,
-    DATE_STRING_LENGTH,
     EVENT_WEATHER_UPDATED,
     SSE_SOURCE_WORKER,
     WEATHER_DATA_STALE_THRESHOLD_HOURS,
-    DEFAULT_TIMEZONE,
 )
 
 
@@ -133,9 +132,9 @@ class WeatherWorker(BaseWorker):
                             if weather_datetime:
                                 # Calculate hours since last refresh using timezone-aware comparison
                                 try:
-                                    # Get timezone-aware current time
-                                    timezone_str = get_timezone_from_settings(
-                                        settings_dict
+                                    # Get timezone-aware current time using cached approach
+                                    timezone_str = get_timezone_from_cache_sync(
+                                        self.settings_service
                                     )
                                     tz = ZoneInfo(timezone_str)
                                     now = datetime.now(tz)
@@ -172,7 +171,7 @@ class WeatherWorker(BaseWorker):
                                         f"Failed to get timezone for comparison: {tz_e}"
                                     )
                                     # Fallback to naive datetime comparison
-                                    now = datetime.now()
+                                    now = utc_now()
                                     if weather_datetime.tzinfo is not None:
                                         weather_datetime = weather_datetime.replace(
                                             tzinfo=None
@@ -342,7 +341,7 @@ class WeatherWorker(BaseWorker):
 
                         if last_update:
                             hours_since_update = (
-                                datetime.now() - last_update.replace(tzinfo=None)
+                                utc_now() - last_update.replace(tzinfo=None)
                             ).total_seconds() / 3600
                             health_status["data_current"] = (
                                 hours_since_update <= WEATHER_DATA_STALE_THRESHOLD_HOURS

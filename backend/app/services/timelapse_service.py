@@ -13,42 +13,50 @@ ARCHITECTURAL COMPLIANCE:
 - No direct database operations in business logic
 """
 
-from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from ..enums import LogEmoji, SSEEvent, SSEEventSource, SSEPriority, TimelapseStatus
+from ..enums import (
+    LogEmoji,
+    LoggerName,
+    LogSource,
+    SSEEvent,
+    SSEEventSource,
+    SSEPriority,
+    TimelapseStatus,
+)
 from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource
 
-logger = get_service_logger(LoggerName.TIMELAPSE_SERVICE, LogSource.SYSTEM)
 
-from ..database.core import AsyncDatabase, SyncDatabase
-from ..database.timelapse_operations import TimelapseOperations, SyncTimelapseOperations
-from ..database.sse_events_operations import SSEEventsOperations
-from ..models.timelapse_model import (
-    Timelapse,
-    TimelapseWithDetails,
-    TimelapseCreate,
-    TimelapseUpdate,
-)
-from ..models.shared_models import (
-    TimelapseStatistics,
-    TimelapseLibraryStatistics,
-    TimelapseForCleanup,
-    TimelapseVideoSettings,
-)
 from ..constants import (
     SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
+)
+from ..database.core import AsyncDatabase, SyncDatabase
+from ..database.sse_events_operations import SSEEventsOperations
+from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
+from ..models.shared_models import (
+    TimelapseForCleanup,
+    TimelapseLibraryStatistics,
+    TimelapseStatistics,
+    TimelapseVideoSettings,
+)
+from ..models.timelapse_model import (
+    Timelapse,
+    TimelapseCreate,
+    TimelapseUpdate,
+    TimelapseWithDetails,
+)
+from ..utils.response_helpers import (
+    MetricsHelper,
+    ResponseFormatter,
+    ValidationHelper,
 )
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
     utc_now,
 )
-from ..utils.response_helpers import (
-    ResponseFormatter,
-    ValidationHelper,
-    MetricsHelper,
-)
+
+logger = get_service_logger(LoggerName.TIMELAPSE_SERVICE, LogSource.SYSTEM)
 
 
 class TimelapseService:

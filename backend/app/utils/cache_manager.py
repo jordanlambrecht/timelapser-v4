@@ -14,14 +14,18 @@ Related Files:
         invalidate cached data based on SSE events and application state changes.
 """
 
-import time
+import asyncio
 import hashlib
 import json
-from typing import Dict, Any, Optional, TypeVar, Callable, Awaitable, Union
+import time
 from datetime import datetime
-
-import asyncio
 from functools import wraps
+from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar, Union
+
+from ..constants import DEFAULT_TIMEZONE
+
+# Import timezone-aware utilities to fix violations
+from .time_utils import utc_now
 
 T = TypeVar("T")
 
@@ -98,7 +102,7 @@ class MemoryCache:
         """
         async with self._lock:
             self._cache[key] = CacheEntry(value, ttl_seconds, etag)
-            etag_info = f" (ETag: {etag})" if etag else ""
+            # etag_info = f" (ETag: {etag})" if etag else ""
             # logger.debug(f"💾 Cached: {key} (TTL: {ttl_seconds}s){etag_info}")
 
     async def get_with_etag(self, key: str) -> tuple[Optional[Any], Optional[str]]:
@@ -147,7 +151,7 @@ class MemoryCache:
     async def clear(self) -> None:
         """Clear all cache entries."""
         async with self._lock:
-            count = len(self._cache)
+            # count = len(self._cache)
             self._cache.clear()
             # logger.info(f"🧹 Cache cleared: {count} entries removed")
 
@@ -381,7 +385,7 @@ def generate_timestamp_etag(obj: Any, timestamp_field: str = "updated_at") -> st
         >>> generate_timestamp_etag(camera)  # camera.updated_at = datetime(...)
         '"1672531200.0"'
 
-        >>> generate_timestamp_etag({"updated_at": datetime.now()})
+        >>> generate_timestamp_etag({"updated_at": utc_now()})
         '"1672531200.123456"'
     """
     try:
@@ -396,7 +400,7 @@ def generate_timestamp_etag(obj: Any, timestamp_field: str = "updated_at") -> st
             # logger.warning(
             #     f"⚠️ No {timestamp_field} found for ETag generation, using current time"
             # )
-            timestamp = datetime.now()
+            timestamp = utc_now()
 
         # Convert datetime to timestamp
         if isinstance(timestamp, datetime):
@@ -409,10 +413,10 @@ def generate_timestamp_etag(obj: Any, timestamp_field: str = "updated_at") -> st
         # logger.debug(f"🏷️ Generated timestamp ETag: {etag}")
         return etag
 
-    except Exception as e:
+    except Exception:
         # logger.error(f"❌ ETag generation failed: {e}")
         # Fallback to current timestamp
-        return f'"{datetime.now().timestamp()}"'
+        return f'"{utc_now().timestamp()}"'
 
 
 def generate_content_hash_etag(
@@ -456,10 +460,10 @@ def generate_content_hash_etag(
         # logger.debug(f"🏷️ Generated {algorithm} hash ETag: {etag}")
         return etag
 
-    except Exception as e:
+    except Exception:
         # logger.error(f"❌ Hash ETag generation failed: {e}")
         # Fallback to timestamp-based ETag
-        return f'"{datetime.now().timestamp()}"'
+        return f'"{utc_now().timestamp()}"'
 
 
 def generate_composite_etag(
@@ -485,7 +489,7 @@ def generate_composite_etag(
         ETag string in format: "id-timestamp" or "id-version"
 
     Examples:
-        >>> generate_composite_etag(123, datetime.now())
+        >>> generate_composite_etag(123, utc_now())
         '"123-1672531200.0"'
 
         >>> generate_composite_etag("image_456", version="v2")
@@ -505,15 +509,15 @@ def generate_composite_etag(
 
         # If no timestamp or version provided, use current timestamp
         if len(parts) == 1:
-            parts.append(str(datetime.now().timestamp()))
+            parts.append(str(utc_now().timestamp()))
 
         etag = f'"{"-".join(parts)}"'
         # logger.debug(f"🏷️ Generated composite ETag: {etag}")
         return etag
 
-    except Exception as e:
+    except Exception:
         # logger.error(f"❌ Composite ETag generation failed: {e}")
-        return f'"{obj_id}-{datetime.now().timestamp()}"'
+        return f'"{obj_id}-{utc_now().timestamp()}"'
 
 
 def generate_collection_etag(items: list, count_field: Optional[str] = None) -> str:
@@ -534,7 +538,7 @@ def generate_collection_etag(items: list, count_field: Optional[str] = None) -> 
         ETag string based on collection size + latest timestamp
 
     Examples:
-        >>> generate_collection_etag([{"id": 1, "updated_at": datetime.now()}])
+        >>> generate_collection_etag([{"id": 1, "updated_at": utc_now()}])
         '"1-1672531200.0"'
     """
     try:
@@ -562,7 +566,7 @@ def generate_collection_etag(items: list, count_field: Optional[str] = None) -> 
 
         # Use current time if no timestamps found
         if latest_timestamp is None:
-            latest_timestamp = datetime.now()
+            latest_timestamp = utc_now()
 
         # Include count field if provided
         if count_field and items:
@@ -578,9 +582,9 @@ def generate_collection_etag(items: list, count_field: Optional[str] = None) -> 
         # logger.debug(f"🏷️ Generated collection ETag: {etag} (count: {total_count})")
         return etag
 
-    except Exception as e:
+    except Exception:
         # logger.error(f"❌ Collection ETag generation failed: {e}")
-        return f'"{len(items) if items else 0}-{datetime.now().timestamp()}"'
+        return f'"{len(items) if items else 0}-{utc_now().timestamp()}"'
 
 
 def validate_etag_match(request_etag: Optional[str], current_etag: str) -> bool:
@@ -700,7 +704,7 @@ def cached_response_with_etag(
             if etag_generator and result:
                 try:
                     etag = etag_generator(result)
-                except Exception as e:
+                except Exception:
                     # logger.warning(f"⚠️ ETag generation failed for {cache_key}: {e}")
                     pass
 
@@ -735,15 +739,15 @@ async def get_timezone_async(settings_service) -> str:
             else:
                 # Sync service
                 timezone = settings_service.get_setting("timezone")
-            return timezone or "UTC"
+            return timezone or DEFAULT_TIMEZONE
         else:
             # logger.warning(
             #     f"Settings service {type(settings_service)} does not have get_setting method"
             # )
-            return "UTC"
-    except Exception as e:
+            return DEFAULT_TIMEZONE
+    except Exception:
         # logger.warning(f"Failed to get timezone from settings service: {e}")
-        return "UTC"
+        return DEFAULT_TIMEZONE
 
 
 @cached_response(ttl_seconds=300, key_prefix="setting")
@@ -778,6 +782,6 @@ async def get_setting_cached(
             # )
             return default
 
-    except Exception as e:
+    except Exception:
         # logger.error(f"❌ Settings error for key '{key}': {e}")
         return default

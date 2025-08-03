@@ -424,6 +424,7 @@ class LogEmoji(str, Enum):
     INFO = "ℹ️"
     DEBUG = "🐞"
     CRITICAL = "☠️"
+    CANCELED = "🚫"
 
     # Work emojis
     PROCESSING = "🔄"
@@ -453,6 +454,7 @@ class LogEmoji(str, Enum):
     MAINTENANCE = "🔧"
     API = "🔌"
     SECURITY = "🔒"
+    CACHE = "🗄️"
 
     # Database emojis
     DATABASE = "🗄️"

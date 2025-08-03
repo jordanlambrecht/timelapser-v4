@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Optional, List
+from typing import List, Optional, Type
 
 
 def parse_enum(

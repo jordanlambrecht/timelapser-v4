@@ -62,8 +62,9 @@ class SchedulerTimeUtils:
     def get_timezone(self) -> ZoneInfo:
         """Get configured timezone with caching."""
         if self._cached_timezone is None:
+            from ...constants import DEFAULT_TIMEZONE
             settings = self.settings_service.get_all_settings()
-            timezone_str = settings.get("timezone", "UTC")
+            timezone_str = settings.get("timezone", DEFAULT_TIMEZONE)
             self._cached_timezone = ZoneInfo(timezone_str)
         return self._cached_timezone
 

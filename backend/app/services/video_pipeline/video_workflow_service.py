@@ -30,35 +30,37 @@ Separation of Concerns:
 - No direct router compatibility layer
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from ...services.logger import get_service_logger
+from ...config import settings
+from ...database.core import SyncDatabase
+from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
-    LogLevel,
     LoggerName,
+    LogLevel,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
     VideoQuality,
 )
-
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
-
-from ...database.core import SyncDatabase
-from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...models.shared_models import VideoGenerationJobWithDetails
+from ...services.logger import get_service_logger
 from ...utils.file_helpers import (
-    validate_file_path,
     ensure_directory_exists,
     get_relative_path,
+    validate_file_path,
 )
-from ...utils.time_utils import get_timezone_aware_timestamp_sync
-from ...config import settings
+from ...utils.time_utils import (
+    format_filename_timestamp,
+    get_timezone_aware_timestamp_sync,
+)
+from . import ffmpeg_utils
+from .overlay_integration_service import OverlayIntegrationService
 
 # from ..log_service import SyncLogService  # Removed: file does not exist
 from .video_job_service import VideoJobService
-from .overlay_integration_service import OverlayIntegrationService
-from . import ffmpeg_utils
+
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 
 
 class VideoWorkflowService:
@@ -418,10 +420,11 @@ class VideoWorkflowService:
                 must_exist=True,
             )
 
-            # Generate output filename
-            timestamp_str = get_timezone_aware_timestamp_sync(
-                self.settings_service
-            ).strftime("%Y%m%d_%H%M%S")
+            # Generate output filename with timezone-aware timestamp
+            timestamp_dt = get_timezone_aware_timestamp_sync(self.settings_service)
+            timestamp_str = format_filename_timestamp(
+                timestamp_dt, self.settings_service
+            )
             output_filename = f"timelapse_{job.timelapse_id}_{timestamp_str}.mp4"
 
             # Ensure output directory exists
@@ -503,7 +506,7 @@ class VideoWorkflowService:
                 self._log_job_event(
                     job,
                     LogLevel.ERROR,
-                    f"FFmpeg video generation failed",
+                    "FFmpeg video generation failed",
                     "ffmpeg_generation_failure",
                     {
                         "ffmpeg_error": message,
@@ -868,8 +871,6 @@ class VideoWorkflowService:
             Dict[str, Any]: Service status information
         """
         try:
-            processing_status = self.get_processing_status()
-
             return {
                 "service_name": "VideoWorkflowService",
                 "service_type": "video_workflow_orchestration",

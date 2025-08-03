@@ -6,20 +6,19 @@ Pure functions for FFmpeg command generation and video rendering operations.
 No external dependencies or side effects - suitable for service layer consumption.
 """
 
-import subprocess
-import tempfile
 import glob
 import re
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from ...enums import LogSource, LoggerName, VideoQuality
 from ...services.logger import get_service_logger
-from ...enums import LoggerName, VideoQuality
 
-from ...config import settings
-
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
 from ...utils import file_helpers
 
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 # Quality settings for different output levels
 QUALITY_SETTINGS = {

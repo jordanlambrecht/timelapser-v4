@@ -53,15 +53,15 @@ CONFIGURATION STANDARDS:
 • Consistent job removal before re-adding (prevents conflicts)
 """
 
-import asyncio
 from typing import Dict, Any, Callable
-from ...services.logger import get_service_logger, LogEmoji
+from ...services.logger import get_service_logger
 from ...enums import LoggerName
-
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+from ...utils.time_utils import utc_now
 
 from .scheduler_time_utils import SchedulerTimeUtils
 from ...constants import SCHEDULER_MAX_INSTANCES
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 
 class SchedulerJobTemplate:
@@ -155,9 +155,7 @@ class SchedulerJobTemplate:
                 # Use date trigger for delayed execution
                 import datetime
 
-                run_date = datetime.datetime.now() + datetime.timedelta(
-                    seconds=delay_seconds
-                )
+                run_date = utc_now() + datetime.timedelta(seconds=delay_seconds)
 
                 job = self.scheduler.add_job(
                     func=wrapper_func,

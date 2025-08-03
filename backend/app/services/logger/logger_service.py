@@ -16,19 +16,15 @@ Architecture:
 """
 
 import asyncio
-from typing import Dict, Any, Optional, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
-
-from backend.app.database.log_operations import LogOperations
-
-from ...models.log_summary_model import LogSourceModel, LogSummaryModel
-
-
-from ...enums import LogLevel, LogSource, LoggerName, LogEmoji, SSEEvent, SSEPriority
 
 # Database operations will be injected to avoid circular imports
 from ...database.core import AsyncDatabase, SyncDatabase
+from ...database.log_operations import LogOperations
+from ...enums import LogEmoji, LoggerName, LogLevel, LogSource, SSEEvent, SSEPriority
 
 # from ...database.log_operations import LogOperations, SyncLogOperations
 # from ...database.sse_events_operations import (
@@ -36,18 +32,18 @@ from ...database.core import AsyncDatabase, SyncDatabase
 #     SyncSSEEventsOperations,
 # )
 from ...models.log_model import Log
+from ...models.log_summary_model import LogSourceModel, LogSummaryModel
 
 # Timezone utilities available if needed
 from ...utils.time_utils import utc_now
-from .handlers.database_handler import EnhancedDatabaseHandler
 from .handlers.batching_database_handler import BatchingDatabaseHandler
 from .handlers.console_handler import ConsoleHandler
 from .handlers.file_handler import FileHandler
 
 # SSE operations imported below with other database operations
 from .services.cleanup_service import LogCleanupService
-from .utils.formatters import LogMessageFormatter
 from .utils.context_extractor import ContextExtractor
+from .utils.formatters import LogMessageFormatter
 from .utils.settings_cache import LoggerSettingsCache
 
 
@@ -189,8 +185,8 @@ class LoggerService:
                 and self.async_log_ops
                 and self.sync_log_ops
             ):
-                from .handlers.database_handler import EnhancedDatabaseHandler
                 from .handlers.batching_database_handler import BatchingDatabaseHandler
+                from .handlers.database_handler import EnhancedDatabaseHandler
 
                 if self.enable_batching:
                     self.database_handler = BatchingDatabaseHandler(
@@ -1534,13 +1530,10 @@ class LoggerService:
         Returns:
             LogSummaryModel with statistics
         """
-        from ...database.log_operations import LogOperations
         from ...models.log_summary_model import LogSummaryModel
 
         if not self.async_db:
             raise ValueError("Async database required for log summary")
-
-        log_ops = LogOperations(self.async_db)
 
         # Get basic counts and statistics
         # This is a placeholder - you may need to implement the actual

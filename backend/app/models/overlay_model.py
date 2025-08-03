@@ -9,16 +9,17 @@ This module provides type-safe interfaces for the overlay generation system incl
 - Asset upload models
 """
 
-from typing import Dict, Optional, Literal
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Dict, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..enums import (
+    OverlayGridPosition,
     OverlayJobPriority,
     OverlayJobStatus,
     OverlayJobType,
     OverlayType,
-    OverlayGridPosition,
 )
 
 # Type definitions for overlay system
@@ -32,23 +33,25 @@ class OverlayItem(BaseModel):
     """Individual overlay item configuration"""
 
     type: OverlayType = Field(..., description="Type of overlay content")
-    customText: Optional[str] = Field(None, description="Custom text for text overlays")
-    textSize: int = Field(16, ge=8, le=72, description="Font size in pixels")
-    textColor: str = Field("#FFFFFF", description="Text color in hex format")
-    backgroundColor: Optional[str] = Field(
+    custom_text: Optional[str] = Field(
+        None, description="Custom text for text overlays"
+    )
+    text_size: int = Field(16, ge=8, le=72, description="Font size in pixels")
+    text_color: str = Field("#FFFFFF", description="Text color in hex format")
+    background_color: Optional[str] = Field(
         None, description="Background color in hex or rgba format"
     )
-    backgroundOpacity: int = Field(
+    background_opacity: int = Field(
         0, ge=0, le=100, description="Background opacity percentage"
     )
-    dateFormat: Optional[str] = Field(
+    date_format: Optional[str] = Field(
         "MM/dd/yyyy HH:mm", description="Date format for date/time overlays"
     )
-    imageUrl: Optional[str] = Field(None, description="URL or path to image asset")
-    imageScale: int = Field(100, ge=10, le=500, description="Image scale percentage")
+    image_url: Optional[str] = Field(None, description="URL or path to image asset")
+    image_scale: int = Field(100, ge=10, le=500, description="Image scale percentage")
 
     # New frontend properties
-    enableBackground: Optional[bool] = Field(
+    enable_background: Optional[bool] = Field(
         None, description="Whether to enable background for this overlay item"
     )
     unit: Optional[Literal["F", "C"]] = Field(
@@ -57,10 +60,10 @@ class OverlayItem(BaseModel):
     display: Optional[
         Literal["temp_only", "with_unit", "conditions_only", "temp_and_conditions"]
     ] = Field(None, description="Display format for weather overlays")
-    leadingZeros: Optional[bool] = Field(
+    leading_zeros: Optional[bool] = Field(
         None, description="Whether to use leading zeros for sequence numbers"
     )
-    hidePrefix: Optional[bool] = Field(
+    hide_prefix: Optional[bool] = Field(
         None, description="Whether to hide prefix text for sequence overlays"
     )
 
@@ -74,22 +77,22 @@ class GlobalOverlayOptions(BaseModel):
         100, ge=0, le=100, description="Global overlay opacity percentage"
     )
     font: str = Field("Arial", description="Font family name")
-    xMargin: int = Field(
+    x_margin: int = Field(
         20, ge=0, le=200, description="Horizontal margin from edge in pixels"
     )
-    yMargin: int = Field(
+    y_margin: int = Field(
         20, ge=0, le=200, description="Vertical margin from edge in pixels"
     )
-    backgroundColor: str = Field(
+    background_color: str = Field(
         "#000000", description="Global background color in hex format"
     )
-    backgroundOpacity: int = Field(
+    background_opacity: int = Field(
         50, ge=0, le=100, description="Global background opacity percentage"
     )
-    fillColor: str = Field(
+    fill_color: str = Field(
         "#FFFFFF", description="Global text/fill color in hex format"
     )
-    dropShadow: int = Field(2, ge=0, le=10, description="Drop shadow size in pixels")
+    drop_shadow: int = Field(2, ge=0, le=10, description="Drop shadow size in pixels")
     preset: Optional[str] = Field(None, description="Selected preset name")
 
     model_config = ConfigDict(from_attributes=True)
@@ -100,12 +103,12 @@ def _default_global_overlay_options() -> GlobalOverlayOptions:
     return GlobalOverlayOptions(
         opacity=100,
         font="Arial",
-        xMargin=20,
-        yMargin=20,
-        backgroundColor="#000000",
-        backgroundOpacity=50,
-        fillColor="#FFFFFF",
-        dropShadow=2,
+        x_margin=20,
+        y_margin=20,
+        background_color="#000000",
+        background_opacity=50,
+        fill_color="#FFFFFF",
+        drop_shadow=2,
         preset=None,
     )
 
@@ -113,10 +116,10 @@ def _default_global_overlay_options() -> GlobalOverlayOptions:
 class OverlayConfiguration(BaseModel):
     """Complete overlay configuration for timelapses"""
 
-    overlayPositions: Dict[OverlayGridPosition, OverlayItem] = Field(
+    overlay_positions: Dict[OverlayGridPosition, OverlayItem] = Field(
         default_factory=dict, description="Overlay items positioned on 9-position grid"
     )
-    globalOptions: GlobalOverlayOptions = Field(
+    global_options: GlobalOverlayOptions = Field(
         default_factory=_default_global_overlay_options,
         description="Global overlay settings",
     )

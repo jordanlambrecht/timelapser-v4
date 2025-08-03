@@ -6,23 +6,22 @@ Provides unified interface for all overlay generation functionality
 with proper dependency injection following the established pattern.
 """
 
-from typing import Optional, Dict, Any
-
-from ...models.health_model import HealthStatus
+from typing import Any, Dict, Optional
 
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...enums import LogSource, LoggerName, LogEmoji
+from ...enums import LogEmoji, LoggerName, LogSource
+from ...models.health_model import HealthStatus
 from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_timestamp
 from .services import (
-    SyncOverlayJobService,
     AsyncOverlayJobService,
-    SyncOverlayPresetService,
+    OverlayIntegrationService,
     OverlayPresetService,
-    SyncOverlayTemplateService,
     OverlayTemplateService,
     SyncOverlayIntegrationService,
-    OverlayIntegrationService,
+    SyncOverlayJobService,
+    SyncOverlayPresetService,
+    SyncOverlayTemplateService,
 )
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)

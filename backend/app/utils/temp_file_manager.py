@@ -6,13 +6,15 @@ Provides centralized management of temporary files for overlay previews,
 test captures, and other transient file operations.
 """
 
-import time
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
-from ..services.logger import get_service_logger, LogEmoji
+
 from ..enums import LoggerName
+from ..services.logger import get_service_logger
+from .time_utils import format_filename_timestamp, utc_now
 
 logger = get_service_logger(LoggerName.SYSTEM)
 
@@ -61,11 +63,9 @@ class TempFileManager:
             Unique file path for preview image
         """
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = utc_now()
 
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S_%f")[
-            :-3
-        ]  # Include milliseconds
+        timestamp_str = format_filename_timestamp(timestamp)
         filename = f"camera_{camera_id}_preview_{timestamp_str}.jpg"
         return self.preview_dir / filename
 
@@ -83,11 +83,9 @@ class TempFileManager:
             Unique file path for overlay preview image
         """
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = utc_now()
 
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S_%f")[
-            :-3
-        ]  # Include milliseconds
+        timestamp_str = format_filename_timestamp(timestamp)
         filename = f"camera_{camera_id}_overlay_preview_{timestamp_str}.png"
         return self.overlay_dir / filename
 
@@ -105,11 +103,9 @@ class TempFileManager:
             Unique file path for test capture image
         """
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = utc_now()
 
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S_%f")[
-            :-3
-        ]  # Include milliseconds
+        timestamp_str = format_filename_timestamp(timestamp)
         filename = f"camera_{camera_id}_test_{timestamp_str}.jpg"
         return self.test_capture_dir / filename
 

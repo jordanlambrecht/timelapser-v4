@@ -6,16 +6,17 @@ Type-safe models for corruption detection data structures,
 following Timelapser's existing architectural patterns.
 """
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Dict, Any, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # Import corruption detection constants
 from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
+    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
     DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
-    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
 )
 
 

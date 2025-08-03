@@ -38,36 +38,30 @@ class CaptureWorker:
 ```
 """
 
-from typing import Optional, Dict, Any
-from ...services.logger import get_service_logger
+from typing import Any, Dict, Optional
+
+from ...database.core import AsyncDatabase, SyncDatabase
 from ...enums import LoggerName
-
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
-
+from ...services.logger import get_service_logger
 from .corruption_pipeline import CorruptionPipeline
-
-# Import database layer
-from ...database.core import SyncDatabase, AsyncDatabase
-
-# Import pipeline components
-from .services import (
-    CorruptionEvaluationService,
-    SyncCorruptionEvaluationService,
-    CorruptionHealthService,
-    SyncCorruptionHealthService,
-    CorruptionStatisticsService,
-    SyncCorruptionStatisticsService,
-)
-
-# Database operations now use existing database layer
 from .detectors import (
-    FastCorruptionDetector,
-    HeavyCorruptionDetector,
     CorruptionScoreCalculator,
+    FastCorruptionDetector,
     FastDetectionResult,
+    HeavyCorruptionDetector,
     HeavyDetectionResult,
     ScoreCalculationResult,
 )
+from .services import (
+    CorruptionEvaluationService,
+    CorruptionHealthService,
+    CorruptionStatisticsService,
+    SyncCorruptionEvaluationService,
+    SyncCorruptionHealthService,
+    SyncCorruptionStatisticsService,
+)
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
 def create_corruption_pipeline(
@@ -138,7 +132,7 @@ def get_corruption_pipeline_health() -> Dict[str, Any]:
     """
     try:
         # Create a test pipeline to check component health
-        pipeline = create_corruption_pipeline()
+        create_corruption_pipeline()
 
         return {
             "pipeline_status": "healthy",

@@ -15,33 +15,33 @@ Responsibilities:
 - Audit trail management
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from ....services.logger import get_service_logger, LogEmoji
-from ....enums import LoggerName
+from ....enums import LogSource, LoggerName
+from ....services.logger import LogEmoji, get_service_logger
 
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
-from ....database.core import AsyncDatabase, SyncDatabase
-from ....models.corruption_model import (
-    CorruptionEvaluationResult,
-)
 from ....constants import (
+    CORRUPTION_CRITICAL_THRESHOLD,
     DEFAULT_CORRUPTION_FALLBACK_SCORE,
     DEFAULT_CORRUPTION_RETRY_ENABLED,
     DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
-    CORRUPTION_CRITICAL_THRESHOLD,
 )
-
-from ..detectors import (
-    FastCorruptionDetector,
-    HeavyCorruptionDetector,
-    CorruptionScoreCalculator,
-)
+from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+from ....models.corruption_model import (
+    CorruptionEvaluationResult,
+)
+from ..detectors import (
+    CorruptionScoreCalculator,
+    FastCorruptionDetector,
+    HeavyCorruptionDetector,
+)
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE, LogSource.PIPELINE)
 
 
 class CorruptionEvaluationService:
@@ -461,7 +461,7 @@ class SyncCorruptionEvaluationService:
             action_taken = "saved" if is_valid else "discarded"
 
             # Log the evaluation
-            log_entry = self.db_ops.log_corruption_detection(
+            self.db_ops.log_corruption_detection(
                 camera_id=camera_id,
                 image_id=None,  # Will be set by caller if needed
                 corruption_score=int(score_result.final_score),

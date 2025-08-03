@@ -10,27 +10,28 @@ left behind after system crashes or restarts, including:
 """
 
 
-from pathlib import Path
-from typing import Dict, Any
 from datetime import datetime, timedelta, timezone
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from pathlib import Path
+from typing import Any, Dict
 
-logger = get_service_logger(LoggerName.SYSTEM)
-
+from ..config import settings
 from ..constants import ALLOWED_VIDEO_EXTENSIONS
-
 from ..database.core import SyncDatabase
-from ..database.thumbnail_job_operations import SyncThumbnailJobOperations
 from ..database.image_operations import SyncImageOperations
+from ..database.thumbnail_job_operations import SyncThumbnailJobOperations
 from ..database.video_operations import SyncVideoOperations
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
+from ..services.settings_service import SyncSettingsService
 from ..utils.temp_file_manager import (
     cleanup_temporary_files,
     get_timelapser_temp_file_count,
 )
-from ..utils.time_utils import utc_now, utc_timestamp
-from ..config import settings
-from ..services.settings_service import SyncSettingsService
+from ..utils.time_utils import utc_now, utc_timestamp, UTC_TIMEZONE
+
+# UTC timezone constant imported from time_utils for consistency
+
+logger = get_service_logger(LoggerName.SYSTEM)
 
 
 class StartupCleanupService:
@@ -194,7 +195,7 @@ class StartupCleanupService:
                             # Check if file is old enough to be from a failed processing attempt
                             # Convert file timestamp to UTC for comparison
                             file_mtime_utc = datetime.fromtimestamp(
-                                thumbnail_full_path.stat().st_mtime, tz=timezone.utc
+                                thumbnail_full_path.stat().st_mtime, tz=UTC_TIMEZONE
                             )
                             file_age = utc_now() - file_mtime_utc
                             if file_age.total_seconds() > 300:  # 5 minutes old
@@ -428,7 +429,7 @@ class StartupCleanupService:
 
                     # Check if file is old enough
                     file_mtime = datetime.fromtimestamp(
-                        image_file.stat().st_mtime, tz=timezone.utc
+                        image_file.stat().st_mtime, tz=UTC_TIMEZONE
                     )
                     if file_mtime > cutoff_time:
                         continue
@@ -487,7 +488,7 @@ class StartupCleanupService:
 
                     # Check if file is old enough
                     file_mtime = datetime.fromtimestamp(
-                        thumb_file.stat().st_mtime, tz=timezone.utc
+                        thumb_file.stat().st_mtime, tz=UTC_TIMEZONE
                     )
                     if file_mtime > cutoff_time:
                         continue
@@ -540,7 +541,7 @@ class StartupCleanupService:
 
                     # Check if file is old enough
                     file_mtime = datetime.fromtimestamp(
-                        video_file.stat().st_mtime, tz=timezone.utc
+                        video_file.stat().st_mtime, tz=UTC_TIMEZONE
                     )
                     if file_mtime > cutoff_time:
                         continue

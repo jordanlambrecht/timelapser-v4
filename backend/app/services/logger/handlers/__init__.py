@@ -7,12 +7,8 @@ This module contains all the handlers that process log entries:
 - FileHandler: Writes logs to rotating files
 """
 
+from .console_handler import ConsoleHandler
 from .database_handler import EnhancedDatabaseHandler
-from .console_handler import ConsoleHandler  
 from .file_handler import FileHandler
 
-__all__ = [
-    "EnhancedDatabaseHandler",
-    "ConsoleHandler", 
-    "FileHandler"
-]
+__all__ = ["EnhancedDatabaseHandler", "ConsoleHandler", "FileHandler"]

@@ -13,39 +13,35 @@ Responsibilities:
 - Performance impact monitoring
 """
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
-from ....services.logger import get_service_logger, LogEmoji
-from ....enums import LoggerName
+from datetime import timedelta
+from typing import Any, Dict, List
 
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
+from ....enums import LogSource, LoggerName
+from ....services.logger import LogEmoji, get_service_logger
+from ....utils.time_utils import utc_now
 
-from ....database.core import AsyncDatabase, SyncDatabase
-from ....models.corruption_model import (
-    CameraHealthAssessment,
-    CameraWithCorruption,
-    CorruptionAnalysisStats,
-)
+
 from ....constants import (
-    DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
-    DEFAULT_DEGRADED_MODE_TIME_WINDOW_MINUTES,
-    DEFAULT_DEGRADED_MODE_FAILURE_PERCENTAGE,
-    MIN_CORRUPTION_ANALYSIS_SAMPLE_SIZE,
-    HEALTH_DEGRADED_MODE_PENALTY,
-    HEALTH_CONSECUTIVE_FAILURES_HIGH_THRESHOLD,
-    HEALTH_CONSECUTIVE_FAILURES_HIGH_PENALTY,
-    HEALTH_CONSECUTIVE_FAILURES_MEDIUM_THRESHOLD,
-    HEALTH_CONSECUTIVE_FAILURES_MEDIUM_PENALTY,
-    HEALTH_POOR_QUALITY_THRESHOLD,
-    HEALTH_POOR_QUALITY_PENALTY,
-    HEALTH_AVERAGE_QUALITY_THRESHOLD,
     HEALTH_AVERAGE_QUALITY_PENALTY,
+    HEALTH_AVERAGE_QUALITY_THRESHOLD,
+    HEALTH_CONSECUTIVE_FAILURES_HIGH_PENALTY,
+    HEALTH_CONSECUTIVE_FAILURES_HIGH_THRESHOLD,
+    HEALTH_CONSECUTIVE_FAILURES_MEDIUM_PENALTY,
+    HEALTH_CONSECUTIVE_FAILURES_MEDIUM_THRESHOLD,
+    HEALTH_DEGRADED_MODE_PENALTY,
+    HEALTH_POOR_QUALITY_PENALTY,
+    HEALTH_POOR_QUALITY_THRESHOLD,
 )
-
+from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+from ....models.corruption_model import (
+    CameraHealthAssessment,
+)
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE, LogSource.PIPELINE)
 
 
 class CorruptionHealthService:
@@ -208,7 +204,7 @@ class CorruptionHealthService:
                 recommendations=recommendations,
                 # TODO: Use timezone-aware datetime from settings instead of UTC
                 # Should use get_timezone_aware_timestamp_async(settings_service)
-                assessment_timestamp=datetime.utcnow(),
+                assessment_timestamp=utc_now(),
                 metrics=metrics_dict,
             )
 
@@ -302,7 +298,7 @@ class CorruptionHealthService:
                     "images_flagged_today": recent_detections["today"],
                     "images_flagged_week": recent_detections["week"],
                 },
-                "last_updated": datetime.utcnow(),
+                "last_updated": utc_now(),
             }
 
         except Exception as e:
@@ -322,7 +318,7 @@ class CorruptionHealthService:
         """
         try:
             # Get detection thresholds
-            thresholds = await self.db_ops.get_corruption_settings()
+            await self.db_ops.get_corruption_settings()
 
             # This would need to query all cameras and check their failure patterns
             # For now, returning empty list as this requires more complex logic
@@ -417,7 +413,7 @@ class CorruptionHealthService:
                         h
                         for h in history
                         if h.created_at is not None
-                        and h.created_at > datetime.utcnow() - timedelta(hours=6)
+                        and h.created_at > utc_now() - timedelta(hours=6)
                     ]
                 ),
             }

@@ -6,17 +6,15 @@ Specialized component for bulk thumbnail and small image generation operations.
 Optimized for processing multiple images efficiently with progress tracking.
 """
 
-import asyncio
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional
+
+from ....enums import LoggerName, LogSource
 from ....services.logger import get_service_logger
-from ....enums import LoggerName
-
-logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE)
-
-from .thumbnail_generator import ThumbnailGenerator
 from .small_image_generator import SmallImageGenerator
+from .thumbnail_generator import ThumbnailGenerator
+
+logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE, LogSource.PIPELINE)
 
 
 class BatchThumbnailGenerator:

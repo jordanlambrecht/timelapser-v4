@@ -169,12 +169,14 @@ class HealthOperations:
             Tuple of (success, latency_ms, error_message)
         """
         try:
-            start_time = time.time()
+            start_time = time.time()  # Performance timing - timezone-irrelevant
             async with self.db.get_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1")
                     await cur.fetchone()
-            latency_ms = (time.time() - start_time) * 1000
+            latency_ms = (
+                time.time() - start_time
+            ) * 1000  # Performance timing - timezone-irrelevant
             return True, latency_ms, None
         except (psycopg.Error, ConnectionError, OSError) as e:
             raise HealthOperationError(
@@ -402,12 +404,14 @@ class SyncHealthOperations:
             Tuple of (success, latency_ms, error_message)
         """
         try:
-            start_time = time.time()
+            start_time = time.time()  # Performance timing - timezone-irrelevant
             with self.db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     cur.fetchone()
-            latency_ms = (time.time() - start_time) * 1000
+            latency_ms = (
+                time.time() - start_time
+            ) * 1000  # Performance timing - timezone-irrelevant
             return True, latency_ms, None
         except (psycopg.Error, ConnectionError, OSError) as e:
             raise HealthOperationError(

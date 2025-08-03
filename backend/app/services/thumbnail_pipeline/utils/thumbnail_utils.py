@@ -5,6 +5,7 @@ Thumbnail Utility Functions
 
 from pathlib import Path
 from typing import Tuple
+
 from PIL import Image
 
 from .constants import SUPPORTED_IMAGE_FORMATS

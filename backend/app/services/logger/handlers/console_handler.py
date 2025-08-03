@@ -7,22 +7,22 @@ for development and production monitoring.
 """
 
 import sys
-from typing import Dict, Any, Optional
 from datetime import datetime
-from ....enums import LogEmoji, LogLevel, LogSource, LoggerName
-from ....utils.time_utils import utc_now
+from typing import Any, Dict, Optional
+
+from ....enums import LogEmoji, LoggerName, LogLevel, LogSource
+from ....utils.time_utils import format_datetime_for_console, utc_now
 from ..constants import (
+    ANSI_BOLD,
     ANSI_COLOR_CYAN,
     ANSI_COLOR_GREEN,
-    ANSI_COLOR_YELLOW,
-    ANSI_COLOR_RED,
     ANSI_COLOR_MAGENTA,
-    ANSI_RESET,
-    ANSI_BOLD,
+    ANSI_COLOR_RED,
+    ANSI_COLOR_YELLOW,
     ANSI_DIM,
-    CONSOLE_TIMESTAMP_FORMAT,
-    CONSOLE_MAX_CONTEXT_ITEMS,
+    ANSI_RESET,
     CONSOLE_CONTEXT_INDENTATION,
+    CONSOLE_MAX_CONTEXT_ITEMS,
 )
 
 
@@ -115,7 +115,7 @@ class ConsoleHandler:
 
             # Add timestamp if enabled
             if self.include_timestamp:
-                timestamp_str = timestamp.strftime(CONSOLE_TIMESTAMP_FORMAT)
+                timestamp_str = format_datetime_for_console(timestamp)
                 if self.use_colors:
                     output_parts.append(f"{self.DIM}[{timestamp_str}]{self.RESET}")
                 else:
@@ -147,7 +147,7 @@ class ConsoleHandler:
             try:
                 print(f"[CONSOLE_HANDLER_ERROR] {message}", file=sys.stderr)
                 print(f"[CONSOLE_HANDLER_ERROR] Handler error: {e}", file=sys.stderr)
-            except:
+            except Exception:
                 pass  # If even stderr fails, give up silently
 
     def _should_log_level(self, level: LogLevel) -> bool:

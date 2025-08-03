@@ -5,16 +5,20 @@ Database Helper Functions
 Common database operation patterns and utilities to reduce duplication
 between AsyncDatabase and SyncDatabase classes.
 """
-
-from typing import Dict, Any, List, Optional, Union, Tuple, Callable, Awaitable, Set
-from datetime import date, datetime
-import json
-import time
 import asyncio
-from ..services.logger.logger_service import get_service_logger, LogEmoji
-from ..enums import LoggerName
+import json
+import os
+import time
+from datetime import date, datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Union
 
-logger = get_service_logger(LoggerName.SYSTEM)
+import psutil
+
+from ..enums import LoggerName, LogSource
+from ..services.logger.logger_service import get_service_logger
+from .time_utils import utc_now
+
+logger = get_service_logger(LoggerName.SYSTEM, LogSource.DATABASE)
 
 
 class DatabaseQueryBuilder:
@@ -361,7 +365,7 @@ class DatabaseUtilities:
             1-based day number
         """
         if current_date is None:
-            current_date = date.today()
+            current_date = utc_now().date()  # Use timezone-aware current date
 
         return max(1, (current_date - start_date).days + 1)
 
@@ -578,10 +582,10 @@ class SettingsManager:
     def create_or_update_setting_query(key: str, value: str) -> tuple[str, dict]:
         """Build upsert query for settings"""
         query = """
-            INSERT INTO settings (key, value) 
+            INSERT INTO settings (key, value)
             VALUES (%(key)s, %(value)s)
-            ON CONFLICT (key) 
-            DO UPDATE SET 
+            ON CONFLICT (key)
+            DO UPDATE SET
                 value = EXCLUDED.value,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING id, key, value, created_at, updated_at
@@ -1671,7 +1675,7 @@ class ConnectionPoolMonitor:
         metrics = {
             "timestamp": time.time(),
             "pool_name": self.pool_name,
-            "collection_time": datetime.now().isoformat(),
+            "collection_time": utc_now().isoformat(),
         }
 
         # Get basic pool stats
@@ -2382,7 +2386,7 @@ class ConnectionPoolHealthAggregator:
         """
         system_health = {
             "timestamp": time.time(),
-            "collection_time": datetime.now().isoformat(),
+            "collection_time": utc_now().isoformat(),
             "pools": {},
             "system_status": "unknown",
             "total_pools": len(self.registered_pools),
@@ -2572,8 +2576,6 @@ class DatabaseBenchmark:
     def _get_memory_usage(self) -> float:
         """Get current memory usage in bytes."""
         try:
-            import psutil
-            import os
 
             process = psutil.Process(os.getpid())
             return process.memory_info().rss

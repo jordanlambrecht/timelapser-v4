@@ -4,34 +4,34 @@ Image metadata and serving HTTP endpoints.
 
 Role: Image metadata and serving HTTP endpoints
 Responsibilities: Image metadata queries, thumbnail serving with cascading fallbacks,
-                 image statistics
+                image statistics
 Interactions: Uses ImageService for business logic, serves files directly from
-             filesystem with proper headers
+            filesystem with proper headers
 """
 # NOTE: THIS FILE SHOULD NOT CONTAIN ANY BUSINESS LOGIC.
 
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
 
-from fastapi import APIRouter, Query, HTTPException, status, Response
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
 
+from ..constants import CACHE_CONTROL_PUBLIC, IMAGE_SIZE_VARIANTS
 from ..dependencies import ImageServiceDep
 
-from ..models.image_model import Image
+# from ..models.image_model import Image
 from ..models.shared_models import BulkDownloadResponse
-from ..utils.router_helpers import handle_exceptions
-from ..utils.response_helpers import ResponseFormatter
-from ..utils.file_helpers import create_file_response
 from ..utils.cache_manager import (
     generate_composite_etag,
     generate_content_hash_etag,
 )
-from ..constants import IMAGE_SIZE_VARIANTS, CACHE_CONTROL_PUBLIC
+from ..utils.file_helpers import create_file_response
+from ..utils.response_helpers import ResponseFormatter
+from ..utils.router_helpers import handle_exceptions
 
 # NOTE: CACHING STRATEGY - IMPLEMENTED THROUGHOUT THIS FILE
 # Images are immutable content with aggressive caching implemented:
 # - Image files: Long cache (1 year) + ETag - implemented in serve endpoints
-# - Image metadata: ETag + moderate cache (5-10 min) - implemented in metadata endpoints  
+# - Image metadata: ETag + moderate cache (5-10 min) - implemented in metadata endpoints
 # - Dynamic operations (bulk downloads, deletion): No cache + SSE broadcasting - implemented
 # This caching strategy is fully implemented across all endpoints below.
 router = APIRouter(tags=["images"])
@@ -55,12 +55,12 @@ class BulkDownloadRequest(BaseModel):
 
 class BatchImageRequest(BaseModel):
     """Request model for batch image loading"""
-    
+
     image_ids: List[int] = Field(
         ..., min_length=1, max_length=1000, description="List of image IDs to load"
     )
-    
-    @field_validator('image_ids')
+
+    @field_validator("image_ids")
     @classmethod
     def validate_image_ids(cls, v):
         """Validate that all image IDs are positive integers"""
@@ -310,7 +310,7 @@ async def bulk_download_images(
         total_size=bulk_result.get("total_size"),
         zip_data=bulk_result.get("zip_data"),
     )
-    
+
     return ResponseFormatter.success(
         message="Bulk download prepared successfully",
         data=bulk_response.model_dump(),

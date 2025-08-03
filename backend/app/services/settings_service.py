@@ -6,36 +6,32 @@ This service provides a clean interface for settings operations,
 handling business logic and coordinating between database operations
 and external systems.
 """
-from pathlib import Path
 import time
-
 import zoneinfo
-from typing import List, Dict, Optional, Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from ..utils.time_utils import utc_timestamp
-
-from .logger import get_service_logger
-
-from ..enums import SSEEvent, SSEEventSource, SSEPriority, LogSource, LoggerName
-
-from ..database.settings_operations import (
-    SettingsOperations,
-    SyncSettingsOperations,
-    SettingsOperationError,
-)
-from ..models.settings_model import Setting
-from ..models.shared_models import CorruptionSettings
-from ..database.sse_events_operations import SSEEventsOperations
-from ..utils.hashing import mask_api_key
-from ..utils.conversion_utils import safe_int
-from .weather.api_key_service import APIKeyService, SyncAPIKeyService
 from ..constants import (
     DEFAULT_CORRUPTION_DISCARD_THRESHOLD,
-    TIMEZONE_ALIASES,
-    DEFAULT_TIMEZONE,
-    DEFAULT_THUMBNAIL_SMALL_GENERATION_MODE,
     DEFAULT_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
+    DEFAULT_THUMBNAIL_SMALL_GENERATION_MODE,
+    DEFAULT_TIMEZONE,
+    TIMEZONE_ALIASES,
 )
+from ..database.settings_operations import (
+    SettingsOperationError,
+    SettingsOperations,
+    SyncSettingsOperations,
+)
+from ..database.sse_events_operations import SSEEventsOperations
+from ..enums import LoggerName, LogSource, SSEEvent, SSEEventSource, SSEPriority
+from ..models.settings_model import Setting
+from ..models.shared_models import CorruptionSettings
+from ..utils.conversion_utils import safe_int
+from ..utils.hashing import mask_api_key
+from ..utils.time_utils import utc_timestamp
+from .logger import get_service_logger
+from .weather.api_key_service import APIKeyService, SyncAPIKeyService
 
 logger = get_service_logger(LoggerName.SETTINGS_SERVICE, LogSource.SYSTEM)
 
@@ -79,10 +75,12 @@ class SettingsService:
             logger.error(f"Unexpected error retrieving all settings: {e}")
             raise
 
-    async def get_setting(self, key: str) -> Optional[str]:
+    async def get_setting(
+        self, key: str, default: Optional[str] = None
+    ) -> Optional[str]:
         """Get specific setting by key."""
         try:
-            return await self.settings_ops.get_setting(key)
+            return await self.settings_ops.get_setting(key, default)
         except SettingsOperationError as e:
             logger.error(f"Database error retrieving setting '{key}': {e}")
             raise
@@ -194,12 +192,23 @@ class SettingsService:
 
                 return result
             else:
+                # Get old value for timezone change logging
+                old_value = None
+                if key == "timezone":
+                    old_value = await self.get_setting("timezone", DEFAULT_TIMEZONE)
+
                 # Normal setting handling
                 result = await self.settings_ops.set_setting(key, value)
 
                 if result:
                     # Clear settings cache since a setting was updated
                     self.clear_settings_cache()
+
+                    # Special handling for timezone changes
+                    if key == "timezone" and old_value and old_value != value:
+                        from app.utils.time_utils import log_timezone_change
+
+                        log_timezone_change(old_value, value, source="settings_api")
 
                     # Create SSE event for setting changes
                     await self.sse_ops.create_event(
@@ -381,7 +390,7 @@ class SettingsService:
                     settings_dict = {}  # Can't call async from sync context
                 else:
                     settings_dict = asyncio.run(self.get_all_settings())
-            except:
+            except Exception:
                 settings_dict = {}
 
             return {

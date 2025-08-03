@@ -3,16 +3,16 @@
 Thumbnail Business Logic Services
 """
 
-from .job_service import ThumbnailJobService, SyncThumbnailJobService
+from .job_service import SyncThumbnailJobService, ThumbnailJobService
 from .performance_service import (
-    ThumbnailPerformanceService,
     SyncThumbnailPerformanceService,
+    ThumbnailPerformanceService,
 )
+from .repair_service import SyncThumbnailRepairService, ThumbnailRepairService
 from .verification_service import (
-    ThumbnailVerificationService,
     SyncThumbnailVerificationService,
+    ThumbnailVerificationService,
 )
-from .repair_service import ThumbnailRepairService, SyncThumbnailRepairService
 
 __all__ = [
     "ThumbnailJobService",

@@ -1,19 +1,20 @@
 # backend/app/models/camera.py
 
-from pydantic import BaseModel, field_validator, Field, ConfigDict
-from typing import Optional, Literal, Sequence, Any, Dict, Union
 from datetime import datetime
+from typing import Any, Dict, Literal, Optional, Sequence
 
-# Import shared components to eliminate duplication
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..models.timelapse_model import TimelapseWithDetails
+from ..enums import TimelapseStatus
 from ..models.image_model import Image
 from ..models.log_model import Log
-from ..enums import TimelapseStatus
+from ..models.timelapse_model import TimelapseWithDetails
 from ..utils.validation_helpers import (
-    validate_rtsp_url,
     validate_camera_name,
+    validate_rtsp_url,
 )
+
+# Import shared components to eliminate duplication
 
 
 # ============================================================================
@@ -210,7 +211,7 @@ class CameraBase(BaseModel):
 
     @field_validator("rtsp_url")
     @classmethod
-    def validate_rtsp_url(_cls, v: str) -> str:
+    def validate_rtsp_url(cls, v: str) -> str:
         """Validate RTSP URL format and prevent injection"""
         result = validate_rtsp_url(v, allow_none=False)
         assert result is not None  # Type assertion for Pylance
@@ -218,7 +219,7 @@ class CameraBase(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(_cls, v: str) -> str:
+    def validate_name(cls, v: str) -> str:
         """Validate camera name"""
         result = validate_camera_name(v, allow_none=False)
         assert result is not None  # Type assertion for Pylance
@@ -310,10 +311,18 @@ class Camera(CameraBase):
     days_since_first_capture: Optional[int] = None
 
     # Additional database fields missing from model (causing validation errors)
-    enabled: Optional[bool] = Field(default=True, description="Whether camera is enabled")
-    is_connected: Optional[bool] = Field(default=None, description="Camera connection status") 
-    last_error: Optional[str] = Field(default=None, description="Last error encountered")
-    last_error_message: Optional[str] = Field(default=None, description="Last error message details")
+    enabled: Optional[bool] = Field(
+        default=True, description="Whether camera is enabled"
+    )
+    is_connected: Optional[bool] = Field(
+        default=None, description="Camera connection status"
+    )
+    last_error: Optional[str] = Field(
+        default=None, description="Last error encountered"
+    )
+    last_error_message: Optional[str] = Field(
+        default=None, description="Last error message details"
+    )
 
     @property
     def has_preview_image(self) -> bool:

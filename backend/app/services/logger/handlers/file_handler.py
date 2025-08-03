@@ -6,23 +6,29 @@ compression, and retention policies. Designed for production
 environments where log persistence is required.
 """
 
-import os
 import gzip
+import json
+import re
 import shutil
+import threading
 import time
-from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
-import threading
-import json
+from typing import Any, Dict, Optional
 
-from ....enums import LogLevel, LogSource
 from ....constants import (
-    LOG_FILE_MAX_SIZE,
-    LOG_FILE_MAX_COUNT,
-    LOG_FILE_RETENTION_DAYS,
-    LOG_FILE_DIRECTORY,
     LOG_FILE_BASE_NAME,
+    LOG_FILE_DIRECTORY,
+    LOG_FILE_MAX_COUNT,
+    LOG_FILE_MAX_SIZE,
+    LOG_FILE_RETENTION_DAYS,
+)
+from ....enums import LogLevel, LogSource
+from ....utils.time_utils import (
+    format_date_string,
+    format_filename_timestamp,
+    format_time_object_for_display,
+    utc_now,
 )
 from ..utils.settings_cache import LoggerSettingsCache
 
@@ -212,8 +218,8 @@ class FileHandler:
     def _setup_current_log_file(self) -> None:
         """Set up the current log file for writing."""
         try:
-            # Generate current log file path
-            timestamp = datetime.now().strftime("%Y%m%d")
+            # Generate current log file path (YYYYMMDD format for daily rotation)
+            timestamp = format_filename_timestamp(utc_now())[:8]  # Extract YYYYMMDD
 
             if self.use_json_format:
                 current_log_path = (
@@ -271,7 +277,7 @@ class FileHandler:
 
             # Use current time if timestamp not provided
             if timestamp is None:
-                timestamp = datetime.now()
+                timestamp = utc_now()
 
             # Thread-safe file operations
             with self._lock:
@@ -383,7 +389,11 @@ class FileHandler:
         logger_name: Optional[str],
     ) -> str:
         """Format log entry as plain text."""
-        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        timestamp_str = (
+            format_date_string(timestamp)
+            + " "
+            + format_time_object_for_display(timestamp.time())
+        )
 
         # Build log line
         parts = [f"[{timestamp_str}]", f"[{level.value}]"]
@@ -438,7 +448,7 @@ class FileHandler:
                 return
 
             # Check date-based rotation (daily rotation)
-            current_date = datetime.now().strftime("%Y%m%d")
+            current_date = format_filename_timestamp(utc_now())[:8]  # Extract YYYYMMDD
             file_date = self._extract_date_from_filename(self._current_log_path.name)
 
             if file_date != current_date:
@@ -457,7 +467,7 @@ class FileHandler:
         """
         try:
             # Generate rotated filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = format_filename_timestamp(utc_now())
             name_parts = current_path.stem.split("_")
 
             if len(name_parts) >= 2:
@@ -526,7 +536,7 @@ class FileHandler:
                         print(f"Failed to remove old log file {file_path}: {e}")
 
             # Remove files older than retention period
-            cutoff_date = datetime.now() - timedelta(days=current_retention_days)
+            cutoff_date = utc_now() - timedelta(days=current_retention_days)
             cutoff_timestamp = cutoff_date.timestamp()
 
             for file_path in log_files:
@@ -551,12 +561,11 @@ class FileHandler:
         """
         try:
             # Look for date pattern YYYYMMDD in filename
-            import re
 
             date_pattern = r"(\d{8})"
             match = re.search(date_pattern, filename)
             return match.group(1) if match else ""
-        except:
+        except Exception:
             return ""
 
     def set_min_level(self, level: LogLevel) -> None:

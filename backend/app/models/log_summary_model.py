@@ -2,13 +2,15 @@
 """
 Pydantic models for log summary and statistics data.
 """
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel
 
 
 class LogSourceModel(BaseModel):
     """Model for log source statistics"""
+
     source: str
     log_count: int
     last_log_at: Optional[datetime]
@@ -21,6 +23,7 @@ class LogSourceModel(BaseModel):
 
 class LogSummaryModel(BaseModel):
     """Model for log summary statistics"""
+
     total_logs: int
     critical_count: int
     error_count: int
@@ -35,6 +38,7 @@ class LogSummaryModel(BaseModel):
 
 class ErrorCountBySourceModel(BaseModel):
     """Model for error count by source statistics"""
+
     source: str
     error_count: int
     critical_count: int
