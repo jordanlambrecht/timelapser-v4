@@ -6,26 +6,30 @@ Tests the database layer for overlay job queue management including
 job creation, status updates, priority handling, and statistics.
 """
 
-import pytest
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
-from typing import Dict, Any
 
-from app.database.overlay_job_operations import OverlayJobOperations, SyncOverlayJobOperations
+import pytest
+
+from app.constants import (
+    OVERLAY_JOB_PRIORITY_HIGH,
+    OVERLAY_JOB_PRIORITY_LOW,
+    OVERLAY_JOB_PRIORITY_MEDIUM,
+    OVERLAY_JOB_TYPE_BATCH,
+    OVERLAY_JOB_TYPE_SINGLE,
+)
+from app.database.overlay_job_operations import (
+    OverlayJobOperations,
+    SyncOverlayJobOperations,
+)
+from app.enums import JobPriority, JobStatus
 from app.models.overlay_model import (
     OverlayJob,
     OverlayJobCreate,
-    OverlayJobUpdate,
     OverlayJobStatistics,
-)
-from app.enums import JobStatus, JobPriority
-from app.constants import (
-    OVERLAY_JOB_TYPE_SINGLE,
-    OVERLAY_JOB_TYPE_BATCH,
-    OVERLAY_JOB_PRIORITY_HIGH,
-    OVERLAY_JOB_PRIORITY_MEDIUM,
-    OVERLAY_JOB_PRIORITY_LOW,
+    OverlayJobUpdate,
 )
 
 
@@ -78,7 +82,9 @@ class TestOverlayJobOperations:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_create_job_success(self, job_ops, sample_job_data, mock_async_database):
+    async def test_create_job_success(
+        self, job_ops, sample_job_data, mock_async_database
+    ):
         """Test successful overlay job creation."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -119,7 +125,9 @@ class TestOverlayJobOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_batch_job_success(self, job_ops, sample_batch_job_data, mock_async_database):
+    async def test_create_batch_job_success(
+        self, job_ops, sample_batch_job_data, mock_async_database
+    ):
         """Test successful batch overlay job creation."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -158,7 +166,9 @@ class TestOverlayJobOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_job_failure(self, job_ops, sample_job_data, mock_async_database):
+    async def test_create_job_failure(
+        self, job_ops, sample_job_data, mock_async_database
+    ):
         """Test job creation failure handling."""
         # Mock database returning None (creation failed)
         mock_async_database.fetch_one = AsyncMock(return_value=None)
@@ -222,7 +232,7 @@ class TestOverlayJobOperations:
         # Assertions
         assert len(jobs) == 2
         assert all(isinstance(job, OverlayJob) for job in jobs)
-        
+
         # Higher priority jobs should come first
         assert jobs[0].priority == OVERLAY_JOB_PRIORITY_HIGH
         assert jobs[1].priority == OVERLAY_JOB_PRIORITY_MEDIUM
@@ -368,7 +378,9 @@ class TestOverlayJobOperations:
 
         # Test marking job as completed
         output_path = "/data/overlays/output_1.jpg"
-        result = await job_ops.mark_job_completed(1, output_path, processing_time_ms=45000)
+        result = await job_ops.mark_job_completed(
+            1, output_path, processing_time_ms=45000
+        )
 
         # Assertions
         assert result is True
@@ -537,7 +549,9 @@ class TestOverlayJobOperations:
         assert stats.failed_jobs_24h == 2
         assert stats.total_jobs_24h == 38  # 8 + 3 + 25 + 2
         assert stats.average_processing_time_ms == 42000  # Converted to int
-        assert stats.success_rate_percentage == pytest.approx(92.1, rel=1e-1)  # 25/27 active jobs
+        assert stats.success_rate_percentage == pytest.approx(
+            92.1, rel=1e-1
+        )  # 25/27 active jobs
 
         # Verify database was called correctly
         mock_async_database.fetch_all.assert_called_once()
@@ -566,7 +580,9 @@ class TestOverlayJobOperations:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_error_handling_database_exception(self, job_ops, mock_async_database):
+    async def test_error_handling_database_exception(
+        self, job_ops, mock_async_database
+    ):
         """Test error handling when database operations fail."""
         # Mock database raising an exception
         mock_async_database.fetch_all = AsyncMock(
@@ -580,7 +596,9 @@ class TestOverlayJobOperations:
         assert jobs == []
 
     @pytest.mark.asyncio
-    async def test_error_handling_invalid_overlay_config(self, job_ops, mock_async_database):
+    async def test_error_handling_invalid_overlay_config(
+        self, job_ops, mock_async_database
+    ):
         """Test handling of jobs with invalid overlay configuration."""
         # Mock database response with invalid overlay config
         mock_async_database.fetch_one = AsyncMock(
@@ -621,7 +639,9 @@ class TestSyncOverlayJobOperations:
         return SyncOverlayJobOperations(mock_sync_database)
 
     @pytest.mark.asyncio
-    async def test_sync_get_pending_jobs_success(self, sync_job_ops, mock_sync_database):
+    async def test_sync_get_pending_jobs_success(
+        self, sync_job_ops, mock_sync_database
+    ):
         """Test sync version of get_pending_jobs."""
         # Mock the sync database methods
         mock_sync_database.fetch_all = MagicMock(
@@ -666,7 +686,9 @@ class TestSyncOverlayJobOperations:
 
         # Test marking job as completed (sync version)
         output_path = "/data/overlays/output_1.jpg"
-        result = sync_job_ops.mark_job_completed(1, output_path, processing_time_ms=30000)
+        result = sync_job_ops.mark_job_completed(
+            1, output_path, processing_time_ms=30000
+        )
 
         # Assertions
         assert result is True

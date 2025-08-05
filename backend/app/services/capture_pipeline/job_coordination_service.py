@@ -23,14 +23,14 @@ pipeline workflow, ensuring proper queuing, prioritization, and status tracking
 while maintaining clean separation from job execution logic.
 """
 
-from enum import Enum
 import json
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
+from ...exceptions import CaptureValidationError, JobCoordinationError
 from ...models.health_model import HealthStatus
 from ...services.logger import get_service_logger
 from ...utils.enum_helpers import parse_enum
-from ...exceptions import JobCoordinationError, CaptureValidationError
 
 if TYPE_CHECKING:
     from ..scheduling import SyncJobQueueService

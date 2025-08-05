@@ -9,7 +9,6 @@ can import them without creating circular dependencies.
 
 from enum import Enum
 
-
 # =============================================================================
 # PRIORITY SYSTEMS
 # =============================================================================

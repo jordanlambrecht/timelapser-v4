@@ -7,8 +7,8 @@ following the established pattern from health_responses.py and other workers.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Any
 from datetime import datetime
+from typing import Any, Dict
 
 from ..enums import WorkerType
 from ..models.health_model import HealthStatus

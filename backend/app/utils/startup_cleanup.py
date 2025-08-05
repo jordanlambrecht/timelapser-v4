@@ -27,7 +27,7 @@ from ..utils.temp_file_manager import (
     cleanup_temporary_files,
     get_timelapser_temp_file_count,
 )
-from ..utils.time_utils import utc_now, utc_timestamp, UTC_TIMEZONE
+from ..utils.time_utils import UTC_TIMEZONE, utc_now, utc_timestamp
 
 # UTC timezone constant imported from time_utils for consistency
 

@@ -6,8 +6,8 @@ Test runner script for the timelapser.
 Provides convenient commands to run different test suites.
 """
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 

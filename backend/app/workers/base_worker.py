@@ -30,9 +30,10 @@ while respecting the scheduler's timing authority.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Optional, TypedDict, Dict
+from typing import Any, Dict, Optional, TypedDict
+
+from ..enums import LogEmoji, LoggerName, LogSource
 from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource, LogEmoji
 from ..utils.time_utils import utc_now
 
 # Worker logger initialized at module level

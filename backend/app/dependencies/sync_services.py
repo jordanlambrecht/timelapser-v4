@@ -8,14 +8,14 @@ that need synchronous database operations.
 
 from typing import TYPE_CHECKING
 
+from ..database import async_db, sync_db
 from .base import SyncServiceFactory
-from .registry import register_singleton_factory, get_singleton_service
-from ..database import sync_db, async_db
+from .registry import get_singleton_service, register_singleton_factory
 
 if TYPE_CHECKING:
+    from ..services.capture_pipeline.rtsp_service import RTSPService
     from ..services.settings_service import SyncSettingsService
     from ..services.video_service import SyncVideoService
-    from ..services.capture_pipeline.rtsp_service import RTSPService
 
 
 # Sync Settings Service Factory (Singleton)

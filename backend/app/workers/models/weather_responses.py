@@ -6,8 +6,8 @@ eliminating the need for .get() calls and providing compile-time safety.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -199,6 +199,7 @@ class WeatherWorkerStatus:
         if not self.last_successful_update:
             return False
         from datetime import timedelta
+
         from ...utils.time_utils import utc_now
 
         return (utc_now() - self.last_successful_update) < timedelta(hours=1)

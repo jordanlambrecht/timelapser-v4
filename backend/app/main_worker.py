@@ -42,30 +42,29 @@ Architecture Benefits:
 """
 
 
-import signal
 import asyncio
-from typing import Dict, Any, Optional
-from .utils.time_utils import utc_now
-from .models.health_model import HealthStatus
-from .workers.models.main_worker_responses import (
-    WorkerEcosystemStatus,
-    WorkerHealthStatus,
-    ServiceHealthStatus,
-    EcosystemStats,
-    MainWorkerStatus,
-)
-from .workers.utils.worker_status_builder import WorkerStatusBuilder
+import signal
+from typing import Any, Dict, Optional
 
+from .config import settings
 
 # Import from the same app directory
 from .database import async_db, sync_db
-from .enums import LogEmoji, LogSource, LoggerName, WorkerType
-from .config import settings
-
+from .enums import LogEmoji, LoggerName, LogSource, WorkerType
+from .models.health_model import HealthStatus
 
 # Import necessary services for initialization
 from .services.logger.logger_service import get_service_logger
 from .services.overlay_pipeline.utils.font_cache import preload_overlay_fonts
+from .utils.time_utils import utc_now
+from .workers.models.main_worker_responses import (
+    EcosystemStats,
+    MainWorkerStatus,
+    ServiceHealthStatus,
+    WorkerEcosystemStatus,
+    WorkerHealthStatus,
+)
+from .workers.utils.worker_status_builder import WorkerStatusBuilder
 
 logger: Optional[Any] = None
 
@@ -172,13 +171,13 @@ class AsyncTimelapseWorker:
             self.overlay_worker = background_workers["overlay"]
 
             # Create missing workers that aren't in the service locator yet
-            from .workers.health_worker import HealthWorker
-            from .workers.scheduler_worker import SchedulerWorker
-            from .workers.sse_worker import SSEWorker
+            from .services.camera_service import SyncCameraService
 
             # Create health worker
             from .services.capture_pipeline.rtsp_service import RTSPService
-            from .services.camera_service import SyncCameraService
+            from .workers.health_worker import HealthWorker
+            from .workers.scheduler_worker import SchedulerWorker
+            from .workers.sse_worker import SSEWorker
 
             sync_camera_service = SyncCameraService(
                 db=service_locator.sync_db,

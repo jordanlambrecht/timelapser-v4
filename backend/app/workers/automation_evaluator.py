@@ -59,14 +59,15 @@ PROBLEM SOLVED:
 """
 
 import time
-from typing import Dict, Optional, List, Callable
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, SSEPriority
-from .utils import SchedulerTimeUtils
+from typing import Callable, Dict, List, Optional
+
+from ..constants import EVENT_VIDEO_JOB_QUEUED, JOB_PRIORITY
 from ..database.core import SyncDatabase
-from ..database.timelapse_operations import SyncTimelapseOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..constants import JOB_PRIORITY, EVENT_VIDEO_JOB_QUEUED
+from ..database.timelapse_operations import SyncTimelapseOperations
+from ..enums import LoggerName, SSEPriority
+from ..services.logger import get_service_logger
+from .utils import SchedulerTimeUtils
 
 logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 

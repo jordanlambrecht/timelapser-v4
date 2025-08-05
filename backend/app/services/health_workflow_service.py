@@ -7,11 +7,11 @@ Converts raw data to typed objects at the service boundary.
 """
 
 from typing import Any
-from ..workers.models.health_responses import HealthWorkerStatus, CameraHealthSummary
+
+from ..enums import LoggerName, WorkerType
 from ..models.health_model import HealthStatus
-from ..enums import WorkerType
 from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from ..workers.models.health_responses import CameraHealthSummary, HealthWorkerStatus
 
 health_service_logger = get_service_logger(LoggerName.HEALTH_WORKER)
 

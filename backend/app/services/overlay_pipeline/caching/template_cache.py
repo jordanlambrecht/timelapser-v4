@@ -18,15 +18,13 @@ from typing import Dict, Optional, Set, Tuple
 from PIL import Image
 
 from ....enums import LoggerName, LogSource
-from ....services.logger import get_service_logger
-from ..utils.overlay_utils import OverlayRenderer
-
-
 from ....models.overlay_model import (
     OverlayConfiguration,
     OverlayGridPosition,
 )
+from ....services.logger import get_service_logger
 from ..generators import OverlayGenerationContext, overlay_generator_registry
+from ..utils.overlay_utils import OverlayRenderer
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 

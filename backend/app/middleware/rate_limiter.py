@@ -13,11 +13,10 @@ import time
 from collections import defaultdict, deque
 from typing import Any, Dict, Optional, Tuple
 
+from fastapi import HTTPException, Request, Response, status
+
 from ..enums import LoggerName
 from ..services.logger import get_service_logger
-
-
-from fastapi import HTTPException, Request, Response, status
 
 logger = get_service_logger(LoggerName.MIDDLEWARE)
 

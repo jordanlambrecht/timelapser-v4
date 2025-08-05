@@ -9,24 +9,22 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 import asyncio
 import time
 from typing import (
-    List,
-    Dict,
     Any,
     Callable,
+    Dict,
+    Generic,
+    List,
     Optional,
     Protocol,
-    runtime_checkable,
     Sequence,
     TypeVar,
-    Generic,
+    runtime_checkable,
 )
 
-from ...services.logger import get_service_logger
 from ...enums import LoggerName
-from ..constants import MILLISECONDS_PER_SECOND
-
-
+from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_now
+from ..constants import MILLISECONDS_PER_SECOND
 
 # Enum imports removed - using Any for priority field flexibility
 

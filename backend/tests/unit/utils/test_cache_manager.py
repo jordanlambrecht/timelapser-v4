@@ -7,13 +7,14 @@ Tests the core caching infrastructure including MemoryCache, CacheEntry,
 decorators, and ETag utilities.
 """
 
-import pytest
 import asyncio
-import time
 import hashlib
 import json
+import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.utils.cache_manager import (
     CacheEntry,
@@ -21,16 +22,16 @@ from app.utils.cache_manager import (
     cache,
     cached_response,
     cached_response_with_etag,
-    generate_timestamp_etag,
-    generate_content_hash_etag,
-    generate_composite_etag,
-    generate_collection_etag,
-    validate_etag_match,
-    extract_etag_from_headers,
-    get_cache_stats,
-    clear_cache,
     cleanup_expired_cache,
+    clear_cache,
     delete_cache_by_prefix,
+    extract_etag_from_headers,
+    generate_collection_etag,
+    generate_composite_etag,
+    generate_content_hash_etag,
+    generate_timestamp_etag,
+    get_cache_stats,
+    validate_etag_match,
 )
 
 

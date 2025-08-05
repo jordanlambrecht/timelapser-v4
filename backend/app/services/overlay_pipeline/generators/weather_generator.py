@@ -10,10 +10,8 @@ from typing import Union
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
-from ....services.logger import get_service_logger
-
-
 from ....models.overlay_model import OverlayItem, OverlayType
+from ....services.logger import get_service_logger
 from ....utils.validation_helpers import (
     validate_display_format,
     validate_temperature_unit,

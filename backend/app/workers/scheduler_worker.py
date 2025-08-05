@@ -35,31 +35,31 @@ REFACTORING IMPACT:
 • Refactored: 427 lines with proper separation of concerns
 • 83% size reduction while maintaining full functionality
 """
-from typing import Dict, Any, Callable, Optional, List
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.job import Job
+from typing import Any, Callable, Dict, List, Optional
 
-from .base_worker import BaseWorker
-from .utils.worker_status_builder import WorkerStatusBuilder
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource, WorkerType, LogEmoji
-from ..services.scheduler_workflow_service import SchedulerWorkflowService
-from .utils import SchedulerTimeUtils, JobIdGenerator, SchedulerJobTemplate
-from .immediate_job_manager import ImmediateJobManager
-from .standard_job_manager import StandardJobManager
-from .automation_evaluator import AutomationEvaluator
-from ..services.settings_service import SyncSettingsService
-from ..services.scheduling.capture_timing_service import SyncCaptureTimingService
-from ..database.timelapse_operations import SyncTimelapseOperations
-from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.scheduled_job_operations import SyncScheduledJobOperations
-from ..database.core import SyncDatabase
-from ..models.scheduled_job_model import ScheduledJobCreate
-from ..utils.time_utils import utc_now
+from apscheduler.job import Job
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from ..constants import (
     SCHEDULER_MAX_INSTANCES,
 )
-from ..enums import JobPriority
+from ..database.core import SyncDatabase
+from ..database.scheduled_job_operations import SyncScheduledJobOperations
+from ..database.sse_events_operations import SyncSSEEventsOperations
+from ..database.timelapse_operations import SyncTimelapseOperations
+from ..enums import JobPriority, LogEmoji, LoggerName, LogSource, WorkerType
+from ..models.scheduled_job_model import ScheduledJobCreate
+from ..services.logger import get_service_logger
+from ..services.scheduler_workflow_service import SchedulerWorkflowService
+from ..services.scheduling.capture_timing_service import SyncCaptureTimingService
+from ..services.settings_service import SyncSettingsService
+from ..utils.time_utils import utc_now
+from .automation_evaluator import AutomationEvaluator
+from .base_worker import BaseWorker
+from .immediate_job_manager import ImmediateJobManager
+from .standard_job_manager import StandardJobManager
+from .utils import JobIdGenerator, SchedulerJobTemplate, SchedulerTimeUtils
+from .utils.worker_status_builder import WorkerStatusBuilder
 
 # Initialize scheduler worker logger
 scheduler_logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.WORKER)

@@ -7,9 +7,11 @@ Provides consistent response structures across all API endpoints with full type 
 
 New Features:
 - Pydantic response models (SuccessResponse, ErrorResponse, PaginatedResponse, OperationResult)
+- Support for Pydantic models AND dataclasses as data
 - Factory methods for easy response creation
 - Type-safe API structures with validation
 - Automatic timestamp generation
+- Automatic conversion of complex types to JSON-serializable dictionaries
 
 Legacy Features (maintained for compatibility):
 - ResponseFormatter static methods
@@ -17,15 +19,26 @@ Legacy Features (maintained for compatibility):
 - Validation and metrics helpers
 """
 
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+import dataclasses
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from dataclasses import Field as DataclassField
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..enums import LoggerName, LogLevel, LogSource
 from ..services.logger.logger_service import LoggerService
 from .time_utils import utc_now
 
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def is_dataclass_instance(obj: Any) -> bool:
+    """Check if an object is a dataclass instance (not the class itself)."""
+    return dataclasses.is_dataclass(obj) and not isinstance(obj, type)
 
 # =============================================================================
 # PYDANTIC RESPONSE MODELS - Type-safe API response structures
@@ -54,27 +67,42 @@ class ApiResponse(BaseModel):
 
     class Config:
         """Pydantic configuration."""
-
+        
         json_encoders = {
-            # Add custom encoders if needed
+            # Automatically convert nested BaseModel instances to dictionaries
+            BaseModel: lambda v: v.model_dump() if hasattr(v, 'model_dump') else v.dict()
         }
+        
+        # Allow arbitrary types (including dataclasses)
+        arbitrary_types_allowed = True
 
 
 class SuccessResponse(ApiResponse):
     """Standard success response model."""
 
     success: bool = True
-    data: Optional[Union[Dict[str, Any], List[Any]]] = None
+    data: Optional[Union[Dict[str, Any], List[Any], BaseModel, Any]] = None
 
     @classmethod
     def create(
         cls,
         message: str,
-        data: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        data: Optional[Union[Dict[str, Any], List[Any], BaseModel, Any]] = None,
         **kwargs,
     ) -> "SuccessResponse":
         """Factory method to create success responses."""
         return cls(message=message, data=data, **kwargs)
+    
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """Override model_dump to handle dataclasses in the data field."""
+        result = super().model_dump(**kwargs)
+        
+        # Handle dataclass conversion in the data field
+        if result.get("data") is not None and is_dataclass_instance(result["data"]):
+            # Type checker needs explicit cast after our custom check
+            result["data"] = dataclasses.asdict(result["data"])  # type: ignore[arg-type]
+            
+        return result
 
 
 class ErrorResponse(ApiResponse):
@@ -194,7 +222,7 @@ class ResponseFormatter:
 
     @staticmethod
     def success(
-        message: str, data: Optional[Union[Dict[str, Any], List]] = None, **kwargs
+        message: str, data: Optional[Union[Dict[str, Any], List, BaseModel, Any]] = None, **kwargs
     ) -> Dict[str, Any]:
         """
         Create a standardized success response.
@@ -210,7 +238,14 @@ class ResponseFormatter:
         response = {"success": True, "message": message}
 
         if data is not None:
-            response["data"] = data
+            # Convert Pydantic models and dataclasses to dictionaries for JSON serialization
+            if isinstance(data, BaseModel):
+                response["data"] = data.model_dump()
+            elif is_dataclass_instance(data):
+                # Type checker needs explicit cast after our custom check
+                response["data"] = dataclasses.asdict(data)  # type: ignore[arg-type]
+            else:
+                response["data"] = data
 
         # Add any additional fields
         response.update(kwargs)
@@ -892,9 +927,19 @@ MODERN USAGE (Recommended - Type-safe):
 
     from app.utils.response_helpers import SuccessResponse, ErrorResponse, PaginatedResponse
 
-    # Success response
+    # Success response with dictionary data
     response = SuccessResponse.create("Camera updated successfully", data={"id": 123})
     return response.model_dump()
+    
+    # Success response with Pydantic model data
+    camera_model = SomePydanticModel(...)  # Your Pydantic model
+    response = SuccessResponse.create("Model data retrieved", data=camera_model)
+    return response.model_dump()  # Automatically converts nested models
+    
+    # Success response with dataclass data (NEW!)
+    camera_stats = CameraStatisticsResponse(...)  # Your dataclass
+    response = SuccessResponse.create("Statistics retrieved", data=camera_stats)
+    return response.model_dump()  # Automatically converts dataclasses
 
     # Error response
     response = ErrorResponse.create("Camera not found", error_code="CAMERA_NOT_FOUND")
@@ -914,8 +959,17 @@ LEGACY USAGE (Maintained for compatibility):
 
     from app.utils.response_helpers import ResponseFormatter
 
-    # Still works exactly as before
+    # Dictionary data (works as before)
     return ResponseFormatter.success("Camera updated", data={"id": 123})
+    
+    # Pydantic model data (automatically converts!)
+    camera_model = SomePydanticModel(...)
+    return ResponseFormatter.success("Model data retrieved", data=camera_model)
+    
+    # Dataclass data (NEW - automatically converts!)
+    camera_stats = CameraStatisticsResponse(...)  # Your dataclass
+    return ResponseFormatter.success("Statistics retrieved", data=camera_stats)
+    
     return ResponseFormatter.error("Camera not found", error_code="CAMERA_NOT_FOUND")
 """
 

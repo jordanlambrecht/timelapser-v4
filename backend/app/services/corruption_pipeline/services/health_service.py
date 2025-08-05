@@ -16,11 +16,6 @@ Responsibilities:
 from datetime import timedelta
 from typing import Any, Dict, List
 
-from ....enums import LogSource, LoggerName
-from ....services.logger import LogEmoji, get_service_logger
-from ....utils.time_utils import utc_now
-
-
 from ....constants import (
     HEALTH_AVERAGE_QUALITY_PENALTY,
     HEALTH_AVERAGE_QUALITY_THRESHOLD,
@@ -37,9 +32,12 @@ from ....database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+from ....enums import LoggerName, LogSource
 from ....models.corruption_model import (
     CameraHealthAssessment,
 )
+from ....services.logger import LogEmoji, get_service_logger
+from ....utils.time_utils import utc_now
 from ..exceptions import (
     CameraHealthError,
     CorruptionEvaluationError,

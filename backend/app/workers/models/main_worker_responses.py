@@ -5,12 +5,14 @@ These models provide type-safe access to worker ecosystem status and health moni
 following the Service Layer Boundary Pattern for consistent worker architecture.
 """
 
-from typing import Dict, Any, List, Optional
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from ...models.health_model import HealthStatus
+
 from ...enums import WorkerType
+from ...models.health_model import HealthStatus
 from ...utils.time_utils import utc_now
 
 

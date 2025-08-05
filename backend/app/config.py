@@ -1,8 +1,9 @@
 # backend/app/config.py
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
-from typing import Optional, Union, List
 from pathlib import Path
+from typing import List, Optional, Union
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .enums import LogLevel
 

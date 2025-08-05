@@ -5,49 +5,47 @@ Handles weather data refresh and management for sunrise/sunset calculations.
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, cast, Callable
+from typing import Any, Callable, Dict, Optional, cast
 from zoneinfo import ZoneInfo
 
-from .base_worker import BaseWorker
-from .utils.worker_status_builder import WorkerStatusBuilder
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource, LogEmoji, WorkerType
-from .models.weather_responses import (
-    WeatherData,
-    WeatherStatus,
-    WeatherHealthStatus,
-    WeatherWorkerStatus,
-)
-from ..services.weather_workflow_service import WeatherWorkflowService
-from .exceptions import (
-    ServiceUnavailableError,
-    WeatherDataError,
-    WeatherApiError,
-    WeatherConfigurationError,
-    WorkerInitializationError,
-)
-from ..utils.time_utils import utc_now
-from ..services.weather.service import WeatherManager
-from ..models.weather_model import OpenWeatherApiData
-from ..database.sse_events_operations import (
-    SyncSSEEventsOperations,
-    SSEEventsOperations,
-)
-from ..services.settings_service import SyncSettingsService, SettingsService
-from ..utils.time_utils import get_timezone_from_cache_sync
-from ..enums import SSEPriority
 from ..constants import (
-    WEATHER_REFRESH_MISSING_SETTINGS,
-    WEATHER_REFRESH_SKIPPED_DISABLED,
     EVENT_WEATHER_UPDATED,
     SSE_SOURCE_WORKER,
-    WEATHER_DATA_STALE_THRESHOLD_HOURS,
     UNKNOWN_ERROR_MESSAGE,
+    WEATHER_DATA_STALE_THRESHOLD_HOURS,
+    WEATHER_REFRESH_MISSING_SETTINGS,
+    WEATHER_REFRESH_SKIPPED_DISABLED,
 )
+from ..database.sse_events_operations import (
+    SSEEventsOperations,
+    SyncSSEEventsOperations,
+)
+from ..enums import LogEmoji, LoggerName, LogSource, SSEPriority, WorkerType
+from ..models.weather_model import OpenWeatherApiData
+from ..services.logger import get_service_logger
+from ..services.settings_service import SettingsService, SyncSettingsService
+from ..services.weather.service import WeatherManager
+from ..services.weather_workflow_service import WeatherWorkflowService
+from ..utils.time_utils import get_timezone_from_cache_sync, utc_now
+from .base_worker import BaseWorker
 from .constants import (
     SECONDS_PER_HOUR,
     WEATHER_STALENESS_CHECK_HOURS,
 )
+from .exceptions import (
+    ServiceUnavailableError,
+    WeatherApiError,
+    WeatherConfigurationError,
+    WeatherDataError,
+    WorkerInitializationError,
+)
+from .models.weather_responses import (
+    WeatherData,
+    WeatherHealthStatus,
+    WeatherStatus,
+    WeatherWorkerStatus,
+)
+from .utils.worker_status_builder import WorkerStatusBuilder
 
 weather_logger = get_service_logger(LoggerName.WEATHER_WORKER, LogSource.WORKER)
 

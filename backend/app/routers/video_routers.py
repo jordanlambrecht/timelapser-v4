@@ -16,13 +16,8 @@ from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
 
-from ..enums import JobStatus, LoggerName, LogSource
-from ..services.logger import get_service_logger
-
-
 # Local application imports
 from ..config import settings
-
 from ..dependencies import (
     SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: For timing operations
 )
@@ -34,9 +29,10 @@ from ..dependencies import (
     SettingsServiceDep,
     TimelapseServiceDep,
 )
-from ..enums import SSEPriority
+from ..enums import JobStatus, LoggerName, LogSource, SSEPriority
 from ..models import VideoCreate, VideoWithDetails
 from ..models.video_model import Progress, VideoGenerationStatus
+from ..services.logger import get_service_logger
 from ..services.video_pipeline.constants import (
     ERROR_VIDEO_FILE_NOT_FOUND,
     ERROR_VIDEO_GENERATION_FAILED,

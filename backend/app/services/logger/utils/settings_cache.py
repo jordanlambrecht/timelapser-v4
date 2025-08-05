@@ -14,9 +14,9 @@ from typing import Any, Dict, Optional
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....enums import LogLevel
 from ....services.settings_cache import (
-    get_settings_cache,
-    get_cached_logger_settings,
     cache_logger_settings,
+    get_cached_logger_settings,
+    get_settings_cache,
 )
 
 

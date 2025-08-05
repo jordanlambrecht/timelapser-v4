@@ -16,6 +16,12 @@ ARCHITECTURAL COMPLIANCE:
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from ..constants import (
+    SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
+)
+from ..database.core import AsyncDatabase, SyncDatabase
+from ..database.sse_events_operations import SSEEventsOperations
+from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
 from ..enums import (
     LogEmoji,
     LoggerName,
@@ -25,15 +31,6 @@ from ..enums import (
     SSEPriority,
     TimelapseStatus,
 )
-from ..services.logger import get_service_logger
-
-
-from ..constants import (
-    SETTING_KEY_THUMBNAIL_PURGE_SMALLS_ON_COMPLETION,
-)
-from ..database.core import AsyncDatabase, SyncDatabase
-from ..database.sse_events_operations import SSEEventsOperations
-from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
 from ..models.shared_models import (
     TimelapseForCleanup,
     TimelapseLibraryStatistics,
@@ -46,6 +43,7 @@ from ..models.timelapse_model import (
     TimelapseUpdate,
     TimelapseWithDetails,
 )
+from ..services.logger import get_service_logger
 from ..utils.response_helpers import (
     MetricsHelper,
     ResponseFormatter,

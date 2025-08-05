@@ -17,40 +17,35 @@ Responsibilities:
 
 from typing import Optional
 
-from ....enums import LogSource, LoggerName
-from ....services.logger import LogEmoji, get_service_logger
-
-from ..models.corruption_responses import (
-    RetryDecision,
-    CameraHealthDetails,
-)
-from ..exceptions import (
-    CorruptionDetectionError,
-    CorruptionEvaluationError,
-    CorruptionSettingsError,
-    CameraHealthError,
-    DegradedModeError,
-)
-
-
-from ....constants import (
+from ....constants import (  # DEFAULT_CORRUPTION_RETRY_ENABLED,  # Unused; DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,  # Unused
     CORRUPTION_CRITICAL_THRESHOLD,
     DEFAULT_CORRUPTION_FALLBACK_SCORE,
-    # DEFAULT_CORRUPTION_RETRY_ENABLED,  # Unused
-    # DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,  # Unused
 )
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.corruption_operations import (
     CorruptionOperations,
     SyncCorruptionOperations,
 )
+from ....enums import LoggerName, LogSource
 from ....models.corruption_model import (
     CorruptionEvaluationResult,
 )
+from ....services.logger import LogEmoji, get_service_logger
 from ..detectors import (
     CorruptionScoreCalculator,
     FastCorruptionDetector,
     HeavyCorruptionDetector,
+)
+from ..exceptions import (
+    CameraHealthError,
+    CorruptionDetectionError,
+    CorruptionEvaluationError,
+    CorruptionSettingsError,
+    DegradedModeError,
+)
+from ..models.corruption_responses import (
+    CameraHealthDetails,
+    RetryDecision,
 )
 
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE, LogSource.PIPELINE)

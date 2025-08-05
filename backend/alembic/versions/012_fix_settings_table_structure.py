@@ -8,8 +8,9 @@ Create Date: 2025-06-23 09:00:00.000000
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision: str = "012_fix_settings_table_structure"
 down_revision: Union[str, None] = "011_separate_video_modes"
@@ -27,7 +28,7 @@ def upgrade() -> None:
     # (They should already exist from migration 007, but let's be safe)
     op.execute(
         """
-        INSERT INTO settings (key, value) VALUES 
+        INSERT INTO settings (key, value) VALUES
         ('corruption_detection_enabled', 'true'),
         ('corruption_score_threshold', '70'),
         ('corruption_auto_discard_enabled', 'false'),

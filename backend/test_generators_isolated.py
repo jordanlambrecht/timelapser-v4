@@ -4,19 +4,26 @@ Isolated test for overlay generators to verify basic functionality
 without triggering the full service import chain.
 """
 
-import sys
 import os
-from datetime import datetime
+import sys
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional, Union
+
 from PIL import Image as PILImage
 
 # Add the app directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '.'))
 
-# Import core models directly
-from app.models.overlay_model import OverlayItem, GlobalOverlayOptions, OverlayConfiguration
 from app.enums import OverlayType
+
+# Import core models directly
+from app.models.overlay_model import (
+    GlobalOverlayOptions,
+    OverlayConfiguration,
+    OverlayItem,
+)
+
 
 # Mock the context classes since we can't import the generators directly
 @dataclass

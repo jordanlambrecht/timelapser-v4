@@ -6,8 +6,9 @@ following the Service Layer Boundary Pattern for consistent worker architecture.
 """
 
 from pydantic import BaseModel
-from ...models.health_model import HealthStatus
+
 from ...enums import WorkerType
+from ...models.health_model import HealthStatus
 
 
 class HealthWorkerStatus(BaseModel):

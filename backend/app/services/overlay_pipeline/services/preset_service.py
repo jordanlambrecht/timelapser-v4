@@ -5,17 +5,15 @@ Overlay Preset Service - Management of system-wide overlay presets.
 
 from typing import Any, Dict, List, Optional
 
-from ....enums import LoggerName, LogSource
-from ....services.logger import get_service_logger
-
-
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.overlay_operations import OverlayOperations, SyncOverlayOperations
+from ....enums import LoggerName, LogSource
 from ....models.overlay_model import (
     OverlayPreset,
     OverlayPresetCreate,
     OverlayPresetUpdate,
 )
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 

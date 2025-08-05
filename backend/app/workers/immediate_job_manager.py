@@ -43,13 +43,15 @@ IMMEDIATE vs SCHEDULED JOBS:
 • Both use the same APScheduler instance but different trigger types
 """
 
-from typing import Dict, Any, Optional, Callable
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, OverlayJobPriority
+from typing import Any, Callable, Dict, Optional
 
-from .utils import SchedulerTimeUtils, JobIdGenerator
+from ..services.settings_service import SyncSettingsService
+from ..workers.overlay_worker import OverlayWorker
+
 from ..database.core import SyncDatabase
-from ..enums import JobPriority
+from ..enums import JobPriority, LoggerName, OverlayJobPriority
+from ..services.logger import get_service_logger
+from .utils import JobIdGenerator, SchedulerTimeUtils
 
 logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
@@ -203,9 +205,6 @@ class ImmediateJobManager:
             # Create overlay generation wrapper
             async def immediate_overlay_wrapper():
                 try:
-                    # Import overlay worker and services
-                    from ..workers.overlay_worker import OverlayWorker
-                    from ..services.settings_service import SyncSettingsService
 
                     # Create settings service and overlay worker with correct constructor
                     settings_service = SyncSettingsService(self.db)

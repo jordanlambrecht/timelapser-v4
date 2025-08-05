@@ -8,15 +8,12 @@ Creates 3 core services with dependency injection.
 
 from typing import Optional
 
+from ...database.core import AsyncDatabase, SyncDatabase
+from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
 from ...services.settings_service import SyncSettingsService
 from ...services.timelapse_service import SyncTimelapseService
 from ...services.video_service import SyncVideoService
-
-from ...enums import LogSource, LoggerName
-from ...services.logger import get_service_logger
-
-
-from ...database.core import AsyncDatabase, SyncDatabase
 from .overlay_integration_service import OverlayIntegrationService
 from .video_job_service import VideoJobService
 from .video_workflow_service import VideoWorkflowService

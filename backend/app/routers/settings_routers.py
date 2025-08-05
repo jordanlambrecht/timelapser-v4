@@ -11,10 +11,8 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Response
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-
 from ..dependencies import SettingsServiceDep, WeatherManagerDep
+from ..enums import LoggerName
 from ..models import (
     BulkSettingsUpdate,
     Setting,
@@ -22,6 +20,7 @@ from ..models import (
     SettingUpdate,
     WeatherSettingUpdate,
 )
+from ..services.logger import get_service_logger
 from ..utils.cache_manager import (
     generate_collection_etag,
     generate_content_hash_etag,

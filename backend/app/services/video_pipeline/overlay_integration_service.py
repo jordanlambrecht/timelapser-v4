@@ -9,12 +9,11 @@ Simplified version of OverlayManagementService focused on integration only.
 from pathlib import Path
 from typing import Any, Dict
 
-from ...database.core import SyncDatabase
-from ...enums import LogSource, LoggerName
-from ...services.logger import get_service_logger
-
 from ...config import settings
+from ...database.core import SyncDatabase
 from ...database.timelapse_operations import SyncTimelapseOperations
+from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 

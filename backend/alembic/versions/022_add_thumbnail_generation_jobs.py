@@ -6,14 +6,13 @@ Create Date: 2025-01-07 12:00:00.000000
 
 """
 
-from alembic import op
-import sqlalchemy as sa
-
-
 # Import enums for default values
 import sys
 from pathlib import Path
 
+import sqlalchemy as sa
+
+from alembic import op
 from app.enums import JobPriority, JobStatus, ThumbnailJobType
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "app"))

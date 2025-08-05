@@ -8,13 +8,12 @@ with proper dependency injection following the established pattern.
 
 from typing import Any, Dict, Optional
 
-from ..image_service import ImageService, SyncImageService
-
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...enums import LogEmoji, LoggerName, LogSource
 from ...models.health_model import HealthStatus
 from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_timestamp
+from ..image_service import ImageService, SyncImageService
 from .services import (
     AsyncOverlayJobService,
     OverlayIntegrationService,

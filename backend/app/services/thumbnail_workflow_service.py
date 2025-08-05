@@ -7,10 +7,10 @@ Converts raw data to typed objects at the service boundary.
 """
 
 from typing import Any, Dict
-from ..workers.models.thumbnail_responses import ThumbnailWorkerStatus
-from ..enums import WorkerType
+
+from ..enums import LoggerName, WorkerType
 from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from ..workers.models.thumbnail_responses import ThumbnailWorkerStatus
 
 thumbnail_service_logger = get_service_logger(LoggerName.THUMBNAIL_WORKER)
 

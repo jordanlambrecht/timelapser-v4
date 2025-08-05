@@ -74,7 +74,9 @@ def test_instance_type():
     
     # Check instance type
     try:
-        from app.services.capture_pipeline.workflow_orchestrator import WorkflowOrchestratorService
+        from app.services.capture_pipeline.workflow_orchestrator import (
+            WorkflowOrchestratorService,
+        )
         
         if isinstance(pipeline, WorkflowOrchestratorService):
             print("✅ Pipeline is an instance of WorkflowOrchestratorService")

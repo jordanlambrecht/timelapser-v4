@@ -9,33 +9,29 @@ specific video generation tasks when commanded by the scheduler authority.
 Core Philosophy: "Scheduler says jump, VideoWorker says how high"
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from ..services.video_pipeline import create_video_pipeline, get_video_pipeline_health
-
-from .base_worker import BaseWorker
-from .utils.worker_status_builder import WorkerStatusBuilder
 from ..database.core import SyncDatabase
-
-from .exceptions import (
-    WorkerInitializationError,
-    ServiceUnavailableError,
-    VideoGenerationError,
-    JobProcessingError,
-    HealthCheckError,
-    CleanupOperationError,
-)
-
 from ..enums import (
     LogEmoji,
     LoggerName,
-    WorkerType,
     LogSource,
     VideoAutomationMode,
+    WorkerType,
 )
 from ..models.health_model import HealthStatus
-
 from ..services.logger import get_service_logger
+from ..services.video_pipeline import create_video_pipeline, get_video_pipeline_health
+from .base_worker import BaseWorker
+from .exceptions import (
+    CleanupOperationError,
+    HealthCheckError,
+    JobProcessingError,
+    ServiceUnavailableError,
+    VideoGenerationError,
+    WorkerInitializationError,
+)
+from .utils.worker_status_builder import WorkerStatusBuilder
 
 logger = get_service_logger(LoggerName.VIDEO_WORKER, LogSource.WORKER)
 

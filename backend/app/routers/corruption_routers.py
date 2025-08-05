@@ -13,9 +13,6 @@ from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-
 from ..constants import (
     DEFAULT_CORRUPTION_HISTORY_HOURS,
     DEFAULT_CORRUPTION_LOGS_PAGE_SIZE,
@@ -30,6 +27,7 @@ from ..dependencies import (
     CameraServiceDep,
     SettingsServiceDep,
 )
+from ..enums import LoggerName
 from ..models.corruption_model import (
     CorruptionHistoryResponse,
     CorruptionSettings,
@@ -45,6 +43,7 @@ from ..services.corruption_pipeline.services.health_service import (
 from ..services.corruption_pipeline.services.statistics_service import (
     CorruptionStatisticsService,
 )
+from ..services.logger import get_service_logger
 from ..utils.cache_manager import (
     generate_content_hash_etag,
 )

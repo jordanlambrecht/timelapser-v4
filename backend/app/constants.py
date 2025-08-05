@@ -8,32 +8,26 @@ throughout the codebase.
 
 from typing import Set
 
-from .models.health_model import HealthStatus
-from .enums import (
-    # Priority Systems
+from .enums import (  # Priority Systems; Job Systems; Video Systems; Thumbnail Systems; Overlay Systems; Timelapse Systems
     JobPriority,
-    LogLevel,
-    SSEPriority,
-    # Job Systems
     JobStatus,
     JobTypes,
-    # Video Systems
-    VideoAutomationMode,
-    VideoGenerationMode,
-    VideoQuality,
-    # Thumbnail Systems
-    ThumbnailJobPriority,
-    ThumbnailJobStatus,
-    ThumbnailJobType,
-    # Overlay Systems
+    LogLevel,
     OverlayJobPriority,
     OverlayJobStatus,
     OverlayJobType,
     OverlayType,
-    # Timelapse Systems
+    SSEPriority,
+    ThumbnailJobPriority,
+    ThumbnailJobStatus,
+    ThumbnailJobType,
     TimelapseAction,
     TimelapseStatus,
+    VideoAutomationMode,
+    VideoGenerationMode,
+    VideoQuality,
 )
+from .models.health_model import HealthStatus
 
 # =====================================================================
 #  VERSIONING

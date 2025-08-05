@@ -9,11 +9,14 @@ while maintaining security by not exposing internal details.
 import traceback
 import uuid
 
+import psycopg
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from ..config import settings
 from ..enums import LoggerName
 from ..services.logger import get_service_logger
 from ..utils.time_utils import (
@@ -21,12 +24,6 @@ from ..utils.time_utils import (
     utc_now,
     utc_timestamp,
 )
-
-
-import psycopg
-from pydantic import ValidationError
-
-from ..config import settings
 
 logger = get_service_logger(LoggerName.ERROR_HANDLER)
 

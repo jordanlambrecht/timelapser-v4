@@ -8,23 +8,23 @@ by using standardized factory patterns for common service types.
 
 from typing import TYPE_CHECKING
 
-from .base import AsyncServiceFactory
-from .registry import register_singleton_factory, get_async_singleton_service
 from ..database import async_db
+from .base import AsyncServiceFactory
+from .registry import get_async_singleton_service, register_singleton_factory
 
 if TYPE_CHECKING:
-    from ..services.camera_service import CameraService
-    from ..services.video_service import VideoService
-    from ..services.timelapse_service import TimelapseService
-    from ..services.image_service import ImageService
-    from ..services.settings_service import SettingsService
-    from ..services.weather.service import WeatherManager
-    from ..services.statistics_service import StatisticsService
-    from ..services.logger.logger_service import LoggerService
-    from ..services.health_service import HealthService
     from ..services.admin_service import AdminService
+    from ..services.camera_service import CameraService
+    from ..services.health_service import HealthService
+    from ..services.image_service import ImageService
+    from ..services.logger.logger_service import LoggerService
     from ..services.overlay_pipeline import AsyncOverlayService
     from ..services.overlay_pipeline.services.job_service import AsyncOverlayJobService
+    from ..services.settings_service import SettingsService
+    from ..services.statistics_service import StatisticsService
+    from ..services.timelapse_service import TimelapseService
+    from ..services.video_service import VideoService
+    from ..services.weather.service import WeatherManager
 
 
 # Settings Service Factory (Singleton)
@@ -47,8 +47,8 @@ async def get_settings_service() -> "SettingsService":
 async def get_camera_service() -> "CameraService":
     """Get CameraService with complete dependency injection."""
     from ..services.camera_service import CameraService
+    from .scheduling import get_scheduler_service, get_scheduling_service
     from .workflow import get_async_rtsp_service
-    from .scheduling import get_scheduling_service, get_scheduler_service
 
     settings_service = await get_settings_service()
     async_rtsp_service = await get_async_rtsp_service()
@@ -86,9 +86,9 @@ async def get_video_service() -> "VideoService":
 # Timelapse Service Factory
 async def get_timelapse_service() -> "TimelapseService":
     """Get TimelapseService with complex dependency chain."""
-    from ..services.timelapse_service import TimelapseService
     from ..services.image_service import ImageService
     from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
+    from ..services.timelapse_service import TimelapseService
 
     settings_service = await get_settings_service()
     image_service = ImageService(async_db, settings_service)
@@ -114,9 +114,9 @@ async def get_image_service() -> "ImageService":
 # Weather Manager Factory
 async def get_weather_manager() -> "WeatherManager":
     """Get WeatherManager with database and settings service dependency injection."""
-    from ..services.weather.service import WeatherManager
-    from ..database.weather_operations import SyncWeatherOperations
     from ..database import sync_db
+    from ..database.weather_operations import SyncWeatherOperations
+    from ..services.weather.service import WeatherManager
 
     settings_service = await get_settings_service()
     weather_operations = SyncWeatherOperations(sync_db)
@@ -134,8 +134,8 @@ async def get_statistics_service() -> "StatisticsService":
 # Logger Service Factory
 async def get_logger_service() -> "LoggerService":
     """Get LoggerService with async and sync database dependency injection."""
-    from ..services.logger.logger_service import LoggerService
     from ..database import sync_db
+    from ..services.logger.logger_service import LoggerService
 
     return LoggerService(
         async_db=async_db,
@@ -161,8 +161,8 @@ async def get_health_service() -> "HealthService":
 # Admin Service Factory
 async def get_admin_service() -> "AdminService":
     """Get AdminService with scheduled job operations dependency injection."""
-    from ..services.admin_service import AdminService
     from ..database.scheduled_job_operations import ScheduledJobOperations
+    from ..services.admin_service import AdminService
 
     scheduled_job_ops = ScheduledJobOperations(async_db)
     return AdminService(scheduled_job_ops)

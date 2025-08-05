@@ -5,10 +5,13 @@ Shared fixtures and configuration for database operations tests.
 Provides common mocking utilities and test data factories for database tests.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timezone
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from backend.app.utils.time_utils import utc_now
 
 # Note: Avoiding direct import of utc_now to prevent circular imports in tests
 
@@ -17,20 +20,20 @@ from typing import Dict, Any, List
 def mock_async_db():
     """
     Mock async database connection for testing database operations.
-    
+
     Returns:
         tuple: (db_mock, connection_mock, cursor_mock) for easy access in tests
     """
     db = Mock()
     conn = AsyncMock()
     cursor = AsyncMock()
-    
+
     # Setup async context managers
     db.get_connection.return_value.__aenter__ = AsyncMock(return_value=conn)
     db.get_connection.return_value.__aexit__ = AsyncMock(return_value=None)
     conn.cursor.return_value.__aenter__ = AsyncMock(return_value=cursor)
     conn.cursor.return_value.__aexit__ = AsyncMock(return_value=None)
-    
+
     return db, conn, cursor
 
 
@@ -38,20 +41,20 @@ def mock_async_db():
 def mock_sync_db():
     """
     Mock sync database connection for testing sync database operations.
-    
+
     Returns:
         tuple: (db_mock, connection_mock, cursor_mock) for easy access in tests
     """
     db = Mock()
     conn = Mock()
     cursor = Mock()
-    
+
     # Setup sync context managers
     db.get_connection.return_value.__enter__ = Mock(return_value=conn)
     db.get_connection.return_value.__exit__ = Mock(return_value=None)
     conn.cursor.return_value.__enter__ = Mock(return_value=cursor)
     conn.cursor.return_value.__exit__ = Mock(return_value=None)
-    
+
     return db, conn, cursor
 
 
@@ -64,7 +67,7 @@ def mock_current_time():
 # Test data factories
 class TestDataFactory:
     """Factory for creating consistent test data across database operation tests."""
-    
+
     @staticmethod
     def create_camera_data(**overrides) -> Dict[str, Any]:
         """Create mock camera data."""
@@ -77,11 +80,11 @@ class TestDataFactory:
             "lifetime_glitch_count": 5,
             "corruption_detection_heavy": False,
             "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc)
+            "updated_at": datetime.now(timezone.utc),
         }
         defaults.update(overrides)
         return defaults
-    
+
     @staticmethod
     def create_image_data(**overrides) -> Dict[str, Any]:
         """Create mock image data."""
@@ -94,11 +97,11 @@ class TestDataFactory:
             "corruption_score": 85,
             "is_flagged": False,
             "captured_at": utc_now(),
-            "created_at": datetime.now(timezone.utc)
+            "created_at": datetime.now(timezone.utc),
         }
         defaults.update(overrides)
         return defaults
-    
+
     @staticmethod
     def create_corruption_log_data(**overrides) -> Dict[str, Any]:
         """Create mock corruption log data."""
@@ -112,11 +115,11 @@ class TestDataFactory:
             "detection_details": {"algorithm": "fast", "threshold": 80},
             "action_taken": "saved",
             "processing_time_ms": 150,
-            "created_at": datetime.now(timezone.utc)
+            "created_at": datetime.now(timezone.utc),
         }
         defaults.update(overrides)
         return defaults
-    
+
     @staticmethod
     def create_timelapse_data(**overrides) -> Dict[str, Any]:
         """Create mock timelapse data."""
@@ -127,7 +130,7 @@ class TestDataFactory:
             "status": "running",
             "interval_seconds": 60,
             "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc)
+            "updated_at": datetime.now(timezone.utc),
         }
         defaults.update(overrides)
         return defaults
@@ -143,23 +146,23 @@ def test_data():
 def pytest_configure(config):
     """Configure custom pytest markers."""
     config.addinivalue_line(
-        "markers", 
-        "integration: marks tests as integration tests (may require database)"
+        "markers",
+        "integration: marks tests as integration tests (may require database)",
     )
     config.addinivalue_line(
-        "markers",
-        "caching: marks tests that specifically test caching behavior"
+        "markers", "caching: marks tests that specifically test caching behavior"
     )
     config.addinivalue_line(
-        "markers",
-        "query_builder: marks tests for SQL query builders"
+        "markers", "query_builder: marks tests for SQL query builders"
     )
 
 
 # Helper functions for common test patterns
 def assert_has_caching_decorator(method):
     """Assert that a method has the @cached_response decorator."""
-    assert hasattr(method, '__wrapped__'), f"Method {method.__name__} should have caching decorator"
+    assert hasattr(
+        method, "__wrapped__"
+    ), f"Method {method.__name__} should have caching decorator"
 
 
 def assert_sql_contains_patterns(sql: str, patterns: List[str]):

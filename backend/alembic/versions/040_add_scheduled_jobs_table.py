@@ -11,9 +11,11 @@ visibility, audit trails, and recovery capabilities.
 """
 
 from typing import Sequence, Union
-from alembic import op
+
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "040_add_scheduled_jobs_table"

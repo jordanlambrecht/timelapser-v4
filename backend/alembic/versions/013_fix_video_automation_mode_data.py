@@ -8,9 +8,9 @@ Create Date: 2025-06-23 09:45:00.000000
 
 from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "013_fix_automation_data"
 down_revision: Union[str, None] = "012_fix_settings_table_structure"

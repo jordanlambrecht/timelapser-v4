@@ -6,8 +6,8 @@ This replaces the global variables pattern used in the original dependencies.py
 with a proper registry system that handles lifecycle management.
 """
 
-from typing import Any, TypeVar, Callable
 from threading import Lock
+from typing import Any, Callable, TypeVar
 
 T = TypeVar("T")
 

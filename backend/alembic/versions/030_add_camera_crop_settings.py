@@ -8,9 +8,10 @@ Create Date: 2025-01-23 01:00:00.000000
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "031_add_camera_crop_settings"
@@ -27,9 +28,9 @@ def upgrade() -> None:
     result = connection.execute(
         sa.text(
             """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'cameras' 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cameras'
         AND column_name = 'crop_rotation_settings'
     """
         )
@@ -56,9 +57,9 @@ def upgrade() -> None:
     result = connection.execute(
         sa.text(
             """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'cameras' 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cameras'
         AND column_name = 'crop_rotation_enabled'
     """
         )
@@ -85,9 +86,9 @@ def upgrade() -> None:
     result = connection.execute(
         sa.text(
             """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'cameras' 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cameras'
         AND column_name = 'source_resolution'
     """
         )

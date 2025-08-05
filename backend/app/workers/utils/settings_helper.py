@@ -6,15 +6,16 @@ Consolidates repeated settings access patterns across all workers to eliminate
 code duplication and provide consistent settings handling.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
+
 from ...constants import (
     BOOLEAN_TRUE_STRING,
-    SETTING_KEY_GENERATE_THUMBNAILS,
-    DEFAULT_GENERATE_THUMBNAILS,
-    SETTING_KEY_GENERATE_OVERLAYS,
     DEFAULT_GENERATE_OVERLAYS,
-    SETTING_KEY_WEATHER_ENABLED,
+    DEFAULT_GENERATE_THUMBNAILS,
     DEFAULT_WEATHER_ENABLED,
+    SETTING_KEY_GENERATE_OVERLAYS,
+    SETTING_KEY_GENERATE_THUMBNAILS,
+    SETTING_KEY_WEATHER_ENABLED,
 )
 
 

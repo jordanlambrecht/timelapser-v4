@@ -10,16 +10,14 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-
-
 from ..dependencies import AsyncRTSPServiceDep, CameraServiceDep
+from ..enums import LoggerName
 from ..exceptions import CameraNotFoundError, RTSPConnectionError
 from ..models.camera_model import (
     CropRotationSettings,
     CropRotationUpdate,
 )
+from ..services.logger import get_service_logger
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
 

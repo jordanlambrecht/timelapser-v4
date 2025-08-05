@@ -6,10 +6,10 @@ Provides standardized Server-Sent Events broadcasting for worker job lifecycle e
 eliminating duplication between ThumbnailWorker and OverlayWorker.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import LoggerName, SSEEvent, SSEPriority, SSEEventSource
+from ...enums import LoggerName, SSEEvent, SSEEventSource, SSEPriority
 from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_timestamp
 

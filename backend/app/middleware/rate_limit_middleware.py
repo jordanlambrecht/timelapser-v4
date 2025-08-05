@@ -17,8 +17,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..enums import LoggerName
 from ..services.logger import get_service_logger
-
-
 from .rate_limiter import apply_rate_limit, cleanup_rate_limiter
 
 logger = get_service_logger(LoggerName.MIDDLEWARE)

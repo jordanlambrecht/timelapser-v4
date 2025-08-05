@@ -6,9 +6,9 @@ Create Date: 2025-01-07 16:00:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "028_thumbnail_counts"
@@ -19,11 +19,13 @@ depends_on = None
 
 def upgrade():
     """Add thumbnail count tracking columns to timelapses table."""
-    
+
     # Step 1: Add columns as nullable first
-    op.add_column("timelapses", sa.Column("thumbnail_count", sa.Integer(), nullable=True))
+    op.add_column(
+        "timelapses", sa.Column("thumbnail_count", sa.Integer(), nullable=True)
+    )
     op.add_column("timelapses", sa.Column("small_count", sa.Integer(), nullable=True))
-    
+
     # Step 2: Backfill existing data with actual counts from images table
     backfill_thumbnail_counts = """
         UPDATE timelapses 
@@ -40,13 +42,15 @@ def upgrade():
         ) as thumb_stats
         WHERE timelapses.id = thumb_stats.timelapse_id;
     """
-    
+
     op.execute(backfill_thumbnail_counts)
-    
+
     # Step 3: Set default value for any rows that weren't updated
-    op.execute("UPDATE timelapses SET thumbnail_count = 0 WHERE thumbnail_count IS NULL")
+    op.execute(
+        "UPDATE timelapses SET thumbnail_count = 0 WHERE thumbnail_count IS NULL"
+    )
     op.execute("UPDATE timelapses SET small_count = 0 WHERE small_count IS NULL")
-    
+
     # Step 4: Make columns NOT NULL with default values
     op.alter_column("timelapses", "thumbnail_count", nullable=False, server_default="0")
     op.alter_column("timelapses", "small_count", nullable=False, server_default="0")

@@ -10,41 +10,39 @@ Maintains all functionality while using shared infrastructure:
 """
 
 import time
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from ..services.logger import get_service_logger
-from .constants import MILLISECONDS_PER_SECOND
-
+from ..constants import (
+    DEFAULT_THUMBNAIL_CLEANUP_HOURS,
+    DEFAULT_THUMBNAIL_JOB_BATCH_SIZE,
+    DEFAULT_THUMBNAIL_MAX_RETRIES,
+    DEFAULT_THUMBNAIL_WORKER_INTERVAL,
+    HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE,
+    THUMBNAIL_CONCURRENT_JOBS,
+    THUMBNAIL_JOB_RETRY_DELAYS,
+    THUMBNAIL_PROCESSING_TIME_WARNING_MS,
+    THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD,
+    THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD,
+)
+from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.timelapse_operations import SyncTimelapseOperations
+from ..enums import (
+    JobTypes,
+    LogEmoji,
+    LoggerName,
+    LogSource,
+    SSEEventSource,
+    WorkerType,
+)
+from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
+from ..services.logger import get_service_logger
+from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
+from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
 from ..services.thumbnail_workflow_service import ThumbnailWorkflowService
-
+from .constants import MILLISECONDS_PER_SECOND
 from .mixins.job_processing_mixin import JobProcessingMixin
 from .mixins.startup_recovery_mixin import StartupRecoveryMixin
 from .utils.worker_status_builder import WorkerStatusBuilder
-from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
-from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
-from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
-from ..enums import (
-    LogSource,
-    LoggerName,
-    SSEEventSource,
-    JobTypes,
-    WorkerType,
-    LogEmoji,
-)
-from ..constants import (
-    DEFAULT_THUMBNAIL_JOB_BATCH_SIZE,
-    DEFAULT_THUMBNAIL_WORKER_INTERVAL,
-    DEFAULT_THUMBNAIL_MAX_RETRIES,
-    DEFAULT_THUMBNAIL_CLEANUP_HOURS,
-    THUMBNAIL_JOB_RETRY_DELAYS,
-    HIGH_LOAD_THUMBNAIL_JOB_BATCH_SIZE,
-    THUMBNAIL_QUEUE_SIZE_HIGH_THRESHOLD,
-    THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD,
-    THUMBNAIL_PROCESSING_TIME_WARNING_MS,
-    THUMBNAIL_CONCURRENT_JOBS,
-)
 
 logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 

@@ -6,9 +6,9 @@ Create Date: 2025-01-13 10:30:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "001_add_camera_image_relations"

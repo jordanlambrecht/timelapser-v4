@@ -10,14 +10,14 @@ import asyncio
 import time
 from abc import abstractmethod
 from datetime import timedelta
-from typing import Dict, Any, List, Optional, TypeVar, Generic, Sequence
+from typing import Any, Dict, Generic, List, Optional, Sequence, TypeVar
 
-from ..base_worker import BaseWorker
-from .retry_manager import RetryManager
-from .sse_broadcaster import SSEBroadcaster
-from .job_batch_processor import JobBatchProcessor, ProcessableJob
 from ...enums import SSEEventSource
 from ...utils.time_utils import utc_now
+from ..base_worker import BaseWorker
+from .job_batch_processor import JobBatchProcessor, ProcessableJob
+from .retry_manager import RetryManager
+from .sse_broadcaster import SSEBroadcaster
 
 # Generic type variable for specific job types
 JobType = TypeVar("JobType", bound=ProcessableJob)

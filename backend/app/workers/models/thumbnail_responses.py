@@ -6,8 +6,8 @@ enhancing error handling and providing operational clarity.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 
 @dataclass
@@ -70,6 +70,7 @@ class ThumbnailWorkerStatus:
         if not self.last_job_processed:
             return False
         from datetime import timedelta
+
         from ...utils.time_utils import utc_now
 
         return (utc_now() - self.last_job_processed) < timedelta(minutes=30)

@@ -6,43 +6,40 @@ Simplified dependency injection pattern that replaces the complex worker factory
 Provides centralized service management with lazy initialization and clear interfaces.
 """
 
-from typing import Dict, Any, TypeVar
 from functools import lru_cache
+from typing import Any, Dict, TypeVar
 
 from ..database.core import AsyncDatabase, SyncDatabase
-from ..services.settings_service import SyncSettingsService, SettingsService
-from ..services.image_service import SyncImageService
-from ..services.timelapse_service import SyncTimelapseService, TimelapseService
-from ..services.camera_service import CameraService
-from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
-from ..services.overlay_pipeline.overlay_pipeline import OverlayPipeline
-from ..services.weather.service import WeatherManager
-from ..database.weather_operations import SyncWeatherOperations
 from ..database.sse_events_operations import (
-    SyncSSEEventsOperations,
     SSEEventsOperations,
+    SyncSSEEventsOperations,
 )
-from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
-from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
+from ..database.weather_operations import SyncWeatherOperations
+from ..enums import LogEmoji, LoggerName
+from ..services.camera_service import CameraService, SyncCameraService
+from ..services.capture_pipeline.job_coordination_service import JobCoordinationService
+from ..services.capture_pipeline.rtsp_service import RTSPService
 from ..services.capture_pipeline.workflow_orchestrator_service import (
     WorkflowOrchestratorService,
 )
-from ..services.capture_pipeline.job_coordination_service import JobCoordinationService
-from ..services.capture_pipeline.rtsp_service import RTSPService
 from ..services.corruption_pipeline.services.evaluation_service import (
     SyncCorruptionEvaluationService,
 )
-from ..services.camera_service import SyncCameraService
-from ..enums import LoggerName, LogEmoji
+from ..services.image_service import SyncImageService
 from ..services.logger import get_service_logger
-
-
-from .thumbnail_worker import ThumbnailWorker
-from .overlay_worker import OverlayWorker
-from .cleanup_worker import CleanupWorker
-from .weather_worker import WeatherWorker
-from .video_worker import VideoWorker
+from ..services.overlay_pipeline.overlay_pipeline import OverlayPipeline
+from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
+from ..services.settings_service import SettingsService, SyncSettingsService
+from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
+from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
+from ..services.timelapse_service import SyncTimelapseService, TimelapseService
+from ..services.weather.service import WeatherManager
 from .capture_worker import CaptureWorker
+from .cleanup_worker import CleanupWorker
+from .overlay_worker import OverlayWorker
+from .thumbnail_worker import ThumbnailWorker
+from .video_worker import VideoWorker
+from .weather_worker import WeatherWorker
 
 T = TypeVar("T")
 

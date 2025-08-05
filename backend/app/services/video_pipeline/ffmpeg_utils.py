@@ -13,9 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...enums import LogSource, LoggerName, VideoQuality
+from ...enums import LoggerName, LogSource, VideoQuality
 from ...services.logger import get_service_logger
-
 from ...utils import file_helpers
 
 logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)

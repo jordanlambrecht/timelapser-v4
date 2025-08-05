@@ -7,19 +7,20 @@ and validate optimization improvements.
 """
 
 import asyncio
-import sys
 import json
+import sys
 from pathlib import Path
 
-# Add backend to path
-
 from app.database.core import AsyncDatabase
-from app.utils.database_performance_profiler import DatabasePerformanceProfiler
-from app.utils.database_micro_optimizations import DatabaseMicroOptimizer
+from app.enums import LoggerName
 
 # from app.config import settings
 from app.services.logger import get_service_logger
-from app.enums import LoggerName
+from app.utils.database_micro_optimizations import DatabaseMicroOptimizer
+from app.utils.database_performance_profiler import DatabasePerformanceProfiler
+
+# Add backend to path
+
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

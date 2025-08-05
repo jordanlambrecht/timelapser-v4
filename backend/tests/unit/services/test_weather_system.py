@@ -7,34 +7,35 @@ Tests the weather integration including OpenWeatherService API calls,
 WeatherManager coordination, and worker integration patterns.
 """
 
-import pytest
 import asyncio
 import json
 import time as time_module
-from datetime import datetime, date, time, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
-from typing import Dict, Any, Optional
+from datetime import date, datetime, time, timedelta
+from typing import Any, Dict, Optional
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from app.services.weather.service import OpenWeatherService, WeatherManager
-from app.models.weather_model import (
-    OpenWeatherApiData,
-    WeatherDataRecord,
-    SunTimeWindow,
-    WeatherConfiguration,
-    WeatherApiValidationRequest,
-    WeatherApiValidationResponse,
-    WeatherApiStatus
-)
+import pytest
+
 from app.constants import (
     OPENWEATHER_API_BASE_URL,
     OPENWEATHER_API_TIMEOUT,
-    WEATHER_MAX_CONSECUTIVE_FAILURES,
-    WEATHER_API_KEY_VALID,
     WEATHER_API_KEY_INVALID,
+    WEATHER_API_KEY_VALID,
     WEATHER_CONNECTION_ERROR,
+    WEATHER_MAX_CONSECUTIVE_FAILURES,
     WEATHER_REFRESH_SKIPPED_DISABLED,
-    WEATHER_REFRESH_SKIPPED_LOCATION
+    WEATHER_REFRESH_SKIPPED_LOCATION,
 )
+from app.models.weather_model import (
+    OpenWeatherApiData,
+    SunTimeWindow,
+    WeatherApiStatus,
+    WeatherApiValidationRequest,
+    WeatherApiValidationResponse,
+    WeatherConfiguration,
+    WeatherDataRecord,
+)
+from app.services.weather.service import OpenWeatherService, WeatherManager
 
 
 class TestOpenWeatherApiData:
@@ -48,7 +49,7 @@ class TestOpenWeatherApiData:
             description="clear sky",
             sunrise_timestamp=1672560000,
             sunset_timestamp=1672596000,
-            date_fetched=date(2023, 1, 1)
+            date_fetched=date(2023, 1, 1),
         )
 
         assert data.temperature == 22
@@ -67,7 +68,7 @@ class TestOpenWeatherApiData:
             "description": "cold",
             "sunrise_timestamp": 1672560000,
             "sunset_timestamp": 1672596000,
-            "date_fetched": date(2023, 1, 1)
+            "date_fetched": date(2023, 1, 1),
         }
         data = OpenWeatherApiData(**valid_data)
         assert data.temperature == -40
@@ -85,7 +86,7 @@ class TestOpenWeatherApiData:
             "description": "clear sky",
             "sunrise_timestamp": 1672560000,
             "sunset_timestamp": 1672596000,
-            "date_fetched": date(2023, 1, 1)
+            "date_fetched": date(2023, 1, 1),
         }
 
         # Valid icon
@@ -110,7 +111,7 @@ class TestOpenWeatherApiData:
             "description": "clear sky",
             "sunrise_timestamp": 1672560000,
             "sunset_timestamp": 1672596000,
-            "date_fetched": date(2023, 1, 1)
+            "date_fetched": date(2023, 1, 1),
         }
 
         # Test boundary - 255 characters
@@ -139,7 +140,7 @@ class TestWeatherDataRecord:
             sunset_timestamp=datetime(2023, 1, 1, 18, 0, 0),
             api_key_valid=True,
             api_failing=False,
-            consecutive_failures=0
+            consecutive_failures=0,
         )
 
         assert data.id == 1
@@ -165,15 +166,13 @@ class TestWeatherDataRecord:
         assert data.sunrise_timestamp is None
         assert data.sunset_timestamp is None
         assert data.api_key_valid is True  # Default
-        assert data.api_failing is False   # Default
+        assert data.api_failing is False  # Default
         assert data.consecutive_failures == 0  # Default
 
     def test_failure_tracking_fields(self):
         """Test failure tracking fields work correctly."""
         data = WeatherDataRecord(
-            api_key_valid=False,
-            api_failing=True,
-            consecutive_failures=3
+            api_key_valid=False, api_failing=True, consecutive_failures=3
         )
 
         assert data.api_key_valid is False
@@ -187,9 +186,7 @@ class TestSunTimeWindow:
     def test_valid_time_window_creation(self):
         """Test creating valid time window."""
         window = SunTimeWindow(
-            start_time=time(6, 30),
-            end_time=time(19, 45),
-            is_overnight=False
+            start_time=time(6, 30), end_time=time(19, 45), is_overnight=False
         )
 
         assert window.start_time == time(6, 30)
@@ -199,9 +196,7 @@ class TestSunTimeWindow:
     def test_overnight_time_window(self):
         """Test overnight time window."""
         window = SunTimeWindow(
-            start_time=time(22, 0),
-            end_time=time(6, 0),
-            is_overnight=True
+            start_time=time(22, 0), end_time=time(6, 0), is_overnight=True
         )
 
         assert window.start_time == time(22, 0)
@@ -211,10 +206,7 @@ class TestSunTimeWindow:
     def test_time_validation(self):
         """Test time field validation."""
         # Valid time objects should work
-        window = SunTimeWindow(
-            start_time=time(6, 30),
-            end_time=time(19, 45)
-        )
+        window = SunTimeWindow(start_time=time(6, 30), end_time=time(19, 45))
         assert isinstance(window.start_time, time)
         assert isinstance(window.end_time, time)
 
@@ -222,13 +214,13 @@ class TestSunTimeWindow:
         with pytest.raises(ValueError, match="Must be a time object"):
             SunTimeWindow(
                 start_time="06:30",  # String instead of time object
-                end_time=time(19, 45)
+                end_time=time(19, 45),
             )
 
         with pytest.raises(ValueError, match="Must be a time object"):
             SunTimeWindow(
                 start_time=time(6, 30),
-                end_time="19:45"  # String instead of time object
+                end_time="19:45",  # String instead of time object
             )
 
 
@@ -238,9 +230,7 @@ class TestWeatherApiValidationResponse:
     def test_valid_response_creation(self):
         """Test creating valid API validation response."""
         response = WeatherApiValidationResponse(
-            valid=True,
-            message=WEATHER_API_KEY_VALID,
-            status=WeatherApiStatus.VALID
+            valid=True, message=WEATHER_API_KEY_VALID, status=WeatherApiStatus.VALID
         )
 
         assert response.valid is True
@@ -252,7 +242,7 @@ class TestWeatherApiValidationResponse:
         response = WeatherApiValidationResponse(
             valid=False,
             message=WEATHER_API_KEY_INVALID,
-            status=WeatherApiStatus.INVALID
+            status=WeatherApiStatus.INVALID,
         )
 
         assert response.valid is False
@@ -264,7 +254,7 @@ class TestWeatherApiValidationResponse:
         response = WeatherApiValidationResponse(
             valid=False,
             message=WEATHER_CONNECTION_ERROR + ": Timeout",
-            status=WeatherApiStatus.FAILING
+            status=WeatherApiStatus.FAILING,
         )
 
         assert response.valid is False
@@ -278,9 +268,7 @@ class TestOpenWeatherService:
     def test_service_initialization(self):
         """Test service initialization with valid parameters."""
         service = OpenWeatherService(
-            api_key="test_key",
-            latitude=40.7128,
-            longitude=-74.0060
+            api_key="test_key", latitude=40.7128, longitude=-74.0060
         )
 
         assert service.api_key == "test_key"
@@ -288,7 +276,7 @@ class TestOpenWeatherService:
         assert service.longitude == -74.0060
         assert service.BASE_URL == OPENWEATHER_API_BASE_URL
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_validate_api_key_success(self, mock_get):
         """Test successful API key validation."""
         # Mock successful response
@@ -297,7 +285,7 @@ class TestOpenWeatherService:
         mock_response.json.return_value = {
             "main": {"temp": 22},
             "weather": [{"icon": "01d", "description": "clear sky"}],
-            "sys": {"sunrise": 1672560000, "sunset": 1672596000}
+            "sys": {"sunrise": 1672560000, "sunset": 1672596000},
         }
         mock_get.return_value = mock_response
 
@@ -309,7 +297,7 @@ class TestOpenWeatherService:
         assert result.status == WeatherApiStatus.VALID
         mock_get.assert_called_once()
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_validate_api_key_invalid(self, mock_get):
         """Test invalid API key validation."""
         # Mock 401 Unauthorized response
@@ -324,11 +312,12 @@ class TestOpenWeatherService:
         assert result.message == WEATHER_API_KEY_INVALID
         assert result.status == WeatherApiStatus.INVALID
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_validate_api_key_connection_error(self, mock_get):
         """Test API key validation with connection error."""
         # Mock connection error
         import requests
+
         mock_get.side_effect = requests.exceptions.ConnectionError("Connection failed")
 
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
@@ -338,7 +327,7 @@ class TestOpenWeatherService:
         assert WEATHER_CONNECTION_ERROR in result.message
         assert result.status == WeatherApiStatus.FAILING
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_fetch_current_weather_success(self, mock_get):
         """Test successful weather data fetching."""
         # Mock successful weather response
@@ -347,7 +336,7 @@ class TestOpenWeatherService:
         mock_response.json.return_value = {
             "main": {"temp": 22.5},
             "weather": [{"icon": "01d", "description": "clear sky"}],
-            "sys": {"sunrise": 1672560000, "sunset": 1672596000}
+            "sys": {"sunrise": 1672560000, "sunset": 1672596000},
         }
         mock_get.return_value = mock_response
 
@@ -363,7 +352,7 @@ class TestOpenWeatherService:
         assert result.sunset_timestamp == 1672596000
         assert isinstance(result.date_fetched, date)
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_fetch_current_weather_api_error(self, mock_get):
         """Test weather fetching with API error."""
         # Mock API error response
@@ -376,11 +365,12 @@ class TestOpenWeatherService:
 
         assert result is None
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_fetch_current_weather_timeout(self, mock_get):
         """Test weather fetching with timeout."""
         # Mock timeout error
         import requests
+
         mock_get.side_effect = requests.exceptions.Timeout("Request timeout")
 
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
@@ -391,34 +381,34 @@ class TestOpenWeatherService:
     def test_calculate_sun_time_window(self):
         """Test sunrise/sunset time window calculation."""
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
-        
+
         # Test normal day window (not overnight)
         window = service.calculate_sun_time_window(
             sunrise_timestamp=1672560000,  # 6:00 AM UTC (Jan 1, 2023)
-            sunset_timestamp=1672596000,   # 4:00 PM UTC 
-            sunrise_offset_minutes=30,     # 30 minutes after sunrise
-            sunset_offset_minutes=-30,     # 30 minutes before sunset
-            timezone_str="UTC"
+            sunset_timestamp=1672596000,  # 4:00 PM UTC
+            sunrise_offset_minutes=30,  # 30 minutes after sunrise
+            sunset_offset_minutes=-30,  # 30 minutes before sunset
+            timezone_str="UTC",
         )
 
         assert isinstance(window, SunTimeWindow)
         assert window.is_overnight is False
         # Times will be timezone-adjusted, so just check that offsets were applied
         assert window.start_time.minute == 30  # 30 minute offset applied
-        assert window.end_time.minute == 30    # 30 minute offset applied
+        assert window.end_time.minute == 30  # 30 minute offset applied
 
     def test_is_within_sun_window_normal_day(self):
         """Test time window checking for normal day."""
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
-        
+
         # Test during valid window - using datetime.now() directly from service
         # This test checks the method returns a boolean result
         result = service.is_within_sun_window(
             sunrise_timestamp=1672560000,  # 6:00 AM UTC (Jan 1, 2023)
-            sunset_timestamp=1672596000,   # 4:00 PM UTC
+            sunset_timestamp=1672596000,  # 4:00 PM UTC
             sunrise_offset_minutes=0,
             sunset_offset_minutes=0,
-            timezone_str="UTC"
+            timezone_str="UTC",
         )
         # Should return a boolean (either True or False)
         assert isinstance(result, bool)
@@ -426,14 +416,14 @@ class TestOpenWeatherService:
     def test_is_within_sun_window_outside(self):
         """Test time window checking outside valid hours."""
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
-        
+
         # Test with timestamps far in the past (definitely outside current window)
         result = service.is_within_sun_window(
             sunrise_timestamp=1672560000,  # 6:00 AM UTC (Jan 1, 2023) - in the past
-            sunset_timestamp=1672596000,   # 4:00 PM UTC (Jan 1, 2023) - in the past
+            sunset_timestamp=1672596000,  # 4:00 PM UTC (Jan 1, 2023) - in the past
             sunrise_offset_minutes=0,
             sunset_offset_minutes=0,
-            timezone_str="UTC"
+            timezone_str="UTC",
         )
         # Should return a boolean (current time is after this window from 2023)
         assert isinstance(result, bool)
@@ -463,18 +453,22 @@ class TestWeatherManager:
         """Provide WeatherManager instance with mocked dependencies."""
         return WeatherManager(
             weather_operations=mock_weather_operations,
-            settings_service=mock_settings_service
+            settings_service=mock_settings_service,
         )
 
-    def test_weather_manager_initialization(self, mock_weather_operations, mock_settings_service):
+    def test_weather_manager_initialization(
+        self, mock_weather_operations, mock_settings_service
+    ):
         """Test WeatherManager initialization with dependency injection."""
         manager = WeatherManager(mock_weather_operations, mock_settings_service)
-        
+
         assert manager.weather_ops == mock_weather_operations
         assert manager.settings_service == mock_settings_service
 
     @pytest.mark.asyncio
-    async def test_update_weather_cache_success(self, weather_manager, mock_weather_operations):
+    async def test_update_weather_cache_success(
+        self, weather_manager, mock_weather_operations
+    ):
         """Test successful weather cache update."""
         # Create test weather data
         weather_data = OpenWeatherApiData(
@@ -483,7 +477,7 @@ class TestWeatherManager:
             description="clear sky",
             sunrise_timestamp=1672560000,
             sunset_timestamp=1672596000,
-            date_fetched=date(2023, 1, 1)
+            date_fetched=date(2023, 1, 1),
         )
 
         # Mock successful insert
@@ -495,16 +489,18 @@ class TestWeatherManager:
         mock_weather_operations.insert_weather_data.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_weather_cache_failure(self, weather_manager, mock_weather_operations):
+    async def test_update_weather_cache_failure(
+        self, weather_manager, mock_weather_operations
+    ):
         """Test weather cache update with database failure."""
         # Create test weather data
         weather_data = OpenWeatherApiData(
             temperature=25,
-            icon="01d", 
+            icon="01d",
             description="clear sky",
             sunrise_timestamp=1672560000,
             sunset_timestamp=1672596000,
-            date_fetched=date(2023, 1, 1)
+            date_fetched=date(2023, 1, 1),
         )
 
         # Mock database error
@@ -517,41 +513,47 @@ class TestWeatherManager:
     @pytest.mark.asyncio
     async def test_get_weather_settings(self, weather_manager):
         """Test getting weather settings."""
-        with patch.object(weather_manager, 'settings_service') as mock_service:
-            mock_service.get_all_settings = AsyncMock(return_value={
-                "latitude": "40.7128",
-                "longitude": "-74.0060",
-                "weather_enabled": "true"
-            })
+        with patch.object(weather_manager, "settings_service") as mock_service:
+            mock_service.get_all_settings = AsyncMock(
+                return_value={
+                    "latitude": "40.7128",
+                    "longitude": "-74.0060",
+                    "weather_enabled": "true",
+                }
+            )
 
             settings = await weather_manager.get_weather_settings()
-            
+
             assert settings["latitude"] == "40.7128"
             assert settings["longitude"] == "-74.0060"
             assert settings["weather_enabled"] == "true"
 
     @pytest.mark.asyncio
-    @patch('app.services.weather.service.OpenWeatherService')
-    async def test_refresh_weather_if_needed_no_location(self, mock_service_class, weather_manager):
+    @patch("app.services.weather.service.OpenWeatherService")
+    async def test_refresh_weather_if_needed_no_location(
+        self, mock_service_class, weather_manager
+    ):
         """Test weather refresh when location not configured."""
         # Mock settings without location
-        with patch.object(weather_manager, 'get_weather_settings') as mock_get_settings:
+        with patch.object(weather_manager, "get_weather_settings") as mock_get_settings:
             mock_get_settings.return_value = {"latitude": None, "longitude": None}
 
             result = await weather_manager.refresh_weather_if_needed("test_key")
-            
+
             assert result is None
             mock_service_class.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch('app.services.weather.service.OpenWeatherService')
-    async def test_refresh_weather_if_needed_success(self, mock_service_class, weather_manager, mock_weather_operations):
+    @patch("app.services.weather.service.OpenWeatherService")
+    async def test_refresh_weather_if_needed_success(
+        self, mock_service_class, weather_manager, mock_weather_operations
+    ):
         """Test successful weather refresh."""
         # Mock settings with location
-        with patch.object(weather_manager, 'get_weather_settings') as mock_get_settings:
+        with patch.object(weather_manager, "get_weather_settings") as mock_get_settings:
             mock_get_settings.return_value = {
                 "latitude": "40.7128",
-                "longitude": "-74.0060"
+                "longitude": "-74.0060",
             }
 
             # Mock no recent weather data
@@ -561,21 +563,21 @@ class TestWeatherManager:
             mock_weather_data = OpenWeatherApiData(
                 temperature=25,
                 icon="01d",
-                description="clear sky", 
+                description="clear sky",
                 sunrise_timestamp=1672560000,
                 sunset_timestamp=1672596000,
-                date_fetched=date(2023, 1, 1)
+                date_fetched=date(2023, 1, 1),
             )
             mock_service = Mock()
             mock_service.fetch_current_weather.return_value = mock_weather_data
             mock_service_class.return_value = mock_service
 
             # Mock successful cache update
-            with patch.object(weather_manager, 'update_weather_cache') as mock_update:
+            with patch.object(weather_manager, "update_weather_cache") as mock_update:
                 mock_update.return_value = True
 
                 result = await weather_manager.refresh_weather_if_needed("test_key")
-                
+
                 assert result == mock_weather_data
                 mock_service.fetch_current_weather.assert_called_once()
                 mock_update.assert_called_once_with(mock_weather_data)
@@ -590,18 +592,18 @@ class TestWeatherWorkerIntegration:
         mock_weather_ops = Mock()
         mock_settings_service = Mock()
         mock_sse_ops = Mock()
-        
+
         mock_settings_service.get_all_settings.return_value = {
             "weather_enabled": "true",
             "latitude": "40.7128",
-            "longitude": "-74.0060"
+            "longitude": "-74.0060",
         }
         mock_settings_service.get_openweather_api_key.return_value = "test_key"
-        
+
         return {
             "weather_ops": mock_weather_ops,
             "settings_service": mock_settings_service,
-            "sse_ops": mock_sse_ops
+            "sse_ops": mock_sse_ops,
         }
 
     @pytest.mark.asyncio
@@ -610,7 +612,7 @@ class TestWeatherWorkerIntegration:
         # Setup weather manager
         weather_manager = WeatherManager(
             mock_worker_dependencies["weather_ops"],
-            mock_worker_dependencies["settings_service"]
+            mock_worker_dependencies["settings_service"],
         )
 
         # Mock weather disabled
@@ -620,24 +622,28 @@ class TestWeatherWorkerIntegration:
 
         # Simulate worker refresh logic
         settings_dict = mock_worker_dependencies["settings_service"].get_all_settings()
-        
+
         if settings_dict.get("weather_enabled", "false").lower() != "true":
             # Should skip refresh
             result = None
         else:
-            api_key = mock_worker_dependencies["settings_service"].get_openweather_api_key()
+            api_key = mock_worker_dependencies[
+                "settings_service"
+            ].get_openweather_api_key()
             result = await weather_manager.refresh_weather_if_needed(api_key)
 
         assert result is None
 
     @pytest.mark.asyncio
-    @patch('app.services.weather.service.OpenWeatherService')
-    async def test_worker_weather_refresh_success(self, mock_service_class, mock_worker_dependencies):
+    @patch("app.services.weather.service.OpenWeatherService")
+    async def test_worker_weather_refresh_success(
+        self, mock_service_class, mock_worker_dependencies
+    ):
         """Test successful worker weather refresh."""
         # Setup weather manager
         weather_manager = WeatherManager(
             mock_worker_dependencies["weather_ops"],
-            mock_worker_dependencies["settings_service"]
+            mock_worker_dependencies["settings_service"],
         )
 
         # Mock successful weather fetch
@@ -647,21 +653,25 @@ class TestWeatherWorkerIntegration:
             description="clear sky",
             sunrise_timestamp=1672560000,
             sunset_timestamp=1672596000,
-            date_fetched=date(2023, 1, 1)
+            date_fetched=date(2023, 1, 1),
         )
         mock_service = Mock()
         mock_service.fetch_current_weather.return_value = mock_weather_data
         mock_service_class.return_value = mock_service
 
         # Mock successful cache update
-        with patch.object(weather_manager, 'update_weather_cache') as mock_update:
+        with patch.object(weather_manager, "update_weather_cache") as mock_update:
             mock_update.return_value = True
 
             # Simulate worker refresh logic
-            settings_dict = mock_worker_dependencies["settings_service"].get_all_settings()
-            
+            settings_dict = mock_worker_dependencies[
+                "settings_service"
+            ].get_all_settings()
+
             if settings_dict.get("weather_enabled", "false").lower() == "true":
-                api_key = mock_worker_dependencies["settings_service"].get_openweather_api_key()
+                api_key = mock_worker_dependencies[
+                    "settings_service"
+                ].get_openweather_api_key()
                 result = await weather_manager.refresh_weather_if_needed(api_key)
             else:
                 result = None
@@ -691,7 +701,7 @@ class TestWeatherSystemEdgeCases:
             description="clear sky",
             sunrise_timestamp=1672560000,
             sunset_timestamp=1672596000,
-            date_fetched=date(2023, 1, 1)
+            date_fetched=date(2023, 1, 1),
         )
 
         # Should handle sync operations correctly
@@ -707,31 +717,29 @@ class TestWeatherSystemEdgeCases:
 
         # Test validation responses use constants
         valid_response = WeatherApiValidationResponse(
-            valid=True,
-            message=WEATHER_API_KEY_VALID,
-            status=WeatherApiStatus.VALID
+            valid=True, message=WEATHER_API_KEY_VALID, status=WeatherApiStatus.VALID
         )
         assert valid_response.message == WEATHER_API_KEY_VALID
 
         invalid_response = WeatherApiValidationResponse(
             valid=False,
             message=WEATHER_API_KEY_INVALID,
-            status=WeatherApiStatus.INVALID
+            status=WeatherApiStatus.INVALID,
         )
         assert invalid_response.message == WEATHER_API_KEY_INVALID
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_weather_api_timeout_usage(self, mock_get):
         """Test that API calls use timeout constant."""
         service = OpenWeatherService("test_key", 40.7128, -74.0060)
-        
+
         # Mock response
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "main": {"temp": 22},
             "weather": [{"icon": "01d", "description": "clear sky"}],
-            "sys": {"sunrise": 1672560000, "sunset": 1672596000}
+            "sys": {"sunrise": 1672560000, "sunset": 1672596000},
         }
         mock_get.return_value = mock_response
 
@@ -741,7 +749,7 @@ class TestWeatherSystemEdgeCases:
         # Verify timeout was used
         mock_get.assert_called_once()
         call_kwargs = mock_get.call_args[1]
-        assert call_kwargs['timeout'] == OPENWEATHER_API_TIMEOUT
+        assert call_kwargs["timeout"] == OPENWEATHER_API_TIMEOUT
 
     def test_weather_failure_tracking(self):
         """Test weather failure tracking model."""
@@ -753,9 +761,7 @@ class TestWeatherSystemEdgeCases:
 
         # Test failure tracking
         failed_record = WeatherDataRecord(
-            consecutive_failures=3,
-            api_failing=True,
-            api_key_valid=False
+            consecutive_failures=3, api_failing=True, api_key_valid=False
         )
         assert failed_record.consecutive_failures == 3
         assert failed_record.api_failing is True
@@ -767,7 +773,7 @@ class TestWeatherSystemEdgeCases:
 
         # Test various timezones
         timezones = ["UTC", "US/Eastern", "Europe/London", "Asia/Tokyo"]
-        
+
         for tz in timezones:
             try:
                 window = service.calculate_sun_time_window(
@@ -775,7 +781,7 @@ class TestWeatherSystemEdgeCases:
                     sunset_timestamp=1672596000,
                     sunrise_offset_minutes=0,
                     sunset_offset_minutes=0,
-                    timezone_str=tz
+                    timezone_str=tz,
                 )
                 # Should create valid window for all timezones
                 assert isinstance(window, SunTimeWindow)
@@ -799,19 +805,20 @@ class TestWeatherSystemPerformance:
         # Create multiple weather data records
         weather_records = []
         for i in range(10):
-            weather_records.append(OpenWeatherApiData(
-                temperature=20 + i,
-                icon="01d",
-                description=f"weather {i}",
-                sunrise_timestamp=1672560000,
-                sunset_timestamp=1672596000,
-                date_fetched=date(2023, 1, 1)
-            ))
+            weather_records.append(
+                OpenWeatherApiData(
+                    temperature=20 + i,
+                    icon="01d",
+                    description=f"weather {i}",
+                    sunrise_timestamp=1672560000,
+                    sunset_timestamp=1672596000,
+                    date_fetched=date(2023, 1, 1),
+                )
+            )
 
         # Run concurrent cache updates
         tasks = [
-            weather_manager.update_weather_cache(record)
-            for record in weather_records
+            weather_manager.update_weather_cache(record) for record in weather_records
         ]
         results = await asyncio.gather(*tasks)
 
@@ -825,7 +832,7 @@ class TestWeatherSystemPerformance:
 
         # Time creating many weather records
         start_time = time_module.time()
-        
+
         for i in range(1000):
             OpenWeatherApiData(
                 temperature=20 + (i % 50),
@@ -833,16 +840,16 @@ class TestWeatherSystemPerformance:
                 description=f"test weather {i}",
                 sunrise_timestamp=1672560000 + i,
                 sunset_timestamp=1672596000 + i,
-                date_fetched=date(2023, 1, 1)
+                date_fetched=date(2023, 1, 1),
             )
-        
+
         end_time = time_module.time()
         duration = end_time - start_time
-        
+
         # Should create 1000 records in reasonable time (< 1 second)
         assert duration < 1.0, f"Model validation too slow: {duration:.2f}s"
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_api_call_performance(self, mock_get):
         """Test API call performance characteristics."""
         # Mock fast response
@@ -851,7 +858,7 @@ class TestWeatherSystemPerformance:
         mock_response.json.return_value = {
             "main": {"temp": 22},
             "weather": [{"icon": "01d", "description": "clear sky"}],
-            "sys": {"sunrise": 1672560000, "sunset": 1672596000}
+            "sys": {"sunrise": 1672560000, "sunset": 1672596000},
         }
         mock_get.return_value = mock_response
 
@@ -859,10 +866,10 @@ class TestWeatherSystemPerformance:
 
         # Time multiple API calls
         start_time = time_module.time()
-        
+
         for _ in range(10):
             service.fetch_current_weather()
-        
+
         end_time = time_module.time()
         duration = end_time - start_time
 

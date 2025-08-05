@@ -6,18 +6,19 @@ Tests the SSE event broadcasting and filtering for the thumbnail system,
 ensuring events are properly formatted and reach the frontend correctly.
 """
 
-import pytest
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.database.sse_events_operations import SSEEventsOperations
-from app.enums import JobStatus, JobPriority
+import pytest
+
 from app.constants import (
-    THUMBNAIL_JOB_TYPE_SINGLE,
     THUMBNAIL_JOB_TYPE_BULK,
+    THUMBNAIL_JOB_TYPE_SINGLE,
 )
+from app.database.sse_events_operations import SSEEventsOperations
+from app.enums import JobPriority, JobStatus
 
 
 @pytest.mark.frontend

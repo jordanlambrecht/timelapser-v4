@@ -11,14 +11,14 @@ import json
 import sys
 from pathlib import Path
 
+from app.database.migrations import (
+    DatabaseInitializationError,
+    get_database_status,
+    initialize_database,
+)
+
 # Add the app directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
-
-from app.database.migrations import (
-    initialize_database,
-    get_database_status,
-    DatabaseInitializationError,
-)
 
 
 def main():

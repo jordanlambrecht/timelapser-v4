@@ -6,10 +6,6 @@ Revises: 013_fix_video_automation_mode_data
 Create Date: 2025-06-28 20:00:00.000000
 """
 
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
 revision = "013a_add_missing_camera_columns"
 down_revision = "013_fix_automation_data"
 branch_labels = None

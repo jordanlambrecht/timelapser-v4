@@ -8,15 +8,11 @@ for the timelapse capture system.
 
 from typing import TYPE_CHECKING
 
+from ..database import async_db, sync_db
 from .base import AsyncServiceFactory, SyncServiceFactory
 from .registry import get_scheduler_worker
-from ..database import async_db, sync_db
 
 if TYPE_CHECKING:
-    from ..services.scheduling.time_window_service import (
-        TimeWindowService,
-        SyncTimeWindowService,
-    )
     from ..services.scheduling.capture_timing_service import (
         CaptureTimingService,
         SyncCaptureTimingService,
@@ -26,6 +22,10 @@ if TYPE_CHECKING:
         SyncJobQueueService,
     )
     from ..services.scheduling.scheduler_authority_service import SchedulerService
+    from ..services.scheduling.time_window_service import (
+        SyncTimeWindowService,
+        TimeWindowService,
+    )
 
 
 # Async Time Window Service Factory

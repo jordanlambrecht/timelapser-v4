@@ -12,10 +12,11 @@ This mixin provides:
 - Common configuration validation patterns
 """
 
-from typing import Any, Optional, Dict, List
-from ...services.logger import get_service_logger
-from ...enums import LoggerName, LogSource
+from typing import Any, Dict, List, Optional
+
 from ...constants import BOOLEAN_TRUE_STRING
+from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
 
 # Initialize mixin logger
 settings_logger = get_service_logger(LoggerName.SYSTEM, LogSource.WORKER)

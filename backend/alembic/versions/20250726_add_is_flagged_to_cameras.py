@@ -2,9 +2,9 @@
 Add is_flagged column to cameras table
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "20250726_add_is_flagged"
 down_revision = "018a126e6ced"

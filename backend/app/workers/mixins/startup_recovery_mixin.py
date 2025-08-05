@@ -12,9 +12,10 @@ This mixin provides:
 - Configurable recovery parameters
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+from ...enums import LogEmoji, LoggerName, LogSource
 from ...services.logger import get_service_logger
-from ...enums import LoggerName, LogSource, LogEmoji
 
 # Initialize mixin logger
 recovery_logger = get_service_logger(LoggerName.SYSTEM, LogSource.WORKER)

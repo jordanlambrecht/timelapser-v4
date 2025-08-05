@@ -7,13 +7,14 @@ Tests both async and sync versions of weather database operations
 to ensure proper data handling and query functionality.
 """
 
-import pytest
 import asyncio
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock, patch
-from typing import Dict, Any, Optional
 
-from app.database.weather_operations import WeatherOperations, SyncWeatherOperations
+import pytest
+
+from app.database.weather_operations import SyncWeatherOperations, WeatherOperations
 from app.models.weather_model import WeatherDataRecord
 
 
@@ -25,10 +26,12 @@ class TestWeatherOperations:
         """Provide mock database connection."""
         mock_db = Mock()
         mock_connection = AsyncMock()
-        mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_connection),
-            __aexit__=AsyncMock(return_value=None)
-        ))
+        mock_db.get_connection = AsyncMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_connection),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
         return mock_db, mock_connection
 
     @pytest.fixture
@@ -54,7 +57,7 @@ class TestWeatherOperations:
             "sunset_timestamp": 1672596000,
             "api_key_valid": True,
             "api_failing": False,
-            "consecutive_failures": 0
+            "consecutive_failures": 0,
         }
 
         # Mock query result
@@ -105,7 +108,7 @@ class TestWeatherOperations:
             sunrise_timestamp=datetime(2023, 1, 1, 6, 0, 0),
             sunset_timestamp=datetime(2023, 1, 1, 18, 0, 0),
             api_key_valid=True,
-            api_failing=False
+            api_failing=False,
         )
 
         assert weather_id == 123
@@ -124,7 +127,7 @@ class TestWeatherOperations:
 
         weather_id = await weather_ops.insert_weather_data(
             weather_date_fetched=datetime(2023, 1, 1, 12, 0, 0),
-            current_temp=20.0
+            current_temp=20.0,
             # Other fields should use defaults
         )
 
@@ -142,17 +145,16 @@ class TestWeatherOperations:
         mock_failure_row = Mock()
         mock_failure_row._mapping = {"consecutive_failures": 2}
         mock_select_result.fetchone.return_value = mock_failure_row
-        
+
         # Mock the INSERT query
         mock_insert_result = Mock()
         mock_insert_result.scalar.return_value = 126
-        
+
         # Setup execute to return different results for different calls
         mock_connection.execute.side_effect = [mock_select_result, mock_insert_result]
 
         await weather_ops.update_weather_failure(
-            error_response_code=401,
-            last_error_message="Invalid API key"
+            error_response_code=401, last_error_message="Invalid API key"
         )
 
         # Should be called twice: once for SELECT, once for INSERT
@@ -171,7 +173,7 @@ class TestWeatherOperations:
             "weather_date_fetched": datetime(2023, 1, 1, 14, 0, 0),
             "current_temp": 24.0,
             "weather_icon": "02d",
-            "weather_description": "few clouds"
+            "weather_description": "few clouds",
         }
 
         # Mock query result
@@ -213,7 +215,9 @@ class TestSyncWeatherOperations:
         """Provide mock sync database connection."""
         mock_db = Mock()
         mock_connection = Mock()
-        mock_db.get_connection.return_value.__enter__ = Mock(return_value=mock_connection)
+        mock_db.get_connection.return_value.__enter__ = Mock(
+            return_value=mock_connection
+        )
         mock_db.get_connection.return_value.__exit__ = Mock(return_value=None)
         return mock_db, mock_connection
 
@@ -234,7 +238,7 @@ class TestSyncWeatherOperations:
             "weather_date_fetched": datetime(2023, 1, 2, 15, 0, 0),
             "current_temp": 18.5,
             "weather_icon": "03d",
-            "weather_description": "scattered clouds"
+            "weather_description": "scattered clouds",
         }
 
         # Mock query result
@@ -265,7 +269,7 @@ class TestSyncWeatherOperations:
             current_weather_icon="03d",
             current_weather_description="scattered clouds",
             sunrise_timestamp=datetime(2023, 1, 2, 6, 0, 0),
-            sunset_timestamp=datetime(2023, 1, 2, 18, 0, 0)
+            sunset_timestamp=datetime(2023, 1, 2, 18, 0, 0),
         )
 
         assert weather_id == 125
@@ -281,17 +285,16 @@ class TestSyncWeatherOperations:
         mock_failure_row = Mock()
         mock_failure_row._mapping = {"consecutive_failures": 1}
         mock_select_result.fetchone.return_value = mock_failure_row
-        
+
         # Mock the INSERT query
         mock_insert_result = Mock()
         mock_insert_result.scalar.return_value = 127
-        
+
         # Setup execute to return different results for different calls
         mock_connection.execute.side_effect = [mock_select_result, mock_insert_result]
 
         sync_weather_ops.update_weather_failure(
-            error_response_code=200,
-            last_error_message=None
+            error_response_code=200, last_error_message=None
         )
 
         # Should be called twice: once for SELECT, once for INSERT
@@ -307,7 +310,7 @@ class TestSyncWeatherOperations:
         mock_row._mapping = {
             "id": 3,
             "weather_date_fetched": datetime(2023, 1, 2, 16, 0, 0),
-            "current_temp": 21.5
+            "current_temp": 21.5,
         }
 
         # Mock query result
@@ -329,17 +332,26 @@ class TestWeatherOperationsIntegration:
     def test_operations_consistency(self):
         """Test that async and sync operations have consistent interfaces."""
         # Both classes should have the same method signatures
-        async_methods = [method for method in dir(WeatherOperations) 
-                        if not method.startswith('_') and callable(getattr(WeatherOperations, method))]
-        sync_methods = [method for method in dir(SyncWeatherOperations) 
-                       if not method.startswith('_') and callable(getattr(SyncWeatherOperations, method))]
+        async_methods = [
+            method
+            for method in dir(WeatherOperations)
+            if not method.startswith("_")
+            and callable(getattr(WeatherOperations, method))
+        ]
+        sync_methods = [
+            method
+            for method in dir(SyncWeatherOperations)
+            if not method.startswith("_")
+            and callable(getattr(SyncWeatherOperations, method))
+        ]
 
         # Filter out database-specific methods
-        async_methods = [m for m in async_methods if m != 'db']
-        sync_methods = [m for m in sync_methods if m != 'db']
+        async_methods = [m for m in async_methods if m != "db"]
+        sync_methods = [m for m in sync_methods if m != "db"]
 
-        assert set(async_methods) == set(sync_methods), \
-            f"Method mismatch: async={async_methods}, sync={sync_methods}"
+        assert set(async_methods) == set(
+            sync_methods
+        ), f"Method mismatch: async={async_methods}, sync={sync_methods}"
 
     @pytest.mark.asyncio
     async def test_mixed_operation_usage(self):
@@ -353,10 +365,10 @@ class TestWeatherOperationsIntegration:
 
         # Both should be able to handle similar data patterns
         test_datetime = datetime(2023, 1, 1, 12, 0, 0)
-        
+
         # Verify both can be instantiated and have expected attributes
-        assert hasattr(async_ops, 'db')
-        assert hasattr(sync_ops, 'db')
+        assert hasattr(async_ops, "db")
+        assert hasattr(sync_ops, "db")
         assert async_ops.db == mock_async_db
         assert sync_ops.db == mock_sync_db
 
@@ -383,11 +395,13 @@ class TestWeatherOperationsErrorHandling:
         # Setup mocks locally for this test
         mock_db = Mock()
         mock_connection = AsyncMock()
-        mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_connection),
-            __aexit__=AsyncMock(return_value=None)
-        ))
-        
+        mock_db.get_connection = AsyncMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_connection),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
+
         weather_ops = WeatherOperations(mock_db)
 
         # Mock query execution failure
@@ -403,11 +417,13 @@ class TestWeatherOperationsErrorHandling:
         # Setup mocks locally for this test
         mock_db = Mock()
         mock_connection = AsyncMock()
-        mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_connection),
-            __aexit__=AsyncMock(return_value=None)
-        ))
-        
+        mock_db.get_connection = AsyncMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_connection),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
+
         weather_ops = WeatherOperations(mock_db)
 
         # Mock commit failure
@@ -416,8 +432,7 @@ class TestWeatherOperationsErrorHandling:
         # Should propagate the exception to allow upstream error handling
         with pytest.raises(Exception, match="Commit failed"):
             await weather_ops.insert_weather_data(
-                weather_date_fetched=datetime(2023, 1, 1, 12, 0, 0),
-                current_temp=25.0
+                weather_date_fetched=datetime(2023, 1, 1, 12, 0, 0), current_temp=25.0
             )
 
         # Rollback should not be called automatically (handled by context manager)
@@ -445,11 +460,13 @@ class TestWeatherOperationsDataValidation:
         # Setup mocks locally
         mock_db = Mock()
         mock_connection = AsyncMock()
-        mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_connection),
-            __aexit__=AsyncMock(return_value=None)
-        ))
-        
+        mock_db.get_connection = AsyncMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_connection),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
+
         weather_ops = WeatherOperations(mock_db)
 
         # Mock successful insert
@@ -462,7 +479,7 @@ class TestWeatherOperationsDataValidation:
             # Required minimum
             {
                 "weather_date_fetched": datetime(2023, 1, 1, 12, 0, 0),
-                "current_temp": 20.0
+                "current_temp": 20.0,
             },
             # With all optional fields
             {
@@ -473,13 +490,13 @@ class TestWeatherOperationsDataValidation:
                 "sunrise_timestamp": datetime(2023, 1, 1, 6, 0, 0),
                 "sunset_timestamp": datetime(2023, 1, 1, 18, 0, 0),
                 "api_key_valid": True,
-                "api_failing": False
+                "api_failing": False,
             },
             # With negative temperature
             {
                 "weather_date_fetched": datetime(2023, 1, 1, 12, 0, 0),
-                "current_temp": -10.0
-            }
+                "current_temp": -10.0,
+            },
         ]
 
         for i, test_data in enumerate(test_cases):
@@ -496,11 +513,13 @@ class TestWeatherOperationsDataValidation:
         # Setup mocks locally
         mock_db = Mock()
         mock_connection = AsyncMock()
-        mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_connection),
-            __aexit__=AsyncMock(return_value=None)
-        ))
-        
+        mock_db.get_connection = AsyncMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_connection),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
+
         weather_ops = WeatherOperations(mock_db)
 
         # Mock empty result
@@ -510,9 +529,9 @@ class TestWeatherOperationsDataValidation:
 
         # Test with various datetime formats
         test_datetimes = [
-            datetime(2023, 1, 1, 0, 0, 0),    # Midnight
-            datetime(2023, 1, 1, 12, 30, 45), # Mid-day with seconds
-            datetime(2023, 12, 31, 23, 59, 59) # End of year
+            datetime(2023, 1, 1, 0, 0, 0),  # Midnight
+            datetime(2023, 1, 1, 12, 30, 45),  # Mid-day with seconds
+            datetime(2023, 12, 31, 23, 59, 59),  # End of year
         ]
 
         for test_dt in test_datetimes:
@@ -534,18 +553,20 @@ class TestWeatherOperationsPerformance:
         for i in range(5):
             mock_db = Mock()
             mock_connection = AsyncMock()
-            mock_db.get_connection = AsyncMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_connection),
-                __aexit__=AsyncMock(return_value=None)
-            ))
-            
+            mock_db.get_connection = AsyncMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_connection),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+
             # Mock successful query
             mock_row = Mock()
             mock_row._mapping = {"id": i, "current_temp": 20.0 + i}
             mock_result = Mock()
             mock_result.fetchone.return_value = mock_row
             mock_connection.execute.return_value = mock_result
-            
+
             mock_dbs.append((mock_db, mock_connection))
 
         # Create operations for each database
@@ -574,26 +595,28 @@ class TestWeatherOperationsPerformance:
         for i in range(10):
             mock_db = Mock()
             mock_connection = Mock()
-            mock_db.get_connection.return_value.__enter__ = Mock(return_value=mock_connection)
+            mock_db.get_connection.return_value.__enter__ = Mock(
+                return_value=mock_connection
+            )
             mock_db.get_connection.return_value.__exit__ = Mock(return_value=None)
-            
+
             # Mock successful query
             mock_row = Mock()
             mock_row._mapping = {"id": i, "current_temp": 15.0 + i}
             mock_result = Mock()
             mock_result.fetchone.return_value = mock_row
             mock_connection.execute.return_value = mock_result
-            
+
             mock_dbs.append(mock_db)
 
         # Time sequential sync operations
         start_time = time.time()
-        
+
         for mock_db in mock_dbs:
             sync_ops = SyncWeatherOperations(mock_db)
             result = sync_ops.get_latest_weather()
             assert result is not None
-        
+
         end_time = time.time()
         duration = end_time - start_time
 

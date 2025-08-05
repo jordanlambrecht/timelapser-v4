@@ -4,18 +4,17 @@ SSE worker for Timelapser v4.
 Handles SSE events cleanup and maintenance tasks.
 """
 
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
 
-from ..enums import LoggerName, LogSource, WorkerType, LogEmoji
+from ..database.core import AsyncDatabase
+from ..database.sse_events_operations import SSEEventsOperations
+from ..enums import LogEmoji, LoggerName, LogSource, WorkerType
 from ..services.logger import get_service_logger
+from ..services.sse_workflow_service import SSEWorkflowService
 from ..utils.time_utils import utc_now
-
 from .base_worker import BaseWorker
 from .utils.worker_status_builder import WorkerStatusBuilder
-from ..database.sse_events_operations import SSEEventsOperations
-from ..database.core import AsyncDatabase
-from ..services.sse_workflow_service import SSEWorkflowService
 
 logger = get_service_logger(LoggerName.SSE_WORKER, LogSource.WORKER)
 

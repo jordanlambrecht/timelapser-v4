@@ -54,30 +54,29 @@ DESIGN PATTERN: Function Injection Manager
 • Centralized management of all recurring system operations
 """
 
-import inspect
 import asyncio
-from typing import Dict, Any, Optional, Callable
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
+import inspect
+from typing import Any, Callable, Dict, Optional
 
-from .utils import SchedulerTimeUtils, SchedulerJobTemplate
-from ..database.core import SyncDatabase
 from ..constants import (
     HEALTH_CHECK_INTERVAL_SECONDS,
-    WEATHER_REFRESH_MINUTE,
-    VIDEO_AUTOMATION_INTERVAL_SECONDS,
     SCHEDULER_UPDATE_INTERVAL_SECONDS,
+    VIDEO_AUTOMATION_INTERVAL_SECONDS,
+    WEATHER_REFRESH_MINUTE,
 )
-from .constants import (
-    WEATHER_STARTUP_DELAY_SECONDS,
-    WEATHER_CATCHUP_INTERVAL_MINUTES,
+from ..database.core import SyncDatabase
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
+from .constants import (  # TIMELAPSE_SYNC_INTERVAL_MINUTES,
     AUTOMATION_TRIGGER_INTERVAL_MINUTES,
-    # TIMELAPSE_SYNC_INTERVAL_MINUTES,
-    SSE_CLEANUP_INTERVAL_HOURS,
     CLEANUP_INTERVAL_HOURS_DEFAULT,
-    SECONDS_PER_MINUTE,
     SECONDS_PER_HOUR,
+    SECONDS_PER_MINUTE,
+    SSE_CLEANUP_INTERVAL_HOURS,
+    WEATHER_CATCHUP_INTERVAL_MINUTES,
+    WEATHER_STARTUP_DELAY_SECONDS,
 )
+from .utils import SchedulerJobTemplate, SchedulerTimeUtils
 
 logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 

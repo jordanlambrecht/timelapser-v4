@@ -16,41 +16,38 @@ Maintains all functionality while using shared infrastructure:
 """
 
 import time
-from typing import List, Dict, Any, Optional
-
-from ..models.health_model import HealthStatus
-
-from .mixins.job_processing_mixin import JobProcessingMixin
-from .mixins.startup_recovery_mixin import StartupRecoveryMixin
-from .utils.worker_status_builder import WorkerStatusBuilder
-from .constants import MILLISECONDS_PER_SECOND
-from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
-from ..services.overlay_pipeline import OverlayService
-from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.core import SyncDatabase
-from ..services.image_service import SyncImageService
-from ..services.settings_service import SyncSettingsService
-from ..services.weather.service import WeatherManager
-from ..models.overlay_model import OverlayGenerationJob
-from ..enums import (
-    LogEmoji,
-    SSEEventSource,
-    LoggerName,
-    LogSource,
-    WorkerType,
-    JobTypes,
-)
-from ..services.logger import get_service_logger
+from typing import Any, Dict, List, Optional
 
 # Initialize overlay worker logger
 from ..constants import (
-    DEFAULT_OVERLAY_JOB_BATCH_SIZE,
-    DEFAULT_OVERLAY_WORKER_INTERVAL,
-    DEFAULT_OVERLAY_MAX_RETRIES,
     DEFAULT_OVERLAY_CLEANUP_HOURS,
+    DEFAULT_OVERLAY_JOB_BATCH_SIZE,
+    DEFAULT_OVERLAY_MAX_RETRIES,
+    DEFAULT_OVERLAY_WORKER_INTERVAL,
     OVERLAY_JOB_RETRY_DELAYS,
 )
-
+from ..database.core import SyncDatabase
+from ..database.sse_events_operations import SyncSSEEventsOperations
+from ..enums import (
+    JobTypes,
+    LogEmoji,
+    LoggerName,
+    LogSource,
+    SSEEventSource,
+    WorkerType,
+)
+from ..models.health_model import HealthStatus
+from ..models.overlay_model import OverlayGenerationJob
+from ..services.image_service import SyncImageService
+from ..services.logger import get_service_logger
+from ..services.overlay_pipeline import OverlayService
+from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
+from ..services.settings_service import SyncSettingsService
+from ..services.weather.service import WeatherManager
+from .constants import MILLISECONDS_PER_SECOND
+from .mixins.job_processing_mixin import JobProcessingMixin
+from .mixins.startup_recovery_mixin import StartupRecoveryMixin
+from .utils.worker_status_builder import WorkerStatusBuilder
 
 overlay_logger = get_service_logger(LoggerName.OVERLAY_WORKER, LogSource.WORKER)
 

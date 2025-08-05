@@ -8,63 +8,65 @@ Integrates with user settings for configurable retention policies.
 """
 
 from datetime import datetime
-from typing import Dict, Any, Optional, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from ..database.core import AsyncDatabase
 
-from ..utils.time_utils import utc_now
-
-# from ..models.health_model import HealthStatus  # Unused
-
-from .base_worker import BaseWorker
-from .utils.worker_status_builder import WorkerStatusBuilder
-from .mixins.settings_helper_mixin import SettingsHelperMixin
-from .constants import (
-    CLEANUP_INTERVAL_HOURS_DEFAULT,
-    WEATHER_SSE_CLEANUP_HOURS,
-)
-from .models.cleanup_responses import (
-    RetentionSettings,
-    CleanupResults,
-    CleanupStats,
-    LogCleanupResult,
-    CleanupWorkerStatus,
-)
-from .exceptions import (
-    ServiceUnavailableError,
-    RetentionConfigurationError,
-    CleanupServiceError,
-    WorkerInitializationError,
+from ..constants import (
+    DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
+    DEFAULT_IMAGE_RETENTION_DAYS,
+    DEFAULT_LOG_RETENTION_DAYS,
+    DEFAULT_OVERLAY_CLEANUP_HOURS,
+    DEFAULT_STATISTICS_RETENTION_DAYS,
+    DEFAULT_VIDEO_CLEANUP_DAYS,
+    UNKNOWN_ERROR_MESSAGE,
 )
 from ..database import SyncDatabase
-from ..services.settings_service import SyncSettingsService
-from ..services.logger.services.cleanup_service import LogCleanupService
-from ..services.logger import get_service_logger
-from ..database.log_operations import LogOperations, SyncLogOperations
-from ..enums import LoggerName, LogSource, LogEmoji, WorkerType
-from ..services.cleanup_workflow_service import CleanupWorkflowService
 
 # from ..services.corruption_service import SyncCorruptionService  # Replaced by corruption_pipeline
 from ..database.corruption_operations import SyncCorruptionOperations
+from ..database.image_operations import SyncImageOperations
+from ..database.log_operations import LogOperations, SyncLogOperations
+from ..database.overlay_job_operations import SyncOverlayJobOperations
+from ..database.sse_events_operations import SyncSSEEventsOperations
+from ..database.statistics_operations import SyncStatisticsOperations
+from ..enums import LogEmoji, LoggerName, LogSource, WorkerType
+from ..services.cleanup_workflow_service import CleanupWorkflowService
+from ..services.logger import get_service_logger
+from ..services.logger.services.cleanup_service import LogCleanupService
+from ..services.settings_service import SyncSettingsService
 
 # Defer video pipeline import to avoid circular dependency
 # from ..services.video_pipeline import create_video_pipeline
 from ..services.timelapse_service import SyncTimelapseService
-from ..database.image_operations import SyncImageOperations
-from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.statistics_operations import SyncStatisticsOperations
-from ..database.overlay_job_operations import SyncOverlayJobOperations
-from ..constants import (
-    DEFAULT_LOG_RETENTION_DAYS,
-    DEFAULT_IMAGE_RETENTION_DAYS,
-    DEFAULT_VIDEO_CLEANUP_DAYS,
-    DEFAULT_CORRUPTION_LOGS_RETENTION_DAYS,
-    DEFAULT_STATISTICS_RETENTION_DAYS,
-    DEFAULT_OVERLAY_CLEANUP_HOURS,
-    UNKNOWN_ERROR_MESSAGE,
-)
 from ..utils.temp_file_manager import cleanup_temporary_files
+from ..utils.time_utils import utc_now
+from .base_worker import BaseWorker
+from .constants import (
+    CLEANUP_INTERVAL_HOURS_DEFAULT,
+    WEATHER_SSE_CLEANUP_HOURS,
+)
+from .exceptions import (
+    CleanupServiceError,
+    RetentionConfigurationError,
+    ServiceUnavailableError,
+    WorkerInitializationError,
+)
+from .mixins.settings_helper_mixin import SettingsHelperMixin
+from .models.cleanup_responses import (
+    CleanupResults,
+    CleanupStats,
+    CleanupWorkerStatus,
+    LogCleanupResult,
+    RetentionSettings,
+)
+from .utils.worker_status_builder import WorkerStatusBuilder
+
+# from ..models.health_model import HealthStatus  # Unused
+
+
+
 
 cleanup_logger = get_service_logger(LoggerName.CLEANUP_WORKER, LogSource.WORKER)
 

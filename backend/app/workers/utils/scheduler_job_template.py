@@ -53,13 +53,13 @@ CONFIGURATION STANDARDS:
 • Consistent job removal before re-adding (prevents conflicts)
 """
 
-from typing import Dict, Any, Callable
-from ...services.logger import get_service_logger
-from ...enums import LoggerName
-from ...utils.time_utils import utc_now
+from typing import Any, Callable, Dict
 
-from .scheduler_time_utils import SchedulerTimeUtils
 from ...constants import SCHEDULER_MAX_INSTANCES
+from ...enums import LoggerName
+from ...services.logger import get_service_logger
+from ...utils.time_utils import utc_now
+from .scheduler_time_utils import SchedulerTimeUtils
 
 logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 

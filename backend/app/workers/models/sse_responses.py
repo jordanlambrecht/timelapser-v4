@@ -6,8 +6,8 @@ enhancing error handling and providing operational clarity.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 
 @dataclass

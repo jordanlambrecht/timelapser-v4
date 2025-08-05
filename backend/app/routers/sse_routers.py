@@ -14,16 +14,14 @@ from typing import AsyncGenerator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-from ..utils.time_utils import utc_now
-
-
 from ..database.sse_events_operations import SSEEventsOperations
 from ..dependencies import AsyncDatabaseDep
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
 from ..utils.cache_invalidation import CacheInvalidationService
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
+from ..utils.time_utils import utc_now
 
 router = APIRouter(tags=["sse"])
 

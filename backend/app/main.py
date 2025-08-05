@@ -12,6 +12,7 @@ If you're tempted to add a worker here, add it to worker.py instead!
 """
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -43,7 +44,6 @@ from .database import async_db, sync_db
 from .enums import LogEmoji, LoggerName
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
 from .services.logger import get_service_logger, initialize_global_logger
-from typing import Any
 
 logger: Any = None
 

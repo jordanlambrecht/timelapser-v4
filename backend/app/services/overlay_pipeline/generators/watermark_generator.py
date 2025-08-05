@@ -11,13 +11,11 @@ from typing import Union
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
+from ....models.overlay_model import OverlayItem, OverlayType
 
 # Import moved to function level to avoid circular import
 # from ....routers.settings_routers import get_settings
 from ....services.logger import get_service_logger
-
-
-from ....models.overlay_model import OverlayItem, OverlayType
 from ....utils.validation_helpers import validate_image_path, validate_image_scale
 from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 

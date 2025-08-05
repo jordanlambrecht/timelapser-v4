@@ -13,15 +13,12 @@ from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image, ImageColor, ImageDraw
 
-from ....enums import LogSource, LoggerName
-from ....services.logger import LogEmoji, get_service_logger
-
-
 from ....constants import OVERLAY_TYPE_WATERMARK
-from ....enums import OverlayGridPosition
+from ....enums import LoggerName, LogSource, OverlayGridPosition
 from ....models.image_model import Image as ImageModel
 from ....models.overlay_model import OverlayConfiguration, OverlayItem
 from ....models.timelapse_model import Timelapse as TimelapseModel
+from ....services.logger import LogEmoji, get_service_logger
 from ....utils.time_utils import utc_now
 from ..generators import OverlayGenerationContext, overlay_generator_registry
 from .font_cache import get_font_fast, get_text_size_fast

@@ -17,14 +17,14 @@ Architecture follows dependency injection patterns for testability and maintaina
 
 from .base_worker import BaseWorker
 from .capture_worker import CaptureWorker
+from .cleanup_worker import CleanupWorker
 from .health_worker import HealthWorker
-from .weather_worker import WeatherWorker
-from .video_worker import VideoWorker
+from .overlay_worker import OverlayWorker
 from .scheduler_worker import SchedulerWorker
 from .sse_worker import SSEWorker
-from .cleanup_worker import CleanupWorker
 from .thumbnail_worker import ThumbnailWorker
-from .overlay_worker import OverlayWorker
+from .video_worker import VideoWorker
+from .weather_worker import WeatherWorker
 
 __all__ = [
     "BaseWorker",

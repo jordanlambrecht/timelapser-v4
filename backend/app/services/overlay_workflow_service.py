@@ -6,11 +6,11 @@ Converts raw Dict[str, Any] responses from OverlayWorker to typed objects,
 eliminating defensive coding patterns throughout the codebase.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
 
-from .overlay_responses import OverlayWorkerStatus
 from ..enums import LoggerName, LogSource
 from ..services.logger import get_service_logger
+from .overlay_responses import OverlayWorkerStatus
 
 # Initialize service logger
 overlay_workflow_logger = get_service_logger(

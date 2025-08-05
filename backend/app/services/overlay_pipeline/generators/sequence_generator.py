@@ -10,11 +10,9 @@ from typing import Union
 
 from PIL import Image as PILImage
 
-from ....enums import LogSource, LoggerName
-from ....services.logger import get_service_logger
-
-
+from ....enums import LoggerName, LogSource
 from ....models.overlay_model import OverlayItem, OverlayType
+from ....services.logger import get_service_logger
 from ....utils.validation_helpers import validate_boolean_property
 from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 

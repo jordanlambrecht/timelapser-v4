@@ -9,21 +9,12 @@ for consistent caching behavior across the application.
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
-import time
 from typing import Any, Dict, Tuple
 
-from PIL import Image, ImageDraw, ImageColor
-
-from ....enums import LoggerName
-from ....services.logger import get_service_logger
-from ....utils.time_utils import (
-    format_date_string,
-    format_datetime_string,
-    format_time_object_for_display,
-    utc_now,
-)
+from PIL import Image, ImageColor, ImageDraw
 
 from ....constants import (
     OVERLAY_TYPE_CUSTOM_TEXT,
@@ -38,9 +29,16 @@ from ....constants import (
     OVERLAY_TYPE_WEATHER_CONDITIONS,
     OVERLAY_TYPE_WEATHER_TEMP_CONDITIONS,
 )
-
+from ....enums import LoggerName
 from ....models.overlay_model import OverlayConfiguration, OverlayItem
+from ....services.logger import get_service_logger
 from ....utils.cache_manager import cached_response
+from ....utils.time_utils import (
+    format_date_string,
+    format_datetime_string,
+    format_time_object_for_display,
+    utc_now,
+)
 from .font_cache import get_font_fast, get_text_size_fast
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE)

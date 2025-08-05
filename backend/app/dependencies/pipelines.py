@@ -8,8 +8,8 @@ corruption detection, and video generation.
 
 from typing import TYPE_CHECKING
 
+from ..database import async_db, sync_db
 from .base import PipelineFactory
-from ..database import sync_db, async_db
 
 if TYPE_CHECKING:
     from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline

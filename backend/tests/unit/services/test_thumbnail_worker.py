@@ -6,21 +6,22 @@ Tests the background worker process including job processing,
 error handling, dependency injection, and SSE event broadcasting.
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.workers.thumbnail_worker import ThumbnailWorker
+import pytest
+
+from app.constants import (
+    THUMBNAIL_JOB_TYPE_SINGLE,
+)
+from app.enums import JobPriority, JobStatus
+from app.models.image_model import Image
 from app.models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
 )
-from app.models.image_model import Image
-from app.enums import JobStatus, JobPriority
-from app.constants import (
-    THUMBNAIL_JOB_TYPE_SINGLE,
-)
+from app.workers.thumbnail_worker import ThumbnailWorker
 
 
 @pytest.mark.unit

@@ -6,17 +6,17 @@ Provides Service Layer Boundary Pattern compliance for scheduler operations.
 Converts raw data to typed objects at the service boundary.
 """
 
-from typing import Any, Optional, Dict
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+from ..enums import LoggerName, WorkerType
+from ..models.health_model import HealthStatus
+from ..services.logger import get_service_logger
 from ..workers.models.scheduler_responses import (
-    SchedulerWorkerStatus,
     SchedulerJobInfo,
     SchedulerManagerStatus,
+    SchedulerWorkerStatus,
 )
-from ..models.health_model import HealthStatus
-from ..enums import WorkerType
-from ..services.logger import get_service_logger
-from ..enums import LoggerName
 
 scheduler_service_logger = get_service_logger(LoggerName.SYSTEM)
 

@@ -21,7 +21,8 @@ Benefits over StatusReportingMixin:
 - New developers can easily understand the flow
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from ...utils.time_utils import utc_now
 
 

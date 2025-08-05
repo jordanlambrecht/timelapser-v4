@@ -12,15 +12,13 @@ Provides backward compatibility with existing overlay configurations.
 from typing import Any, Dict
 
 from ....enums import LoggerName, LogSource, OverlayGridPosition
-from ....services.logger import get_service_logger
-from ....utils.enum_helpers import parse_enum
-
-
 from ....models.overlay_model import (
     GlobalOverlayOptions,
     OverlayConfiguration,
     OverlayItem,
 )
+from ....services.logger import get_service_logger
+from ....utils.enum_helpers import parse_enum
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
@@ -83,7 +81,7 @@ class FrontendOverlayAdapter:
             )
 
             return OverlayConfiguration(
-                overlayPositions=overlay_positions, globalOptions=global_options
+                overlay_positions=overlay_positions, global_options=global_options
             )
 
         except Exception as e:
@@ -101,12 +99,12 @@ class FrontendOverlayAdapter:
         return GlobalOverlayOptions(
             opacity=global_options.get("opacity", 100),
             font=global_options.get("font", "Arial"),
-            xMargin=global_options.get("xMargin", 20),
-            yMargin=global_options.get("yMargin", 20),
-            backgroundColor=global_options.get("backgroundColor", "#000000"),
-            backgroundOpacity=global_options.get("backgroundOpacity", 50),
-            fillColor=global_options.get("fillColor", "#FFFFFF"),
-            dropShadow=global_options.get("dropShadow", 2),
+            x_margin=global_options.get("xMargin", 20),
+            y_margin=global_options.get("yMargin", 20),
+            background_color=global_options.get("backgroundColor", "#000000"),
+            background_opacity=global_options.get("backgroundOpacity", 50),
+            fill_color=global_options.get("fillColor", "#FFFFFF"),
+            drop_shadow=global_options.get("dropShadow", 2),
             preset=global_options.get("preset"),
         )
 
@@ -142,19 +140,23 @@ class FrontendOverlayAdapter:
         # Directly assign frontend values, trusting input
         return OverlayItem(
             type=item_data["type"],
-            textSize=item_data.get("textSize", 16),
-            textColor=item_data.get("textColor", global_options.fillColor),
-            backgroundOpacity=item_data.get("backgroundOpacity", 0),
-            imageScale=item_data.get("imageScale", 100),
-            customText=item_data.get("customText"),
-            backgroundColor=item_data.get("backgroundColor"),
-            dateFormat=item_data.get("dateFormat", "MM/dd/yyyy HH:mm"),
-            imageUrl=item_data.get("imageUrl"),
-            enableBackground=item_data.get("enableBackground"),
+            text_size=item_data.get("textSize", 16),
+            text_color=item_data.get("textColor", global_options.fill_color),
+            background_color=item_data.get(
+                "backgroundColor", global_options.background_color
+            ),
+            background_opacity=item_data.get(
+                "backgroundOpacity", global_options.background_opacity
+            ),
+            date_format=item_data.get("dateFormat", "MM/dd/yyyy HH:mm"),
+            image_url=item_data.get("imageUrl"),
+            image_scale=item_data.get("imageScale", 100),
+            custom_text=item_data.get("customText"),
+            enable_background=item_data.get("enableBackground"),
             unit=item_data.get("unit"),
             display=item_data.get("display"),
-            leadingZeros=item_data.get("leadingZeros"),
-            hidePrefix=item_data.get("hidePrefix"),
+            leading_zeros=item_data.get("leadingZeros"),
+            hide_prefix=item_data.get("hidePrefix"),
         )
 
     # @staticmethod

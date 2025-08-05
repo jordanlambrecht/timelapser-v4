@@ -11,9 +11,8 @@ user settings while optimizing performance through intelligent caching.
 
 import threading
 import time
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
-
+from typing import Any, Dict, Optional
 
 # Cache configuration
 DEFAULT_TTL_SECONDS = 300  # 5 minutes

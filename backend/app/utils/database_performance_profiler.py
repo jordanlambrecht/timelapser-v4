@@ -9,14 +9,13 @@ Identifies bottlenecks, provides optimization recommendations, and tracks perfor
 import time
 from typing import Any, Dict, List, Optional
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-from .time_utils import utc_now
-
 from ..database.camera_operations import AsyncCameraOperations
 from ..database.core import AsyncDatabase
 from ..database.image_operations import AsyncImageOperations
+from ..enums import LoggerName
+from ..services.logger import get_service_logger
 from .database_helpers import DatabaseBenchmark
+from .time_utils import utc_now
 
 logger = get_service_logger(LoggerName.SYSTEM)
 

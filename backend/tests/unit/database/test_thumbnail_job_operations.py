@@ -6,19 +6,20 @@ Tests the database layer for thumbnail job management including
 job creation, status updates, priority handling, and cleanup.
 """
 
-import pytest
 import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from app.constants import (
+    THUMBNAIL_JOB_TYPE_SINGLE,
+)
 from app.database.thumbnail_job_operations import ThumbnailJobOperations
+from app.enums import JobPriority, JobStatus
 from app.models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
-)
-from app.enums import JobStatus, JobPriority
-from app.constants import (
-    THUMBNAIL_JOB_TYPE_SINGLE,
 )
 
 

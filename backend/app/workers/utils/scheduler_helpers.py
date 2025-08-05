@@ -7,24 +7,23 @@ Extracted common patterns and utilities for scheduler operations.
 
 import time
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Union
+from typing import Any, Dict, Optional, Union
 from zoneinfo import ZoneInfo
-from ...services.logger import get_service_logger
-from ...enums import LogSource, LoggerName
+
 from ...constants import DEFAULT_TIMEZONE
+from ...enums import LoggerName, LogSource
+from ...services.logger import get_service_logger
+from ...services.settings_service import SyncSettingsService
+from ...utils.time_utils import (
+    get_timezone_aware_timestamp_sync,
+    get_timezone_from_cache_sync,
+)
 from ..constants import (
-    SCHEDULER_CACHE_TTL_SECONDS,
     MILLISECONDS_PER_SECOND,
+    SCHEDULER_CACHE_TTL_SECONDS,
     SCHEDULER_IMMEDIATE_JOB_DELAY_SECONDS,
     SCHEDULER_MISFIRE_GRACE_TIME_SECONDS,
 )
-
-
-from ...utils.time_utils import (
-    get_timezone_from_cache_sync,
-    get_timezone_aware_timestamp_sync,
-)
-from ...services.settings_service import SyncSettingsService
 
 logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 

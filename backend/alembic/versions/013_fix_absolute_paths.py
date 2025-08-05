@@ -7,7 +7,6 @@ Create Date: 2025-06-23 16:40:00.000000
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers
 revision = "013_fix_absolute_paths"
@@ -22,7 +21,7 @@ def upgrade():
     # Fix videos table - convert absolute to relative paths
     op.execute(
         """
-        UPDATE videos 
+        UPDATE videos
         SET file_path = REGEXP_REPLACE(file_path, '^.*/data/', 'data/')
         WHERE file_path LIKE '%/data/%' AND file_path NOT LIKE 'data/%'
     """
@@ -31,7 +30,7 @@ def upgrade():
     # Fix images table - convert absolute to relative paths
     op.execute(
         """
-        UPDATE images 
+        UPDATE images
         SET file_path = REGEXP_REPLACE(file_path, '^.*/data/', 'data/')
         WHERE file_path LIKE '%/data/%' AND file_path NOT LIKE 'data/%'
     """
@@ -40,10 +39,10 @@ def upgrade():
     # Fix any thumbnail paths if they exist
     op.execute(
         """
-        UPDATE images 
+        UPDATE images
         SET thumbnail_path = REGEXP_REPLACE(thumbnail_path, '^.*/data/', 'data/')
-        WHERE thumbnail_path IS NOT NULL 
-        AND thumbnail_path LIKE '%/data/%' 
+        WHERE thumbnail_path IS NOT NULL
+        AND thumbnail_path LIKE '%/data/%'
         AND thumbnail_path NOT LIKE 'data/%'
     """
     )

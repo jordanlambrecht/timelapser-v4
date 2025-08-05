@@ -15,9 +15,8 @@ Architecture:
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from typing import TYPE_CHECKING
 from ...database.core import AsyncDatabase
 from ...enums import LoggerName, SSEPriority
 from ...services.logger import get_service_logger

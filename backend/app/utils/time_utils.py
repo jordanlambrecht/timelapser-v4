@@ -28,13 +28,13 @@ from pathlib import Path
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 
+# Import default timezone constant
+from ..constants import DEFAULT_TIMEZONE
 
 # Note: get_timezone_async import moved to function level to avoid circular import
 # from app.utils.cache_manager import get_timezone_async
 # from ..services import settings_service  # Commented out to avoid circular import
 
-# Import default timezone constant
-from ..constants import DEFAULT_TIMEZONE
 
 # Constant for UTC timezone to avoid hardcoded timezone.utc references
 UTC_TIMEZONE = timezone.utc

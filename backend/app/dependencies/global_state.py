@@ -8,9 +8,9 @@ management while transitioning to the new service registry system.
 
 # Re-export the functions from registry for backwards compatibility
 from .registry import (
-    set_scheduler_worker,
-    get_scheduler_worker,
     clear_settings_service_instances,
+    get_scheduler_worker,
+    set_scheduler_worker,
 )
 
 __all__ = [

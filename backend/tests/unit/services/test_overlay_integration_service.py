@@ -6,28 +6,31 @@ Tests the service layer for overlay system including business logic,
 preset management, configuration validation, and asset handling.
 """
 
-import pytest
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.overlay_pipeline.services.integration_service import OverlayIntegrationService
+import pytest
+
 from app.models.overlay_model import (
+    OverlayAsset,
+    OverlayAssetCreate,
+    OverlayConfiguration,
     OverlayPreset,
     OverlayPresetCreate,
     OverlayPresetUpdate,
+    OverlayPreviewRequest,
+    OverlayPreviewResponse,
     TimelapseOverlay,
     TimelapseOverlayCreate,
     TimelapseOverlayUpdate,
-    OverlayAsset,
-    OverlayAssetCreate,
-    OverlayPreviewRequest,
-    OverlayPreviewResponse,
-    OverlayConfiguration,
 )
 from app.models.shared_models import ResponseWithMessage
+from app.services.overlay_pipeline.services.integration_service import (
+    OverlayIntegrationService,
+)
 
 
 @pytest.mark.unit
@@ -39,7 +42,7 @@ class TestOverlayIntegrationService:
     def mock_overlay_ops(self):
         """Mock overlay operations for testing."""
         mock_ops = AsyncMock()
-        
+
         # Setup mock responses for preset operations
         mock_ops.get_all_presets.return_value = [
             OverlayPreset(
@@ -69,7 +72,7 @@ class TestOverlayIntegrationService:
                 updated_at=datetime.utcnow(),
             ),
         ]
-        
+
         return mock_ops
 
     @pytest.fixture
@@ -78,14 +81,16 @@ class TestOverlayIntegrationService:
         return AsyncMock()
 
     @pytest.fixture
-    def overlay_service(self, mock_async_database, mock_overlay_ops, mock_overlay_job_ops):
+    def overlay_service(
+        self, mock_async_database, mock_overlay_ops, mock_overlay_job_ops
+    ):
         """Create OverlayIntegrationService instance with mocked dependencies."""
         service = OverlayIntegrationService(mock_async_database)
-        
+
         # Inject mocked operations
         service.overlay_ops = mock_overlay_ops
         service.overlay_job_ops = mock_overlay_job_ops
-        
+
         return service
 
     @pytest.fixture
@@ -102,7 +107,7 @@ class TestOverlayIntegrationService:
             text_color="#FFFFFF",
             font_size=24,
         )
-        
+
         return OverlayPresetCreate(
             name="Custom Test Preset",
             description="A custom test overlay preset",
@@ -123,7 +128,7 @@ class TestOverlayIntegrationService:
             text_color="#FFFF00",
             font_size=20,
         )
-        
+
         return TimelapseOverlayCreate(
             timelapse_id=1,
             preset_id=1,
@@ -153,7 +158,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.get_all_presets.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_overlay_preset_by_id_success(self, overlay_service, mock_overlay_ops):
+    async def test_get_overlay_preset_by_id_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful retrieval of preset by ID."""
         # Setup mock response
         expected_preset = OverlayPreset(
@@ -180,7 +187,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.get_preset_by_id.assert_called_once_with(1)
 
     @pytest.mark.asyncio
-    async def test_get_overlay_preset_by_id_not_found(self, overlay_service, mock_overlay_ops):
+    async def test_get_overlay_preset_by_id_not_found(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test getting a preset that doesn't exist."""
         # Setup mock to return None
         mock_overlay_ops.get_preset_by_id.return_value = None
@@ -195,7 +204,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.get_preset_by_id.assert_called_once_with(999)
 
     @pytest.mark.asyncio
-    async def test_create_overlay_preset_success(self, overlay_service, sample_preset_data, mock_overlay_ops):
+    async def test_create_overlay_preset_success(
+        self, overlay_service, sample_preset_data, mock_overlay_ops
+    ):
         """Test successful preset creation."""
         # Setup mock response
         expected_preset = OverlayPreset(
@@ -223,7 +234,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.create_preset.assert_called_once_with(sample_preset_data)
 
     @pytest.mark.asyncio
-    async def test_create_overlay_preset_failure(self, overlay_service, sample_preset_data, mock_overlay_ops):
+    async def test_create_overlay_preset_failure(
+        self, overlay_service, sample_preset_data, mock_overlay_ops
+    ):
         """Test preset creation failure handling."""
         # Setup mock to return None (creation failed)
         mock_overlay_ops.create_preset.return_value = None
@@ -238,7 +251,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.create_preset.assert_called_once_with(sample_preset_data)
 
     @pytest.mark.asyncio
-    async def test_update_overlay_preset_success(self, overlay_service, mock_overlay_ops):
+    async def test_update_overlay_preset_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful preset update."""
         # Setup mock response
         updated_preset = OverlayPreset(
@@ -274,7 +289,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.update_preset.assert_called_once_with(3, update_data)
 
     @pytest.mark.asyncio
-    async def test_delete_overlay_preset_success(self, overlay_service, mock_overlay_ops):
+    async def test_delete_overlay_preset_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful preset deletion."""
         # Setup mock response
         mock_overlay_ops.delete_preset.return_value = True
@@ -289,7 +306,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.delete_preset.assert_called_once_with(3)
 
     @pytest.mark.asyncio
-    async def test_delete_overlay_preset_not_found(self, overlay_service, mock_overlay_ops):
+    async def test_delete_overlay_preset_not_found(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test deleting a preset that doesn't exist."""
         # Setup mock response
         mock_overlay_ops.delete_preset.return_value = False
@@ -308,7 +327,9 @@ class TestOverlayIntegrationService:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_get_timelapse_overlay_config_success(self, overlay_service, mock_overlay_ops):
+    async def test_get_timelapse_overlay_config_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful retrieval of timelapse overlay configuration."""
         # Setup mock response
         expected_config = TimelapseOverlay(
@@ -339,11 +360,13 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.get_timelapse_overlay.assert_called_once_with(1)
 
     @pytest.mark.asyncio
-    async def test_create_or_update_timelapse_overlay_config_create(self, overlay_service, sample_timelapse_overlay_data, mock_overlay_ops):
+    async def test_create_or_update_timelapse_overlay_config_create(
+        self, overlay_service, sample_timelapse_overlay_data, mock_overlay_ops
+    ):
         """Test creating new timelapse overlay configuration."""
         # Setup mock response (no existing config)
         mock_overlay_ops.get_timelapse_overlay.return_value = None
-        
+
         expected_config = TimelapseOverlay(
             id=1,
             timelapse_id=sample_timelapse_overlay_data.timelapse_id,
@@ -356,7 +379,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.create_timelapse_overlay.return_value = expected_config
 
         # Test creating configuration
-        config = await overlay_service.create_or_update_timelapse_overlay_config(sample_timelapse_overlay_data)
+        config = await overlay_service.create_or_update_timelapse_overlay_config(
+            sample_timelapse_overlay_data
+        )
 
         # Assertions
         assert config is not None
@@ -365,10 +390,14 @@ class TestOverlayIntegrationService:
 
         # Verify operations were called correctly
         mock_overlay_ops.get_timelapse_overlay.assert_called_once_with(1)
-        mock_overlay_ops.create_timelapse_overlay.assert_called_once_with(sample_timelapse_overlay_data)
+        mock_overlay_ops.create_timelapse_overlay.assert_called_once_with(
+            sample_timelapse_overlay_data
+        )
 
     @pytest.mark.asyncio
-    async def test_create_or_update_timelapse_overlay_config_update(self, overlay_service, sample_timelapse_overlay_data, mock_overlay_ops):
+    async def test_create_or_update_timelapse_overlay_config_update(
+        self, overlay_service, sample_timelapse_overlay_data, mock_overlay_ops
+    ):
         """Test updating existing timelapse overlay configuration."""
         # Setup mock response (existing config)
         existing_config = TimelapseOverlay(
@@ -381,7 +410,7 @@ class TestOverlayIntegrationService:
             updated_at=datetime.utcnow() - timedelta(days=1),
         )
         mock_overlay_ops.get_timelapse_overlay.return_value = existing_config
-        
+
         updated_config = TimelapseOverlay(
             id=1,
             timelapse_id=sample_timelapse_overlay_data.timelapse_id,
@@ -391,7 +420,7 @@ class TestOverlayIntegrationService:
             created_at=existing_config.created_at,
             updated_at=datetime.utcnow(),
         )
-        
+
         # Convert create data to update data
         update_data = TimelapseOverlayUpdate(
             preset_id=sample_timelapse_overlay_data.preset_id,
@@ -401,7 +430,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.update_timelapse_overlay.return_value = updated_config
 
         # Test updating configuration
-        config = await overlay_service.create_or_update_timelapse_overlay_config(sample_timelapse_overlay_data)
+        config = await overlay_service.create_or_update_timelapse_overlay_config(
+            sample_timelapse_overlay_data
+        )
 
         # Assertions
         assert config is not None
@@ -411,10 +442,14 @@ class TestOverlayIntegrationService:
 
         # Verify operations were called correctly
         mock_overlay_ops.get_timelapse_overlay.assert_called_once_with(1)
-        mock_overlay_ops.update_timelapse_overlay.assert_called_once_with(1, update_data)
+        mock_overlay_ops.update_timelapse_overlay.assert_called_once_with(
+            1, update_data
+        )
 
     @pytest.mark.asyncio
-    async def test_delete_timelapse_overlay_config_success(self, overlay_service, mock_overlay_ops):
+    async def test_delete_timelapse_overlay_config_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful timelapse overlay configuration deletion."""
         # Setup mock response
         mock_overlay_ops.delete_timelapse_overlay.return_value = True
@@ -455,7 +490,9 @@ class TestOverlayIntegrationService:
         assert is_valid is True
 
     @pytest.mark.asyncio
-    async def test_validate_overlay_configuration_invalid_position(self, overlay_service):
+    async def test_validate_overlay_configuration_invalid_position(
+        self, overlay_service
+    ):
         """Test validation with invalid position value."""
         # Invalid position value
         config = {
@@ -471,7 +508,9 @@ class TestOverlayIntegrationService:
         assert is_valid is False
 
     @pytest.mark.asyncio
-    async def test_validate_overlay_configuration_invalid_opacity(self, overlay_service):
+    async def test_validate_overlay_configuration_invalid_opacity(
+        self, overlay_service
+    ):
         """Test validation with invalid opacity value."""
         # Invalid opacity value
         config = {
@@ -501,7 +540,9 @@ class TestOverlayIntegrationService:
         assert is_valid is False
 
     @pytest.mark.asyncio
-    async def test_validate_overlay_configuration_missing_required(self, overlay_service):
+    async def test_validate_overlay_configuration_missing_required(
+        self, overlay_service
+    ):
         """Test validation with missing required fields."""
         # Missing required timestamp format when timestamp is enabled
         config = {
@@ -562,7 +603,9 @@ class TestOverlayIntegrationService:
         mock_overlay_ops.get_all_assets.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_overlay_asset_by_id_success(self, overlay_service, mock_overlay_ops):
+    async def test_get_overlay_asset_by_id_success(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test successful retrieval of asset by ID."""
         # Setup mock response
         expected_asset = OverlayAsset(
@@ -608,7 +651,7 @@ class TestOverlayIntegrationService:
         )
 
         # Mock the preview generation process
-        with patch.object(overlay_service, '_generate_preview_image') as mock_generate:
+        with patch.object(overlay_service, "_generate_preview_image") as mock_generate:
             mock_generate.return_value = OverlayPreviewResponse(
                 success=True,
                 preview_image_path="/tmp/preview_123.jpg",
@@ -634,7 +677,7 @@ class TestOverlayIntegrationService:
     async def test_capture_fresh_photo_for_preview_success(self, overlay_service):
         """Test successful fresh photo capture for preview."""
         # Mock the capture process
-        with patch.object(overlay_service, '_capture_temp_image') as mock_capture:
+        with patch.object(overlay_service, "_capture_temp_image") as mock_capture:
             mock_capture.return_value = "/tmp/temp_camera_1.jpg"
 
             # Test fresh photo capture
@@ -651,10 +694,14 @@ class TestOverlayIntegrationService:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_error_handling_database_exception(self, overlay_service, mock_overlay_ops):
+    async def test_error_handling_database_exception(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test error handling when database operations fail."""
         # Mock database operation raising an exception
-        mock_overlay_ops.get_all_presets.side_effect = Exception("Database connection failed")
+        mock_overlay_ops.get_all_presets.side_effect = Exception(
+            "Database connection failed"
+        )
 
         # Test that exceptions are handled gracefully
         presets = await overlay_service.get_overlay_presets()
@@ -663,10 +710,14 @@ class TestOverlayIntegrationService:
         assert presets == []
 
     @pytest.mark.asyncio
-    async def test_error_handling_invalid_preset_data(self, overlay_service, mock_overlay_ops):
+    async def test_error_handling_invalid_preset_data(
+        self, overlay_service, mock_overlay_ops
+    ):
         """Test error handling with invalid preset data."""
         # Setup mock to raise validation error
-        mock_overlay_ops.create_preset.side_effect = ValueError("Invalid preset configuration")
+        mock_overlay_ops.create_preset.side_effect = ValueError(
+            "Invalid preset configuration"
+        )
 
         # Create invalid preset data
         invalid_preset_data = OverlayPresetCreate(

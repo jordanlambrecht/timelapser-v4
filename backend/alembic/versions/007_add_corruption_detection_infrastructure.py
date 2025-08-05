@@ -6,9 +6,10 @@ Create Date: 2025-06-20 15:00:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers
 revision = "007_corruption_detection"
@@ -143,7 +144,7 @@ def upgrade() -> None:
     # Add corruption detection settings to settings table
     op.execute(
         """
-        INSERT INTO settings (key, value) VALUES 
+        INSERT INTO settings (key, value) VALUES
         ('corruption_detection_enabled', 'true'),
         ('corruption_score_threshold', '70'),
         ('corruption_auto_discard_enabled', 'false'),

@@ -5,16 +5,14 @@ Thumbnail Job Service - Job queue management for thumbnail generation.
 
 from typing import Any, Dict, List, Optional
 
-from ....enums import LogSource, LoggerName
-from ....services.logger import get_service_logger
-
-
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.thumbnail_job_operations import (
     SyncThumbnailJobOperations,
     ThumbnailJobOperations,
 )
 from ....enums import (
+    LoggerName,
+    LogSource,
     ThumbnailJobPriority,
     ThumbnailJobType,
 )
@@ -22,6 +20,7 @@ from ....models.shared_models import (
     ThumbnailGenerationJob,
     ThumbnailGenerationJobCreate,
 )
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE, LogSource.PIPELINE)
 

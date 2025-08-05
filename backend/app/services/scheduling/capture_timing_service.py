@@ -26,10 +26,6 @@ Business Rules:
 from datetime import datetime, time
 from typing import TYPE_CHECKING, Optional
 
-from ...enums import LoggerName, LogSource
-from ...services.logger import get_service_logger
-
-
 from ...constants import (
     CAMERA_HEALTH_OFFLINE,
     DEFAULT_CAPTURE_GRACE_PERIOD_SECONDS,
@@ -37,6 +33,7 @@ from ...constants import (
     MIN_CAPTURE_INTERVAL_SECONDS,
 )
 from ...database.core import AsyncDatabase, SyncDatabase
+from ...enums import LoggerName, LogSource
 from ...models.shared_models import (
     CaptureCountEstimate,
     CaptureDueCheckResult,
@@ -44,6 +41,7 @@ from ...models.shared_models import (
     CaptureValidationResult,
     NextCaptureResult,
 )
+from ...services.logger import get_service_logger
 from ...utils.time_utils import (
     create_time_delta,
     format_time_object_for_display,

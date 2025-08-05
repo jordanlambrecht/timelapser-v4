@@ -7,13 +7,11 @@ Templates are just built-in presets (is_builtin = true) that users can't delete.
 
 from typing import List, Optional
 
-from ....enums import LoggerName, LogSource
-from ....services.logger import get_service_logger
-
-
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.overlay_operations import OverlayOperations, SyncOverlayOperations
+from ....enums import LoggerName, LogSource
 from ....models.overlay_model import OverlayPreset
+from ....services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 

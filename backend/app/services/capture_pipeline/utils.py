@@ -39,11 +39,11 @@ from typing import Any, Dict, List, Optional
 import cv2
 
 from ...enums import LoggerName
-from ...services.logger import get_service_logger
 from ...models.capture_pipeline_models import (
     CameraInfo,
     TimelapseInfo,
 )
+from ...services.logger import get_service_logger
 from ...utils.file_helpers import clean_filename
 from ...utils.time_utils import format_filename_timestamp, utc_now
 from .constants import (

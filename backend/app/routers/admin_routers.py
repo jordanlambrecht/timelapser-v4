@@ -32,7 +32,6 @@ from app.dependencies import (
     get_scheduler_worker,
 )
 from app.enums import ScheduledJobStatus, ScheduledJobType
-
 from app.models.scheduled_job_model import (
     ScheduledJobUpdate,
 )

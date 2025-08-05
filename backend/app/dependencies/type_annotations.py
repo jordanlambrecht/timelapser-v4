@@ -7,84 +7,84 @@ dependencies.py by using a standardized pattern generator.
 """
 
 from typing import Annotated
+
 from fastapi import Depends
 
 # Direct imports for type annotations (to avoid string references)
 from ..database.core import AsyncDatabase, SyncDatabase
-from ..services.camera_service import CameraService
-from ..services.video_service import VideoService, SyncVideoService
-from ..services.timelapse_service import TimelapseService
-from ..services.image_service import ImageService
-from ..services.settings_service import SettingsService
-from ..services.weather.service import WeatherManager
-from ..services.statistics_service import StatisticsService
-from ..services.logger.logger_service import LoggerService
-from ..services.health_service import HealthService
+from ..database.scheduled_job_operations import ScheduledJobOperations
 from ..services.admin_service import AdminService
+from ..services.camera_service import CameraService
+from ..services.capture_pipeline import AsyncRTSPService, WorkflowOrchestratorService
+from ..services.capture_pipeline.rtsp_service import RTSPService
+from ..services.health_service import HealthService
+from ..services.image_service import ImageService
+from ..services.logger.logger_service import LoggerService
 from ..services.overlay_pipeline import AsyncOverlayService
 from ..services.overlay_pipeline.services.job_service import AsyncOverlayJobService
-from ..services.capture_pipeline.rtsp_service import RTSPService
-from ..services.capture_pipeline import AsyncRTSPService, WorkflowOrchestratorService
-from ..services.scheduling.time_window_service import (
-    TimeWindowService,
-    SyncTimeWindowService,
-)
 from ..services.scheduling.capture_timing_service import (
     CaptureTimingService,
     SyncCaptureTimingService,
 )
 from ..services.scheduling.job_queue_service import JobQueueService, SyncJobQueueService
 from ..services.scheduling.scheduler_authority_service import SchedulerService
+from ..services.scheduling.time_window_service import (
+    SyncTimeWindowService,
+    TimeWindowService,
+)
+from ..services.settings_service import SettingsService
+from ..services.statistics_service import StatisticsService
 from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
+from ..services.timelapse_service import TimelapseService
 from ..services.video_pipeline.video_workflow_service import VideoWorkflowService
-from ..database.scheduled_job_operations import ScheduledJobOperations
+from ..services.video_service import SyncVideoService, VideoService
+from ..services.weather.service import WeatherManager
+from .async_services import (
+    get_admin_service,
+    get_camera_service,
+    get_health_service,
+    get_image_service,
+    get_logger_service,
+    get_overlay_job_service,
+    get_overlay_service,
+    get_settings_service,
+    get_statistics_service,
+    get_timelapse_service,
+    get_video_service,
+    get_weather_manager,
+)
 
 # Import all dependency functions
 from .database import get_async_database, get_sync_database
-from .async_services import (
-    get_camera_service,
-    get_video_service,
-    get_timelapse_service,
-    get_image_service,
-    get_settings_service,
-    get_weather_manager,
-    get_statistics_service,
-    get_logger_service,
-    get_health_service,
-    get_admin_service,
-    get_overlay_service,
-    get_overlay_job_service,
-)
-from .sync_services import (
-    get_sync_settings_service,
-    get_sync_video_service,
-    get_rtsp_service,
+from .pipelines import (
+    get_async_video_pipeline,
+    get_corruption_pipeline,
+    get_overlay_integration_service,
+    get_thumbnail_pipeline,
+    get_video_job_service,
+    get_video_pipeline,
 )
 from .scheduling import (
-    get_time_window_service,
-    get_scheduling_service,
     get_job_queue_service,
-    get_sync_time_window_service,
-    get_sync_scheduling_service,
-    get_sync_job_queue_service,
     get_scheduler_service,
+    get_scheduling_service,
+    get_sync_job_queue_service,
+    get_sync_scheduling_service,
+    get_sync_time_window_service,
+    get_time_window_service,
 )
-from .pipelines import (
-    get_thumbnail_pipeline,
-    get_corruption_pipeline,
-    get_video_pipeline,
-    get_async_video_pipeline,
-    get_video_job_service,
-    get_overlay_integration_service,
+from .specialized import (
+    get_scheduled_job_operations,
+)
+from .sync_services import (
+    get_rtsp_service,
+    get_sync_settings_service,
+    get_sync_video_service,
 )
 from .workflow import (
     get_async_rtsp_service,
     get_workflow_orchestrator_service,
 )
-from .specialized import (
-    get_scheduled_job_operations,
-)
-
 
 # Database Type Annotations
 AsyncDatabaseDep = Annotated[AsyncDatabase, Depends(get_async_database)]

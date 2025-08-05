@@ -32,13 +32,6 @@ Separation of Concerns:
 
 from typing import Any, Dict, List, Optional
 
-from ...workers.models.video_responses import (
-    ProcessingStatus,
-    QueueStatus,
-    ProcessQueueResult,
-    VideoGenerationResult,
-)
-
 from ...config import settings
 from ...database.core import SyncDatabase
 from ...database.sse_events_operations import SyncSSEEventsOperations
@@ -62,6 +55,12 @@ from ...utils.file_helpers import (
 from ...utils.time_utils import (
     format_filename_timestamp,
     get_timezone_aware_timestamp_sync,
+)
+from ...workers.models.video_responses import (
+    ProcessingStatus,
+    ProcessQueueResult,
+    QueueStatus,
+    VideoGenerationResult,
 )
 from . import ffmpeg_utils
 from .overlay_integration_service import OverlayIntegrationService

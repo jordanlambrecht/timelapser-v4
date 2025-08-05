@@ -11,10 +11,8 @@ from typing import Any, Dict, Tuple
 
 from PIL import Image
 
-from ....enums import LogSource, LoggerName
+from ....enums import LoggerName, LogSource
 from ....services.logger import get_service_logger
-
-
 from ..utils.constants import (
     SMALL_IMAGE_QUALITY,
     SMALL_IMAGE_SIZE,

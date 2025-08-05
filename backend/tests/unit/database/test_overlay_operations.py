@@ -6,23 +6,24 @@ Tests the database layer for overlay system including preset management,
 timelapse overlay configuration, and asset operations.
 """
 
-import pytest
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
-from typing import Dict, Any
+
+import pytest
 
 from app.database.overlay_operations import OverlayOperations, SyncOverlayOperations
 from app.models.overlay_model import (
+    OverlayAsset,
+    OverlayAssetCreate,
+    OverlayConfiguration,
     OverlayPreset,
     OverlayPresetCreate,
     OverlayPresetUpdate,
     TimelapseOverlay,
     TimelapseOverlayCreate,
     TimelapseOverlayUpdate,
-    OverlayAsset,
-    OverlayAssetCreate,
-    OverlayConfiguration,
 )
 
 
@@ -37,11 +38,13 @@ class TestOverlayOperations:
         # Create a properly mocked database connection
         mock_connection = AsyncMock()
         mock_cursor = AsyncMock()
-        
+
         # Setup the connection context manager chain
-        mock_async_database.get_connection.return_value.__aenter__.return_value = mock_connection
+        mock_async_database.get_connection.return_value.__aenter__.return_value = (
+            mock_connection
+        )
         mock_connection.cursor.return_value.__aenter__.return_value = mock_cursor
-        
+
         return OverlayOperations(mock_async_database)
 
     @pytest.fixture
@@ -58,7 +61,7 @@ class TestOverlayOperations:
             text_color="#FFFFFF",
             font_size=24,
         )
-        
+
         return OverlayPresetCreate(
             name="Test Preset",
             description="A test overlay preset",
@@ -79,7 +82,7 @@ class TestOverlayOperations:
             text_color="#FFFF00",
             font_size=20,
         )
-        
+
         return TimelapseOverlayCreate(
             timelapse_id=1,
             preset_id=1,
@@ -197,7 +200,9 @@ class TestOverlayOperations:
         assert preset is None
 
     @pytest.mark.asyncio
-    async def test_create_preset_success(self, overlay_ops, sample_preset_data, mock_async_database):
+    async def test_create_preset_success(
+        self, overlay_ops, sample_preset_data, mock_async_database
+    ):
         """Test successful preset creation."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -226,7 +231,9 @@ class TestOverlayOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_preset_failure(self, overlay_ops, sample_preset_data, mock_async_database):
+    async def test_create_preset_failure(
+        self, overlay_ops, sample_preset_data, mock_async_database
+    ):
         """Test preset creation failure handling."""
         # Mock database returning None (creation failed)
         mock_async_database.fetch_one = AsyncMock(return_value=None)
@@ -312,7 +319,9 @@ class TestOverlayOperations:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_get_timelapse_overlay_success(self, overlay_ops, mock_async_database):
+    async def test_get_timelapse_overlay_success(
+        self, overlay_ops, mock_async_database
+    ):
         """Test successful retrieval of timelapse overlay configuration."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -344,7 +353,9 @@ class TestOverlayOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_timelapse_overlay_success(self, overlay_ops, sample_timelapse_overlay_data, mock_async_database):
+    async def test_create_timelapse_overlay_success(
+        self, overlay_ops, sample_timelapse_overlay_data, mock_async_database
+    ):
         """Test successful timelapse overlay configuration creation."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -360,7 +371,9 @@ class TestOverlayOperations:
         )
 
         # Test configuration creation
-        config = await overlay_ops.create_timelapse_overlay(sample_timelapse_overlay_data)
+        config = await overlay_ops.create_timelapse_overlay(
+            sample_timelapse_overlay_data
+        )
 
         # Assertions
         assert config is not None
@@ -373,7 +386,9 @@ class TestOverlayOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_timelapse_overlay_success(self, overlay_ops, mock_async_database):
+    async def test_update_timelapse_overlay_success(
+        self, overlay_ops, mock_async_database
+    ):
         """Test successful timelapse overlay update."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -410,7 +425,9 @@ class TestOverlayOperations:
         mock_async_database.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_delete_timelapse_overlay_success(self, overlay_ops, mock_async_database):
+    async def test_delete_timelapse_overlay_success(
+        self, overlay_ops, mock_async_database
+    ):
         """Test successful timelapse overlay deletion."""
         # Mock database execute
         mock_cursor = MagicMock()
@@ -474,7 +491,9 @@ class TestOverlayOperations:
         mock_async_database.fetch_all.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_asset_success(self, overlay_ops, sample_asset_data, mock_async_database):
+    async def test_create_asset_success(
+        self, overlay_ops, sample_asset_data, mock_async_database
+    ):
         """Test successful asset creation."""
         # Mock database response
         mock_async_database.fetch_one = AsyncMock(
@@ -556,7 +575,9 @@ class TestOverlayOperations:
     # ============================================================================
 
     @pytest.mark.asyncio
-    async def test_error_handling_database_exception(self, overlay_ops, mock_async_database):
+    async def test_error_handling_database_exception(
+        self, overlay_ops, mock_async_database
+    ):
         """Test error handling when database operations fail."""
         # Mock database raising an exception
         mock_async_database.fetch_all = AsyncMock(
@@ -570,7 +591,9 @@ class TestOverlayOperations:
         assert presets == []
 
     @pytest.mark.asyncio
-    async def test_error_handling_invalid_json_config(self, overlay_ops, mock_async_database):
+    async def test_error_handling_invalid_json_config(
+        self, overlay_ops, mock_async_database
+    ):
         """Test handling of invalid JSON in overlay configuration."""
         # Mock database response with invalid JSON-like structure
         mock_async_database.fetch_one = AsyncMock(
@@ -604,7 +627,9 @@ class TestSyncOverlayOperations:
         return SyncOverlayOperations(mock_sync_database)
 
     @pytest.mark.asyncio
-    async def test_sync_get_all_presets_success(self, sync_overlay_ops, mock_sync_database):
+    async def test_sync_get_all_presets_success(
+        self, sync_overlay_ops, mock_sync_database
+    ):
         """Test sync version of get_all_presets."""
         # Mock the sync database methods
         mock_sync_database.fetch_all = MagicMock(
@@ -637,7 +662,9 @@ class TestSyncOverlayOperations:
         mock_sync_database.fetch_all.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_get_preset_by_id_success(self, sync_overlay_ops, mock_sync_database):
+    async def test_sync_get_preset_by_id_success(
+        self, sync_overlay_ops, mock_sync_database
+    ):
         """Test sync version of get_preset_by_id."""
         # Mock the sync database methods
         mock_sync_database.fetch_one = MagicMock(

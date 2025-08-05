@@ -5,33 +5,33 @@ Capture worker for Timelapser v4.
 Handles image capture from RTSP cameras.
 """
 
-from typing import Optional, Any, Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from ..constants import UNKNOWN_ERROR_MESSAGE
+from ..enums import LogEmoji, LoggerName, LogSource, WorkerType
+from ..models.camera_model import Camera
+from ..models.shared_models import RTSPCaptureResult
+from ..services.capture_workflow_service import CaptureWorkflowService
+from ..services.logger import get_service_logger
 from .base_worker import BaseWorker
-from .utils.worker_status_builder import WorkerStatusBuilder
-from .models.capture_responses import CaptureWorkerStatus
 from .exceptions import (
-    ServiceUnavailableError,
-    CaptureWorkflowError,
     CameraConnectionError,
+    CaptureWorkflowError,
+    ServiceUnavailableError,
     TimelapseValidationError,
     WorkerInitializationError,
 )
-from ..models.camera_model import Camera
-from ..models.shared_models import RTSPCaptureResult
-from ..services.logger import get_service_logger
-from ..enums import LoggerName, LogSource, LogEmoji, WorkerType
-from ..services.capture_workflow_service import CaptureWorkflowService
-from ..constants import UNKNOWN_ERROR_MESSAGE
+from .models.capture_responses import CaptureWorkerStatus
+from .utils.worker_status_builder import WorkerStatusBuilder
 
 if TYPE_CHECKING:
     from ..services.timelapse_service import TimelapseService
     from ..services.camera_service import CameraService
 
-from ..services.weather.service import WeatherManager
 from ..services.capture_pipeline.workflow_orchestrator_service import (
     WorkflowOrchestratorService,
 )
+from ..services.weather.service import WeatherManager
 
 capture_logger = get_service_logger(LoggerName.CAPTURE_WORKER, LogSource.WORKER)
 

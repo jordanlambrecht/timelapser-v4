@@ -4,7 +4,6 @@ Shared model components to eliminate duplication across models.
 """
 
 from datetime import date, datetime
-
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field

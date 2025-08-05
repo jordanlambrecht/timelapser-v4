@@ -7,10 +7,11 @@ Tests the CacheInvalidationService and its integration with SSE events
 and ETag-aware cache invalidation.
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.utils.cache_invalidation import CacheInvalidationService
 from app.utils.cache_manager import MemoryCache

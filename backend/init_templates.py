@@ -11,14 +11,15 @@ import json
 import sys
 from pathlib import Path
 
-# Add the app directory to Python path
-sys.path.insert(0, str(Path(__file__).parent))
 
 from app.database.template_initializer import (
-    initialize_overlay_templates,
-    get_template_status,
     TemplateInitializationError,
+    get_template_status,
+    initialize_overlay_templates,
 )
+
+# Add the app directory to Python path
+sys.path.insert(0, str(Path(__file__).parent))
 
 
 def main():

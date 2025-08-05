@@ -9,11 +9,11 @@ following the same patterns as main.py but optimized for worker use.
 from typing import Tuple
 
 from ..database import async_db, sync_db
+from ..enums import LogEmoji, LoggerName
 from ..services.logger.logger_service import (
     get_service_logger,
     initialize_global_logger,
 )
-from ..enums import LoggerName, LogEmoji
 
 
 async def initialize_worker_databases() -> Tuple[object, object]:

@@ -12,17 +12,15 @@ Updated: 2025-07-06 - Debugging thumbnail regeneration endpoints
 
 from fastapi import APIRouter, Query
 
-from ..enums import LoggerName
-from ..services.logger import get_service_logger
-
 from ..dependencies import SchedulerServiceDep, ThumbnailPipelineDep
-from ..enums import ThumbnailJobPriority
+from ..enums import LoggerName, ThumbnailJobPriority
 from ..models.shared_models import (
     ThumbnailGenerationResult,
     ThumbnailOperationResponse,
     ThumbnailRegenerationStatus,
     ThumbnailStatistics,
 )
+from ..services.logger import get_service_logger
 from ..utils.router_helpers import handle_exceptions
 
 logger = get_service_logger(LoggerName.API)

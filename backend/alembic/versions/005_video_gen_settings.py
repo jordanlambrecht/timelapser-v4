@@ -6,9 +6,10 @@ Create Date: 2025-06-17 15:40:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers
 revision = "005_video_gen_settings"
@@ -44,7 +45,7 @@ def upgrade() -> None:
     # Set defaults for existing cameras
     op.execute(
         """
-        UPDATE cameras SET 
+        UPDATE cameras SET
             video_generation_mode = 'standard',
             standard_fps = 12,
             enable_time_limits = false,

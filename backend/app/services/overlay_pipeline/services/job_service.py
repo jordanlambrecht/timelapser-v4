@@ -8,11 +8,6 @@ following the architecture pattern of service -> operations -> database.
 
 from typing import List, Optional
 
-from ....enums import LogEmoji, LoggerName, LogSource
-from ....models.health_model import HealthStatus
-from ....services.logger import get_service_logger
-
-
 from ....constants import (
     DEFAULT_OVERLAY_JOB_BATCH_SIZE,
 )
@@ -22,14 +17,19 @@ from ....database.overlay_job_operations import (
     SyncOverlayJobOperations,
 )
 from ....enums import (
+    LogEmoji,
+    LoggerName,
+    LogSource,
     OverlayJobPriority,
     OverlayJobStatus,
     OverlayJobType,
 )
+from ....models.health_model import HealthStatus
 from ....models.overlay_model import (
     OverlayGenerationJob,
     OverlayGenerationJobCreate,
 )
+from ....services.logger import get_service_logger
 from ....utils.time_utils import utc_timestamp
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)

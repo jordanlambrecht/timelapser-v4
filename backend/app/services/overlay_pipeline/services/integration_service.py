@@ -9,6 +9,8 @@ instead of custom generators.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ....database.core import SyncDatabase
+from ....database.sse_events_operations import SSEEventsOperations
 from ....enums import (
     LogEmoji,
     LoggerName,
@@ -18,11 +20,6 @@ from ....enums import (
     SSEEventSource,
     SSEPriority,
 )
-from ....services.logger import get_service_logger
-
-
-from ....database.core import SyncDatabase
-from ....database.sse_events_operations import SSEEventsOperations
 from ....models.image_model import Image as ImageModel
 from ....models.overlay_model import (
     GlobalOverlayOptions,
@@ -35,6 +32,7 @@ from ....models.overlay_model import (
 )
 from ....services.capture_pipeline.rtsp_service import AsyncRTSPService, RTSPService
 from ....services.image_service import ImageService
+from ....services.logger import get_service_logger
 from ....utils.file_helpers import (
     ensure_directory_exists,
     get_overlay_path_for_image,

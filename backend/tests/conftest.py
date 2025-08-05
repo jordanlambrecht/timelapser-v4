@@ -4,14 +4,15 @@
 Pytest configuration and shared fixtures for Timelapser v4 tests.
 """
 
-import pytest
 import asyncio
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any
 
-from app.utils.cache_manager import MemoryCache, CacheEntry
+import pytest
+
 from app.utils.cache_invalidation import CacheInvalidationService
+from app.utils.cache_manager import MemoryCache
+from backend.app.enums import ThumbnailJobPriority
 
 
 @pytest.fixture
@@ -253,12 +254,11 @@ def mock_async_database():
 @pytest.fixture
 def mock_thumbnail_job_operations(mock_async_database):
     """Mock thumbnail job operations for testing."""
-    from app.database.thumbnail_job_operations import ThumbnailJobOperations
+    from datetime import datetime
     from app.models.shared_models import (
         ThumbnailGenerationJob,
         ThumbnailGenerationJobCreate,
     )
-    from datetime import datetime
 
     class MockThumbnailJobOperations:
         def __init__(self):
@@ -305,7 +305,6 @@ def mock_thumbnail_job_operations(mock_async_database):
 
         async def get_job_statistics(self):
             """Get job queue statistics."""
-            from app.models.shared_models import ThumbnailJobStatistics
 
             stats = {
                 "pending_jobs": len(
@@ -374,30 +373,30 @@ def mock_sse_operations():
 @pytest.fixture
 def sample_thumbnail_job_data():
     """Sample data for thumbnail job testing."""
-    from app.models.shared_models import ThumbnailGenerationJobCreate
-    from app.enums import JobStatus, JobPriority
     from app.constants import (
         THUMBNAIL_JOB_TYPE_SINGLE,
     )
+    from app.enums import JobPriority, JobStatus, ThumbnailJobStatus
+    from app.models.shared_models import ThumbnailGenerationJobCreate
 
     return {
         "basic_job": ThumbnailGenerationJobCreate(
             image_id=1,
-            priority=JobPriority.MEDIUM,
-            status=JobStatus.PENDING,
+            priority=ThumbnailJobPriority.MEDIUM,
+            status=ThumbnailJobStatus.PENDING,
             job_type=THUMBNAIL_JOB_TYPE_SINGLE,
         ),
         "high_priority_job": ThumbnailGenerationJobCreate(
             image_id=2,
             priority="high",
-            status=JobStatus.PENDING,
+            status=ThumbnailJobStatus.PENDING,
             job_type=THUMBNAIL_JOB_TYPE_SINGLE,
         ),
         "batch_jobs": [
             ThumbnailGenerationJobCreate(
                 image_id=i,
                 priority=JobPriority.MEDIUM,
-                status=JobStatus.PENDING,
+                status=ThumbnailJobStatus.PENDING,
                 job_type="bulk",
             )
             for i in range(10, 15)
@@ -408,8 +407,9 @@ def sample_thumbnail_job_data():
 @pytest.fixture
 def mock_image_operations():
     """Mock image operations for testing."""
-    from app.models.image_model import Image, ImageWithDetails
     from datetime import datetime
+
+    from app.models.image_model import Image, ImageWithDetails
 
     class MockImageOperations:
         def __init__(self):
@@ -501,11 +501,11 @@ def mock_thumbnail_worker_dependencies(
 
 def generate_test_thumbnail_jobs(count=5, image_id_start=1):
     """Generate test thumbnail job data."""
-    from app.models.shared_models import ThumbnailGenerationJobCreate
-    from app.enums import JobStatus, JobPriority
     from app.constants import (
         THUMBNAIL_JOB_TYPE_SINGLE,
     )
+    from app.enums import JobPriority, JobStatus
+    from app.models.shared_models import ThumbnailGenerationJobCreate
 
     jobs = []
     for i in range(count):
@@ -551,7 +551,7 @@ def mock_image_service():
                 "message": "Thumbnail generation scheduled through scheduler authority",
                 "scheduled": True,
                 "force_regenerate": force_regenerate,
-                "reason": "scheduler_scheduled"
+                "reason": "scheduler_scheduled",
             }
 
     return MockImageService()
@@ -577,15 +577,16 @@ def mock_thumbnail_service_dependencies(
 @pytest.fixture
 def mock_capture_pipeline_services(mock_sync_database, mock_settings_service):
     """Bundle of mock services for capture pipeline integration testing."""
-    
+
     class MockCaptureServices:
         def __init__(self, sync_db, settings_service):
             self.sync_db = sync_db
             self.settings_service = settings_service
-            
+
         def create_mock_camera(self, camera_id=1, status="active"):
             """Create mock camera data."""
             from app.models.camera_model import Camera
+
             return Camera(
                 id=camera_id,
                 name=f"Test Camera {camera_id}",
@@ -596,10 +597,11 @@ def mock_capture_pipeline_services(mock_sync_database, mock_settings_service):
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
-            
+
         def create_mock_timelapse(self, timelapse_id=1, camera_id=1, status="active"):
             """Create mock timelapse data."""
             from app.models.timelapse_model import Timelapse
+
             return Timelapse(
                 id=timelapse_id,
                 camera_id=camera_id,
@@ -610,10 +612,11 @@ def mock_capture_pipeline_services(mock_sync_database, mock_settings_service):
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
-            
+
         def create_mock_image(self, image_id=1, camera_id=1, timelapse_id=1):
             """Create mock image data."""
             from app.models.image_model import Image
+
             return Image(
                 id=image_id,
                 camera_id=camera_id,
@@ -624,7 +627,7 @@ def mock_capture_pipeline_services(mock_sync_database, mock_settings_service):
                 file_size=1024,
                 corruption_score=95,
             )
-    
+
     return MockCaptureServices(mock_sync_database, mock_settings_service)
 
 
@@ -632,7 +635,7 @@ def mock_capture_pipeline_services(mock_sync_database, mock_settings_service):
 def mock_rtsp_capture_result():
     """Mock RTSP capture result for testing."""
     from app.models.shared_models import RTSPCaptureResult
-    
+
     return RTSPCaptureResult(
         success=True,
         image_path="/test/data/images/test_image.jpg",
@@ -647,7 +650,7 @@ def mock_rtsp_capture_result():
 def mock_capture_validation_result():
     """Mock capture validation result for testing."""
     from app.services.scheduling import CaptureReadinessValidationResult
-    
+
     return CaptureReadinessValidationResult(
         valid=True,
         error=None,
@@ -709,15 +712,16 @@ def integration_test_data():
 @pytest.fixture
 def mock_overlay_operations(mock_async_database):
     """Mock overlay operations for testing."""
+    from datetime import datetime
+
     from app.database.overlay_operations import OverlayOperations
     from app.models.overlay_model import (
+        OverlayAsset,
+        OverlayConfiguration,
         OverlayPreset,
         OverlayPresetCreate,
         TimelapseOverlay,
-        OverlayAsset,
-        OverlayConfiguration,
     )
-    from datetime import datetime
 
     class MockOverlayOperations:
         def __init__(self):
@@ -767,9 +771,12 @@ def mock_overlay_operations(mock_async_database):
 
         async def get_timelapse_overlay(self, timelapse_id):
             return next(
-                (config for config in self.timelapse_overlays.values() 
-                 if config.timelapse_id == timelapse_id), 
-                None
+                (
+                    config
+                    for config in self.timelapse_overlays.values()
+                    if config.timelapse_id == timelapse_id
+                ),
+                None,
             )
 
         async def create_timelapse_overlay(self, config_data):
@@ -876,7 +883,7 @@ def mock_overlay_operations(mock_async_database):
                     ),
                 },
             ]
-            
+
             for preset_data in builtin_presets:
                 preset = OverlayPreset(
                     id=self.next_id,
@@ -896,18 +903,19 @@ def mock_overlay_operations(mock_async_database):
 @pytest.fixture
 def mock_overlay_job_operations(mock_async_database):
     """Mock overlay job operations for testing."""
+    from datetime import datetime
+
+    from app.constants import (
+        OVERLAY_JOB_PRIORITY_MEDIUM,
+        OVERLAY_JOB_TYPE_SINGLE,
+    )
     from app.database.overlay_job_operations import OverlayJobOperations
+    from app.enums import JobPriority, JobStatus
     from app.models.overlay_model import (
         OverlayJob,
         OverlayJobCreate,
         OverlayJobStatistics,
     )
-    from app.enums import JobStatus, JobPriority
-    from app.constants import (
-        OVERLAY_JOB_TYPE_SINGLE,
-        OVERLAY_JOB_PRIORITY_MEDIUM,
-    )
-    from datetime import datetime
 
     class MockOverlayJobOperations:
         def __init__(self):
@@ -937,7 +945,9 @@ def mock_overlay_job_operations(mock_async_database):
             return job
 
         async def get_pending_jobs(self, batch_size=5):
-            pending = [job for job in self.jobs.values() if job.status == JobStatus.PENDING]
+            pending = [
+                job for job in self.jobs.values() if job.status == JobStatus.PENDING
+            ]
             # Sort by priority (high first) then by creation time
             pending.sort(key=lambda x: (x.priority, x.created_at))
             return pending[:batch_size]
@@ -946,7 +956,9 @@ def mock_overlay_job_operations(mock_async_database):
             return self.jobs.get(job_id)
 
         async def get_jobs_by_timelapse(self, timelapse_id):
-            return [job for job in self.jobs.values() if job.timelapse_id == timelapse_id]
+            return [
+                job for job in self.jobs.values() if job.timelapse_id == timelapse_id
+            ]
 
         async def mark_job_started(self, job_id):
             if job_id in self.jobs:
@@ -955,7 +967,9 @@ def mock_overlay_job_operations(mock_async_database):
                 return True
             return False
 
-        async def mark_job_completed(self, job_id, output_path, processing_time_ms=None):
+        async def mark_job_completed(
+            self, job_id, output_path, processing_time_ms=None
+        ):
             if job_id in self.jobs:
                 self.jobs[job_id].status = JobStatus.COMPLETED
                 self.jobs[job_id].completed_at = datetime.utcnow()
@@ -990,42 +1004,51 @@ def mock_overlay_job_operations(mock_async_database):
         async def cancel_jobs_for_timelapse(self, timelapse_id):
             cancelled = 0
             for job in self.jobs.values():
-                if (job.timelapse_id == timelapse_id and 
-                    job.status in [JobStatus.PENDING, JobStatus.PROCESSING]):
+                if job.timelapse_id == timelapse_id and job.status in [
+                    JobStatus.PENDING,
+                    JobStatus.PROCESSING,
+                ]:
                     job.status = "cancelled"
                     cancelled += 1
             return cancelled
 
         async def cleanup_old_jobs(self, older_than_hours=24):
             # For testing, just count completed/failed jobs
-            count = len([
-                job for job in self.jobs.values() 
-                if job.status in [JobStatus.COMPLETED, JobStatus.FAILED, "cancelled"]
-            ])
+            count = len(
+                [
+                    job
+                    for job in self.jobs.values()
+                    if job.status
+                    in [JobStatus.COMPLETED, JobStatus.FAILED, "cancelled"]
+                ]
+            )
             return count
 
         async def get_job_statistics(self):
             """Get job queue statistics."""
             status_counts = {}
             processing_times = []
-            
+
             for job in self.jobs.values():
                 status_counts[job.status] = status_counts.get(job.status, 0) + 1
                 if job.processing_time_ms:
                     processing_times.append(job.processing_time_ms)
-            
+
             total_jobs = len(self.jobs)
             completed_jobs = status_counts.get(JobStatus.COMPLETED, 0)
             failed_jobs = status_counts.get(JobStatus.FAILED, 0)
             avg_processing_time = (
-                int(sum(processing_times) / len(processing_times)) 
-                if processing_times else 0
+                int(sum(processing_times) / len(processing_times))
+                if processing_times
+                else 0
             )
-            
+
             # Calculate success rate
             active_jobs = completed_jobs + failed_jobs
-            success_rate = (completed_jobs / active_jobs * 100) if active_jobs > 0 else 0.0
-            
+            success_rate = (
+                (completed_jobs / active_jobs * 100) if active_jobs > 0 else 0.0
+            )
+
             return OverlayJobStatistics(
                 pending_jobs=status_counts.get(JobStatus.PENDING, 0),
                 processing_jobs=status_counts.get(JobStatus.PROCESSING, 0),
@@ -1042,8 +1065,8 @@ def mock_overlay_job_operations(mock_async_database):
 @pytest.fixture
 def sample_overlay_preset_data():
     """Sample data for overlay preset testing."""
-    from app.models.overlay_model import OverlayPresetCreate, OverlayConfiguration
-    
+    from app.models.overlay_model import OverlayConfiguration, OverlayPresetCreate
+
     overlay_config = OverlayConfiguration(
         show_timestamp=True,
         timestamp_format="%Y-%m-%d %H:%M:%S",
@@ -1055,7 +1078,7 @@ def sample_overlay_preset_data():
         text_color="#FFFFFF",
         font_size=24,
     )
-    
+
     return {
         "basic_preset": OverlayPresetCreate(
             name="Test Preset",
@@ -1081,14 +1104,14 @@ def sample_overlay_preset_data():
 @pytest.fixture
 def sample_overlay_job_data():
     """Sample data for overlay job testing."""
-    from app.models.overlay_model import OverlayJobCreate
-    from app.enums import JobStatus, JobPriority
     from app.constants import (
-        OVERLAY_JOB_TYPE_SINGLE,
-        OVERLAY_JOB_TYPE_BATCH,
         OVERLAY_JOB_PRIORITY_HIGH,
         OVERLAY_JOB_PRIORITY_MEDIUM,
+        OVERLAY_JOB_TYPE_BATCH,
+        OVERLAY_JOB_TYPE_SINGLE,
     )
+    from app.enums import JobPriority, JobStatus
+    from app.models.overlay_model import OverlayJobCreate
 
     return {
         "single_job": OverlayJobCreate(
@@ -1145,12 +1168,12 @@ def mock_overlay_service_dependencies(
 
 def generate_test_overlay_jobs(count=5, timelapse_id=1):
     """Generate test overlay job data."""
-    from app.models.overlay_model import OverlayJobCreate  
-    from app.enums import JobStatus, JobPriority
     from app.constants import (
-        OVERLAY_JOB_TYPE_SINGLE,
         OVERLAY_JOB_PRIORITY_MEDIUM,
+        OVERLAY_JOB_TYPE_SINGLE,
     )
+    from app.enums import JobPriority, JobStatus
+    from app.models.overlay_model import OverlayJobCreate
 
     jobs = []
     for i in range(count):
@@ -1174,7 +1197,7 @@ def generate_test_overlay_jobs(count=5, timelapse_id=1):
 def assert_overlay_preset_valid(preset, expected_name=None):
     """Assert that an overlay preset has valid structure."""
     from app.models.overlay_model import OverlayPreset
-    
+
     assert preset is not None
     assert isinstance(preset, OverlayPreset)
     assert preset.id is not None
@@ -1187,15 +1210,20 @@ def assert_overlay_preset_valid(preset, expected_name=None):
 
 def assert_overlay_job_valid(job, expected_status=None):
     """Assert that an overlay job has valid structure."""
-    from app.models.overlay_model import OverlayJob
     from app.enums import JobStatus
-    
+    from app.models.overlay_model import OverlayJob
+
     assert job is not None
     assert isinstance(job, OverlayJob)
     assert job.id is not None
     assert job.timelapse_id is not None
     assert job.preset_id is not None
-    assert job.status in [JobStatus.PENDING, JobStatus.PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED]
+    assert job.status in [
+        JobStatus.PENDING,
+        JobStatus.PROCESSING,
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+    ]
     if expected_status:
         assert job.status == expected_status
 
@@ -1203,19 +1231,19 @@ def assert_overlay_job_valid(job, expected_status=None):
 def assert_overlay_configuration_valid(config):
     """Assert that overlay configuration is valid."""
     assert isinstance(config, dict)
-    
+
     # If timestamp is enabled, required fields must be present
     if config.get("show_timestamp"):
         assert "timestamp_format" in config
         assert "timestamp_position" in config
-        
+
     # Validate opacity if present
     if "background_opacity" in config:
         opacity = config["background_opacity"]
         assert isinstance(opacity, (int, float))
         assert 0.0 <= opacity <= 1.0
-        
-    # Validate color format if present  
+
+    # Validate color format if present
     if "text_color" in config:
         color = config["text_color"]
         assert isinstance(color, str)
