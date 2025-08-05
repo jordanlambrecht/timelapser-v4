@@ -20,15 +20,17 @@ from typing import (
     TypeVar,
     Generic,
 )
-from datetime import datetime, timedelta
-from ...services.logger import get_service_logger, LogEmoji
-from ...enums import LoggerName
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+from ...services.logger import get_service_logger
+from ...enums import LoggerName
+from ..constants import MILLISECONDS_PER_SECOND
+
 
 from ...utils.time_utils import utc_now
 
 # Enum imports removed - using Any for priority field flexibility
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 
 @runtime_checkable
@@ -264,7 +266,9 @@ class JobBatchProcessor(Generic[T]):
                 job_time = time.time() - job_start_time
                 if success:
                     self.processed_jobs_count += 1
-                    self.total_processing_time_ms += int(job_time * 1000)
+                    self.total_processing_time_ms += int(
+                        job_time * MILLISECONDS_PER_SECOND
+                    )
                 else:
                     self.failed_jobs_count += 1
 

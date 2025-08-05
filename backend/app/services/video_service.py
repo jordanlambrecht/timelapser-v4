@@ -738,11 +738,12 @@ class VideoService:
             )
 
             # Calculate derived statistics
+            # No defensive .get() calls needed - job service guarantees all keys exist
             total_jobs = sum(queue_status.values())
-            pending_jobs = queue_status.get("pending", 0)
-            processing_jobs = queue_status.get("processing", 0)
-            completed_jobs = queue_status.get("completed", 0)
-            failed_jobs = queue_status.get("failed", 0)
+            pending_jobs = queue_status["pending"]
+            processing_jobs = queue_status["processing"]
+            completed_jobs = queue_status["completed"]
+            failed_jobs = queue_status["failed"]
 
             # Determine queue health based on thresholds
             if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:
@@ -1134,11 +1135,12 @@ class SyncVideoService:
             queue_status = video_pipeline.job_service.get_queue_status()
 
             # Calculate derived statistics
+            # No defensive .get() calls needed - job service guarantees all keys exist
             total_jobs = sum(queue_status.values())
-            pending_jobs = queue_status.get("pending", 0)
-            processing_jobs = queue_status.get("processing", 0)
-            completed_jobs = queue_status.get("completed", 0)
-            failed_jobs = queue_status.get("failed", 0)
+            pending_jobs = queue_status["pending"]
+            processing_jobs = queue_status["processing"]
+            completed_jobs = queue_status["completed"]
+            failed_jobs = queue_status["failed"]
 
             # Determine queue health based on thresholds
             if pending_jobs >= VIDEO_QUEUE_ERROR_THRESHOLD:

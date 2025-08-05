@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from ...models.health_model import HealthStatus
 from ...services.logger import get_service_logger
 from ...utils.enum_helpers import parse_enum
+from ...exceptions import JobCoordinationError, CaptureValidationError
 
 if TYPE_CHECKING:
     from ..scheduling import SyncJobQueueService
@@ -239,9 +240,24 @@ class JobCoordinationService:
                     )
                     return {"success": False, "error": "database_creation_failed"}
 
+        except JobCoordinationError as e:
+            logger.error(
+                f"Job coordination error for thumbnail job (image {image_id})",
+                exception=e,
+            )
+            return {"success": False, "error": f"job_coordination_error: {str(e)}"}
+        except CaptureValidationError as e:
+            logger.error(
+                f"Capture validation error for thumbnail job (image {image_id})",
+                exception=e,
+            )
+            return {"success": False, "error": f"validation_error: {str(e)}"}
         except Exception as e:
-            logger.error(f"Error coordinating thumbnail job for image {image_id}: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(
+                f"Unexpected error coordinating thumbnail job for image {image_id}: {e}",
+                exception=e,
+            )
+            return {"success": False, "error": f"unexpected_error: {str(e)}"}
 
     # Evaluate video automation triggers after capture
     def evaluate_video_automation_triggers(
@@ -271,6 +287,7 @@ class JobCoordinationService:
                     "reason": "no_automation_settings",
                 }
 
+            # Convert to typed model for type safety
             automation_mode = automation_settings.get(
                 "VideoAutomationMode", VideoAutomationMode
             )
@@ -576,7 +593,9 @@ class JobCoordinationService:
             VideoAutomationMode.MANUAL: JobPriority.HIGH,
             VideoAutomationMode.THUMBNAIL: JobPriority.MEDIUM,
         }
-        return trigger_priority_map.get(trigger_type, JobPriority.MEDIUM)
+        return trigger_priority_map.get(
+            trigger_type, JobPriority.MEDIUM
+        )  # Acceptable: enum mapping lookup
 
     def get_video_automation_settings(self, timelapse_id: int) -> Dict[str, Any]:
         """
@@ -1002,17 +1021,17 @@ class JobCoordinationService:
 
             # Get thumbnail queue status
             try:
-                thumbnail_stats = self.thumbnail_job_ops.get_job_statistics()
+                thumbnail_stats_dict = self.thumbnail_job_ops.get_job_statistics()
                 thumbnail_queue = {
-                    "pending": thumbnail_stats.get("pending_count", 0),
-                    "processing": thumbnail_stats.get("processing_count", 0),
-                    "completed_today": thumbnail_stats.get("completed_today", 0),
-                    "failed_today": thumbnail_stats.get("failed_today", 0),
-                    "average_processing_time_minutes": thumbnail_stats.get(
-                        "avg_processing_time", 0
+                    "pending": thumbnail_stats_dict.get("pending_count", 0),
+                    "processing": thumbnail_stats_dict.get("processing_count", 0),
+                    "completed_today": thumbnail_stats_dict.get("completed_today", 0),
+                    "failed_today": thumbnail_stats_dict.get("failed_today", 0),
+                    "average_processing_time_minutes": thumbnail_stats_dict.get(
+                        "average_processing_time_minutes", 0.0
                     ),
-                    "oldest_pending_age_minutes": thumbnail_stats.get(
-                        "oldest_pending_age", 0
+                    "oldest_pending_age_minutes": thumbnail_stats_dict.get(
+                        "oldest_pending_age_minutes", 0
                     ),
                     "health": HealthStatus.HEALTHY,
                 }
@@ -1044,17 +1063,17 @@ class JobCoordinationService:
 
             # Get video queue status
             try:
-                video_stats = self.video_ops.get_video_job_statistics()
+                video_stats_dict = self.video_ops.get_video_job_statistics()
                 video_queue = {
-                    JobStatus.PENDING: video_stats.get("pending_count", 0),
-                    JobStatus.PROCESSING: video_stats.get("processing_count", 0),
-                    JobStatus.COMPLETED: video_stats.get("completed_today", 0),
-                    JobStatus.FAILED: video_stats.get("failed_today", 0),
-                    "average_processing_time_minutes": video_stats.get(
-                        "avg_processing_time", 0
+                    JobStatus.PENDING: video_stats_dict.get("pending_count", 0),
+                    JobStatus.PROCESSING: video_stats_dict.get("processing_count", 0),
+                    JobStatus.COMPLETED: video_stats_dict.get("completed_today", 0),
+                    JobStatus.FAILED: video_stats_dict.get("failed_today", 0),
+                    "average_processing_time_minutes": video_stats_dict.get(
+                        "average_processing_time_minutes", 0.0
                     ),
-                    "oldest_pending_age_minutes": video_stats.get(
-                        "oldest_pending_age", 0
+                    "oldest_pending_age_minutes": video_stats_dict.get(
+                        "oldest_pending_age_minutes", 0
                     ),
                     "health": HealthStatus.HEALTHY,
                 }
@@ -1235,7 +1254,9 @@ class JobCoordinationService:
             if isinstance(milestone_config, str):
                 milestone_config = json.loads(milestone_config)
 
-            thresholds = milestone_config.get("thresholds", [])
+            thresholds = milestone_config.get(
+                "thresholds", []
+            )  # Note: milestone_config structure varies
 
             for threshold in thresholds:
                 if image_count == threshold:
@@ -1340,7 +1361,9 @@ class JobCoordinationService:
                 JobStatus.FAILED: 0,
             }
 
-        return status_progress_map.get(job_status, 0)
+        return status_progress_map.get(
+            job_status, 0
+        )  # Acceptable: status mapping lookup
 
     def _validate_job_parameters(
         self, job_types: JobTypes, job_parameters: Dict[str, Any]
@@ -1408,7 +1431,7 @@ class JobCoordinationService:
                     validation_result["valid"] = False
 
                 # Validate trigger type
-                # trigger_type = job_parameters.get(
+                # trigger_type = job_parameters.get(  # Note: commented out code
                 #     "trigger_type", VideoAutomationMode.MANUAL
                 # )
                 # sanitized_trigger_type = parse_enum(

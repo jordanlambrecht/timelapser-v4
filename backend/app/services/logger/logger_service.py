@@ -1745,7 +1745,11 @@ def log() -> LoggerService:
     return _global_logger_instance
 
 
-def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SYSTEM):
+def get_service_logger(
+    logger_name: LoggerName,
+    source: LogSource = LogSource.SYSTEM,
+    default_emoji: Optional[LogEmoji] = None,
+):
     """
     Factory function to create a pre-configured logger for a specific service.
 
@@ -1753,15 +1757,15 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
     the correct source and logger_name parameters while supporting all
     the rich features of the logging system.
 
-    Default emojis are automatically assigned based on log level:
-    - error(): LogEmoji.ERROR
-    - warning(): LogEmoji.WARN
-    - info(): LogEmoji.INFO
-    - debug(): LogEmoji.DEBUG
+    Emoji priority system (highest to lowest):
+    1. Direct: Emoji passed directly to log method call
+    2. Instance-set: Default emoji set when creating the service logger
+    3. Fallback: Default emoji based on log level (ERROR, WARNING, INFO, DEBUG)
 
     Args:
         logger_name: The logger name enum to use for all calls
         source: The log source enum to use for all calls (defaults to SYSTEM)
+        default_emoji: Instance-level default emoji that overrides level-based fallbacks
 
     Returns:
         ServiceLogger instance with error, warning, info, debug methods
@@ -1770,17 +1774,33 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
         from ...services.logger import get_service_logger, LogEmoji
         from ...enums import LoggerName
 
+        # Basic usage - uses fallback emojis (ERROR, WARNING, INFO, DEBUG)
         logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+        logger.error("Something went wrong")  # Uses LogEmoji.ERROR (fallback)
 
-        # Basic usage - emojis auto-assigned
-        logger.error("Something went wrong", exception=e)  # Uses LogEmoji.ERROR
-        logger.info("Processing completed")  # Uses LogEmoji.INFO
+        # Instance-level emoji - overrides fallbacks for all levels
+        camera_logger = get_service_logger(LoggerName.CAMERA, default_emoji=LogEmoji.CAMERA)
+        camera_logger.error("Camera error")  # Uses LogEmoji.CAMERA (instance-set)
+        camera_logger.info("Camera ready")   # Uses LogEmoji.CAMERA (instance-set)
 
-        # Override default emojis when needed
-        logger.error("Critical failure", exception=e, emoji=LogEmoji.FIRE, broadcast_sse=True)
-        logger.info("Job completed", emoji=LogEmoji.PARTY, store_in_db=True, broadcast_sse=True)
-        logger.debug("Debug info", store_in_db=True, emoji=LogEmoji.MAGNIFYING_GLASS)
+        # Direct emoji - highest priority, overrides both instance and fallback
+        camera_logger.error("Critical failure", emoji=LogEmoji.FIRE)  # Uses LogEmoji.FIRE (direct)
     """
+
+    def _resolve_emoji(
+        method_emoji: Optional[LogEmoji], fallback_emoji: LogEmoji
+    ) -> LogEmoji:
+        """
+        Resolve emoji using three-tier priority system:
+        1. Direct (method_emoji) - highest priority
+        2. Instance-set (default_emoji) - medium priority
+        3. Fallback (fallback_emoji) - lowest priority
+        """
+        if method_emoji is not None:
+            return method_emoji  # Direct priority
+        if default_emoji is not None:
+            return default_emoji  # Instance-set priority
+        return fallback_emoji  # Fallback priority
 
     class ServiceLogger:
         @staticmethod
@@ -1794,17 +1814,15 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
             correlation_id: Optional[str] = None,
             **kwargs,
         ):
-            """Log an error with all supported parameters."""
-            # Default emoji for error level
-            if emoji is None:
-                emoji = LogEmoji.ERROR
+            """Log an error with emoji priority system."""
+            resolved_emoji = _resolve_emoji(emoji, LogEmoji.ERROR)
             return log().error(
                 message=message,
                 exception=exception,
                 error_context=error_context,
                 source=source,
                 logger_name=logger_name,
-                emoji=emoji,
+                emoji=resolved_emoji,
                 store_in_db=store_in_db,
                 broadcast_sse=broadcast_sse,
                 correlation_id=correlation_id,
@@ -1820,16 +1838,14 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
             correlation_id: Optional[str] = None,
             **kwargs,
         ):
-            """Log a warning with all supported parameters."""
-            # Default emoji for warning level
-            if emoji is None:
-                emoji = LogEmoji.WARNING
+            """Log a warning with emoji priority system."""
+            resolved_emoji = _resolve_emoji(emoji, LogEmoji.WARNING)
             return log().warning(
                 message=message,
                 extra_context=extra_context,
                 source=source,
                 logger_name=logger_name,
-                emoji=emoji,
+                emoji=resolved_emoji,
                 store_in_db=store_in_db,
                 broadcast_sse=broadcast_sse,
                 correlation_id=correlation_id,
@@ -1846,16 +1862,14 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
             event_type: Optional[SSEEvent] = None,
             **kwargs,
         ):
-            """Log an info message with all supported parameters."""
-            # Default emoji for info level
-            if emoji is None:
-                emoji = LogEmoji.INFO
+            """Log an info message with emoji priority system."""
+            resolved_emoji = _resolve_emoji(emoji, LogEmoji.INFO)
             return log().info(
                 message=message,
                 extra_context=extra_context,
                 source=source,
                 logger_name=logger_name,
-                emoji=emoji,
+                emoji=resolved_emoji,
                 store_in_db=store_in_db,
                 broadcast_sse=broadcast_sse,
                 correlation_id=correlation_id,
@@ -1881,15 +1895,13 @@ def get_service_logger(logger_name: LoggerName, source: LogSource = LogSource.SY
             This allows users to control whether debug logs are stored in the database
             via the 'debug_logs_store_in_db' setting.
             """
-            # Default emoji for debug level
-            if emoji is None:
-                emoji = LogEmoji.DEBUG
+            resolved_emoji = _resolve_emoji(emoji, LogEmoji.DEBUG)
             return log().debug(
                 message=message,
                 extra_context=extra_context,
                 source=source,
                 logger_name=logger_name,
-                emoji=emoji,
+                emoji=resolved_emoji,
                 store_in_db=store_in_db,
                 broadcast_sse=broadcast_sse,
                 correlation_id=correlation_id,

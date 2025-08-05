@@ -12,14 +12,16 @@ import json
 from pathlib import Path
 
 # Add backend to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database.core import AsyncDatabase
-from backend.app.utils.database_performance_profiler import DatabasePerformanceProfiler
-from backend.app.utils.database_micro_optimizations import DatabaseMicroOptimizer
-from app.config import settings
-from backend.app.services.logger import get_service_logger
-from backend.app.enums import LoggerName
+from app.utils.database_performance_profiler import DatabasePerformanceProfiler
+from app.utils.database_micro_optimizations import DatabaseMicroOptimizer
+
+# from app.config import settings
+from app.services.logger import get_service_logger
+from app.enums import LoggerName
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logger = get_service_logger(LoggerName.TEST)
 
@@ -78,7 +80,7 @@ async def main():
         print("=" * 80)
 
         # Performance summary
-        print(f"\n📊 Performance Summary:")
+        print("\n📊 Performance Summary:")
         camera_ops = performance_results.get("camera_operations", {})
         total_camera_time = sum(
             op_data.get("metrics", {}).get("execution_time_ms", 0)
@@ -93,7 +95,7 @@ async def main():
         print(f"   Average Connection Time: {avg_conn_time}ms")
 
         # Optimization opportunities
-        print(f"\n🎯 Optimization Opportunities:")
+        print("\n🎯 Optimization Opportunities:")
         high_priority_ops = optimization_report["summary"]["high_priority_operations"]
         quick_wins = optimization_report["summary"]["quick_wins"]
         index_recommendations = optimization_report["summary"]["index_recommendations"]
@@ -121,7 +123,7 @@ async def main():
             print(f"      Effort: {task['estimated_effort']}")
 
         # Performance recommendations
-        print(f"\n💡 Top Performance Recommendations:")
+        print("\n💡 Top Performance Recommendations:")
         overall_recs = performance_results.get("overall_recommendations", [])
         for i, rec in enumerate(overall_recs[:5], 1):
             print(f"   {i}. {rec}")

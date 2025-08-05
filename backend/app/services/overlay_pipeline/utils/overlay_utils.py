@@ -73,7 +73,7 @@ class OverlayRenderer:
                 try:
                     # Check if we can safely use async template caching
                     try:
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                         # We're already in an async context - this shouldn't happen in sync render_overlay
                         logger.warning(
                             "render_overlay called from async context - this may cause issues"

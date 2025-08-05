@@ -10,7 +10,7 @@ import asyncio
 import time
 from abc import abstractmethod
 from datetime import timedelta
-from typing import Dict, Any, List, Optional, Callable, TypeVar, Generic, Sequence
+from typing import Dict, Any, List, Optional, TypeVar, Generic, Sequence
 
 from ..base_worker import BaseWorker
 from .retry_manager import RetryManager
@@ -381,7 +381,8 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
 
                 # Broadcast error event
                 self.sse_broadcaster.broadcast_worker_error(
-                    error_message=str(e), error_context={"loop_iteration": True}
+                    error_message=f"Unexpected error in {self.name} worker loop: {e}",
+                    error_context={"loop_iteration": True}
                 )
 
                 # Wait before retrying to avoid tight error loops
@@ -454,13 +455,17 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
         Returns:
             Dictionary with complete worker status
         """
-        base_status = {
-            "name": self.name,
-            "running": self.running,
-            "worker_interval": self.worker_interval,
-            "cleanup_hours": self.cleanup_hours,
-            "last_cleanup": self.last_cleanup_time.isoformat(),
-        }
+        # Get base status from BaseWorker
+        base_status = super().get_status()
+
+        # Add JobProcessingMixin-specific fields
+        base_status.update(
+            {
+                "worker_interval": self.worker_interval,
+                "cleanup_hours": self.cleanup_hours,
+                "last_cleanup": self.last_cleanup_time.isoformat(),
+            }
+        )
 
         # Add performance stats from job batch processor
         performance_stats = self.job_batch_processor.get_performance_stats()

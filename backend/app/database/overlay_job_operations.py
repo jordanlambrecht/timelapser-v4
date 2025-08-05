@@ -781,6 +781,30 @@ class SyncOverlayJobOperations:
                 f"Failed to perform operation: {e}", operation="overlay_operation"
             ) from e
 
+    def schedule_retry(self, job_id: int, retry_count: int, delay_minutes: int) -> bool:
+        """Schedule job retry by resetting to pending status (sync)."""
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE overlay_generation_jobs
+                        SET status = %(status)s, started_at = NULL, error_message = NULL
+                        WHERE id = %(job_id)s
+                        """,
+                        {
+                            "status": JobStatus.PENDING,
+                            "job_id": job_id,
+                        },
+                    )
+                    return cur.rowcount > 0
+
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise OverlayOperationError(
+                f"Failed to schedule retry for job {job_id}: {e}",
+                operation="schedule_retry",
+            ) from e
+
     def recover_stuck_jobs(
         self,
         max_processing_age_minutes: int = 30,

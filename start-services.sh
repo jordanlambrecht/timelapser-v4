@@ -46,7 +46,7 @@ fi
 
 # Check if virtual environment exists for backend
 if [ ! -d "backend/venv" ]; then
-    echo "📦 Creating Python virtual environment for backend..."
+    echo "📦 Creating Python virtual environment..."
     cd backend
     python3 -m venv venv
     source venv/bin/activate

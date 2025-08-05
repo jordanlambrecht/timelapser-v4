@@ -12,6 +12,12 @@ from zoneinfo import ZoneInfo
 from ...services.logger import get_service_logger
 from ...enums import LogSource, LoggerName
 from ...constants import DEFAULT_TIMEZONE
+from ..constants import (
+    SCHEDULER_CACHE_TTL_SECONDS,
+    MILLISECONDS_PER_SECOND,
+    SCHEDULER_IMMEDIATE_JOB_DELAY_SECONDS,
+    SCHEDULER_MISFIRE_GRACE_TIME_SECONDS,
+)
 
 
 from ...utils.time_utils import (
@@ -35,7 +41,7 @@ class SchedulerTimeUtils:
         self.settings_service = settings_service
         self._cached_timezone: Optional[ZoneInfo] = None
         self._cache_timestamp = 0
-        self._cache_ttl = 300  # 5 minutes
+        self._cache_ttl = SCHEDULER_CACHE_TTL_SECONDS  # 5 minutes
 
     def get_timezone(self) -> ZoneInfo:
         """
@@ -66,14 +72,16 @@ class SchedulerTimeUtils:
 
         return self._cached_timezone
 
-    def get_immediate_run_time(self, delay_seconds: int = 2) -> datetime:
+    def get_immediate_run_time(
+        self, delay_seconds: int = SCHEDULER_IMMEDIATE_JOB_DELAY_SECONDS
+    ) -> datetime:
         """
         Get timezone-aware datetime for immediate job scheduling.
 
         Uses codebase-standard timezone-aware timestamp generation.
 
         Args:
-            delay_seconds: Seconds to delay execution (default: 2)
+            delay_seconds: Seconds to delay execution (default: SCHEDULER_IMMEDIATE_JOB_DELAY_SECONDS)
 
         Returns:
             Timezone-aware datetime for job scheduling
@@ -102,25 +110,25 @@ class JobIdGenerator:
     @staticmethod
     def immediate_capture(camera_id: int, timelapse_id: int) -> str:
         """Generate job ID for immediate capture."""
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time() * MILLISECONDS_PER_SECOND)
         return f"immediate_capture_{camera_id}_{timelapse_id}_{timestamp}"
 
     @staticmethod
     def immediate_video(timelapse_id: int) -> str:
         """Generate job ID for immediate video generation."""
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time() * MILLISECONDS_PER_SECOND)
         return f"immediate_video_{timelapse_id}_{timestamp}"
 
     @staticmethod
     def immediate_overlay(image_id: int) -> str:
         """Generate job ID for immediate overlay generation."""
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time() * MILLISECONDS_PER_SECOND)
         return f"immediate_overlay_{image_id}_{timestamp}"
 
     @staticmethod
     def immediate_thumbnail(image_id: int) -> str:
         """Generate job ID for immediate thumbnail generation."""
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time() * MILLISECONDS_PER_SECOND)
         return f"immediate_thumbnail_{image_id}_{timestamp}"
 
     @staticmethod
@@ -141,7 +149,11 @@ class SchedulerJobTemplate:
         self.time_utils = time_utils
 
     def schedule_immediate_job(
-        self, job_id: str, wrapper_func, delay_seconds: int = 2, max_instances: int = 1
+        self,
+        job_id: str,
+        wrapper_func,
+        delay_seconds: int = SCHEDULER_IMMEDIATE_JOB_DELAY_SECONDS,
+        max_instances: int = 1,
     ) -> bool:
         """
         Template for scheduling immediate one-time jobs.
@@ -170,7 +182,7 @@ class SchedulerJobTemplate:
                 id=job_id,
                 max_instances=max_instances,
                 coalesce=True,
-                misfire_grace_time=30,
+                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME_SECONDS,
             )
 
             if job:
@@ -211,7 +223,7 @@ class SchedulerJobTemplate:
                 id=job_id,
                 max_instances=max_instances,
                 coalesce=True,
-                misfire_grace_time=30,
+                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME_SECONDS,
             )
 
             if job:
@@ -264,7 +276,7 @@ class SchedulerJobTemplate:
                 id=job_id,
                 max_instances=max_instances,
                 coalesce=True,
-                misfire_grace_time=30,
+                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME_SECONDS,
             )
 
             if job:

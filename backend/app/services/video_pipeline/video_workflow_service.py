@@ -30,12 +30,21 @@ Separation of Concerns:
 - No direct router compatibility layer
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+from ...workers.models.video_responses import (
+    ProcessingStatus,
+    QueueStatus,
+    ProcessQueueResult,
+    VideoGenerationResult,
+)
 
 from ...config import settings
 from ...database.core import SyncDatabase
 from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
+    JobPriority,
+    JobStatus,
     LoggerName,
     LogLevel,
     SSEEvent,
@@ -143,7 +152,7 @@ class VideoWorkflowService:
 
     def execute_video_generation(
         self, job_id: int, timelapse_id: int, settings: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    ) -> VideoGenerationResult:
         """
         🎯 SCHEDULER-CENTRIC: Execute specific video generation job when scheduled.
 
@@ -165,35 +174,27 @@ class VideoWorkflowService:
 
             # Check concurrency limits
             if self.currently_processing >= self.max_concurrent_jobs:
-                return {
-                    "success": False,
-                    "error": f"Maximum concurrent jobs ({self.max_concurrent_jobs}) reached",
-                    "job_id": job_id,
-                }
+                return VideoGenerationResult(
+                    success=False,
+                    error=f"Maximum concurrent jobs ({self.max_concurrent_jobs}) reached",
+                )
 
             # Get the specific job
             job = self.job_service.video_ops.get_video_generation_job_by_id(job_id)
             if not job:
-                return {
-                    "success": False,
-                    "error": f"Job {job_id} not found",
-                    "job_id": job_id,
-                }
+                return VideoGenerationResult(
+                    success=False, error=f"Job {job_id} not found"
+                )
 
             # Execute the job
             self.currently_processing += 1
             try:
                 success = self._process_video_job(job)
-                return {
-                    "success": success,
-                    "job_id": job_id,
-                    "timelapse_id": timelapse_id,
-                    "message": (
-                        "Video generation completed"
-                        if success
-                        else "Video generation failed"
-                    ),
-                }
+                return VideoGenerationResult(
+                    success=success,
+                    video_id=job_id,
+                    error=None if success else "Video generation failed",
+                )
             finally:
                 self.currently_processing = max(0, self.currently_processing - 1)
 
@@ -202,11 +203,7 @@ class VideoWorkflowService:
                 f"Error executing scheduled video generation for job {job_id}: {e}",
                 exception=e,
             )
-            return {
-                "success": False,
-                "error": str(e),
-                "job_id": job_id,
-            }
+            return VideoGenerationResult(success=False, error=str(e))
 
     def process_next_pending_job(self) -> Optional[int]:
         """
@@ -532,37 +529,58 @@ class VideoWorkflowService:
 
             return {"success": False, "error": str(e)}
 
-    def get_processing_status(self) -> Dict[str, Any]:
+    def get_processing_status(self) -> ProcessingStatus:
         """
         Get current video processing status.
 
         Returns:
-            Processing status dictionary
+            ProcessingStatus object with current processing information
         """
         try:
-            queue_status = self.job_service.get_queue_status()
+            queue_status_dict = self.job_service.get_queue_status()
 
-            return {
-                "currently_processing": self.currently_processing,
-                "max_concurrent_jobs": self.max_concurrent_jobs,
-                "queue_status": queue_status,
-                "pending_jobs": queue_status.get("pending", 0),
-                "processing_jobs": queue_status.get("processing", 0),
-                "can_process_more": self.currently_processing
-                < self.max_concurrent_jobs,
-                "capacity_utilization_percent": (
+            # Convert dictionary to typed QueueStatus object using enum keys for type safety
+            # This prevents typos, enables IDE autocomplete, and is refactor-safe
+            # TODO: Consider adding .value for explicit intent in future cleanup pass
+            queue_status = QueueStatus(
+                pending=queue_status_dict[JobStatus.PENDING],
+                processing=queue_status_dict[JobStatus.PROCESSING],
+                completed=queue_status_dict[JobStatus.COMPLETED],
+                failed=queue_status_dict[JobStatus.FAILED],
+            )
+
+            # Return typed ProcessingStatus object - use typed object properties consistently
+            return ProcessingStatus(
+                currently_processing=self.currently_processing,
+                max_concurrent_jobs=self.max_concurrent_jobs,
+                queue_status=queue_status,
+                pending_jobs=queue_status.pending,  # Use typed object property
+                processing_jobs=queue_status.processing,  # Use typed object property
+                can_process_more=self.currently_processing < self.max_concurrent_jobs,
+                capacity_utilization_percent=(
                     self.currently_processing / self.max_concurrent_jobs
                 )
                 * 100,
-            }
+            )
 
         except Exception as e:
             logger.error(f"Failed to get processing status: {e}", exception=e)
-            return {"error": str(e)}
+            # Return a default ProcessingStatus object for error cases
+            return ProcessingStatus(
+                currently_processing=0,
+                max_concurrent_jobs=1,
+                queue_status=QueueStatus(
+                    pending=0, processing=0, completed=0, failed=0
+                ),
+                pending_jobs=0,
+                processing_jobs=0,
+                can_process_more=False,
+                capacity_utilization_percent=0.0,
+            )
 
     def execute_video_generation_direct(
         self, timelapse_id: int, settings: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    ) -> VideoGenerationResult:
         """
         🎯 SCHEDULER-CENTRIC: Execute direct video generation when commanded by scheduler.
 
@@ -582,28 +600,23 @@ class VideoWorkflowService:
             )
 
             # Create a temporary job for direct execution
-            job_data = {
-                "timelapse_id": timelapse_id,
-                "trigger_type": (
-                    settings.get("trigger_type", "manual") if settings else "manual"
-                ),
-                "priority": SSEPriority.HIGH,
-                "settings": settings,
-            }
+            trigger_type = (
+                settings.get("trigger_type", "manual") if settings else "manual"
+            )
+            priority = JobPriority.HIGH  # Direct execution gets high priority
 
             # Use job service to create job
             job_id = self.job_service.create_job(
                 timelapse_id=timelapse_id,
-                trigger_type=job_data["trigger_type"],
-                priority=job_data["priority"],
+                trigger_type=trigger_type,
+                priority=priority,
                 settings=settings,
             )
 
             if not job_id:
-                return {
-                    "success": False,
-                    "error": "Failed to create video job",
-                }
+                return VideoGenerationResult(
+                    success=False, error="Failed to create video job"
+                )
 
             # Execute the job immediately
             result = self.execute_video_generation(
@@ -619,12 +632,9 @@ class VideoWorkflowService:
                 f"Direct video generation failed for timelapse {timelapse_id}: {e}",
                 exception=e,
             )
-            return {
-                "success": False,
-                "error": str(e),
-            }
+            return VideoGenerationResult(success=False, error=str(e))
 
-    def process_queue_only(self) -> Dict[str, Any]:
+    def process_queue_only(self) -> ProcessQueueResult:
         """
         🎯 SCHEDULER-CENTRIC: Process existing jobs without autonomous trigger evaluation.
 
@@ -639,7 +649,7 @@ class VideoWorkflowService:
             logger.debug("Processing video queue (execution-only mode)")
 
             jobs_processed = 0
-            errors = []
+            errors: List[str] = []
 
             # Process up to max_concurrent_jobs
             while self.currently_processing < self.max_concurrent_jobs:
@@ -653,20 +663,21 @@ class VideoWorkflowService:
                     # No more pending jobs
                     break
 
-            return {
-                "success": True,
-                "jobs_processed": jobs_processed,
-                "currently_processing": self.currently_processing,
-                "errors": errors,
-            }
+            return ProcessQueueResult(
+                success=True,
+                jobs_processed=jobs_processed,
+                currently_processing=self.currently_processing,
+                errors=errors,
+            )
 
         except Exception as e:
             logger.error(f"Queue processing failed: {e}", exception=e)
-            return {
-                "success": False,
-                "jobs_processed": 0,
-                "errors": [str(e)],
-            }
+            return ProcessQueueResult(
+                success=False,
+                jobs_processed=0,
+                currently_processing=self.currently_processing,
+                errors=[str(e)],
+            )
 
     def get_workflow_health(self) -> Dict[str, Any]:
         """
@@ -708,9 +719,7 @@ class VideoWorkflowService:
                 "processing_capacity": {
                     "currently_processing": self.currently_processing,
                     "max_concurrent_jobs": self.max_concurrent_jobs,
-                    "capacity_utilization_percent": processing_status.get(
-                        "capacity_utilization_percent", 0
-                    ),
+                    "capacity_utilization_percent": processing_status.capacity_utilization_percent,
                 },
                 "sub_services": {
                     "job_service": job_service_health,

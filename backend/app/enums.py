@@ -167,7 +167,9 @@ class VideoGenerationMode(str, Enum):
     TARGET = "target"
 
 
-class VideoAutomationMode(str, Enum):
+class VideoAutomationMode(
+    str, Enum
+):  # Also referenced in some places as "trigger type"
     """Video automation mode enum for trigger types."""
 
     UNKNOWN = "unknown"
@@ -448,7 +450,7 @@ class LogEmoji(str, Enum):
     # System emojis
     SYSTEM = "⚙️"
     STARTUP = "🚀"
-    SHUTDOWN = "🔌"
+    SHUTDOWN = "🛑"
     HEALTH = "💓"
     CLEANUP = "🧹"
     MAINTENANCE = "🔧"
@@ -515,9 +517,11 @@ class LoggerName(str, Enum):
     THUMBNAIL_WORKER = "thumbnail_worker"
     OVERLAY_WORKER = "overlay_worker"
     SCHEDULER_WORKER = "scheduler_worker"
+    CLEANUP_WORKER = "cleanup_worker"
     HEALTH_WORKER = "health_worker"
     VIDEO_WORKER = "video_worker"
     SSE_WORKER = "sse_worker"
+    WEATHER_WORKER = "weather_worker"
 
     # Pipeline loggers
     VIDEO_PIPELINE = "video_pipeline"
@@ -591,3 +595,24 @@ class TimelapseStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     UNKNOWN = "unknown"
+
+
+# =============================================================================
+# WORKER SYSTEMS
+# =============================================================================
+
+
+class WorkerType(str, Enum):
+    """Worker type identifiers for status reporting and monitoring."""
+
+    CAPTURE_WORKER = "CaptureWorker"
+    CLEANUP_WORKER = "CleanupWorker"
+    HEALTH_WORKER = "HealthWorker"
+    OVERLAY_WORKER = "OverlayWorker"
+    SCHEDULER_WORKER = "SchedulerWorker"
+    SSE_WORKER = "SSEWorker"
+    THUMBNAIL_WORKER = "ThumbnailWorker"
+    VIDEO_WORKER = "VideoWorker"
+    WEATHER_WORKER = "WeatherWorker"
+    SYSTEM_WORKER = "SystemWorker"
+    UNKNOWN = "Unknown"

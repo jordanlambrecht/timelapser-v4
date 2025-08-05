@@ -6,7 +6,7 @@ Consolidates repeated settings access patterns across all workers to eliminate
 code duplication and provide consistent settings handling.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from ...constants import (
     BOOLEAN_TRUE_STRING,
     SETTING_KEY_GENERATE_THUMBNAILS,

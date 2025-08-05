@@ -20,7 +20,7 @@ class Settings(BaseSettings):
         default=20,
         ge=5,
         le=100,
-        description="Database connection pool size (optimized for concurrent operations)",
+        description="Database connection pool size (optimized for concurrency)",
     )
     db_max_overflow: int = Field(
         default=30,
@@ -29,7 +29,10 @@ class Settings(BaseSettings):
         description="Maximum overflow connections (optimized for peak load)",
     )
     db_pool_timeout: int = Field(
-        default=30, ge=5, le=300, description="Database connection timeout in seconds"
+        default=30,
+        ge=5,
+        le=300,
+        description="Database connection timeout in seconds",
     )
 
     # API
@@ -49,7 +52,7 @@ class Settings(BaseSettings):
             "http://localhost:3001",
             "http://localhost:3002",
         ],
-        description="Allowed CORS origins. Can be comma-separated string or list.",
+        description="Allowed CORS origins. Can be comma-separated string.",
     )
 
     @property
@@ -69,7 +72,7 @@ class Settings(BaseSettings):
     # ============= PATH CONFIGURATION (AI-CONTEXT COMPLIANT) =============
     # CRITICAL: All file operations MUST use these settings
 
-    # Base data directory - defaults to relative path, can be overridden via environment
+    # Base data directory - defaults to relative path, overrideable
     data_directory: str = "./data"
 
     @property
@@ -131,10 +134,16 @@ class Settings(BaseSettings):
         description="Capture interval in seconds (10s to 24h)",
     )
     max_concurrent_captures: int = Field(
-        default=4, ge=1, le=20, description="Maximum concurrent capture operations"
+        default=4,
+        ge=1,
+        le=20,
+        description="Maximum concurrent capture operations",
     )
     health_check_interval: int = Field(
-        default=120, ge=30, le=3600, description="Health check interval in seconds"
+        default=120,
+        ge=30,
+        le=3600,
+        description="Health check interval in seconds",
     )
 
     # Video generation

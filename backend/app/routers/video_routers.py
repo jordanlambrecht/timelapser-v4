@@ -60,7 +60,6 @@ from ..utils.router_helpers import (
 from ..utils.time_utils import (
     format_filename_timestamp,
     get_timezone_aware_timestamp_async,
-    parse_iso_timestamp_safe,
 )
 from ..utils.validation_helpers import (
     create_default_video_settings,
@@ -215,9 +214,7 @@ async def delete_video(
 ):
     """Delete a video"""
     # Check if video exists using validate_entity_exists
-    existing_video = await validate_entity_exists(
-        video_service.get_video_by_id, video_id, "video"
-    )
+    await validate_entity_exists(video_service.get_video_by_id, video_id, "video")
 
     # Delete video
     success = await video_service.delete_video(video_id)
@@ -271,11 +268,6 @@ async def download_video(
     if video.created_at:
         try:
             # Parse timestamp safely using time_utils
-            if isinstance(video.created_at, str):
-                parsed_timestamp = parse_iso_timestamp_safe(video.created_at)
-            else:  # datetime object
-                parsed_timestamp = video.created_at
-
             # Get timezone-aware timestamp using settings service
             timezone_aware_timestamp = await get_timezone_aware_timestamp_async(
                 settings_service
@@ -319,10 +311,8 @@ async def generate_video(
     ALL timing operations must flow through SchedulerWorker. This ensures proper
     coordination and prevents conflicts with other video generation jobs.
     """
-    import asyncio
-
     # Validate camera exists and is accessible
-    camera = await validate_entity_exists(
+    await validate_entity_exists(
         camera_service.get_camera_by_id, request.camera_id, "camera"
     )
 
@@ -339,7 +329,7 @@ async def generate_video(
             detail="System is unhealthy, video generation temporarily unavailable",
         )
 
-    loop = asyncio.get_event_loop()
+    # Event loop is available in async context
 
     try:
         # 🎯 SCHEDULER-CENTRIC: Route video generation through scheduler authority
@@ -389,10 +379,11 @@ async def get_video_generation_queue(
 ):
     """Get current video generation queue status with health monitoring"""
 
-    loop = asyncio.get_event_loop()
+    # Event loop is available in async context
 
     try:
         # Get queue status from job service and processing status from workflow service
+        loop = asyncio.get_event_loop()
         queue_status = await loop.run_in_executor(
             None, video_pipeline.job_service.get_queue_status
         )
@@ -400,21 +391,33 @@ async def get_video_generation_queue(
             None, video_pipeline.get_processing_status
         )
 
-        # Combine both statuses for comprehensive automation stats
-        combined_status = {**queue_status, **processing_status}
+        # Service Layer Boundary Pattern - Services should return typed objects
+        # Router receives clean typed objects without defensive conversions
+        combined_status = {
+            **queue_status,
+            "currently_processing": processing_status.currently_processing,
+            "max_concurrent_jobs": processing_status.max_concurrent_jobs,
+            "can_process_more": processing_status.can_process_more,
+            "queue_status": {
+                "pending": processing_status.queue_status.pending,
+                "processing": processing_status.queue_status.processing,
+                "completed": processing_status.queue_status.completed,
+                "failed": processing_status.queue_status.failed,
+            },
+        }
 
         # Add health check for video queue
         health_status = await health_service.get_detailed_health()
 
         # Enhance response with health information
-        enhanced_status = {
+        final_status = {
             **combined_status,
             "system_health": health_status.status,
             "warnings": health_status.warnings,
         }
 
         return ResponseFormatter.success(
-            "Video generation queue status retrieved", data=enhanced_status
+            "Video generation queue status retrieved", data=final_status
         )
 
     except Exception as e:

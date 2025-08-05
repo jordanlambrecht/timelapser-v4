@@ -203,7 +203,7 @@ class OverlayTemplateInitializer:
                             continue
 
                         # Insert template
-                        template_id = self.insert_template(conn, template)
+                        self.insert_template(conn, template)
                         inserted_count += 1
 
                     except TemplateInitializationError as e:

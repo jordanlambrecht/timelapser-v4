@@ -17,7 +17,7 @@ Responsibilities:
 from datetime import timedelta
 from typing import Any, Dict
 
-from ....enums import LoggerName
+from ....enums import LogSource, LoggerName
 from ....services.logger import LogEmoji, get_service_logger
 from ....utils.time_utils import utc_now
 
@@ -31,7 +31,21 @@ from ....database.corruption_operations import (
     SyncCorruptionOperations,
 )
 
-logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
+from ..models.corruption_responses import (
+    DetectionStatsData,
+    QualityMetricsData,
+    PerformanceMetricsData,
+    HealthMetricsData,
+    CameraSettingsData,
+    CameraStatisticsResponse,
+    TimelapseStatisticsResponse,
+)
+from ..exceptions import (
+    CorruptionStatisticsError,
+    CorruptionEvaluationError,
+)
+
+logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE, LogSource.PIPELINE)
 
 
 class CorruptionStatisticsService:
@@ -127,15 +141,27 @@ class CorruptionStatisticsService:
                 "generated_at": utc_now(),
             }
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                "Corruption statistics error for system statistics", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during system statistics", exception=e
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting system statistics: {e}",
+                f"Unexpected error getting system statistics: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to get system statistics: {str(e)}"
+            ) from e
 
-    async def get_camera_statistics(self, camera_id: int) -> Dict[str, Any]:
+    async def get_camera_statistics(self, camera_id: int) -> CameraStatisticsResponse:
         """
         Get detailed statistics for a specific camera.
 
@@ -149,11 +175,11 @@ class CorruptionStatisticsService:
             # Get camera corruption stats
             stats = await self.db_ops.get_corruption_stats(camera_id=camera_id)
 
-            # Get camera metadata
-            metadata = await self.db_ops.get_camera_corruption_metadata(camera_id)
+            # Get camera metadata - Service Layer Boundary Pattern: process raw dict
+            metadata_dict = await self.db_ops.get_camera_corruption_metadata(camera_id)
 
-            # Get camera settings
-            camera_settings = await self.db_ops.get_camera_corruption_settings(
+            # Get camera settings - Service Layer Boundary Pattern: process raw dict
+            camera_settings_dict = await self.db_ops.get_camera_corruption_settings(
                 camera_id
             )
 
@@ -168,52 +194,68 @@ class CorruptionStatisticsService:
             if stats.total_detections > 0:
                 discard_rate = (stats.images_discarded / stats.total_detections) * 100
 
-            return {
-                "camera_id": camera_id,
-                "detection_stats": {
-                    "total_detections": stats.total_detections,
-                    "images_saved": stats.images_saved,
-                    "images_discarded": stats.images_discarded,
-                    "images_retried": stats.images_retried,
-                    "detection_efficiency_percent": detection_efficiency,
-                    "discard_rate_percent": discard_rate,
-                },
-                "quality_metrics": {
-                    "avg_corruption_score": stats.avg_corruption_score,
-                    "min_corruption_score": stats.min_corruption_score,
-                    "max_corruption_score": stats.max_corruption_score,
-                },
-                "performance_metrics": {
-                    "avg_processing_time_ms": stats.avg_processing_time_ms,
-                },
-                "health_metrics": {
-                    "consecutive_failures": metadata.get(
+            # Service Layer Boundary Pattern - Return typed object at boundary
+            return CameraStatisticsResponse(
+                camera_id=camera_id,
+                detection_stats=DetectionStatsData(
+                    total_detections=stats.total_detections,
+                    images_saved=stats.images_saved,
+                    images_discarded=stats.images_discarded,
+                    images_retried=stats.images_retried,
+                    detection_efficiency_percent=detection_efficiency,
+                    discard_rate_percent=discard_rate,
+                ),
+                quality_metrics=QualityMetricsData(
+                    avg_corruption_score=stats.avg_corruption_score,
+                    min_corruption_score=stats.min_corruption_score,
+                    max_corruption_score=stats.max_corruption_score,
+                ),
+                performance_metrics=PerformanceMetricsData(
+                    avg_processing_time_ms=stats.avg_processing_time_ms,
+                ),
+                health_metrics=HealthMetricsData(
+                    consecutive_failures=metadata_dict.get(
                         "consecutive_corruption_failures", 0
                     ),
-                    "lifetime_glitch_count": metadata.get("lifetime_glitch_count", 0),
-                    "degraded_mode_active": metadata.get("degraded_mode_active", False),
-                    "last_degraded_at": metadata.get("last_degraded_at"),
-                },
-                "settings": {
-                    "heavy_detection_enabled": camera_settings.get(
+                    lifetime_glitch_count=metadata_dict.get("lifetime_glitch_count", 0),
+                    degraded_mode_active=metadata_dict.get(
+                        "degraded_mode_active", False
+                    ),
+                    last_degraded_at=metadata_dict.get("last_degraded_at"),
+                ),
+                settings=CameraSettingsData(
+                    heavy_detection_enabled=camera_settings_dict.get(
                         "heavy_detection_enabled", False
                     ),
-                },
-                "most_recent_detection": stats.most_recent_detection,
-                "generated_at": utc_now(),
-            }
+                ),
+                most_recent_detection=stats.most_recent_detection,
+                generated_at=utc_now(),
+            )
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                f"Corruption statistics error for camera {camera_id}", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during camera {camera_id} statistics",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting camera {camera_id} statistics: {e}",
+                f"Unexpected error getting camera {camera_id} statistics: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to get camera {camera_id} statistics: {str(e)}"
+            ) from e
 
     async def get_timelapse_quality_statistics(
         self, timelapse_id: int
-    ) -> Dict[str, Any]:
+    ) -> TimelapseStatisticsResponse:
         """
         Get quality statistics for a specific timelapse.
 
@@ -224,43 +266,47 @@ class CorruptionStatisticsService:
             Dictionary with timelapse quality statistics
         """
         try:
-            stats = await self.db_ops.get_timelapse_quality_statistics(timelapse_id)
+            # Service Layer Boundary Pattern - Process raw dictionary internally
+            stats_dict = await self.db_ops.get_timelapse_quality_statistics(
+                timelapse_id
+            )
 
-            # Calculate derived metrics
-            quality_score = 100.0
-            flagged_percentage = 0.0
-
-            if stats.get("total_images", 0) > 0:
-                flagged_percentage = (
-                    stats.get("flagged_images", 0) / stats["total_images"]
-                ) * 100
-                quality_score = 100.0 - (
-                    flagged_percentage * 2
-                )  # Simple quality scoring
-                quality_score = max(0.0, min(100.0, quality_score))
-
-            return {
-                "timelapse_id": timelapse_id,
-                "image_stats": {
-                    "total_images": stats.get("total_images", 0),
-                    "flagged_images": stats.get("flagged_images", 0),
-                    "manual_flags": stats.get("manual_flags", 0),
-                    "flagged_percentage": flagged_percentage,
+            # Service Layer Boundary Pattern - Return typed object at boundary
+            return TimelapseStatisticsResponse(
+                timelapse_id=timelapse_id,
+                image_stats={
+                    "total_images": stats_dict.get("total_images", 0),
+                    "flagged_images": stats_dict.get("flagged_images", 0),
+                    "manual_flags": stats_dict.get("manual_flags", 0),
+                    "flagged_percentage": stats_dict.get("flagged_percentage", 0.0),
                 },
-                "quality_metrics": {
-                    "avg_corruption_score": stats.get("avg_score", 100.0),
-                    "quality_score": quality_score,
+                quality_metrics={
+                    "avg_corruption_score": stats_dict.get("avg_score", 0.0),
+                    "quality_score": stats_dict.get("quality_score", 0.0),
                 },
-                "generated_at": utc_now(),
-            }
+                generated_at=utc_now(),
+            )
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                f"Corruption statistics error for timelapse {timelapse_id}", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during timelapse {timelapse_id} statistics",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting timelapse {timelapse_id} quality statistics: {e}",
+                f"Unexpected error getting timelapse {timelapse_id} quality statistics: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to get timelapse {timelapse_id} statistics: {str(e)}"
+            ) from e
 
     async def get_detection_trends(self, hours: int = 24) -> Dict[str, Any]:
         """
@@ -325,13 +371,25 @@ class CorruptionStatisticsService:
                 "generated_at": utc_now(),
             }
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                "Corruption statistics error for detection trends", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during detection trends", exception=e
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting detection trends: {e}",
+                f"Unexpected error getting detection trends: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to get detection trends: {str(e)}"
+            ) from e
 
     async def get_performance_metrics(self) -> Dict[str, Any]:
         """
@@ -379,13 +437,25 @@ class CorruptionStatisticsService:
                 "generated_at": utc_now(),
             }
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                "Corruption statistics error for performance metrics", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during performance metrics", exception=e
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting performance metrics: {e}",
+                f"Unexpected error getting performance metrics: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to get performance metrics: {str(e)}"
+            ) from e
 
     async def export_statistics_report(self, format: str = "json") -> Dict[str, Any]:
         """
@@ -425,13 +495,23 @@ class CorruptionStatisticsService:
 
             return report
 
+        except CorruptionStatisticsError as e:
+            logger.error("Corruption statistics error for export report", exception=e)
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during export report", exception=e
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error exporting statistics report: {e}",
+                f"Unexpected error exporting statistics report: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CorruptionStatisticsError(
+                f"Failed to export statistics report: {str(e)}"
+            ) from e
 
 
 class SyncCorruptionStatisticsService:
@@ -458,25 +538,55 @@ class SyncCorruptionStatisticsService:
             Dictionary with basic camera statistics
         """
         try:
-            # Get camera failure stats
-            failure_stats = self.db_ops.get_camera_corruption_failure_stats(camera_id)
+            # Service Layer Boundary Pattern - Process raw dictionary internally
+            failure_stats_dict = self.db_ops.get_camera_corruption_failure_stats(
+                camera_id
+            )
 
             return {
                 "camera_id": camera_id,
-                "consecutive_failures": failure_stats.get(
+                "consecutive_failures": failure_stats_dict.get(
                     "consecutive_corruption_failures", 0
                 ),
-                "lifetime_glitch_count": failure_stats.get("lifetime_glitch_count", 0),
-                "degraded_mode_active": failure_stats.get(
+                "lifetime_glitch_count": failure_stats_dict.get(
+                    "lifetime_glitch_count", 0
+                ),
+                "degraded_mode_active": failure_stats_dict.get(
                     "degraded_mode_active", False
                 ),
-                "failures_last_hour": failure_stats.get("failures_last_hour", 0),
-                "failures_last_30min": failure_stats.get("failures_last_30min", 0),
+                "failures_last_hour": failure_stats_dict.get("failures_last_hour", 0),
+                "failures_last_30min": failure_stats_dict.get("failures_last_30min", 0),
             }
 
+        except CorruptionStatisticsError as e:
+            logger.error(
+                f"Corruption statistics error for basic camera {camera_id} stats",
+                exception=e,
+            )
+            return {
+                "camera_id": camera_id,
+                "consecutive_failures": 0,
+                "lifetime_glitch_count": 0,
+                "degraded_mode_active": False,
+                "failures_last_hour": 0,
+                "failures_last_30min": 0,
+            }
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during basic camera {camera_id} stats",
+                exception=e,
+            )
+            return {
+                "camera_id": camera_id,
+                "consecutive_failures": 0,
+                "lifetime_glitch_count": 0,
+                "degraded_mode_active": False,
+                "failures_last_hour": 0,
+                "failures_last_30min": 0,
+            }
         except Exception as e:
             logger.error(
-                f"Error getting basic camera {camera_id} stats: {e}",
+                f"Unexpected error getting basic camera {camera_id} stats: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )

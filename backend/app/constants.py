@@ -760,6 +760,7 @@ LOG_RETENTION_PERIOD = "30 days"
 # Error and success messages for camera operations
 CAMERA_NOT_FOUND = "Camera not found"
 CAMERA_CAPTURE_SUCCESS = "Capture successful"
+UNKNOWN_ERROR_MESSAGE = "Unknown error"
 
 
 # ====================================================================

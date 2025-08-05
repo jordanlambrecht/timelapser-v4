@@ -8,6 +8,8 @@ with proper dependency injection following the established pattern.
 
 from typing import Any, Dict, Optional
 
+from ..image_service import ImageService, SyncImageService
+
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...enums import LogEmoji, LoggerName, LogSource
 from ...models.health_model import HealthStatus
@@ -77,7 +79,7 @@ class OverlayPipeline:
             async_database: Async database instance (for async services)
             settings_service: Settings service for configuration access (required for production)
             sse_ops: SSE events operations for real-time notifications (required for production)
-            
+
         Note:
             Weather data is read from stored image records (weather_temperature, weather_conditions, etc.)
             rather than making live API calls to weather services.
@@ -112,8 +114,6 @@ class OverlayPipeline:
             )
             self.sync_preset_service = SyncOverlayPresetService(self.database)
             self.sync_template_service = SyncOverlayTemplateService(self.database)
-            # Create SyncImageService for integration service
-            from ...services.image_service import SyncImageService
 
             sync_image_service = SyncImageService(self.database)
 
@@ -144,8 +144,6 @@ class OverlayPipeline:
                 self.job_service = AsyncOverlayJobService(
                     self.async_database, self.settings_service
                 )
-                # Create ImageService for async integration service
-                from ...services.image_service import ImageService
 
                 image_service = ImageService(self.async_database, self.settings_service)
 

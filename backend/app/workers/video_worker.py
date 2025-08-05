@@ -11,15 +11,31 @@ Core Philosophy: "Scheduler says jump, VideoWorker says how high"
 
 from typing import Dict, Any, Optional
 
-from ..enums import LogEmoji, LoggerName
+from ..services.video_pipeline import create_video_pipeline, get_video_pipeline_health
 
 from .base_worker import BaseWorker
-from ..services.video_pipeline import create_video_pipeline, get_video_pipeline_health
-from ..services.video_pipeline.video_workflow_service import VideoWorkflowService
+from .utils.worker_status_builder import WorkerStatusBuilder
 from ..database.core import SyncDatabase
 
+from .exceptions import (
+    WorkerInitializationError,
+    ServiceUnavailableError,
+    VideoGenerationError,
+    JobProcessingError,
+    HealthCheckError,
+    CleanupOperationError,
+)
+
+from ..enums import (
+    LogEmoji,
+    LoggerName,
+    WorkerType,
+    LogSource,
+    VideoAutomationMode,
+)
+from ..models.health_model import HealthStatus
+
 from ..services.logger import get_service_logger
-from ..enums import LogSource
 
 logger = get_service_logger(LoggerName.VIDEO_WORKER, LogSource.WORKER)
 
@@ -47,79 +63,53 @@ class VideoWorker(BaseWorker):
 
         Args:
             db: SyncDatabase instance for pipeline creation
+
+        Raises:
+            WorkerInitializationError: If required dependencies are missing
         """
+        # Validate required dependencies
+        if not db:
+            raise WorkerInitializationError("SyncDatabase is required")
+
         super().__init__("VideoWorker")
         self.db = db
-        self.workflow_service: Optional[VideoWorkflowService] = None
+        self.workflow_service = (
+            None  # Will be VideoWorkflowService after initialization
+        )
 
     async def initialize(self) -> None:
         """Initialize video worker resources using factory pattern."""
         try:
+
             # Create video pipeline using factory
             self.workflow_service = create_video_pipeline(self.db)
+
+            # FAIL FAST: Service must be initialized properly
+            if not self.workflow_service:
+                raise WorkerInitializationError(
+                    "Failed to initialize video workflow service - worker cannot start"
+                )
+
             logger.info(
                 "Initialized video worker with simplified pipeline",
-                extra_context={"worker_type": "video", "pipeline_type": "simplified"},
+                store_in_db=False,
                 emoji=LogEmoji.VIDEO,
             )
 
-            # Perform startup recovery for stuck video jobs
-            if self.workflow_service and hasattr(self.workflow_service, "video_ops"):
-                try:
-                    logger.info(
-                        "🔄 Performing startup recovery for stuck video generation jobs...",
-                        extra_context={
-                            "operation": "startup_recovery",
-                            "job_type": "video_generation",
-                        },
-                    )
-                    recovery_results = await self.run_in_executor(
-                        self.workflow_service.video_ops.recover_stuck_jobs, 30
-                    )
+            # Startup recovery functionality not implemented in current video pipeline
+            logger.debug(
+                "VideoWorker initialized - no startup recovery needed",
+                store_in_db=False,
+            )
 
-                    if recovery_results.get("stuck_jobs_recovered", 0) > 0:
-                        logger.info(
-                            f"Recovered {recovery_results['stuck_jobs_recovered']} stuck video jobs on startup",
-                            extra_context={
-                                "operation": "startup_recovery",
-                                "stuck_jobs_recovered": recovery_results[
-                                    "stuck_jobs_recovered"
-                                ],
-                                "job_type": "video_generation",
-                            },
-                            emoji=LogEmoji.SUCCESS,
-                        )
-                    elif recovery_results.get("stuck_jobs_found", 0) > 0:
-                        logger.warning(
-                            f"Found {recovery_results['stuck_jobs_found']} stuck video jobs but only recovered "
-                            f"{recovery_results['stuck_jobs_recovered']}",
-                            extra_context={
-                                "operation": "startup_recovery",
-                                "stuck_jobs_found": recovery_results[
-                                    "stuck_jobs_found"
-                                ],
-                                "stuck_jobs_recovered": recovery_results[
-                                    "stuck_jobs_recovered"
-                                ],
-                                "job_type": "video_generation",
-                            },
-                        )
-                    else:
-                        logger.debug(
-                            "No stuck video jobs found during startup recovery",
-                            extra_context={
-                                "operation": "startup_recovery",
-                                "stuck_jobs_found": 0,
-                                "job_type": "video_generation",
-                            },
-                        )
-
-                except Exception as e:
-                    logger.error(f"Error during startup recovery for video jobs: {e}")
-
-        except Exception as e:
-            logger.error("Failed to initialize video worker", e)
+        except (WorkerInitializationError, ServiceUnavailableError):
+            # Re-raise specific initialization errors
             raise
+        except Exception as e:
+            logger.error(f"Failed to initialize video worker: {e}", store_in_db=False)
+            raise WorkerInitializationError(
+                f"Unexpected initialization failure: {e}"
+            ) from e
 
     async def cleanup(self) -> None:
         """Cleanup video worker resources."""
@@ -138,8 +128,11 @@ class VideoWorker(BaseWorker):
                         )
 
             logger.info("Cleaned up video worker", emoji=LogEmoji.SUCCESS)
+        except CleanupOperationError as e:
+            logger.error(f"Error during video worker cleanup: {e}")
         except Exception as e:
-            logger.error("Error during video worker cleanup", e)
+            # Unexpected cleanup errors shouldn't prevent shutdown
+            logger.warning(f"Unexpected error during cleanup: {e}")
 
     async def process_pending_jobs(self) -> None:
         """
@@ -152,15 +145,9 @@ class VideoWorker(BaseWorker):
         Called by scheduler to process the video job queue.
         """
         try:
+            # Service guaranteed to exist after initialization - no defensive check needed
             if not self.workflow_service:
-                logger.error(
-                    "Video workflow service not initialized",
-                    extra_context={
-                        "operation": "process_pending_jobs",
-                        "error_type": "service_not_initialized",
-                    },
-                )
-                return
+                raise ServiceUnavailableError("VideoWorkflowService not initialized")
 
             # EXECUTION-ONLY: Process pending jobs without autonomous trigger evaluation
             result = await self.run_in_executor(
@@ -168,41 +155,28 @@ class VideoWorker(BaseWorker):
             )
 
             # Log execution results (no job creation, only processing)
-            if result.get("success"):
-                jobs_processed = result.get("jobs_processed", 0)
-
-                if jobs_processed > 0:
+            if result.success:
+                if result.jobs_processed > 0:
                     logger.info(
-                        f"Video execution: {jobs_processed} jobs processed",
-                        extra_context={
-                            "operation": "process_pending_jobs",
-                            "jobs_processed": jobs_processed,
-                            "success": True,
-                        },
+                        f"Video execution: {result.jobs_processed} jobs processed",
+                        store_in_db=False,
                     )
                 else:
                     logger.debug(
                         "Video execution cycle completed - no pending jobs",
-                        extra_context={
-                            "operation": "process_pending_jobs",
-                            "jobs_processed": 0,
-                        },
+                        store_in_db=False,
                     )
             else:
-                errors = result.get("errors", [])
-                if errors:
+                if result.errors:
                     logger.error(
-                        f"Video execution cycle failed: {'; '.join(errors)}",
-                        extra_context={
-                            "operation": "process_pending_jobs",
-                            "errors": errors,
-                            "error_count": len(errors),
-                            "success": False,
-                        },
+                        f"Video execution cycle failed: {'; '.join(result.errors)}",
                     )
 
+        except JobProcessingError as e:
+            logger.error(f"Error processing video execution queue: {e}")
         except Exception as e:
-            logger.error("Error processing video execution queue", e)
+            # Unexpected processing errors should be logged but not crash the worker
+            logger.warning(f"Unexpected error during job processing: {e}")
 
     async def execute_video_generation(
         self, timelapse_id: int, video_settings: Optional[Dict[str, Any]] = None
@@ -221,17 +195,12 @@ class VideoWorker(BaseWorker):
             bool: True if video generation was executed successfully
         """
         try:
+            # Service guaranteed to exist after initialization
             if not self.workflow_service:
-                logger.error("Video workflow service not initialized")
-                return False
+                raise ServiceUnavailableError("VideoWorkflowService not initialized")
 
             logger.info(
                 f"Executing video generation for timelapse {timelapse_id} (scheduler commanded)",
-                extra_context={
-                    "operation": "execute_video_generation",
-                    "timelapse_id": timelapse_id,
-                    "trigger_type": "scheduler_commanded",
-                },
                 emoji=LogEmoji.VIDEO,
             )
 
@@ -242,127 +211,113 @@ class VideoWorker(BaseWorker):
                 video_settings,
             )
 
-            if result.get("success"):
-                video_path = result.get("video_path")
+            if result.success:
                 logger.info(
-                    f"Video generation completed for timelapse {timelapse_id}: {video_path}",
-                    extra_context={
-                        "operation": "execute_video_generation",
-                        "timelapse_id": timelapse_id,
-                        "video_path": video_path,
-                        "success": True,
-                    },
+                    f"Video generation completed for timelapse {timelapse_id}: {result.video_path}",
                     emoji=LogEmoji.SUCCESS,
                 )
                 return True
             else:
-                error = result.get("error", "Unknown error")
+                error = result.error or "Unknown error"
                 logger.error(
                     f"Video generation failed for timelapse {timelapse_id}: {error}",
-                    extra_context={
-                        "operation": "execute_video_generation",
-                        "timelapse_id": timelapse_id,
-                        "error": error,
-                        "success": False,
-                    },
                 )
                 return False
 
+        except VideoGenerationError as e:
+            logger.error(f"Video generation error for timelapse {timelapse_id}: {e}")
+            return False
+        except ServiceUnavailableError as e:
+            logger.error(
+                f"Service unavailable during video generation for timelapse {timelapse_id}: {e}"
+            )
+            return False
         except Exception as e:
             logger.error(
-                f"Error executing video generation for timelapse {timelapse_id}", e
+                f"Unexpected error executing video generation for timelapse {timelapse_id}: {e}"
             )
             return False
 
     def get_status(self) -> Dict[str, Any]:
         """
-        Get current video generation status (STANDARDIZED METHOD NAME).
-
-        This replaces get_video_generation_status() for consistency with other workers.
+        Get current video generation status using explicit status pattern.
 
         Returns:
             Dict[str, Any]: Video generation status information
         """
         try:
-            # Get base status from BaseWorker
-            base_status = super().get_status()
-
-            if not self.workflow_service:
-                base_status.update(
-                    {
-                        "worker_type": "VideoWorker",
-                        "pipeline_status": "error",
-                        "error": "Video workflow service not initialized",
-                        "active_generations": 0,
-                        "pending_generations": 0,
-                        "can_process_more": False,
-                    }
-                )
-                return base_status
-
-            # Get processing status from workflow service
-            processing_status = self.workflow_service.get_processing_status()
-            queue_status = processing_status.get("queue_status", {})
-
-            # Add video-specific status information
-            base_status.update(
-                {
-                    "worker_type": "VideoWorker",
-                    "pipeline_status": "healthy",
-                    "active_generations": processing_status.get(
-                        "currently_processing", 0
-                    ),
-                    "pending_generations": queue_status.get("pending", 0),
-                    "completed_today": queue_status.get("completed", 0),
-                    "failed_today": queue_status.get("failed", 0),
-                    "max_concurrent": processing_status.get("max_concurrent_jobs", 0),
-                    "can_process_more": processing_status.get(
-                        "can_process_more", False
-                    ),
-                    "workflow_service_status": (
-                        "healthy" if self.workflow_service else "unavailable"
-                    ),
-                    "database_status": "healthy" if self.db else "unavailable",
-                }
+            # Build explicit base status - no super() calls
+            base_status = WorkerStatusBuilder.build_base_status(
+                name=self.name,
+                running=self.running,
+                worker_type=WorkerType.VIDEO_WORKER,
             )
 
-            return base_status
+            # Get video-specific status directly
+            service_status = self._get_video_worker_status()
+
+            # Simple, explicit merge
+            return WorkerStatusBuilder.merge_service_status(base_status, service_status)
 
         except Exception as e:
-            logger.error("Error getting video generation status", e)
-            base_status = super().get_status()
-            base_status.update(
-                {
-                    "worker_type": "VideoWorker",
-                    "pipeline_status": "error",
-                    "error": str(e),
-                    "active_generations": 0,
-                    "pending_generations": 0,
-                    "can_process_more": False,
-                }
+            # Return standardized error status
+            return WorkerStatusBuilder.build_error_status(
+                name=self.name,
+                worker_type=WorkerType.VIDEO_WORKER,
+                error_type="unexpected",
+                error_message=str(e),
             )
-            return base_status
 
-    async def get_video_generation_status(self) -> Dict[str, Any]:
+    def _get_video_worker_status(self) -> Dict[str, Any]:
         """
-        Get current video generation status (DEPRECATED - use get_status()).
+        Get video-specific status information.
 
-        Kept for backward compatibility.
+        This is used to get service-specific status for the explicit status pattern.
         """
-        # Delegate to standardized method
-        status = self.get_status()
+        # Service guaranteed to exist after initialization
+        if not self.workflow_service:
+            raise ServiceUnavailableError("VideoWorkflowService not initialized")
+
+        # Get processing status from workflow service (now returns typed object)
+        processing_status = self.workflow_service.get_processing_status()
+
+        # Return video-specific status information using typed object
         return {
-            "active_generations": status.get("active_generations", 0),
-            "pending_generations": status.get("pending_generations", 0),
-            "completed_today": status.get("completed_today", 0),
-            "failed_today": status.get("failed_today", 0),
-            "max_concurrent": status.get("max_concurrent", 0),
-            "can_process_more": status.get("can_process_more", False),
-            "queue_status": (
-                "healthy" if status.get("pipeline_status") == "healthy" else "error"
+            "worker_type": WorkerType.VIDEO_WORKER,
+            "pipeline_status": HealthStatus.HEALTHY.value,
+            "active_generations": processing_status.currently_processing,
+            "pending_generations": processing_status.queue_status.pending,
+            "completed_today": processing_status.queue_status.completed,
+            "failed_today": processing_status.queue_status.failed,
+            "max_concurrent": processing_status.max_concurrent_jobs,
+            "can_process_more": processing_status.can_process_more,
+            "workflow_service_status": (
+                HealthStatus.HEALTHY.value
+                if self.workflow_service
+                else HealthStatus.UNREACHABLE.value
             ),
-            **({"error": status["error"]} if "error" in status else {}),
+            "database_status": (
+                HealthStatus.HEALTHY.value
+                if self.db
+                else HealthStatus.UNREACHABLE.value
+            ),
         }
+
+    def get_health(self) -> Dict[str, Any]:
+        """
+        Get health status for worker management system compatibility.
+
+        This method provides simple binary health information separate
+        from the detailed status reporting in get_status().
+        """
+        return WorkerStatusBuilder.build_simple_health_status(
+            running=self.running,
+            worker_type=WorkerType.VIDEO_WORKER,
+            additional_checks={
+                "workflow_service_available": self.workflow_service is not None,
+                "database_available": self.db is not None,
+            },
+        )
 
     async def trigger_manual_generation(self, timelapse_id: int) -> bool:
         """
@@ -375,46 +330,42 @@ class VideoWorker(BaseWorker):
             bool: True if generation was triggered successfully
         """
         try:
+            # Service guaranteed to exist after initialization
             if not self.workflow_service:
-                logger.error("Video workflow service not initialized")
-                return False
+                raise ServiceUnavailableError("VideoWorkflowService not initialized")
 
             # Trigger manual job processing using direct execution
             result = await self.run_in_executor(
                 self.workflow_service.execute_video_generation_direct,
                 timelapse_id,
-                {"trigger_type": "manual"},
+                {"trigger_type": VideoAutomationMode.MANUAL.value},
             )
-            job_id = result.get("video_id") if result.get("success") else None
 
-            if job_id:
+            if result.success and result.video_id:
                 logger.info(
-                    f"Triggered manual video generation for timelapse {timelapse_id}, job {job_id}",
-                    extra_context={
-                        "operation": "trigger_manual_generation",
-                        "timelapse_id": timelapse_id,
-                        "job_id": job_id,
-                        "trigger_type": "manual",
-                        "success": True,
-                    },
+                    f"Triggered manual video generation for timelapse {timelapse_id}, job {result.video_id}",
                     emoji=LogEmoji.SUCCESS,
                 )
                 return True
             else:
                 logger.warning(
                     f"Failed to trigger manual generation for timelapse {timelapse_id}",
-                    extra_context={
-                        "operation": "trigger_manual_generation",
-                        "timelapse_id": timelapse_id,
-                        "trigger_type": "manual",
-                        "success": False,
-                    },
                 )
                 return False
 
+        except VideoGenerationError as e:
+            logger.error(
+                f"Video generation error during manual trigger for timelapse {timelapse_id}: {e}"
+            )
+            return False
+        except ServiceUnavailableError as e:
+            logger.error(
+                f"Service unavailable during manual trigger for timelapse {timelapse_id}: {e}"
+            )
+            return False
         except Exception as e:
             logger.error(
-                f"Error triggering manual generation for timelapse {timelapse_id}", e
+                f"Unexpected error triggering manual generation for timelapse {timelapse_id}: {e}"
             )
             return False
 
@@ -429,9 +380,9 @@ class VideoWorker(BaseWorker):
             int: Number of jobs cleaned up
         """
         try:
+            # Service guaranteed to exist after initialization
             if not self.workflow_service:
-                logger.error("Video workflow service not initialized")
-                return 0
+                raise ServiceUnavailableError("VideoWorkflowService not initialized")
 
             # Clean up old jobs using job service
             cleaned_count = await self.run_in_executor(
@@ -441,18 +392,19 @@ class VideoWorker(BaseWorker):
             if cleaned_count > 0:
                 logger.info(
                     f"Cleaned up {cleaned_count} old video jobs",
-                    extra_context={
-                        "operation": "clean_old_jobs",
-                        "cleaned_count": cleaned_count,
-                        "days_to_keep": days_to_keep,
-                    },
                     emoji=LogEmoji.CLEANUP,
                 )
 
             return cleaned_count
 
+        except CleanupOperationError as e:
+            logger.error(f"Cleanup operation failed for video jobs: {e}")
+            return 0
+        except ServiceUnavailableError as e:
+            logger.error(f"Service unavailable during job cleanup: {e}")
+            return 0
         except Exception as e:
-            logger.error("Error cleaning old video jobs", e)
+            logger.warning(f"Unexpected error cleaning old video jobs: {e}")
             return 0
 
     async def get_video_pipeline_health(self) -> Dict[str, Any]:
@@ -463,23 +415,32 @@ class VideoWorker(BaseWorker):
             Dict[str, Any]: Pipeline health status
         """
         try:
-            if not self.workflow_service:
-                return {
-                    "status": "unhealthy",
-                    "error": "Video workflow service not initialized",
-                }
 
+            # Service guaranteed to exist after initialization
             # Get pipeline health using helper function
-            health_status = await self.run_in_executor(
+            health_status_dict = await self.run_in_executor(
                 get_video_pipeline_health, self.workflow_service
             )
 
-            return health_status
+            # Return the health status dictionary directly since it already has the right structure
+            return health_status_dict
 
-        except Exception as e:
-            logger.error("Error checking video pipeline health", e)
+        except HealthCheckError as e:
+            logger.error(f"Health check operation failed: {e}")
             return {
-                "status": "unhealthy",
+                "status": HealthStatus.UNHEALTHY.value,
+                "error": str(e),
+            }
+        except ServiceUnavailableError as e:
+            logger.error(f"Service unavailable during health check: {e}")
+            return {
+                "status": HealthStatus.UNREACHABLE.value,
+                "error": str(e),
+            }
+        except Exception as e:
+            logger.warning(f"Unexpected error checking video pipeline health: {e}")
+            return {
+                "status": HealthStatus.UNHEALTHY.value,
                 "error": str(e),
             }
 
@@ -491,9 +452,9 @@ class VideoWorker(BaseWorker):
             bool: True if a job was processed
         """
         try:
+            # Service guaranteed to exist after initialization
             if not self.workflow_service:
-                logger.error("Video workflow service not initialized")
-                return False
+                raise ServiceUnavailableError("VideoWorkflowService not initialized")
 
             # Process next job in queue
             job_id = await self.run_in_executor(
@@ -507,6 +468,12 @@ class VideoWorker(BaseWorker):
                 logger.debug("No pending jobs to process")
                 return False
 
+        except JobProcessingError as e:
+            logger.error(f"Job processing failed: {e}")
+            return False
+        except ServiceUnavailableError as e:
+            logger.error(f"Service unavailable during job processing: {e}")
+            return False
         except Exception as e:
-            logger.error("Error processing next video job", e)
+            logger.warning(f"Unexpected error processing next video job: {e}")
             return False

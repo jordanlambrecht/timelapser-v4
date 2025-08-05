@@ -13,6 +13,11 @@ from typing import Any, Dict, Optional
 from ....enums import LoggerName
 from ....services.logger import LogEmoji, get_service_logger
 
+# Service Layer Boundary Pattern - Process raw dictionaries, not typed objects
+from ..exceptions import (
+    ScoreCalculationError,
+)
+
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
@@ -143,9 +148,19 @@ class CorruptionScoreCalculator:
                 calculation_details=calculation_details,
             )
 
+        except ScoreCalculationError as e:
+            logger.error("Score calculation error", exception=e)
+            return ScoreCalculationResult(
+                final_score=100.0,  # Assume corrupted on error
+                is_corrupted=True,
+                should_auto_discard=True,
+                calculation_details={"error": str(e)},
+            )
         except Exception as e:
             logger.error(
-                "Error calculating corruption score", exception=e, emoji=LogEmoji.FAILED
+                "Unexpected error calculating corruption score",
+                exception=e,
+                emoji=LogEmoji.FAILED,
             )
             # Return safe defaults on error
             return ScoreCalculationResult(
@@ -227,7 +242,9 @@ class CorruptionScoreCalculator:
             return "excellent"
 
     def get_score_breakdown(
-        self, fast_result: Dict[str, Any], heavy_result: Optional[Dict[str, Any]] = None
+        self,
+        fast_result: Dict[str, Any],
+        heavy_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Get detailed breakdown of how score was calculated.
@@ -239,27 +256,32 @@ class CorruptionScoreCalculator:
         Returns:
             Detailed breakdown dictionary
         """
+        # Service Layer Boundary Pattern - Process raw dictionaries internally
         breakdown: Dict[str, Any] = {
             "fast_detection": {
-                "score": fast_result.get("corruption_score", 0.0),
-                "failed_checks": fast_result.get("failed_checks", []),
-                "processing_time_ms": fast_result.get("detection_time_ms", 0.0),
+                "score": fast_result["corruption_score"],
+                "failed_checks": fast_result["failed_checks"],
+                "processing_time_ms": fast_result["detection_time_ms"],
                 "weight": self.config["fast_weight"],
             }
         }
 
-        if heavy_result:
+        if heavy_result and heavy_result.get("is_available", True):
             breakdown["heavy_detection"] = {
-                "score": heavy_result.get("corruption_score", 0.0),
-                "failed_checks": heavy_result.get("failed_checks", []),
-                "processing_time_ms": heavy_result.get("detection_time_ms", 0.0),
+                "score": heavy_result["corruption_score"],
+                "failed_checks": heavy_result["failed_checks"],
+                "processing_time_ms": heavy_result["detection_time_ms"],
                 "weight": self.config["heavy_weight"],
             }
 
-        # Calculate final score
+        # Calculate final score using raw dictionary data
         final_score = self.calculate_simple_score(
-            fast_result.get("corruption_score", 0.0),
-            heavy_result.get("corruption_score") if heavy_result else None,
+            fast_result["corruption_score"],
+            (
+                heavy_result["corruption_score"]
+                if heavy_result and heavy_result.get("is_available", True)
+                else None
+            ),
         )
 
         # Add final calculation results

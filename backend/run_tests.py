@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # backend/run_tests.py
 """
-Test runner script for the timelapser backend.
+Test runner script for the timelapser.
 
 Provides convenient commands to run different test suites.
 """
@@ -147,7 +147,9 @@ def install_test_dependencies() -> int:
 def main():
     """Main test runner."""
     if len(sys.argv) < 2:
-        print("Usage: python run_tests.py [cache|all|coverage|thumbnail|thumbnail-unit|thumbnail-coverage|thumbnail-frontend|integration|install]")
+        print(
+            "Usage: python run_tests.py [cache|all|coverage|thumbnail|thumbnail-unit|thumbnail-coverage|thumbnail-frontend|integration|install]"
+        )
         print()
         print("Commands:")
         print("  cache             - Run cache-related tests")

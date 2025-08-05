@@ -86,3 +86,27 @@ class WorkflowError(TimelapserError):
     """Custom exception for workflow orchestration errors."""
 
     pass
+
+
+class JobCoordinationError(TimelapserError):
+    """Custom exception for job coordination failures."""
+
+    pass
+
+
+class CaptureValidationError(TimelapserError):
+    """Custom exception for capture validation failures."""
+
+    pass
+
+
+class OverlayGenerationError(TimelapserError):
+    """Custom exception for overlay generation failures."""
+
+    pass
+
+
+class CaptureContextError(TimelapserError):
+    """Custom exception for capture context validation failures."""
+
+    pass

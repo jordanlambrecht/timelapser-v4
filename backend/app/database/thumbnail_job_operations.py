@@ -19,7 +19,6 @@ from ..enums import JobStatus
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationJobCreate
 from ..utils.cache_invalidation import CacheInvalidationService
 from ..utils.cache_manager import cache, cached_response, generate_composite_etag
-from ..utils.database_helpers import DatabaseQueryBuilder
 from ..utils.time_utils import utc_now
 from .core import AsyncDatabase, SyncDatabase
 from .exceptions import ThumbnailOperationError

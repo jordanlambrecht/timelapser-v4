@@ -65,11 +65,11 @@ class DatabaseQueryBuilder:
         if order_by:
             query_parts.append(f"ORDER BY {order_by}")
         if limit is not None:
-            query_parts.append(f"LIMIT %(limit)s")
+            query_parts.append("LIMIT %(limit)s")
             if params is not None:
                 params["limit"] = limit
         if offset is not None:
-            query_parts.append(f"OFFSET %(offset)s")
+            query_parts.append("OFFSET %(offset)s")
             if params is not None:
                 params["offset"] = offset
         return " ".join(query_parts), params or {}
@@ -1299,7 +1299,7 @@ class AsyncDatabaseOperationBase(DatabaseOperationBase):
         Returns:
             Query result
         """
-        global database_cache
+        # Access module-level database_cache
 
         # Check cache first if key provided
         if cache_key:
@@ -1353,7 +1353,7 @@ class SyncDatabaseOperationBase(DatabaseOperationBase):
         Returns:
             Query result
         """
-        global database_cache
+        # Access module-level database_cache
 
         # Check cache first if key provided
         if cache_key:

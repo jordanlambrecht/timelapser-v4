@@ -225,3 +225,44 @@ class CapturePipelineResult(BaseModel):
             if step_result.step_name == step_name:
                 return step_result
         return None
+
+
+class CameraInfo(BaseModel):
+    """Camera information for validation operations."""
+
+    id: int = Field(..., description="Camera ID")
+    rtsp_url: str = Field(..., description="RTSP stream URL")
+    health_status: str = Field(default="online", description="Camera health status")
+    data_directory: Optional[str] = Field(None, description="Data storage directory")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CameraInfo":
+        """Create from dictionary response for backward compatibility."""
+        return cls(
+            id=data.get("id", 0),
+            rtsp_url=data.get("rtsp_url", ""),
+            health_status=data.get("health_status", "online"),
+            data_directory=data.get("data_directory"),
+        )
+
+    @property
+    def is_online(self) -> bool:
+        """Check if camera is online."""
+        return self.health_status != "offline"
+
+
+class TimelapseInfo(BaseModel):
+    """Timelapse information for validation operations."""
+
+    id: int = Field(..., description="Timelapse ID")
+    status: str = Field(default="running", description="Timelapse status")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TimelapseInfo":
+        """Create from dictionary response for backward compatibility."""
+        return cls(id=data.get("id", 0), status=data.get("status", "running"))
+
+    @property
+    def is_running(self) -> bool:
+        """Check if timelapse is in running state."""
+        return self.status == "running"

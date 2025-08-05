@@ -17,12 +17,15 @@ Architecture:
 import asyncio
 from typing import Any, Dict, Optional
 
+from typing import TYPE_CHECKING
 from ...database.core import AsyncDatabase
 from ...enums import LoggerName, SSEPriority
 from ...services.logger import get_service_logger
 from ...services.settings_service import SettingsService
-from ...workers.scheduler_worker import SchedulerWorker
 from .capture_timing_service import CaptureTimingService
+
+if TYPE_CHECKING:
+    from ...workers.scheduler_worker import SchedulerWorker
 
 logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
 
@@ -46,7 +49,7 @@ class SchedulerAuthorityService:
 
     def __init__(
         self,
-        scheduler_worker: SchedulerWorker,
+        scheduler_worker: "SchedulerWorker",
         async_db: Optional[AsyncDatabase] = None,
         settings_service: Optional[SettingsService] = None,
         timing_service: Optional[CaptureTimingService] = None,
@@ -576,7 +579,7 @@ class SchedulerAuthorityService:
             logger.error(f"Error synchronizing timelapses: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_scheduler_worker(self) -> SchedulerWorker:
+    def get_scheduler_worker(self) -> "SchedulerWorker":
         """
         Get the underlying SchedulerWorker instance.
 
@@ -590,7 +593,7 @@ class SchedulerAuthorityService:
 
 
 def create_scheduler_authority_service(
-    scheduler_worker: SchedulerWorker,
+    scheduler_worker: "SchedulerWorker",
     async_db: Optional[AsyncDatabase] = None,
     settings_service: Optional[SettingsService] = None,
     timing_service: Optional[CaptureTimingService] = None,

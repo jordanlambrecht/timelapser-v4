@@ -32,10 +32,11 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Optional, TypedDict, Dict
 from ..services.logger import get_service_logger
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource, LogEmoji
+from ..utils.time_utils import utc_now
 
 # Worker logger initialized at module level
-worker_logger = get_service_logger(LoggerName.SYSTEM)
+worker_logger = get_service_logger(LoggerName.SYSTEM, LogSource.WORKER)
 
 
 class WorkerErrorResponse(TypedDict):
@@ -74,13 +75,13 @@ class BaseWorker(ABC):
 
     async def start(self) -> None:
         """Start the worker."""
-        worker_logger.info(f"Starting {self.name} worker")
+        worker_logger.info(f"Starting {self.name} worker", store_in_db=False)
         self.running = True
         await self.initialize()
 
     async def stop(self) -> None:
         """Stop the worker."""
-        worker_logger.info(f"Stopping {self.name} worker")
+        worker_logger.info(f"Stopping {self.name} worker", store_in_db=False)
         self.running = False
         await self.cleanup()
 
@@ -98,32 +99,34 @@ class BaseWorker(ABC):
         """Log info message with worker name prefix."""
         worker_logger.info(
             f"[{self.name}] {message}",
+            store_in_db=False,
         )
 
     def log_error(self, message: str, error: Optional[Exception] = None) -> None:
         """Log error message with worker name prefix."""
         if error:
             worker_logger.error(
-                f"[{self.name}] {message}",
-                exception=error,
-                extra_context={"worker": self.name, "error": str(error)},
+                f"[{self.name}] {message}: {error}",
+                store_in_db=False,
             )
         else:
             worker_logger.error(
                 f"[{self.name}] {message}",
-                extra_context={"worker": self.name},
+                store_in_db=False,
             )
 
     def log_warning(self, message: str) -> None:
         """Log warning message with worker name prefix."""
         worker_logger.warning(
             f"[{self.name}] {message}",
+            store_in_db=False,
         )
 
     def log_debug(self, message: str) -> None:
         """Log debug message with worker name prefix."""
         worker_logger.debug(
             f"[{self.name}] {message}",
+            store_in_db=False,
         )
 
     async def run_in_executor(self, func, *args, **kwargs) -> Any:
@@ -160,7 +163,9 @@ class BaseWorker(ABC):
             duration_ms: Duration in milliseconds
         """
         worker_logger.info(
-            f"[{self.name}] 📊 {operation} completed in {duration_ms:.2f}ms",
+            f"[{self.name}] {operation} completed in {duration_ms:.2f}ms",
+            emoji=LogEmoji.PROCESSING,
+            store_in_db=False,
         )
 
     def log_job_metrics(self, processed: int, failed: int, success_rate: float) -> None:
@@ -173,8 +178,10 @@ class BaseWorker(ABC):
             success_rate: Success rate as a percentage
         """
         worker_logger.info(
-            f"[{self.name}] 📈 Jobs processed: {processed}, failed: {failed}, "
+            f"[{self.name}] Jobs processed: {processed}, failed: {failed}, "
             f"success rate: {success_rate:.1f}%",
+            emoji=LogEmoji.JOB,
+            store_in_db=False,
         )
 
     def log_queue_metrics(self, pending: int, processing: int, total: int) -> None:
@@ -187,8 +194,10 @@ class BaseWorker(ABC):
             total: Total number of jobs in queue
         """
         worker_logger.info(
-            f"[{self.name}] 📋 Queue status: {pending} pending, {processing} processing, "
+            f"[{self.name}] Queue status: {pending} pending, {processing} processing, "
             f"{total} total",
+            emoji=LogEmoji.QUEUE,
+            store_in_db=False,
         )
 
     # Worker health monitoring utilities
@@ -204,7 +213,7 @@ class BaseWorker(ABC):
             "worker_name": self.name,
             "running": self.running,
             "healthy": self.running,  # Basic health check
-            "last_check": "now",  # Can be overridden by subclasses
+            "last_check": utc_now().isoformat(),
         }
 
     def is_healthy(self) -> bool:

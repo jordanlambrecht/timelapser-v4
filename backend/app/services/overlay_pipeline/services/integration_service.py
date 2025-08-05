@@ -888,16 +888,16 @@ class SyncOverlayIntegrationService:
                     # Get overlay coverage statistics
                     cur.execute(
                         """
-                        SELECT 
+                        SELECT
                             COUNT(*) as total_images,
                             COUNT(*) FILTER (WHERE has_valid_overlay = true) as images_with_overlay,
                             COUNT(*) FILTER (WHERE has_valid_overlay = true AND overlay_updated_at > NOW() - INTERVAL '24 hours') as overlays_generated_24h,
                             COUNT(*) FILTER (WHERE has_valid_overlay = true AND overlay_updated_at > NOW() - INTERVAL '7 days') as overlays_generated_7d,
                             COUNT(*) FILTER (WHERE captured_at > NOW() - INTERVAL '24 hours') as images_captured_24h,
-                            AVG(CASE WHEN has_valid_overlay = true AND overlay_updated_at IS NOT NULL AND captured_at IS NOT NULL 
-                                THEN EXTRACT(EPOCH FROM (overlay_updated_at - captured_at)) * 1000 
+                            AVG(CASE WHEN has_valid_overlay = true AND overlay_updated_at IS NOT NULL AND captured_at IS NOT NULL
+                                THEN EXTRACT(EPOCH FROM (overlay_updated_at - captured_at)) * 1000
                                 ELSE NULL END) as avg_overlay_delay_ms
-                        FROM images 
+                        FROM images
                         WHERE captured_at > NOW() - INTERVAL '30 days'
                     """
                     )

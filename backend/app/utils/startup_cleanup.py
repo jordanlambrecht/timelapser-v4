@@ -10,7 +10,7 @@ left behind after system crashes or restarts, including:
 """
 
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict
 

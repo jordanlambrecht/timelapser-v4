@@ -21,7 +21,7 @@ def parse_enum(
         Enum: The matching enum member, or the default/fallback member.
 
     Example:
-        >>> from backend.app.enums import VideoAutomationMode
+        >>> from ..enums import VideoAutomationMode
         >>> parse_enum(VideoAutomationMode, "manual")
         <VideoAutomationMode.MANUAL: 'manual'>
 

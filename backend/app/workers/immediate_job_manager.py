@@ -44,14 +44,14 @@ IMMEDIATE vs SCHEDULED JOBS:
 """
 
 from typing import Dict, Any, Optional, Callable
-from ..services.logger import get_service_logger, LogEmoji
+from ..services.logger import get_service_logger
 from ..enums import LoggerName, OverlayJobPriority
-
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .utils import SchedulerTimeUtils, JobIdGenerator
 from ..database.core import SyncDatabase
 from ..enums import JobPriority
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 
 class ImmediateJobManager:
@@ -134,7 +134,7 @@ class ImmediateJobManager:
             return success
 
         except Exception as e:
-            self.log_error(f"Error scheduling immediate capture", e)
+            self.log_error(f"Error scheduling immediate capture: {e}")
             return False
 
     async def schedule_immediate_video_generation(
@@ -190,7 +190,7 @@ class ImmediateJobManager:
             return success
 
         except Exception as e:
-            self.log_error(f"Error scheduling immediate video generation", e)
+            self.log_error(f"Error scheduling immediate video generation: {e}")
             return False
 
     async def schedule_immediate_overlay_generation(
@@ -250,7 +250,7 @@ class ImmediateJobManager:
             return success
 
         except Exception as e:
-            self.log_error(f"Error scheduling immediate overlay generation", e)
+            self.log_error(f"Error scheduling immediate overlay generation: {e}")
             return False
 
     async def schedule_immediate_thumbnail_generation(
@@ -302,7 +302,7 @@ class ImmediateJobManager:
             return success
 
         except Exception as e:
-            self.log_error(f"Error scheduling immediate thumbnail generation", e)
+            self.log_error(f"Error scheduling immediate thumbnail generation: {e}")
             return False
 
     def _add_immediate_job(
@@ -315,7 +315,7 @@ class ImmediateJobManager:
                 try:
                     self.scheduler.remove_job(job_id)
                     del self.job_registry[job_id]
-                except:
+                except Exception:
                     pass  # Job may have already completed
 
             # Add the job with date trigger for immediate execution

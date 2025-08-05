@@ -13,21 +13,25 @@ import time
 from typing import List, Dict, Any
 
 from ..services.logger import get_service_logger
+from .constants import MILLISECONDS_PER_SECOND
 
 from ..database.timelapse_operations import SyncTimelapseOperations
-
-# from .mixins.job_batch_processor import ProcessableJob
+from ..services.thumbnail_workflow_service import ThumbnailWorkflowService
 
 from .mixins.job_processing_mixin import JobProcessingMixin
+from .mixins.startup_recovery_mixin import StartupRecoveryMixin
+from .utils.worker_status_builder import WorkerStatusBuilder
 from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
 from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
 from ..enums import (
-    LogEmoji,
     LogSource,
     LoggerName,
     SSEEventSource,
+    JobTypes,
+    WorkerType,
+    LogEmoji,
 )
 from ..constants import (
     DEFAULT_THUMBNAIL_JOB_BATCH_SIZE,
@@ -45,7 +49,10 @@ from ..constants import (
 logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 
 
-class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
+class ThumbnailWorker(
+    StartupRecoveryMixin,
+    JobProcessingMixin[ThumbnailGenerationJob],
+):
     """
     Refactored high-performance background worker for thumbnail generation.
 
@@ -119,13 +126,18 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         self.thumbnail_job_service = thumbnail_job_service
         self.thumbnail_pipeline = thumbnail_pipeline
 
+        # Initialize workflow service for Service Layer Boundary Pattern
+        self.thumbnail_service = ThumbnailWorkflowService()
+
     async def initialize(self) -> None:
         """Initialize thumbnail worker resources."""
         logger.info(
             f"Initialized with batch_size={self.job_batch_processor.current_batch_size}, "
             f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}",
+            store_in_db=False,
+            emoji=LogEmoji.SYSTEM,
             extra_context={
-                "worker_type": "thumbnail",
+                "worker_type": WorkerType.THUMBNAIL_WORKER,
                 "batch_size": self.job_batch_processor.current_batch_size,
                 "worker_interval": self.worker_interval,
                 "max_retries": self.retry_manager.max_retries,
@@ -133,30 +145,13 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             },
         )
 
-        # Perform startup recovery for stuck thumbnail jobs
-        try:
-            logger.info("🔄 Performing startup recovery for stuck thumbnail jobs...")
-            recovery_results = (
-                self.thumbnail_job_service.thumbnail_job_ops.recover_stuck_jobs(
-                    max_processing_age_minutes=30
-                )
-            )
-
-            if recovery_results.get("stuck_jobs_recovered", 0) > 0:
-                logger.info(
-                    f"Recovered {recovery_results['stuck_jobs_recovered']} stuck thumbnail jobs on startup",
-                    emoji=LogEmoji.SUCCESS,
-                )
-            elif recovery_results.get("stuck_jobs_found", 0) > 0:
-                logger.warning(
-                    f"Found {recovery_results['stuck_jobs_found']} stuck jobs but only recovered "
-                    f"{recovery_results['stuck_jobs_recovered']}"
-                )
-            else:
-                logger.debug("No stuck thumbnail jobs found during startup recovery")
-
-        except Exception as e:
-            logger.error(f"Error during startup recovery for thumbnail jobs: {e}")
+        # Perform startup recovery using StartupRecoveryMixin
+        self.perform_startup_recovery(
+            job_service=self.thumbnail_job_service.thumbnail_job_ops,
+            job_type_name="thumbnail",
+            max_processing_age_minutes=30,
+            logger=logger,
+        )
 
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
@@ -171,7 +166,9 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         logger.info(
             f"Final worker stats: {final_stats['processed_jobs_total']} processed, "
             f"{final_stats['failed_jobs_total']} failed, "
-            f"{final_stats['success_rate_percent']:.1f}% success rate"
+            f"{final_stats['success_rate_percent']:.1f}% success rate",
+            store_in_db=False,
+            emoji=LogEmoji.SYSTEM,
         )
 
         # Broadcast worker shutdown event using shared SSE broadcaster
@@ -213,11 +210,12 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             logger.debug(
                 f"Processing thumbnail job {job.id} for image {job.image_id} "
                 f"(priority: {job.priority})",
+                store_in_db=False,
                 extra_context={
                     "job_id": job.id,
                     "image_id": job.image_id,
                     "priority": job.priority,
-                    "job_type": "thumbnail_generation",
+                    "job_type": JobTypes.THUMBNAIL,
                 },
             )
 
@@ -225,6 +223,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             if not self.thumbnail_job_service.mark_job_started(job.id):
                 logger.warning(
                     f"Failed to mark job {job.id} as started",
+                    store_in_db=False,
                     extra_context={
                         "job_id": job.id,
                         "image_id": job.image_id,
@@ -242,6 +241,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             if not isinstance(result_dict, dict):
                 logger.error(
                     f"Invalid result type from thumbnail pipeline: {type(result_dict)}",
+                    store_in_db=False,
                     extra_context={
                         "job_id": job.id,
                         "image_id": job.image_id,
@@ -257,6 +257,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
             except Exception as e:
                 logger.error(
                     f"Failed to create ThumbnailGenerationResult: {e}",
+                    store_in_db=False,
                     extra_context={
                         "job_id": job.id,
                         "image_id": job.image_id,
@@ -266,7 +267,9 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 )
                 return False
 
-            processing_time_ms = int((time.time() - job_start_time) * 1000)
+            processing_time_ms = int(
+                (time.time() - job_start_time) * MILLISECONDS_PER_SECOND
+            )
 
             if result.success:
                 # Mark job as completed
@@ -275,6 +278,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 ):
                     logger.error(
                         f"Failed to mark job {job.id} as completed",
+                        store_in_db=False,
                         extra_context={
                             "job_id": job.id,
                             "image_id": job.image_id,
@@ -291,6 +295,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 if processing_time_ms > THUMBNAIL_PROCESSING_TIME_WARNING_MS:
                     logger.warning(
                         f"Slow thumbnail processing detected: job {job.id} took {processing_time_ms}ms",
+                        store_in_db=False,
                         extra_context={
                             "job_id": job.id,
                             "image_id": job.image_id,
@@ -302,6 +307,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
                 logger.debug(
                     f"Successfully completed thumbnail job {job.id} in {processing_time_ms}ms",
+                    store_in_db=False,
                     extra_context={
                         "job_id": job.id,
                         "image_id": job.image_id,
@@ -316,6 +322,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 error_msg = result.error or "Unknown thumbnail generation error"
                 logger.warning(
                     f"Thumbnail job {job.id} failed: {error_msg}",
+                    store_in_db=False,
                     extra_context={
                         "job_id": job.id,
                         "image_id": job.image_id,
@@ -327,7 +334,9 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 return False
 
         except Exception as e:
-            logger.error(f"Exception processing thumbnail job {job.id}", e)
+            logger.error(
+                f"Exception processing thumbnail job {job.id}: {e}", store_in_db=False
+            )
             return False
 
     def mark_job_failed(self, job_id: int, error_message: str) -> bool:
@@ -348,7 +357,10 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 # retry_count=self.retry_manager.max_retries,
             )
         except Exception as e:
-            logger.error(f"Error marking thumbnail job {job_id} as failed", e)
+            logger.error(
+                f"Error marking thumbnail job {job_id} as failed: {e}",
+                store_in_db=False,
+            )
             return False
 
     def schedule_job_retry(
@@ -370,7 +382,10 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 job_id=job_id, retry_count=retry_count, delay_minutes=delay_minutes
             )
         except Exception as e:
-            logger.error(f"Error scheduling retry for thumbnail job {job_id}", e)
+            logger.error(
+                f"Error scheduling retry for thumbnail job {job_id}: {e}",
+                store_in_db=False,
+            )
             return False
 
     def cleanup_completed_jobs(self, hours_to_keep: int) -> int:
@@ -386,7 +401,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         try:
             return self.thumbnail_job_service.cleanup_completed_jobs(hours_to_keep)
         except Exception as e:
-            logger.error(f"Error cleaning up thumbnail jobs", e)
+            logger.error(f"Error cleaning up thumbnail jobs: {e}", store_in_db=False)
             return 0
 
     def get_queue_statistics(self) -> Dict[str, int]:
@@ -399,7 +414,9 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
         try:
             return self.thumbnail_job_service.get_job_statistics()
         except Exception as e:
-            logger.error(f"Error getting thumbnail queue statistics", e)
+            logger.error(
+                f"Error getting thumbnail queue statistics: {e}", store_in_db=False
+            )
             return {"pending_jobs": 0, "processing_jobs": 0, "completed_jobs": 0}
 
     # Thumbnail-specific helper methods
@@ -434,6 +451,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 if success:
                     logger.debug(
                         f"Updated thumbnail counts for timelapse {result.timelapse_id}",
+                        store_in_db=False,
                         extra_context={
                             "timelapse_id": result.timelapse_id,
                             "increment_thumbnail": increment_thumbnail,
@@ -444,6 +462,7 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
                 else:
                     logger.warning(
                         f"Failed to update thumbnail counts for timelapse {result.timelapse_id}",
+                        store_in_db=False,
                         extra_context={
                             "timelapse_id": result.timelapse_id,
                             "increment_thumbnail": increment_thumbnail,
@@ -455,8 +474,8 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
         except Exception as e:
             logger.error(
-                f"Error updating thumbnail counts for timelapse {result.timelapse_id}",
-                e,
+                f"Error updating thumbnail counts for timelapse {result.timelapse_id}: {e}",
+                store_in_db=False,
             )
 
     def _get_job_data_for_events(self, job: ThumbnailGenerationJob) -> Dict[str, Any]:
@@ -480,26 +499,58 @@ class ThumbnailWorker(JobProcessingMixin[ThumbnailGenerationJob]):
 
     def get_status(self) -> Dict[str, Any]:
         """
-        Get comprehensive thumbnail worker status.
-
-        Extends the base status from JobProcessingMixin with thumbnail-specific information.
+        Get comprehensive thumbnail worker status using explicit status pattern.
 
         Returns:
             Dictionary with complete worker status
         """
-        # Get base status from JobProcessingMixin
-        status = super().get_status()
+        try:
+            # Get rich base status from JobProcessingMixin (this is good!)
+            base_status = super().get_status()
 
-        # Add thumbnail-specific information
-        status.update(
-            {
-                "worker_type": "ThumbnailWorker",
-                "thumbnail_pipeline_status": (
-                    "healthy" if self.thumbnail_pipeline else "unavailable"
-                ),
-                "processing_time_warning_threshold_ms": THUMBNAIL_PROCESSING_TIME_WARNING_MS,
-                "concurrent_jobs_limit": THUMBNAIL_CONCURRENT_JOBS,
-            }
+            # Get service-specific status
+            service_status = self.thumbnail_service.get_worker_status(
+                thumbnail_pipeline=self.thumbnail_pipeline,
+                processing_time_warning_threshold_ms=THUMBNAIL_PROCESSING_TIME_WARNING_MS,
+                concurrent_jobs_limit=THUMBNAIL_CONCURRENT_JOBS,
+                base_status=base_status,
+            )
+
+            # Simple, explicit merge
+            return WorkerStatusBuilder.merge_service_status(base_status, service_status)
+
+        except Exception as e:
+            # Return standardized error status but preserve any base status we got
+            try:
+                base_status = super().get_status()
+            except Exception:
+                base_status = WorkerStatusBuilder.build_base_status(
+                    name=self.name,
+                    running=self.running,
+                    worker_type=WorkerType.THUMBNAIL_WORKER.value,
+                )
+
+            error_status = WorkerStatusBuilder.build_error_status(
+                name=self.name,
+                worker_type=WorkerType.THUMBNAIL_WORKER.value,
+                error_type="unexpected",
+                error_message=str(e),
+            )
+            return {**base_status, **error_status}
+
+    def get_health(self) -> Dict[str, Any]:
+        """
+        Get health status for worker management system compatibility.
+
+        This method provides simple binary health information separate
+        from the detailed status reporting in get_status().
+        """
+        return WorkerStatusBuilder.build_simple_health_status(
+            running=self.running,
+            worker_type=WorkerType.THUMBNAIL_WORKER.value,
+            additional_checks={
+                "thumbnail_service_available": self.thumbnail_service is not None,
+                "thumbnail_pipeline_available": self.thumbnail_pipeline is not None,
+                "job_service_available": self.thumbnail_job_service is not None,
+            },
         )
-
-        return status

@@ -433,14 +433,16 @@ class WeatherManager:
                 try:
                     get_all_method = getattr(self.settings_service, "get_all_settings")
                     if inspect.iscoroutinefunction(get_all_method):
-                        settings_dict = await self.settings_service.get_all_settings()
+                        await self.settings_service.get_all_settings()
                     else:
-                        settings_dict = self.settings_service.get_all_settings()
+                        self.settings_service.get_all_settings()
                 except Exception as e:
                     logger.warning(f"Failed to get timezone from settings service: {e}")
-                    settings_dict = await self._get_settings_from_db()
+                    # Get settings from DB if needed
+                await self._get_settings_from_db()
             else:
-                settings_dict = await self._get_settings_from_db()
+                # Get settings from DB if needed
+                await self._get_settings_from_db()
 
             # Get timezone and create timezone-aware timestamp using cached approach
             timezone_str = await get_timezone_from_cache_async(self.settings_service)
@@ -576,14 +578,16 @@ class WeatherManager:
                 try:
                     get_all_method = getattr(self.settings_service, "get_all_settings")
                     if inspect.iscoroutinefunction(get_all_method):
-                        settings_dict = await self.settings_service.get_all_settings()
+                        await self.settings_service.get_all_settings()
                     else:
-                        settings_dict = self.settings_service.get_all_settings()
+                        self.settings_service.get_all_settings()
                 except Exception as e:
                     logger.warning(f"Failed to get timezone from settings service: {e}")
-                    settings_dict = await self._get_settings_from_db()
+                    # Get settings from DB if needed
+                await self._get_settings_from_db()
             else:
-                settings_dict = await self._get_settings_from_db()
+                # Get settings from DB if needed
+                await self._get_settings_from_db()
 
             # Get today's date in the configured timezone using cached approach
             try:
@@ -696,14 +700,16 @@ class WeatherManager:
                 try:
                     get_all_method = getattr(self.settings_service, "get_all_settings")
                     if inspect.iscoroutinefunction(get_all_method):
-                        settings_dict = await self.settings_service.get_all_settings()
+                        await self.settings_service.get_all_settings()
                     else:
-                        settings_dict = self.settings_service.get_all_settings()
+                        self.settings_service.get_all_settings()
                 except Exception as e:
                     logger.warning(f"Failed to get timezone from settings service: {e}")
-                    settings_dict = await self._get_settings_from_db()
+                    # Get settings from DB if needed
+                await self._get_settings_from_db()
             else:
-                settings_dict = await self._get_settings_from_db()
+                # Get settings from DB if needed
+                await self._get_settings_from_db()
 
             timezone_str = await get_timezone_from_cache_async(self.settings_service)
 

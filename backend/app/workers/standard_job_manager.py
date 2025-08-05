@@ -57,10 +57,8 @@ DESIGN PATTERN: Function Injection Manager
 import inspect
 import asyncio
 from typing import Dict, Any, Optional, Callable
-from ..services.logger import get_service_logger, LogEmoji
+from ..services.logger import get_service_logger
 from ..enums import LoggerName
-
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 from .utils import SchedulerTimeUtils, SchedulerJobTemplate
 from ..database.core import SyncDatabase
@@ -69,8 +67,19 @@ from ..constants import (
     WEATHER_REFRESH_MINUTE,
     VIDEO_AUTOMATION_INTERVAL_SECONDS,
     SCHEDULER_UPDATE_INTERVAL_SECONDS,
-    STANDARD_JOBS_COUNT,
 )
+from .constants import (
+    WEATHER_STARTUP_DELAY_SECONDS,
+    WEATHER_CATCHUP_INTERVAL_MINUTES,
+    AUTOMATION_TRIGGER_INTERVAL_MINUTES,
+    # TIMELAPSE_SYNC_INTERVAL_MINUTES,
+    SSE_CLEANUP_INTERVAL_HOURS,
+    CLEANUP_INTERVAL_HOURS_DEFAULT,
+    SECONDS_PER_MINUTE,
+    SECONDS_PER_HOUR,
+)
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 
 class StandardJobManager:
@@ -99,6 +108,7 @@ class StandardJobManager:
         self.automation_triggers_func: Optional[Callable] = None
         self.sync_timelapses_func: Optional[Callable] = None
         self.sse_cleanup_func: Optional[Callable] = None
+        self.database_cleanup_func: Optional[Callable] = None
 
     def log_info(self, message: str) -> None:
         """Log info message with prefix."""
@@ -152,7 +162,24 @@ class StandardJobManager:
         if self._add_sse_cleanup_job():
             success_count += 1
 
-        self.log_info(f"Added {success_count}/{STANDARD_JOBS_COUNT} standard jobs")
+        # Add database cleanup job (CEO compliant replacement for CleanupWorker autonomous run)
+        if self._add_database_cleanup_job():
+            success_count += 1
+
+        total_jobs = len(
+            [
+                "health_job",
+                "weather_job",
+                "weather_startup_job",
+                "weather_catchup_job",
+                "video_automation_job",
+                "automation_triggers_job",
+                "timelapse_sync_job",
+                "sse_cleanup_job",
+                "database_cleanup_job",
+            ]
+        )
+        self.log_info(f"Added {success_count}/{total_jobs} standard jobs")
         return success_count
 
     def _add_health_job(self) -> bool:
@@ -190,7 +217,9 @@ class StandardJobManager:
         # Weather startup job (immediate refresh on startup)
         startup_wrapper = self._create_weather_startup_wrapper()
         if self.job_template.schedule_immediate_job(
-            job_id="weather_startup_job", wrapper_func=startup_wrapper, delay_seconds=5
+            job_id="weather_startup_job",
+            wrapper_func=startup_wrapper,
+            delay_seconds=WEATHER_STARTUP_DELAY_SECONDS,
         ):
             jobs_added += 1
 
@@ -199,7 +228,8 @@ class StandardJobManager:
         if self.job_template.schedule_interval_job(
             job_id="weather_catchup_job",
             func=catchup_wrapper,
-            interval_seconds=15 * 60,  # 15 minutes
+            interval_seconds=WEATHER_CATCHUP_INTERVAL_MINUTES
+            * SECONDS_PER_MINUTE,  # 15 minutes
         ):
             jobs_added += 1
 
@@ -267,7 +297,8 @@ class StandardJobManager:
         return self.job_template.schedule_interval_job(
             job_id="automation_triggers_job",
             func=self.automation_triggers_func,
-            interval_seconds=5 * 60,  # 5 minutes
+            interval_seconds=AUTOMATION_TRIGGER_INTERVAL_MINUTES
+            * SECONDS_PER_MINUTE,  # 5 minutes
         )
 
     def _add_timelapse_sync_job(self) -> bool:
@@ -295,7 +326,22 @@ class StandardJobManager:
         return self.job_template.schedule_interval_job(
             job_id="sse_cleanup_job",
             func=self.sse_cleanup_func,
-            interval_seconds=6 * 60 * 60,  # 6 hours
+            interval_seconds=SSE_CLEANUP_INTERVAL_HOURS * SECONDS_PER_HOUR,  # 6 hours
+        )
+
+    def _add_database_cleanup_job(self) -> bool:
+        """Add database cleanup job (CEO compliant - replaces CleanupWorker autonomous run)."""
+        if not self.database_cleanup_func:
+            self.log_debug(
+                "Database cleanup function not configured, skipping database cleanup job"
+            )
+            return False
+
+        return self.job_template.schedule_interval_job(
+            job_id="database_cleanup_job",
+            func=self.database_cleanup_func,
+            interval_seconds=CLEANUP_INTERVAL_HOURS_DEFAULT
+            * SECONDS_PER_HOUR,  # 6 hours
         )
 
     def remove_all_standard_jobs(self) -> None:
@@ -309,6 +355,7 @@ class StandardJobManager:
             "automation_triggers_job",
             "timelapse_sync_job",
             "sse_cleanup_job",
+            "database_cleanup_job",
         ]
 
         for job_id in standard_job_ids:

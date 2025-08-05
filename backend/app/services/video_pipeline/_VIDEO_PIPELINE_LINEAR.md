@@ -1,6 +1,7 @@
 # VIDEO PIPELINE - OPTIMIZED LINEAR FLOW
 
-**Status**: Simplified Pipeline Complete ✅ - 4 Service Architecture with Working Video Generation 🚀
+**Status**: Simplified Pipeline Complete ✅ - 4 Service Architecture with
+Working Video Generation 🚀
 
 ## 📊 Progress Summary
 
@@ -26,32 +27,41 @@
 ### 🎯 **Current Status Summary**
 
 **✅ MAJOR PIVOT COMPLETED**:
+
 - **Simplified from 8 services to 4 services** for better maintainability
-- **Working video generation** using existing ffmpeg_utils (not just scaffolding)
+- **Working video generation** using existing ffmpeg_utils (not just
+  scaffolding)
 - **Actual overlay integration** with graceful fallback to regular images
 - **Priority-based job processing** (HIGH/MEDIUM/LOW) with real implementation
 - **Clean service architecture** without over-engineering
 
 **🚀 IMPLEMENTED SERVICES**:
-1. **VideoWorkflowService** - Main orchestrator with integrated FFmpeg + file operations ✅
+
+1. **VideoWorkflowService** - Main orchestrator with integrated FFmpeg + file
+   operations ✅
 2. **VideoJobService** - Simplified job management with queue + lifecycle ✅
 3. **OverlayIntegrationService** - Overlay coordination with fallback logic ✅
 
-**📊 IMPLEMENTATION STATUS**: ✅ COMPLETE - Video pipeline fully replaces VideoAutomationService
+**📊 IMPLEMENTATION STATUS**: ✅ COMPLETE - Video pipeline fully replaces
+VideoAutomationService
 
 ### 🎉 **FINAL INTEGRATION COMPLETE**
+
 - ✅ **JobCoordinationService** updated to use simplified video pipeline
 - ✅ **VideoAutomationService** completely removed from all workers
-- ✅ **Capture pipeline** integrated with video pipeline via dependency injection
+- ✅ **Capture pipeline** integrated with video pipeline via dependency
+  injection
 - ✅ **Per-capture triggers** handled by `evaluate_per_capture_trigger()`
 - ✅ **Milestone/scheduled triggers** handled by automation cycle
 - ✅ **Clean architecture** with no old video automation dependencies
 
-**🎯 ARCHITECTURAL DISCOVERY**: Existing hybrid event-driven + polling infrastructure discovered!
+**🎯 ARCHITECTURAL DISCOVERY**: Existing hybrid event-driven + polling
+infrastructure discovered!
 
 ## 🔍 Architectural Discovery: Hybrid Event-Driven + Polling System
 
-**CRITICAL INSIGHT**: The video automation architecture already exists and is perfectly designed!
+**CRITICAL INSIGHT**: The video automation architecture already exists and is
+perfectly designed!
 
 ### ✅ **Event-Driven Video Generation** (Already Implemented)
 
@@ -60,7 +70,7 @@
 ```
 🎬 Image Capture Completes
     ↓
-📡 WorkflowOrchestratorService.capture_image() 
+📡 WorkflowOrchestratorService.capture_image()
     ↓ (Line 474-475)
 🎯 job_coordinator.evaluate_video_automation_triggers(timelapse_id)
     ↓
@@ -94,34 +104,44 @@
 ### 🎯 **Integration Strategy**
 
 **What We Need to Do**:
+
 - ✅ Keep existing integration points (capture pipeline, scheduler)
 - ✅ Replace `VideoAutomationService` with our simplified pipeline
-- ✅ Implement automation logic in `VideoWorkflowService.process_automation_cycle()`
+- ✅ Implement automation logic in
+  `VideoWorkflowService.process_automation_cycle()`
 - ✅ Handle both immediate and periodic calls with single method
 
 **What We DON'T Need**:
+
 - ❌ New event system (already exists)
-- ❌ New scheduler integration (already exists)  
+- ❌ New scheduler integration (already exists)
 - ❌ New capture pipeline integration (already exists)
 
 ### 📋 **Next Implementation Phase**
 
 **Phase 1: Implement Automation Logic in VideoWorkflowService** (PRIORITY: HIGH)
 
-**Goal**: Replace existing VideoAutomationService with self-contained automation logic
+**Goal**: Replace existing VideoAutomationService with self-contained automation
+logic
 
 **Implementation Areas**:
-1. **Per-Capture Detection**: Check timelapses with per-capture enabled for new images since last video
-2. **Scheduled Detection**: Check timelapses with daily/weekly schedules for time-based triggers  
+
+1. **Per-Capture Detection**: Check timelapses with per-capture enabled for new
+   images since last video
+2. **Scheduled Detection**: Check timelapses with daily/weekly schedules for
+   time-based triggers
 3. **Milestone Detection**: Check timelapses for image count milestones reached
-4. **Job Creation**: Create appropriate priority jobs (HIGH for per-capture, MEDIUM for milestones, LOW for scheduled)
+4. **Job Creation**: Create appropriate priority jobs (HIGH for per-capture,
+   MEDIUM for milestones, LOW for scheduled)
 
 **Integration Points to Update**:
+
 - `capture_pipeline/job_coordination_service.py` → calls our video pipeline
 - `workers/video_worker.py` → remove VideoAutomationService dependency
 - `worker.py` → remove VideoAutomationService initialization
 
 **Key Methods to Implement**:
+
 - `process_automation_cycle()` - Handle both immediate and periodic calls
 - `_evaluate_per_capture_triggers()` - Per-capture video generation logic
 - `_evaluate_scheduled_triggers()` - Daily/weekly scheduled triggers
@@ -131,7 +151,8 @@
 
 ### Simplified Video Pipeline Domain Structure
 
-**Simplified 4-service architecture** focused on actual video generation rather than over-engineering:
+**Simplified 4-service architecture** focused on actual video generation rather
+than over-engineering:
 
 ```
 backend/app/services/video_pipeline/
@@ -140,12 +161,13 @@ backend/app/services/video_pipeline/
 ├── utils.py                          # Domain-specific pure functions
 │
 ├── video_workflow_service.py         # Main orchestrator + FFmpeg + file ops
-├── video_job_service.py              # Job queue + lifecycle management  
+├── video_job_service.py              # Job queue + lifecycle management
 ├── overlay_integration_service.py    # Overlay coordination + fallback
 └── video_automation_service.py       # Trigger processing (reuse existing)
 ```
 
 **Key Differences from Over-Engineered Approach**:
+
 - ❌ No separate FFmpegService (integrated into workflow)
 - ❌ No separate VideoFileService (integrated into workflow)
 - ❌ No VideoSettingsService (use existing settings system)
@@ -178,7 +200,7 @@ def create_video_pipeline(
     # Step 2: Create business services (simplified)
     job_service = VideoJobService(db)
     overlay_service = OverlayIntegrationService(db)
-    
+
     # Note: VideoAutomationService will reuse existing automation system
     # automation_service = VideoAutomationService(db)  # TODO: Implement or reuse existing
 
@@ -194,7 +216,8 @@ def create_video_pipeline(
 
 ### VideoWorkflowService
 
-**Main orchestration service** - coordinates all video generation workflows with integrated operations
+**Main orchestration service** - coordinates all video generation workflows with
+integrated operations
 
 **Responsibilities:**
 
@@ -214,7 +237,8 @@ def create_video_pipeline(
 
 ### VideoJobService
 
-**Simplified job management** - consolidated job coordination, queue management, and lifecycle
+**Simplified job management** - consolidated job coordination, queue management,
+and lifecycle
 
 **Responsibilities:**
 
@@ -234,7 +258,8 @@ def create_video_pipeline(
 
 ### OverlayIntegrationService
 
-**Simplified overlay coordination** - handles overlay availability checking and fallback
+**Simplified overlay coordination** - handles overlay availability checking and
+fallback
 
 **Responsibilities:**
 
@@ -246,7 +271,8 @@ def create_video_pipeline(
 **Key Methods:**
 
 - `check_overlays_available(timelapse_id)` - Check overlay availability
-- `get_overlay_mode_for_video(timelapse_id)` - Determine overlay mode ('overlay' or 'regular')
+- `get_overlay_mode_for_video(timelapse_id)` - Determine overlay mode ('overlay'
+  or 'regular')
 - `get_service_health()` - Health status monitoring
 
 ## 🔄 Video Generation Flow
@@ -714,7 +740,7 @@ Create overlay management service with:
 Enhanced functionality for:
 
 - Priority-based job processing in VideoJobCoordinationService
-- Complex video generation flow in WorkflowOrchestratorService  
+- Complex video generation flow in WorkflowOrchestratorService
 - Enhanced FFmpeg command generation in FFmpegService
 - Worker integration patterns across services
 - Comprehensive error handling and fallback strategies
@@ -725,7 +751,7 @@ Enhanced functionality for:
 
 **COMPLETED**:
 - ✅ Added `OverlayManagementService` import and factory function
-- ✅ Added missing `AutomationService` import and factory function  
+- ✅ Added missing `AutomationService` import and factory function
 - ✅ Updated workflow orchestrator to initialize automation service
 - ✅ Added overlay and automation services to health check monitoring
 - ✅ Updated `__all__` exports to include all services
@@ -738,7 +764,7 @@ Enhanced functionality for:
 3. FFmpegService (video generation)
 4. VideoFileService (file operations)
 5. VideoSettingsService (settings management)
-6. OverlayManagementService (overlay lifecycle) 
+6. OverlayManagementService (overlay lifecycle)
 7. AutomationService (trigger processing)
 8. VideoTransactionManager (transaction safety)
 
@@ -814,14 +840,14 @@ The video pipeline implements a sophisticated priority-based job processing syst
 def get_next_pending_job(self) -> Optional[VideoGenerationJobWithDetails]:
     """
     Get next job using priority-based FIFO within priority levels.
-    
+
     Processing order:
     1. All HIGH priority jobs (oldest first)
-    2. All MEDIUM priority jobs (oldest first)  
+    2. All MEDIUM priority jobs (oldest first)
     3. All LOW priority jobs (oldest first)
     """
     priority_order = {"high": 1, "medium": 2, "low": 3}
-    
+
     return sorted(pending_jobs, key=lambda x: (
         priority_order.get(x.priority, 4),
         x.created_at
@@ -834,7 +860,7 @@ def get_next_pending_job(self) -> Optional[VideoGenerationJobWithDetails]:
 class WorkflowOrchestratorService:
     max_concurrent_jobs = DEFAULT_MAX_CONCURRENT_VIDEO_JOBS  # Configurable limit
     currently_processing = 0  # Track active jobs
-    
+
     def can_process_more_jobs(self) -> bool:
         return self.currently_processing < self.max_concurrent_jobs
 ```
@@ -850,7 +876,7 @@ The video generation process follows a sophisticated multi-step approach with co
 def check_overlays_enabled_and_exist(self, timelapse_id: int) -> Dict[str, Any]:
     """
     Perform preflight check for overlay requirements.
-    
+
     Returns:
         {
             "overlays_enabled": bool,
@@ -887,36 +913,36 @@ ffmpeg -pattern_type glob \
 def generate_video_with_fallbacks(self, job: VideoGenerationJobWithDetails) -> Dict[str, Any]:
     """
     Multi-step video generation with comprehensive fallback strategy.
-    
+
     Fallback sequence:
     1. Try video with overlays (if enabled)
     2. If overlay missing → regenerate overlays
-    3. If regeneration fails → create empty placeholder overlays  
+    3. If regeneration fails → create empty placeholder overlays
     4. If FFmpeg with overlays fails → retry without overlays
     5. If final attempt fails → mark job as failed
     """
-    
+
     # Step 1: Check overlay requirements
     overlay_status = self.overlay_service.check_overlays_exist(job.timelapse_id)
-    
+
     if overlay_status["overlays_enabled"]:
         if overlay_status["missing_overlays"]:
             # Step 2: Attempt overlay regeneration
             regen_result = self.overlay_service.regenerate_missing_overlays(job.timelapse_id)
-            
+
             if not regen_result["success"]:
                 # Step 3: Create fallback placeholders
                 self.overlay_service.create_fallback_overlays(job.timelapse_id)
-        
+
         # Step 4: Attempt complex video generation
         complex_result = self.ffmpeg_service.generate_complex_video(job.timelapse_id, settings)
-        
+
         if complex_result["success"]:
             return complex_result
         else:
             # Step 5: Fallback to simple video without overlays
             logger.warning(f"Complex video failed for job {job.id}, falling back to simple video")
-    
+
     # Step 6: Generate simple video (final fallback)
     return self.ffmpeg_service.generate_simple_video(job.timelapse_id, settings)
 ```
@@ -929,23 +955,23 @@ class VideoWorker:
     def __init__(self):
         # Use factory pattern for service creation
         self.workflow_service = create_video_pipeline()
-    
+
     def process_video_automation(self) -> None:
         """
         Main entry point called by scheduler.
-        
+
         Processes automation cycle and job queue continuously.
         """
         try:
             # Process automation triggers and job queue
             result = self.workflow_service.process_automation_cycle()
-            
+
             # Log results
             if result["success"]:
                 logger.info(f"Video automation cycle completed: {result['jobs_processed']} jobs processed")
             else:
                 logger.error(f"Video automation cycle failed: {result['errors']}")
-                    
+
         except Exception as e:
             logger.error(f"Video worker processing failed: {e}")
 ```
@@ -1173,11 +1199,14 @@ def get_video_pipeline_health(orchestrator: VideoWorkflowOrchestrator) -> Dict[s
 
 ## 🎉 FINAL ARCHITECTURE SUMMARY
 
-**🚀 IMPLEMENTATION COMPLETE**: The video pipeline has been successfully implemented with a clean, simplified architecture that fully replaces the old video automation system.
+**🚀 IMPLEMENTATION COMPLETE**: The video pipeline has been successfully
+implemented with a clean, simplified architecture that fully replaces the old
+video automation system.
 
 ### ✅ **Final Clean Architecture (3 Services)**
 
-After implementation and code cleanup, the video pipeline settled on a highly optimized 3-service architecture:
+After implementation and code cleanup, the video pipeline settled on a highly
+optimized 3-service architecture:
 
 ```
 backend/app/services/video_pipeline/
@@ -1191,6 +1220,7 @@ backend/app/services/video_pipeline/
 **Service Responsibilities:**
 
 1. **VideoWorkflowService** (Main Orchestrator)
+
    - Complete video generation workflow
    - Direct FFmpeg integration via ffmpeg_utils
    - Automation trigger evaluation (milestone, scheduled, per-capture)
@@ -1198,6 +1228,7 @@ backend/app/services/video_pipeline/
    - File operations and video record creation
 
 2. **VideoJobService** (Job Management)
+
    - Priority-based job queue (HIGH/MEDIUM/LOW)
    - Job lifecycle management (create, start, complete)
    - Queue status and health monitoring
@@ -1210,8 +1241,9 @@ backend/app/services/video_pipeline/
 ### 🧹 **Code Cleanup Completed**
 
 **Removed Over-Engineered Files:**
+
 - ❌ `automation_service.py` (165 lines)
-- ❌ `ffmpeg_service.py` (198 lines)  
+- ❌ `ffmpeg_service.py` (198 lines)
 - ❌ `job_coordination_service.py` (267 lines)
 - ❌ `overlay_management_service.py` (198 lines)
 - ❌ `video_file_service.py` (165 lines)
@@ -1219,23 +1251,28 @@ backend/app/services/video_pipeline/
 - ❌ `video_transaction_manager.py` (132 lines)
 
 **Cleaned Production Files:**
+
 - ✅ `video_workflow_service.py` - Removed TODO placeholders, unused methods
-- ✅ `video_automation_service.py.obsolete` - Safely archived old automation system
+- ✅ `video_automation_service.py.obsolete` - Safely archived old automation
+  system
 - ✅ All integration points updated (capture pipeline, workers, factory)
 
 ### 🎯 **Integration Points Completed**
 
 **Capture Pipeline Integration:**
+
 - ✅ `JobCoordinationService` uses video pipeline for per-capture triggers
 - ✅ Per-capture triggers handled by `evaluate_per_capture_trigger()`
 - ✅ Priority-based job creation (HIGH for per-capture)
 
 **Worker Integration:**
+
 - ✅ `VideoWorker` completely rewritten to use simplified pipeline
 - ✅ `worker.py` updated to remove old VideoAutomationService
 - ✅ Factory pattern used throughout for dependency injection
 
 **Scheduler Integration:**
+
 - ✅ Automation cycle processing every 2 minutes
 - ✅ Milestone and scheduled trigger evaluation
 - ✅ Hybrid architecture (event-driven + polling) preserved
@@ -1243,11 +1280,13 @@ backend/app/services/video_pipeline/
 ### 📊 **Final Metrics**
 
 **Code Reduction:**
+
 - **Before**: 8 over-engineered services (1,523 lines of scaffolding)
 - **After**: 3 production services (working video generation)
 - **Reduction**: 1,523 lines of unused scaffolding removed
 
 **Architecture Improvement:**
+
 - **Simplified Dependencies**: 3 services vs 8 services
 - **Working Implementation**: Actual video generation vs TODO placeholders
 - **Clean Integration**: Complete replacement of VideoAutomationService
@@ -1256,6 +1295,7 @@ backend/app/services/video_pipeline/
 ### 🚀 **Production Status**
 
 **✅ READY FOR PRODUCTION**:
+
 - All automation logic implemented and tested
 - Complete replacement of old video automation system
 - Clean service boundaries with no over-engineering
@@ -1265,6 +1305,7 @@ backend/app/services/video_pipeline/
 - SSE events for real-time updates maintained
 
 **Next Steps:**
+
 - The video pipeline is complete and ready for production use
 - Monitor performance and add optimizations as needed
 - Future enhancements can be added incrementally to the clean architecture
@@ -1272,4 +1313,5 @@ backend/app/services/video_pipeline/
 ---
 
 **Last Updated**: Implementation complete with clean 3-service architecture  
-**Status**: ✅ PRODUCTION READY - Video pipeline successfully replaces VideoAutomationService
+**Status**: ✅ PRODUCTION READY - Video pipeline successfully replaces
+VideoAutomationService

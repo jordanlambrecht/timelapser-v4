@@ -40,6 +40,10 @@ from ....database.corruption_operations import (
 from ....models.corruption_model import (
     CameraHealthAssessment,
 )
+from ..exceptions import (
+    CameraHealthError,
+    CorruptionEvaluationError,
+)
 
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE, LogSource.PIPELINE)
 
@@ -68,20 +72,24 @@ class CorruptionHealthService:
             CameraHealthAssessment with detailed health metrics
         """
         try:
-            # Get camera corruption metadata
-            metadata = await self.db_ops.get_camera_corruption_metadata(camera_id)
+            # Service Layer Boundary Pattern - Get raw dict from database layer
+            metadata_dict = await self.db_ops.get_camera_corruption_metadata(camera_id)
 
             # Get corruption statistics
             stats = await self.db_ops.get_corruption_stats(camera_id=camera_id)
 
-            # Calculate health score using established constants
+            # Service layer processes raw dictionaries internally
+            # Convert to typed object at service boundary (return statement)
+
+            # Calculate health score using raw dictionary data
             health_score = 100.0
             penalties = []
             issues = []
             recommendations = []
 
-            # Degraded mode penalty
-            if metadata.get("degraded_mode_active", False):
+            # Degraded mode penalty - database guarantees this key exists
+            degraded_mode_active = metadata_dict["degraded_mode_active"]
+            if degraded_mode_active:
                 health_score -= HEALTH_DEGRADED_MODE_PENALTY
                 penalties.append(
                     f"Degraded mode active (-{HEALTH_DEGRADED_MODE_PENALTY})"
@@ -93,8 +101,8 @@ class CorruptionHealthService:
                     "Investigate camera feed quality and connection stability"
                 )
 
-            # Consecutive failures penalty
-            consecutive_failures = metadata.get("consecutive_corruption_failures", 0)
+            # Consecutive failures penalty - database guarantees this key exists
+            consecutive_failures = metadata_dict["consecutive_corruption_failures"]
             if consecutive_failures >= HEALTH_CONSECUTIVE_FAILURES_HIGH_THRESHOLD:
                 health_score -= HEALTH_CONSECUTIVE_FAILURES_HIGH_PENALTY
                 penalties.append(
@@ -184,18 +192,19 @@ class CorruptionHealthService:
                     "Monitor camera closely for any further degradation"
                 )
 
-            # Create metrics dictionary
+            # Create metrics dictionary using raw dictionary data
             metrics_dict = {
-                "degraded_mode_active": metadata.get("degraded_mode_active", False),
+                "degraded_mode_active": degraded_mode_active,
                 "consecutive_failures": consecutive_failures,
-                "lifetime_glitch_count": metadata.get("lifetime_glitch_count", 0),
-                "last_degraded_at": metadata.get("last_degraded_at"),
+                "lifetime_glitch_count": metadata_dict["lifetime_glitch_count"],
+                "last_degraded_at": metadata_dict["last_degraded_at"],
                 "corruption_stats": (
                     stats.model_dump() if hasattr(stats, "model_dump") else stats
                 ),
                 "penalties": penalties,
             }
 
+            # Service Layer Boundary Pattern - Return typed object at boundary
             return CameraHealthAssessment(
                 camera_id=camera_id,
                 health_score=int(health_score),
@@ -208,13 +217,26 @@ class CorruptionHealthService:
                 metrics=metrics_dict,
             )
 
+        except CameraHealthError as e:
+            logger.error(
+                f"Camera health assessment error for camera {camera_id}", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during camera {camera_id} health assessment",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error assessing camera {camera_id} health: {e}",
+                f"Unexpected error assessing camera {camera_id} health: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to assess camera {camera_id} health: {str(e)}"
+            ) from e
 
     async def get_system_health_overview(self) -> Dict[str, Any]:
         """
@@ -301,13 +323,25 @@ class CorruptionHealthService:
                 "last_updated": utc_now(),
             }
 
+        except CameraHealthError as e:
+            logger.error(
+                "Camera health error during system health overview", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during system health overview", exception=e
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting system health overview: {e}",
+                f"Unexpected error getting system health overview: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to get system health overview: {str(e)}"
+            ) from e
 
     async def check_degraded_mode_triggers(self) -> List[Dict[str, Any]]:
         """
@@ -326,13 +360,26 @@ class CorruptionHealthService:
 
             return cameras_to_degrade
 
+        except CameraHealthError as e:
+            logger.error(
+                "Camera health error during degraded mode triggers check", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                "Corruption evaluation error during degraded mode triggers check",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error checking degraded mode triggers: {e}",
+                f"Unexpected error checking degraded mode triggers: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to check degraded mode triggers: {str(e)}"
+            ) from e
 
     async def reset_camera_health(self, camera_id: int) -> bool:
         """
@@ -347,13 +394,27 @@ class CorruptionHealthService:
         try:
             return await self.db_ops.reset_camera_degraded_mode(camera_id)
 
+        except CameraHealthError as e:
+            logger.error(
+                f"Camera health error during camera {camera_id} health reset",
+                exception=e,
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during camera {camera_id} health reset",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error resetting camera {camera_id} health: {e}",
+                f"Unexpected error resetting camera {camera_id} health: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to reset camera {camera_id} health: {str(e)}"
+            ) from e
 
     async def get_health_trends(
         self, camera_id: int, hours: int = 24
@@ -418,13 +479,27 @@ class CorruptionHealthService:
                 ),
             }
 
+        except CameraHealthError as e:
+            logger.error(
+                f"Camera health error during health trends for camera {camera_id}",
+                exception=e,
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during health trends for camera {camera_id}",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error getting health trends for camera {camera_id}: {e}",
+                f"Unexpected error getting health trends for camera {camera_id}: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to get health trends for camera {camera_id}: {str(e)}"
+            ) from e
 
 
 class SyncCorruptionHealthService:

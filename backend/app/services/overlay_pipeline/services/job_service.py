@@ -9,6 +9,7 @@ following the architecture pattern of service -> operations -> database.
 from typing import List, Optional
 
 from ....enums import LogEmoji, LoggerName, LogSource
+from ....models.health_model import HealthStatus
 from ....services.logger import get_service_logger
 
 
@@ -148,6 +149,16 @@ class SyncOverlayJobService:
             logger.error(f"Failed to mark overlay job {job_id} as failed", exception=e)
             return False
 
+    def schedule_retry(self, job_id: int, retry_count: int, delay_minutes: int) -> bool:
+        """Schedule job retry with delay."""
+        try:
+            return self.overlay_job_ops.schedule_retry(
+                job_id, retry_count, delay_minutes
+            )
+        except Exception as e:
+            logger.error(f"Failed to schedule retry for job {job_id}", exception=e)
+            return False
+
     def recover_stuck_jobs(self, max_processing_age_minutes: int = 30) -> dict:
         """
         Recover jobs stuck in processing status.
@@ -182,16 +193,20 @@ class SyncOverlayJobService:
                 test_jobs = self.overlay_job_ops.get_pending_jobs(limit=1)
                 db_healthy = isinstance(test_jobs, list)
                 logger.debug(
-                    f"🗄️ Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}"
+                    f"Database connectivity: {'✅ healthy' if db_healthy else '❌ unhealthy'}",
+                    emoji=LogEmoji.DATABASE,
                 )
             except Exception as e:
                 db_error = str(e)
-                logger.error("🗄️ Database connectivity failed", exception=e)
+                logger.error(
+                    "Database connectivity failed", exception=e, emoji=LogEmoji.DATABASE
+                )
 
             # Basic queue health check
             queue_healthy = db_healthy
             logger.debug(
-                f"📋 Job queue: {'✅ healthy' if queue_healthy else '⚠️ degraded'}"
+                f"Job queue: {'✅ healthy' if queue_healthy else '⚠️ degraded'}",
+                emoji=LogEmoji.QUEUE,
             )
 
             # Check settings service if provided
@@ -205,7 +220,8 @@ class SyncOverlayJobService:
                     )
                     settings_healthy = test_setting is not None
                     logger.debug(
-                        f"Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}"
+                        f"Settings service: {'✅ healthy' if settings_healthy else '❌ unhealthy'}",
+                        emoji=LogEmoji.SYSTEM,
                     )
                 except Exception as e:
                     settings_healthy = False
@@ -223,28 +239,34 @@ class SyncOverlayJobService:
             # Queue stats and settings are great but not critical
             overall_healthy = db_healthy
             if overall_healthy and queue_healthy and settings_healthy:
-                overall_status = "healthy"
+                overall_status = HealthStatus.HEALTHY
             elif overall_healthy:
-                overall_status = "degraded"
+                overall_status = HealthStatus.DEGRADED
             else:
-                overall_status = "unhealthy"
+                overall_status = HealthStatus.UNREACHABLE
 
             health_data = {
                 "service": "overlay_job_service",
                 "status": overall_status,
                 "database": {
-                    "status": "healthy" if db_healthy else "unhealthy",
+                    "status": (
+                        HealthStatus.HEALTHY if db_healthy else HealthStatus.UNREACHABLE
+                    ),
                     "error": db_error,
                 },
                 "job_queue": {
-                    "status": "healthy" if queue_healthy else "degraded",
+                    "status": (
+                        HealthStatus.HEALTHY if queue_healthy else HealthStatus.DEGRADED
+                    ),
                 },
                 "settings_service": {
                     "status": (
-                        "healthy"
+                        HealthStatus.HEALTHY
                         if settings_healthy
                         else (
-                            "unhealthy" if self.settings_service else "not_configured"
+                            HealthStatus.UNREACHABLE
+                            if self.settings_service
+                            else HealthStatus.UNKNOWN
                         )
                     ),
                     "error": settings_error,
@@ -262,7 +284,7 @@ class SyncOverlayJobService:
 
             return {
                 "service": "overlay_job_service",
-                "status": "unhealthy",
+                "status": HealthStatus.UNREACHABLE,
                 "error": str(e),
                 "timestamp": utc_timestamp(),
             }

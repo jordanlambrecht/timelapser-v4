@@ -40,6 +40,10 @@ import cv2
 
 from ...enums import LoggerName
 from ...services.logger import get_service_logger
+from ...models.capture_pipeline_models import (
+    CameraInfo,
+    TimelapseInfo,
+)
 from ...utils.file_helpers import clean_filename
 from ...utils.time_utils import format_filename_timestamp, utc_now
 from .constants import (
@@ -117,11 +121,14 @@ def validate_capture_prerequisites(camera_info: Dict, timelapse_info: Dict) -> b
             logger.error("Camera information is missing")
             return False
 
-        if not camera_info.get("id"):
+        # Convert to typed models for type safety
+        camera = CameraInfo.from_dict(camera_info)
+
+        if not camera.id:
             logger.error("Camera ID is missing")
             return False
 
-        if not camera_info.get("rtsp_url"):
+        if not camera.rtsp_url:
             logger.error("Camera RTSP URL is missing")
             return False
 
@@ -130,25 +137,26 @@ def validate_capture_prerequisites(camera_info: Dict, timelapse_info: Dict) -> b
             logger.error("Timelapse information is missing")
             return False
 
-        if not timelapse_info.get("id"):
+        timelapse = TimelapseInfo.from_dict(timelapse_info)
+
+        if not timelapse.id:
             logger.error("Timelapse ID is missing")
             return False
 
         # Check camera health status if available
-        if camera_info.get("health_status") == "offline":
-            logger.warning(f"Camera {camera_info.get('id')} is marked as offline")
+        if not camera.is_online:
+            logger.warning(f"Camera {camera.id} is marked as offline")
             # Don't fail here - let capture workflow handle connectivity
 
         # Check timelapse status
-        timelapse_status = timelapse_info.get("status")
-        if timelapse_status not in ["running", "active"]:
+        if not timelapse.is_running:
             logger.error(
-                f"Timelapse {timelapse_info.get('id')} is not in running state: {timelapse_status}"
+                f"Timelapse {timelapse.id} is not in running state: {timelapse.status}"
             )
             return False
 
         # Basic disk space check (if data directory is available)
-        data_dir = camera_info.get("data_directory")
+        data_dir = camera.data_directory
         if data_dir and Path(data_dir).exists():
             stat = os.statvfs(data_dir)
             free_bytes = stat.f_frsize * stat.f_bavail
@@ -209,7 +217,9 @@ def calculate_workflow_step_timeout(step_name: str) -> int:
         STEP_CAPTURE_COMPLETE: 5,
     }
 
-    return step_timeouts.get(step_name, WORKFLOW_STEP_TIMEOUT_SECONDS)
+    return step_timeouts.get(
+        step_name, WORKFLOW_STEP_TIMEOUT_SECONDS
+    )  # Acceptable: dictionary lookup with fallback
 
 
 def create_error_context(
@@ -305,6 +315,7 @@ def merge_workflow_results(step_results: List[Dict[str, Any]]) -> Dict[str, Any]
         }
 
     total_steps = len(step_results)
+
     successful_steps = sum(1 for result in step_results if result.get("success", False))
     failed_steps = total_steps - successful_steps
 

@@ -15,17 +15,29 @@ Responsibilities:
 - Audit trail management
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from ....enums import LogSource, LoggerName
 from ....services.logger import LogEmoji, get_service_logger
+
+from ..models.corruption_responses import (
+    RetryDecision,
+    CameraHealthDetails,
+)
+from ..exceptions import (
+    CorruptionDetectionError,
+    CorruptionEvaluationError,
+    CorruptionSettingsError,
+    CameraHealthError,
+    DegradedModeError,
+)
 
 
 from ....constants import (
     CORRUPTION_CRITICAL_THRESHOLD,
     DEFAULT_CORRUPTION_FALLBACK_SCORE,
-    DEFAULT_CORRUPTION_RETRY_ENABLED,
-    DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
+    # DEFAULT_CORRUPTION_RETRY_ENABLED,  # Unused
+    # DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,  # Unused
 )
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....database.corruption_operations import (
@@ -82,9 +94,11 @@ class CorruptionEvaluationService:
             CorruptionEvaluationResult with evaluation details
         """
         try:
-            # Check if corruption detection is enabled
-            settings = await self.db_ops.get_corruption_settings()
-            if not settings.get("detection_enabled", True):
+            # Service Layer Boundary Pattern - Get raw dictionaries from database layer
+            settings_dict = await self.db_ops.get_corruption_settings()
+
+            # Service processes raw dictionaries internally
+            if not settings_dict.get("is_enabled", True):
                 return CorruptionEvaluationResult(
                     is_valid=True,
                     corruption_score=DEFAULT_CORRUPTION_FALLBACK_SCORE,
@@ -92,39 +106,38 @@ class CorruptionEvaluationService:
                     detection_disabled=True,
                 )
 
-            # Get camera-specific settings
-            camera_settings = await self.db_ops.get_camera_corruption_settings(
+            # Get camera-specific settings - process as raw dictionary
+            camera_settings_dict = await self.db_ops.get_camera_corruption_settings(
                 camera_id
             )
-            heavy_detection_enabled = camera_settings.get(
+            heavy_detection_enabled = camera_settings_dict.get(
                 "corruption_detection_heavy", False
             )
 
-            # Get camera degraded mode status
-            camera_metadata = await self.db_ops.get_camera_corruption_metadata(
+            # Get camera degraded mode status - process as raw dictionary
+            camera_metadata_dict = await self.db_ops.get_camera_corruption_metadata(
                 camera_id
             )
-            is_degraded = camera_metadata.get("degraded_mode_active", False)
-            consecutive_failures = camera_metadata.get(
-                "consecutive_corruption_failures", 0
-            )
+            is_degraded = camera_metadata_dict["degraded_mode_active"]
+            consecutive_failures = camera_metadata_dict[
+                "consecutive_corruption_failures"
+            ]
 
-            # Perform fast detection
-            fast_result = self.fast_detector.detect(image_path)
+            # Perform fast detection - detectors return dictionaries
+            fast_result_dict = self.fast_detector.detect(image_path)
 
             # Perform heavy detection if enabled and not in degraded mode
-            heavy_result = None
+            heavy_result_dict = None
             if heavy_detection_enabled and not is_degraded:
-                heavy_result = self.heavy_detector.detect(image_path)
+                heavy_result_dict = self.heavy_detector.detect(image_path)
 
-            # Calculate final score
+            # Calculate final score using raw dictionary data
+            heavy_score = (
+                heavy_result_dict["corruption_score"] if heavy_result_dict else None
+            )
             score_result = self.score_calculator.calculate_final_score(
-                fast_score=fast_result.get("corruption_score", 100.0),
-                heavy_score=(
-                    heavy_result.get("corruption_score")
-                    if heavy_result and heavy_result.get("corruption_score") is not None
-                    else None
-                ),
+                fast_score=fast_result_dict["corruption_score"],
+                heavy_score=heavy_score,
                 health_degraded=is_degraded,
                 consecutive_failures=consecutive_failures,
             )
@@ -136,29 +149,56 @@ class CorruptionEvaluationService:
             # TODO: Create SSE event for corruption detection result
             # Should use SSEEventsOperations.create_event() with EVENT_CORRUPTION_DETECTED
 
-            # Create evaluation result
-            evaluation_result = CorruptionEvaluationResult(
+            # Service Layer Boundary Pattern - Convert to typed object at boundary
+            return CorruptionEvaluationResult(
                 is_valid=is_valid,
                 corruption_score=int(score_result.final_score),
-                fast_score=int(fast_result.get("corruption_score", 100.0)),
+                fast_score=int(fast_result_dict["corruption_score"]),
                 heavy_score=(
-                    int(heavy_result.get("corruption_score", 0))
-                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    int(heavy_result_dict["corruption_score"])
+                    if heavy_result_dict and heavy_result_dict.get("is_available", True)
                     else None
                 ),
                 action_taken=action_taken,
                 detection_disabled=False,
-                processing_time_ms=fast_result.get("detection_time_ms", 0.0)
-                + (heavy_result.get("detection_time_ms", 0.0) if heavy_result else 0.0),
-                failed_checks=fast_result.get("failed_checks", [])
-                + (heavy_result.get("failed_checks", []) if heavy_result else []),
+                processing_time_ms=fast_result_dict["detection_time_ms"]
+                + (
+                    heavy_result_dict["detection_time_ms"] if heavy_result_dict else 0.0
+                ),
+                failed_checks=fast_result_dict["failed_checks"]
+                + (heavy_result_dict["failed_checks"] if heavy_result_dict else []),
             )
 
-            return evaluation_result
-
+        except CorruptionSettingsError as e:
+            logger.error(f"Corruption settings error for {image_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="settings_error",
+                detection_disabled=False,
+                error=str(e),
+            )
+        except CorruptionDetectionError as e:
+            logger.error(f"Corruption detection error for {image_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="detection_error",
+                detection_disabled=False,
+                error=str(e),
+            )
+        except CorruptionEvaluationError as e:
+            logger.error(f"Corruption evaluation error for {image_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="evaluation_error",
+                detection_disabled=False,
+                error=str(e),
+            )
         except Exception as e:
-            logger.error(
-                f"Error evaluating image quality for {image_path}: {e}",
+            logger.warning(
+                f"Unexpected error evaluating image quality for {image_path}: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
@@ -177,7 +217,7 @@ class CorruptionEvaluationService:
         camera_id: int,
         current_attempt: int,
         max_attempts: int = 3,
-    ) -> Dict[str, Any]:
+    ) -> RetryDecision:
         """
         Determine if a failed capture should be retried.
 
@@ -193,62 +233,98 @@ class CorruptionEvaluationService:
         try:
             # Don't retry if image is valid
             if evaluation_result.is_valid:
-                return {
-                    "should_retry": False,
-                    "reason": "Image is valid, no retry needed",
-                }
+                return RetryDecision(
+                    should_retry=False,
+                    reason="Image is valid, no retry needed",
+                    retry_count=current_attempt,
+                    max_retries=max_attempts,
+                    next_retry_delay_ms=0,
+                )
 
             # Don't retry if max attempts reached
             if current_attempt >= max_attempts:
-                return {
-                    "should_retry": False,
-                    "reason": f"Maximum retry attempts ({max_attempts}) reached",
-                }
+                return RetryDecision(
+                    should_retry=False,
+                    reason=f"Maximum retry attempts ({max_attempts}) reached",
+                    retry_count=current_attempt,
+                    max_retries=max_attempts,
+                    next_retry_delay_ms=0,
+                )
 
-            # Check if retry is enabled in settings
-            settings = await self.db_ops.get_corruption_settings()
-            retry_enabled = settings.get(
-                "retry_enabled", DEFAULT_CORRUPTION_RETRY_ENABLED
-            )
+            # Service Layer Boundary Pattern - Process raw dictionary from database
+            settings_dict = await self.db_ops.get_corruption_settings()
+            retry_enabled = settings_dict.get("retry_enabled", True)
 
             if not retry_enabled:
-                return {
-                    "should_retry": False,
-                    "reason": "Corruption retry is disabled in settings",
-                }
+                return RetryDecision(
+                    should_retry=False,
+                    reason="Corruption retry is disabled in settings",
+                    retry_count=current_attempt,
+                    max_retries=max_attempts,
+                    next_retry_delay_ms=0,
+                )
 
             # Don't retry if score is critically bad (likely real corruption)
             if evaluation_result.corruption_score >= CORRUPTION_CRITICAL_THRESHOLD:
-                return {
-                    "should_retry": False,
-                    "reason": f"Corruption score too high ({evaluation_result.corruption_score}) for retry",
-                }
+                return RetryDecision(
+                    should_retry=False,
+                    reason=f"Corruption score too high ({evaluation_result.corruption_score}) for retry",
+                    retry_count=current_attempt,
+                    max_retries=max_attempts,
+                    next_retry_delay_ms=0,
+                )
 
-            # Check camera degraded mode
-            camera_metadata = await self.db_ops.get_camera_corruption_metadata(
+            # Check camera degraded mode - process raw dictionary
+            camera_metadata_dict = await self.db_ops.get_camera_corruption_metadata(
                 camera_id
             )
-            if camera_metadata.get("degraded_mode_active", False):
-                return {
-                    "should_retry": False,
-                    "reason": "Camera is in degraded mode, skipping retry",
-                }
+            is_degraded = camera_metadata_dict["degraded_mode_active"]
+
+            if is_degraded:
+                return RetryDecision(
+                    should_retry=False,
+                    reason="Camera is in degraded mode, skipping retry",
+                    retry_count=current_attempt,
+                    max_retries=max_attempts,
+                    next_retry_delay_ms=0,
+                )
 
             # Allow retry for borderline cases
-            return {
-                "should_retry": True,
-                "reason": f"Retry attempt {current_attempt + 1}/{max_attempts} for borderline corruption",
-            }
+            return RetryDecision(
+                should_retry=True,
+                reason=f"Retry attempt {current_attempt + 1}/{max_attempts} for borderline corruption",
+                retry_count=current_attempt,
+                max_retries=max_attempts,
+                next_retry_delay_ms=1000,  # 1 second delay
+            )
 
-        except Exception as e:
+        except CorruptionSettingsError as e:
             logger.error(
-                f"Error determining retry for camera {camera_id}: {e}",
+                f"Corruption settings error for camera {camera_id} retry decision",
+                exception=e,
+            )
+            return RetryDecision(
+                should_retry=False,
+                reason=f"Settings error: {str(e)}",
+                retry_count=current_attempt,
+                max_retries=max_attempts,
+                next_retry_delay_ms=0,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error determining retry for camera {camera_id}: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            return {"should_retry": False, "reason": f"Error in retry logic: {str(e)}"}
+            return RetryDecision(
+                should_retry=False,
+                reason=f"Error in retry logic: {str(e)}",
+                retry_count=current_attempt,
+                max_retries=max_attempts,
+                next_retry_delay_ms=0,
+            )
 
-    async def assess_camera_health(self, camera_id: int) -> Dict[str, Any]:
+    async def assess_camera_health(self, camera_id: int) -> CameraHealthDetails:
         """
         Assess camera health based on corruption detection metrics.
 
@@ -256,50 +332,66 @@ class CorruptionEvaluationService:
             camera_id: ID of the camera to assess
 
         Returns:
-            Dictionary with health assessment results
+            CameraHealthDetails with health assessment results
         """
         try:
-            # Get camera corruption metadata
-            metadata = await self.db_ops.get_camera_corruption_metadata(camera_id)
+            # Service Layer Boundary Pattern - Get raw dictionaries from database layer
+            metadata_dict = await self.db_ops.get_camera_corruption_metadata(camera_id)
 
             # Get recent corruption statistics
             stats = await self.db_ops.get_corruption_stats(camera_id=camera_id)
 
+            # Service processes raw dictionaries internally
+            is_degraded = metadata_dict["degraded_mode_active"]
+            consecutive_failures = metadata_dict["consecutive_corruption_failures"]
+
             # Calculate health score
             health_score = 100.0
-            penalties = []
+            issues = []
+            recommendations = []
 
             # Degraded mode penalty
-            if metadata.get("degraded_mode_active", False):
+            if is_degraded:
                 penalty = 30.0
                 health_score -= penalty
-                penalties.append(f"Degraded mode active (-{penalty})")
+                issues.append("Camera is in degraded mode - quality detection limited")
+                recommendations.append(
+                    "Investigate camera feed quality and connection stability"
+                )
 
             # Consecutive failures penalty
-            consecutive_failures = metadata.get("consecutive_corruption_failures", 0)
             if consecutive_failures > 5:
                 penalty = min(consecutive_failures * 2.0, 25.0)
                 health_score -= penalty
-                penalties.append(
-                    f"Consecutive failures: {consecutive_failures} (-{penalty})"
+                issues.append(
+                    f"High consecutive corruption failures: {consecutive_failures}"
+                )
+                recommendations.append(
+                    "Check camera feed stability and image quality settings"
                 )
 
             # Average corruption score penalty
             if stats.avg_corruption_score > 70.0:
                 penalty = (stats.avg_corruption_score - 70.0) / 3.0
                 health_score -= penalty
-                penalties.append(
-                    f"High avg corruption score: {stats.avg_corruption_score:.1f} (-{penalty:.1f})"
+                issues.append(
+                    f"High average corruption score: {stats.avg_corruption_score:.1f}"
+                )
+                recommendations.append(
+                    "Review camera positioning, lens cleanliness, and lighting conditions"
                 )
 
             # Recent detection failures
-            if (
-                stats.images_discarded > stats.images_saved
-                and stats.total_detections > 10
-            ):
-                penalty = 15.0
-                health_score -= penalty
-                penalties.append(f"More discarded than saved images (-{penalty})")
+            recent_corruption_rate = 0.0
+            if stats.total_detections > 10:
+                recent_corruption_rate = stats.images_discarded / stats.total_detections
+                if recent_corruption_rate > 0.3:  # More than 30% corrupted
+                    penalty = 15.0
+                    health_score -= penalty
+                    issues.append(f"High corruption rate: {recent_corruption_rate:.1%}")
+                    recommendations.append(
+                        "Investigate image quality issues or adjust detection thresholds"
+                    )
 
             # Ensure health score doesn't go below 0
             health_score = max(0.0, health_score)
@@ -314,30 +406,52 @@ class CorruptionEvaluationService:
             else:
                 status = "critical"
 
-            return {
-                "camera_id": camera_id,
-                "health_score": health_score,
-                "health_status": status,
-                "degraded_mode_active": metadata.get("degraded_mode_active", False),
-                "consecutive_failures": consecutive_failures,
-                "lifetime_glitch_count": metadata.get("lifetime_glitch_count", 0),
-                "recent_stats": {
-                    "total_detections": stats.total_detections,
-                    "images_saved": stats.images_saved,
-                    "images_discarded": stats.images_discarded,
-                    "avg_corruption_score": stats.avg_corruption_score,
-                },
-                "penalties": penalties,
-                "last_degraded_at": metadata.get("last_degraded_at"),
-            }
+            # Add general recommendations based on status
+            if status in ["degraded", "critical"]:
+                recommendations.append(
+                    "Consider temporary camera maintenance or replacement"
+                )
+                recommendations.append(
+                    "Review camera feed configuration and network stability"
+                )
+            elif status == "monitoring":
+                recommendations.append(
+                    "Monitor camera closely for any further degradation"
+                )
 
+            # Service Layer Boundary Pattern - Convert to typed object at boundary
+            return CameraHealthDetails(
+                camera_id=camera_id,
+                health_score=health_score,
+                status=status,
+                recent_corruption_rate=recent_corruption_rate,
+                consecutive_failures=consecutive_failures,
+                degraded_mode_active=is_degraded,
+                issues=issues,
+                recommendations=recommendations,
+                last_assessment=None,  # Could be set to current timestamp if needed
+            )
+
+        except CameraHealthError as e:
+            logger.error(
+                f"Camera health assessment error for camera {camera_id}", exception=e
+            )
+            raise
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during health assessment for camera {camera_id}",
+                exception=e,
+            )
+            raise
         except Exception as e:
             logger.error(
-                f"Error assessing camera {camera_id} health: {e}",
+                f"Unexpected error assessing camera {camera_id} health: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
-            raise
+            raise CameraHealthError(
+                f"Failed to assess camera {camera_id} health: {str(e)}"
+            ) from e
 
     async def check_degraded_mode_trigger(self, camera_id: int) -> bool:
         """
@@ -350,19 +464,17 @@ class CorruptionEvaluationService:
             True if camera should enter degraded mode
         """
         try:
-            # Get corruption settings for degraded mode thresholds
-            settings = await self.db_ops.get_corruption_settings()
+            # Service Layer Boundary Pattern - Process raw dictionary from database
+            settings_dict = await self.db_ops.get_corruption_settings()
+            consecutive_threshold = settings_dict.get(
+                "degraded_mode_failure_threshold", 5
+            )
 
-            # Get camera failure statistics
-            metadata = await self.db_ops.get_camera_corruption_metadata(camera_id)
+            # Get camera failure statistics - process raw dictionary
+            metadata_dict = await self.db_ops.get_camera_corruption_metadata(camera_id)
+            consecutive_failures = metadata_dict["consecutive_corruption_failures"]
 
             # Check consecutive failures threshold
-            consecutive_threshold = settings.get(
-                "degraded_mode_failure_threshold",
-                DEFAULT_DEGRADED_MODE_FAILURE_THRESHOLD,
-            )
-            consecutive_failures = metadata.get("consecutive_corruption_failures", 0)
-
             if consecutive_failures >= consecutive_threshold:
                 logger.warning(
                     f"Camera {camera_id} should enter degraded mode: {consecutive_failures} consecutive failures",
@@ -375,9 +487,26 @@ class CorruptionEvaluationService:
 
             return False
 
+        except DegradedModeError as e:
+            logger.error(
+                f"Degraded mode operation error for camera {camera_id}", exception=e
+            )
+            return False
+        except CorruptionSettingsError as e:
+            logger.error(
+                f"Corruption settings error during degraded mode check for camera {camera_id}",
+                exception=e,
+            )
+            return False
+        except CorruptionEvaluationError as e:
+            logger.error(
+                f"Corruption evaluation error during degraded mode check for camera {camera_id}",
+                exception=e,
+            )
+            return False
         except Exception as e:
             logger.error(
-                f"Error checking degraded mode trigger for camera {camera_id}: {e}",
+                f"Unexpected error checking degraded mode trigger for camera {camera_id}: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )
@@ -422,9 +551,11 @@ class SyncCorruptionEvaluationService:
             CorruptionEvaluationResult model instance
         """
         try:
-            # Check if corruption detection is enabled
-            settings = self.db_ops.get_corruption_settings()
-            if not settings.get("detection_enabled", True):
+            # Service Layer Boundary Pattern - Process raw dictionary from database
+            settings_dict = self.db_ops.get_corruption_settings()
+            is_enabled = settings_dict.get("is_enabled", True)
+
+            if not is_enabled:
                 return CorruptionEvaluationResult(
                     is_valid=True,
                     corruption_score=DEFAULT_CORRUPTION_FALLBACK_SCORE,
@@ -432,58 +563,57 @@ class SyncCorruptionEvaluationService:
                     detection_disabled=True,
                 )
 
-            # Get camera-specific settings
-            camera_settings = self.db_ops.get_camera_corruption_settings(camera_id)
-            heavy_detection_enabled = camera_settings.get(
+            # Get camera-specific settings - process raw dictionary
+            camera_settings_dict = self.db_ops.get_camera_corruption_settings(camera_id)
+            heavy_detection_enabled = camera_settings_dict.get(
                 "corruption_detection_heavy", False
             )
 
-            # Perform fast detection
-            fast_result = self.fast_detector.detect(file_path)
+            # Perform fast detection - detector returns dictionary
+            fast_result_dict = self.fast_detector.detect(file_path)
 
             # Perform heavy detection if enabled
-            heavy_result = None
+            heavy_result_dict = None
             if heavy_detection_enabled:
-                heavy_result = self.heavy_detector.detect(file_path)
+                heavy_result_dict = self.heavy_detector.detect(file_path)
 
-            # Calculate final score
+            # Calculate final score using raw dictionary data
+            heavy_score = (
+                heavy_result_dict["corruption_score"] if heavy_result_dict else None
+            )
             score_result = self.score_calculator.calculate_final_score(
-                fast_score=fast_result.get("corruption_score", 100.0),
-                heavy_score=(
-                    heavy_result.get("corruption_score")
-                    if heavy_result and heavy_result.get("corruption_score") is not None
-                    else None
-                ),
+                fast_score=fast_result_dict["corruption_score"],
+                heavy_score=heavy_score,
             )
 
             # Determine if image is valid
             is_valid = not score_result.is_corrupted
             action_taken = "saved" if is_valid else "discarded"
 
-            # Log the evaluation
+            # Log the evaluation - database layer expects raw data
             self.db_ops.log_corruption_detection(
                 camera_id=camera_id,
                 image_id=None,  # Will be set by caller if needed
                 corruption_score=int(score_result.final_score),
-                fast_score=int(fast_result.get("corruption_score", 100.0)),
+                fast_score=int(fast_result_dict["corruption_score"]),
                 heavy_score=(
-                    int(heavy_result.get("corruption_score", 0))
-                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    int(heavy_result_dict["corruption_score"])
+                    if heavy_result_dict and heavy_result_dict.get("is_available", True)
                     else None
                 ),
                 detection_details={
-                    "fast_detection": fast_result,
-                    "heavy_detection": heavy_result,
+                    "fast_detection": fast_result_dict,
+                    "heavy_detection": heavy_result_dict,
                     "score_calculation": score_result.to_dict(),
                     "timelapse_id": timelapse_id,
                     "capture_attempt": capture_attempt,
                 },
                 action_taken=action_taken,
                 processing_time_ms=int(
-                    fast_result.get("detection_time_ms", 0.0)
+                    fast_result_dict["detection_time_ms"]
                     + (
-                        heavy_result.get("detection_time_ms", 0.0)
-                        if heavy_result
+                        heavy_result_dict["detection_time_ms"]
+                        if heavy_result_dict
                         else 0.0
                     )
                 ),
@@ -496,26 +626,56 @@ class SyncCorruptionEvaluationService:
                 is_valid=is_valid,
             )
 
+            # Service Layer Boundary Pattern - Return typed object at boundary
             return CorruptionEvaluationResult(
                 is_valid=is_valid,
                 corruption_score=int(score_result.final_score),
-                fast_score=int(fast_result.get("corruption_score", 100.0)),
+                fast_score=int(fast_result_dict["corruption_score"]),
                 heavy_score=(
-                    int(heavy_result.get("corruption_score", 0))
-                    if heavy_result and heavy_result.get("corruption_score") is not None
+                    int(heavy_result_dict["corruption_score"])
+                    if heavy_result_dict and heavy_result_dict.get("is_available", True)
                     else None
                 ),
                 action_taken=action_taken,
                 detection_disabled=False,
-                processing_time_ms=fast_result.get("detection_time_ms", 0.0)
-                + (heavy_result.get("detection_time_ms", 0.0) if heavy_result else 0.0),
-                failed_checks=fast_result.get("failed_checks", [])
-                + (heavy_result.get("failed_checks", []) if heavy_result else []),
+                processing_time_ms=fast_result_dict["detection_time_ms"]
+                + (
+                    heavy_result_dict["detection_time_ms"] if heavy_result_dict else 0.0
+                ),
+                failed_checks=fast_result_dict["failed_checks"]
+                + (heavy_result_dict["failed_checks"] if heavy_result_dict else []),
             )
 
+        except CorruptionSettingsError as e:
+            logger.error(f"Corruption settings error for {file_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="settings_error",
+                detection_disabled=False,
+                error=str(e),
+            )
+        except CorruptionDetectionError as e:
+            logger.error(f"Corruption detection error for {file_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="detection_error",
+                detection_disabled=False,
+                error=str(e),
+            )
+        except CorruptionEvaluationError as e:
+            logger.error(f"Corruption evaluation error for {file_path}", exception=e)
+            return CorruptionEvaluationResult(
+                is_valid=False,
+                corruption_score=100,
+                action_taken="evaluation_error",
+                detection_disabled=False,
+                error=str(e),
+            )
         except Exception as e:
             logger.error(
-                f"Error evaluating captured image {file_path}: {e}",
+                f"Unexpected error evaluating captured image {file_path}: {e}",
                 exception=e,
                 emoji=LogEmoji.FAILED,
             )

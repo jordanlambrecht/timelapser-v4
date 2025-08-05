@@ -11,53 +11,46 @@ clean separation between the web server and background job processing.
 If you're tempted to add a worker here, add it to worker.py instead!
 """
 
+from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-import uvicorn
-from .services.logger import get_service_logger, initialize_global_logger
-from .enums import LoggerName, LogEmoji
-from .constants import DEFAULT_TIMEZONE
-
-
-from .config import settings
-from .database import async_db, sync_db
-
-from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
-
-# from app.middleware.trailing_slash import TrailingSlashRedirectMiddleware
-from app.routers import (
-    camera_routers as cameras,
-    timelapse_routers as timelapses,
-    video_routers as videos,
-    settings_routers as settings_router,
-    log_routers as logs,
-    image_routers as images,
-    health_routers as health,
-    dashboard_routers as dashboard,
-    thumbnail_routers as thumbnails,
-    corruption_routers as corruption,
-    video_automation_routers as video_automation,
-    monitoring_routers as monitoring,
-    sse_routers as sse,
-    camera_crop_router as camera_crop,
-    admin_routers as admin,
-)
 
 # Import full overlay router with complete functionality
+# from app.middleware.trailing_slash import TrailingSlashRedirectMiddleware
+from app.routers import admin_routers as admin
+from app.routers import camera_crop_router as camera_crop
+from app.routers import camera_routers as cameras
+from app.routers import corruption_routers as corruption
+from app.routers import dashboard_routers as dashboard
+from app.routers import health_routers as health
+from app.routers import image_routers as images
+from app.routers import log_routers as logs
+from app.routers import monitoring_routers as monitoring
 from app.routers import overlay_routers as overlay
-
+from app.routers import settings_routers as settings_router
+from app.routers import sse_routers as sse
+from app.routers import thumbnail_routers as thumbnails
+from app.routers import timelapse_routers as timelapses
+from app.routers import video_automation_routers as video_automation
+from app.routers import video_routers as videos
 from app.utils.ascii_text import print_welcome_message
 
-# Logger will be initialized during lifespan startup
-logger = None
+from .config import settings
+from .constants import DEFAULT_TIMEZONE
+from .database import async_db, sync_db
+from .enums import LogEmoji, LoggerName
+from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
+from .services.logger import get_service_logger, initialize_global_logger
+from typing import Any
+
+logger: Any = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Handle application startup and shutdown"""
-    global logger
-
     # Initialize the global logger first
     await initialize_global_logger(
         async_db=async_db,
@@ -69,10 +62,13 @@ async def lifespan(_app: FastAPI):
     )
 
     # Get the system logger
+    global logger
     logger = get_service_logger(LoggerName.SYSTEM)
 
     # Get the global logger service instance for app state
     from .services.logger.logger_service import log
+
+    _app.state.logger_service = log()
 
     _app.state.logger_service = log()
 
@@ -88,7 +84,7 @@ async def lifespan(_app: FastAPI):
     )
 
     # Initialize database with hybrid approach
-    from .database.migrations import initialize_database, DatabaseInitializationError
+    from .database.migrations import DatabaseInitializationError, initialize_database
 
     try:
         result = initialize_database()

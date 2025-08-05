@@ -1,16 +1,190 @@
 # backend/app/utils/response_helpers.py
 """
-Response Helper Functions
+Response Helper Functions and Models
 
-Standardized response formatting and SSE event broadcasting utilities.
-Provides consistent response structures across all API endpoints.
+Type-safe Pydantic response models and legacy helper utilities for API responses.
+Provides consistent response structures across all API endpoints with full type safety.
+
+New Features:
+- Pydantic response models (SuccessResponse, ErrorResponse, PaginatedResponse, OperationResult)
+- Factory methods for easy response creation
+- Type-safe API structures with validation
+- Automatic timestamp generation
+
+Legacy Features (maintained for compatibility):
+- ResponseFormatter static methods
+- SSE event builders
+- Validation and metrics helpers
 """
 
-from typing import Dict, Any, Optional, List, Union
-from datetime import datetime
-from ..services.logger import Log
-from ..enums import LogLevel, LogSource, LoggerName
+from typing import Any, Dict, List, Optional, Union, Tuple
+
+from pydantic import BaseModel, Field
+
 from ..database.core import AsyncDatabase, SyncDatabase
+from ..enums import LoggerName, LogLevel, LogSource
+from ..services.logger.logger_service import LoggerService
+from .time_utils import utc_now
+
+
+# =============================================================================
+# PYDANTIC RESPONSE MODELS - Type-safe API response structures
+# =============================================================================
+
+
+class PaginationInfo(BaseModel):
+    """Pagination information for paginated responses."""
+
+    total_count: int
+    page: int
+    per_page: int
+    total_pages: int
+    has_previous: bool
+    has_next: bool
+    start_index: int
+    end_index: int
+
+
+class ApiResponse(BaseModel):
+    """Base API response model with common fields."""
+
+    success: bool
+    message: str
+    timestamp: str = Field(default_factory=lambda: utc_now().isoformat())
+
+    class Config:
+        """Pydantic configuration."""
+
+        json_encoders = {
+            # Add custom encoders if needed
+        }
+
+
+class SuccessResponse(ApiResponse):
+    """Standard success response model."""
+
+    success: bool = True
+    data: Optional[Union[Dict[str, Any], List[Any]]] = None
+
+    @classmethod
+    def create(
+        cls,
+        message: str,
+        data: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        **kwargs,
+    ) -> "SuccessResponse":
+        """Factory method to create success responses."""
+        return cls(message=message, data=data, **kwargs)
+
+
+class ErrorResponse(ApiResponse):
+    """Standard error response model."""
+
+    success: bool = False
+    error_code: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def create(
+        cls,
+        message: str,
+        error_code: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> "ErrorResponse":
+        """Factory method to create error responses."""
+        return cls(message=message, error_code=error_code, details=details, **kwargs)
+
+
+class PaginatedResponse(ApiResponse):
+    """Paginated response model with data and pagination info."""
+
+    success: bool = True
+    data: List[Any]
+    pagination: PaginationInfo
+
+    @classmethod
+    def create(
+        cls,
+        message: str,
+        data: List[Any],
+        total_count: int,
+        page: int,
+        per_page: int,
+        **kwargs,
+    ) -> "PaginatedResponse":
+        """Factory method to create paginated responses."""
+        total_pages = (total_count + per_page - 1) // per_page
+
+        pagination = PaginationInfo(
+            total_count=total_count,
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+            has_previous=page > 1,
+            has_next=page < total_pages,
+            start_index=(page - 1) * per_page + 1 if total_count > 0 else 0,
+            end_index=min(page * per_page, total_count),
+        )
+
+        return cls(message=message, data=data, pagination=pagination, **kwargs)
+
+
+class OperationResult(ApiResponse):
+    """Operation result response model for CRUD operations."""
+
+    operation: str
+    entity_type: str
+    entity_id: Union[int, str]
+    details: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def create_success(
+        cls,
+        operation: str,
+        entity_type: str,
+        entity_id: Union[int, str],
+        details: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> "OperationResult":
+        """Factory method to create successful operation results."""
+        message = f"{entity_type.capitalize()} {operation}d successfully"
+        return cls(
+            success=True,
+            message=message,
+            operation=operation,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            details=details,
+            **kwargs,
+        )
+
+    @classmethod
+    def create_failure(
+        cls,
+        operation: str,
+        entity_type: str,
+        entity_id: Union[int, str],
+        error_message: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> "OperationResult":
+        """Factory method to create failed operation results."""
+        message = error_message or f"Failed to {operation} {entity_type}"
+        return cls(
+            success=False,
+            message=message,
+            operation=operation,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            details=details,
+            **kwargs,
+        )
+
+
+# =============================================================================
+# LEGACY RESPONSE FORMATTER - Maintained for backward compatibility
+# =============================================================================
 
 
 class ResponseFormatter:
@@ -193,7 +367,7 @@ class SSEEventBuilder:
                 "image_count": image_count,
                 "day_number": day_number,
             },
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
     @staticmethod
@@ -218,7 +392,7 @@ class SSEEventBuilder:
         event_data = {
             "type": "camera_status_changed",
             "data": {"camera_id": camera_id, "status": status},
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
         if health_status:
@@ -249,7 +423,7 @@ class SSEEventBuilder:
                 "timelapse_id": timelapse_id,
                 "status": status,
             },
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
     @staticmethod
@@ -276,7 +450,7 @@ class SSEEventBuilder:
         event_data = {
             "type": "video_generation_status",
             "data": {"camera_id": camera_id, "video_id": video_id, "status": status},
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
         if progress is not None:
@@ -313,7 +487,7 @@ class SSEEventBuilder:
                 "corruption_score": corruption_score,
                 "action_taken": action_taken,
             },
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
     @staticmethod
@@ -342,7 +516,7 @@ class SSEEventBuilder:
                 "metric_value": metric_value,
                 "severity": severity,
             },
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
     @staticmethod
@@ -363,7 +537,7 @@ class SSEEventBuilder:
         return {
             "type": event_type,
             "data": data,
-            "timestamp": timestamp or datetime.now().isoformat(),
+            "timestamp": timestamp or utc_now().isoformat(),
         }
 
 
@@ -375,7 +549,7 @@ class ValidationHelper:
     @staticmethod
     def validate_pagination_params(
         page: int, per_page: int, max_per_page: int = 100
-    ) -> tuple[int, int]:
+    ) -> Tuple[int, int]:
         """
         Validate pagination parameters and return limit/offset.
 
@@ -551,7 +725,7 @@ class LoggingHelper:
 
     def __init__(self, async_db: AsyncDatabase, sync_db: SyncDatabase):
         """Initialize with database connections for logging."""
-        self.log = Log(async_db, sync_db)
+        self.log = LoggerService(async_db, sync_db)
 
     async def log_operation_start(
         self, operation: str, entity_type: str, entity_id: Union[int, str]
@@ -562,7 +736,11 @@ class LoggingHelper:
             level=LogLevel.INFO,
             source=LogSource.SYSTEM,
             logger_name=LoggerName.SYSTEM,
-            system_context={"operation": operation, "entity_type": entity_type, "entity_id": str(entity_id)}
+            system_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id),
+            },
         )
 
     async def log_operation_success(
@@ -576,7 +754,7 @@ class LoggingHelper:
         message = f"Successfully {operation}d {entity_type} {entity_id}"
         if details:
             message += f": {details}"
-        
+
         await self.log.log_system(
             message,
             level=LogLevel.INFO,
@@ -586,12 +764,16 @@ class LoggingHelper:
                 "operation": operation,
                 "entity_type": entity_type,
                 "entity_id": str(entity_id),
-                "details": details
-            }
+                "details": details,
+            },
         )
 
     async def log_operation_error(
-        self, operation: str, entity_type: str, entity_id: Union[int, str], error: Exception
+        self,
+        operation: str,
+        entity_type: str,
+        entity_id: Union[int, str],
+        error: Exception,
     ):
         """Log operation error."""
         await self.log.log_error(
@@ -599,12 +781,12 @@ class LoggingHelper:
             error_context={
                 "operation": operation,
                 "entity_type": entity_type,
-                "entity_id": str(entity_id)
+                "entity_id": str(entity_id),
             },
             exception=error,
             level=LogLevel.ERROR,
             source=LogSource.SYSTEM,
-            logger_name=LoggerName.ERROR_HANDLER
+            logger_name=LoggerName.ERROR_HANDLER,
         )
 
     async def log_validation_error(self, field_name: str, value: Any, reason: str):
@@ -615,11 +797,11 @@ class LoggingHelper:
                 "field_name": field_name,
                 "value": str(value),
                 "reason": reason,
-                "validation_type": "field_validation"
+                "validation_type": "field_validation",
             },
             level=LogLevel.WARNING,
             source=LogSource.SYSTEM,
-            logger_name=LoggerName.SYSTEM
+            logger_name=LoggerName.SYSTEM,
         )
 
     # Sync versions for compatibility
@@ -632,7 +814,11 @@ class LoggingHelper:
             level=LogLevel.INFO,
             source=LogSource.SYSTEM,
             logger_name=LoggerName.SYSTEM,
-            system_context={"operation": operation, "entity_type": entity_type, "entity_id": str(entity_id)}
+            system_context={
+                "operation": operation,
+                "entity_type": entity_type,
+                "entity_id": str(entity_id),
+            },
         )
 
     def log_operation_success_sync(
@@ -646,7 +832,7 @@ class LoggingHelper:
         message = f"Successfully {operation}d {entity_type} {entity_id}"
         if details:
             message += f": {details}"
-        
+
         self.log.log_system_sync(
             message,
             level=LogLevel.INFO,
@@ -656,12 +842,16 @@ class LoggingHelper:
                 "operation": operation,
                 "entity_type": entity_type,
                 "entity_id": str(entity_id),
-                "details": details
-            }
+                "details": details,
+            },
         )
 
     def log_operation_error_sync(
-        self, operation: str, entity_type: str, entity_id: Union[int, str], error: Exception
+        self,
+        operation: str,
+        entity_type: str,
+        entity_id: Union[int, str],
+        error: Exception,
     ):
         """Sync version of log_operation_error."""
         self.log.log_error_sync(
@@ -669,12 +859,12 @@ class LoggingHelper:
             error_context={
                 "operation": operation,
                 "entity_type": entity_type,
-                "entity_id": str(entity_id)
+                "entity_id": str(entity_id),
             },
             exception=error,
             level=LogLevel.ERROR,
             source=LogSource.SYSTEM,
-            logger_name=LoggerName.ERROR_HANDLER
+            logger_name=LoggerName.ERROR_HANDLER,
         )
 
     def log_validation_error_sync(self, field_name: str, value: Any, reason: str):
@@ -685,9 +875,66 @@ class LoggingHelper:
                 "field_name": field_name,
                 "value": str(value),
                 "reason": reason,
-                "validation_type": "field_validation"
+                "validation_type": "field_validation",
             },
             level=LogLevel.WARNING,
             source=LogSource.SYSTEM,
-            logger_name=LoggerName.SYSTEM
+            logger_name=LoggerName.SYSTEM,
         )
+
+
+# =============================================================================
+# USAGE EXAMPLES - How to use the new Pydantic models
+# =============================================================================
+
+"""
+MODERN USAGE (Recommended - Type-safe):
+
+    from app.utils.response_helpers import SuccessResponse, ErrorResponse, PaginatedResponse
+
+    # Success response
+    response = SuccessResponse.create("Camera updated successfully", data={"id": 123})
+    return response.model_dump()
+
+    # Error response
+    response = ErrorResponse.create("Camera not found", error_code="CAMERA_NOT_FOUND")
+    return response.model_dump()
+
+    # Paginated response
+    response = PaginatedResponse.create(
+        message="Cameras retrieved",
+        data=cameras,
+        total_count=100,
+        page=1,
+        per_page=10
+    )
+    return response.model_dump()
+
+LEGACY USAGE (Maintained for compatibility):
+
+    from app.utils.response_helpers import ResponseFormatter
+
+    # Still works exactly as before
+    return ResponseFormatter.success("Camera updated", data={"id": 123})
+    return ResponseFormatter.error("Camera not found", error_code="CAMERA_NOT_FOUND")
+"""
+
+# =============================================================================
+# EXPORTS - Make all response models and utilities easily importable
+# =============================================================================
+
+__all__ = [
+    # Pydantic Response Models (New - Type-safe)
+    "PaginationInfo",
+    "ApiResponse",
+    "SuccessResponse",
+    "ErrorResponse",
+    "PaginatedResponse",
+    "OperationResult",
+    # Legacy Helper Classes (Maintained for compatibility)
+    "ResponseFormatter",
+    "SSEEventBuilder",
+    "ValidationHelper",
+    "MetricsHelper",
+    "LoggingHelper",
+]

@@ -44,9 +44,11 @@ REFACTORING BENEFIT:
 from .scheduler_time_utils import SchedulerTimeUtils
 from .job_id_generator import JobIdGenerator
 from .scheduler_job_template import SchedulerJobTemplate
+from .worker_status_builder import WorkerStatusBuilder
 
 __all__ = [
     "SchedulerTimeUtils",
-    "JobIdGenerator", 
+    "JobIdGenerator",
     "SchedulerJobTemplate",
+    "WorkerStatusBuilder",
 ]

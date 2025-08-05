@@ -15,10 +15,14 @@ from .job_processing_mixin import JobProcessingMixin
 from .retry_manager import RetryManager
 from .sse_broadcaster import SSEBroadcaster
 from .job_batch_processor import JobBatchProcessor
+from .startup_recovery_mixin import StartupRecoveryMixin
+from .settings_helper_mixin import SettingsHelperMixin
 
 __all__ = [
     "JobProcessingMixin",
     "RetryManager",
-    "SSEBroadcaster", 
+    "SSEBroadcaster",
     "JobBatchProcessor",
+    "StartupRecoveryMixin",
+    "SettingsHelperMixin",
 ]

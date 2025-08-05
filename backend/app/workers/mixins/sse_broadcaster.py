@@ -7,14 +7,13 @@ eliminating duplication between ThumbnailWorker and OverlayWorker.
 """
 
 from typing import Dict, Any, Optional
-from ...services.logger import get_service_logger
-from ...enums import LoggerName, SSEEvent
-
-logger = get_service_logger(LoggerName.SSEBROADCASTER)
 
 from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import SSEPriority, SSEEventSource
+from ...enums import LoggerName, SSEEvent, SSEPriority, SSEEventSource
+from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_timestamp
+
+logger = get_service_logger(LoggerName.SSEBROADCASTER)
 
 
 class SSEBroadcaster:

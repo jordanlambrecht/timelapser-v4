@@ -60,17 +60,15 @@ PROBLEM SOLVED:
 
 import time
 from typing import Dict, Optional, List, Callable
-from ..services.logger import get_service_logger, LogEmoji
-from ..enums import LoggerName
-
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
-
+from ..services.logger import get_service_logger
+from ..enums import LoggerName, SSEPriority
 from .utils import SchedulerTimeUtils
 from ..database.core import SyncDatabase
 from ..database.timelapse_operations import SyncTimelapseOperations
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..constants import JOB_PRIORITY, EVENT_VIDEO_JOB_QUEUED
-from ..enums import SSEPriority
+
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
 
 
 class AutomationEvaluator:
