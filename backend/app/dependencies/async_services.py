@@ -105,10 +105,10 @@ async def get_timelapse_service() -> "TimelapseService":
 # Image Service Factory
 async def get_image_service() -> "ImageService":
     """Get ImageService with async database dependency injection."""
-    factory = AsyncServiceFactory(
-        service_module="app.services.image_service", service_class="ImageService"
-    )
-    return await factory.get_service()
+    from ..services.image_service import ImageService
+
+    settings_service = await get_settings_service()
+    return ImageService(db=async_db, settings_service=settings_service)
 
 
 # Weather Manager Factory

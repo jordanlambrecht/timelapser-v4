@@ -182,13 +182,13 @@ class AsyncTimelapseWorker:
             sync_camera_service = SyncCameraService(
                 db=service_locator.sync_db,
                 async_db=service_locator.async_db,
-                settings_service=service_locator.get_async_settings_service(),
+                settings_service=service_locator.get_sync_settings_service(),
             )
 
             rtsp_service = RTSPService(
                 db=service_locator.sync_db,
                 async_db=service_locator.async_db,
-                settings_service=service_locator.get_async_settings_service(),
+                settings_service=service_locator.get_sync_settings_service(),
             )
 
             self.health_worker = HealthWorker(

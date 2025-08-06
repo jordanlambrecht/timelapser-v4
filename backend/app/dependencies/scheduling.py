@@ -31,11 +31,11 @@ if TYPE_CHECKING:
 # Async Time Window Service Factory
 async def get_time_window_service() -> "TimeWindowService":
     """Get TimeWindowService with async database dependency injection."""
-    factory = AsyncServiceFactory(
-        service_module="app.services.scheduling.time_window_service",
-        service_class="TimeWindowService",
-    )
-    return await factory.get_service()
+    from ..services.scheduling.time_window_service import TimeWindowService
+    from .async_services import get_settings_service
+
+    settings_service = await get_settings_service()
+    return TimeWindowService(async_db, settings_service)
 
 
 # Async Scheduling Service Factory

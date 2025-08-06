@@ -118,6 +118,7 @@ class ServiceLocator:
             async_database=self.async_db,
             settings_service=self.get_sync_settings_service(),
             image_service=self.get_sync_image_service(),
+            timelapse_service=self.get_sync_timelapse_service(),
         )
 
     @lru_cache(maxsize=None)
@@ -152,13 +153,13 @@ class ServiceLocator:
             camera_service=SyncCameraService(
                 db=self.sync_db,
                 async_db=self.async_db,
-                settings_service=self.get_async_settings_service(),
+                settings_service=self.get_sync_settings_service(),
             ),
             timelapse_service=self.get_sync_timelapse_service(),
             rtsp_service=RTSPService(
                 db=self.sync_db,
                 async_db=self.async_db,
-                settings_service=self.get_async_settings_service(),
+                settings_service=self.get_sync_settings_service(),
             ),
             job_coordinator=JobCoordinationService(
                 db=self.sync_db,
