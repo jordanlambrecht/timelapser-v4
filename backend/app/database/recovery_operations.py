@@ -60,11 +60,12 @@ class RecoveryQueryBuilder:
         # Validate table name to prevent SQL injection
         validated_table = RecoveryQueryBuilder._validate_table_name(table_name)
         return f"""
-            SELECT id, created_at, updated_at
+            SELECT id, created_at, started_at
             FROM {validated_table}
             WHERE status = %(status)s
-                AND updated_at < %(cutoff_time)s
-            ORDER BY updated_at ASC
+                AND started_at IS NOT NULL
+                AND started_at < %(cutoff_time)s
+            ORDER BY started_at ASC
         """
 
     @staticmethod
@@ -76,9 +77,10 @@ class RecoveryQueryBuilder:
             UPDATE {validated_table}
             SET status = %(new_status)s,
                 error_message = %(error_message)s,
-                updated_at = %(updated_at)s
+                started_at = NULL
             WHERE status = %(current_status)s
-                AND updated_at < %(cutoff_time)s
+                AND started_at IS NOT NULL
+                AND started_at < %(cutoff_time)s
         """
 
     @staticmethod
@@ -92,11 +94,12 @@ class RecoveryQueryBuilder:
                     COUNT(*) FILTER (WHERE status = 'processing') as processing_count,
                     COUNT(*) FILTER (
                         WHERE status = 'processing'
-                        AND updated_at < %(cutoff_time)s
+                        AND started_at IS NOT NULL
+                        AND started_at < %(cutoff_time)s
                     ) as stuck_count,
                     COUNT(*) FILTER (WHERE status = 'pending') as pending_count,
                     COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
-                    AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (
+                    AVG(EXTRACT(EPOCH FROM (COALESCE(completed_at, started_at, created_at) - created_at))) FILTER (
                         WHERE status = 'processing'
                     ) as avg_processing_time_seconds
                 FROM {validated_table}
@@ -312,7 +315,6 @@ class RecoveryOperations:
                         {
                             "new_status": JobStatus.PENDING.value,
                             "error_message": error_message,
-                            "updated_at": current_time,
                             "current_status": JobStatus.PROCESSING.value,
                             "cutoff_time": cutoff_time,
                         },
@@ -480,7 +482,6 @@ class SyncRecoveryOperations:
                         {
                             "new_status": JobStatus.PENDING.value,
                             "error_message": error_message,
-                            "updated_at": current_time,
                             "current_status": JobStatus.PROCESSING.value,
                             "cutoff_time": cutoff_time,
                         },
