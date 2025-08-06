@@ -242,6 +242,25 @@ class CameraService:
             logger.error(f"Unexpected error retrieving cameras: {e}")
             raise
 
+    async def get_active_cameras(self) -> List[Camera]:
+        """
+        Retrieve all active/enabled cameras for health monitoring.
+
+        Returns:
+            List of active Camera model instances
+        """
+        try:
+            all_cameras = await self.camera_ops.get_cameras()
+            # Filter for active cameras only
+            active_cameras = [camera for camera in all_cameras if camera.status == "active"]
+            return active_cameras
+        except CameraOperationError as e:
+            logger.error(f"Database error retrieving active cameras: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving active cameras: {e}")
+            raise
+
     async def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
         """
         Retrieve a specific camera by ID.
