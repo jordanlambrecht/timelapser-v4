@@ -183,20 +183,29 @@ class SettingsOperations:
                 operation="get_all_setting_records",
             ) from e
 
-    @cached_response(ttl_seconds=300, key_prefix="settings")
-    async def get_setting(self, key: str) -> Optional[str]:
+    async def get_setting(
+        self, key: str, default: Optional[str] = None
+    ) -> Optional[str]:
         """
-        Retrieve a specific setting value by key using sophisticated caching.
+        Retrieve a specific setting value by key using direct database access.
 
         Args:
             key: Setting key to retrieve
+            default: Default value if setting not found
 
         Returns:
-            Setting value, or None if not found
-
-        Note: Uses the sophisticated cache manager's get_setting_cached function
+            Setting value, default value, or None if not found
         """
-        return await get_setting_cached(self, key)
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+                    results = await cur.fetchall()
+                    return results[0]["value"] if results else default
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="get_setting"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_setting_record(self, key: str) -> Optional[Setting]:

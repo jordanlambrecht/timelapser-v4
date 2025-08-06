@@ -18,6 +18,8 @@ interface SettingsContextType {
   smallGenerationMode: "all" | "latest" | "disabled"
   purgeSmalllsOnCompletion: boolean
   imageCaptureType: "PNG" | "JPG"
+  imageQuality: number
+  rtspTimeoutSeconds: number
 
   // API settings
   openWeatherApiKey: string
@@ -92,6 +94,8 @@ interface SettingsContextType {
   ) => Promise<void>
   setPurgeSmallsOnCompletion: (value: boolean) => Promise<void>
   setImageCaptureType: (value: "PNG" | "JPG") => void
+  setImageQuality: (value: number) => void
+  setRtspTimeoutSeconds: (value: number) => void
   setOpenWeatherApiKey: (value: string) => void
   setApiKeyModified: (value: boolean) => void
   setWeatherIntegrationEnabled: (value: boolean) => void
@@ -140,6 +144,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     smallGenerationMode: "disabled" as "all" | "latest" | "disabled",
     purgeSmalllsOnCompletion: false,
     imageCaptureType: "JPG" as "PNG" | "JPG",
+    imageQuality: 90,
+    rtspTimeoutSeconds: 10,
 
     // API settings
     openWeatherApiKey: "",
@@ -263,6 +269,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           imageCaptureType: (data.data.image_capture_type || "JPG") as
             | "PNG"
             | "JPG",
+          imageQuality: parseInt(data.data.image_quality || "90"),
+          rtspTimeoutSeconds: parseInt(data.data.rtsp_timeout_seconds || "10"),
 
           // API settings - the backend now returns the actual key for display
           openWeatherApiKey: data.data.openweather_api_key || "", // Store actual key for display
@@ -536,6 +544,14 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
   const setImageCaptureType = useCallback((value: "PNG" | "JPG") => {
     setSettings((prev) => ({ ...prev, imageCaptureType: value }))
+  }, [])
+
+  const setImageQuality = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, imageQuality: value }))
+  }, [])
+
+  const setRtspTimeoutSeconds = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, rtspTimeoutSeconds: value }))
   }, [])
 
   const setOpenWeatherApiKey = useCallback((value: string) => {
@@ -907,6 +923,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         if (settings.imageCaptureType !== originalSettings.imageCaptureType) {
           changes.push(`Image Type (${settings.imageCaptureType})`)
         }
+        if (settings.imageQuality !== originalSettings.imageQuality) {
+          changes.push(`Image Quality (${settings.imageQuality})`)
+        }
+        if (settings.rtspTimeoutSeconds !== originalSettings.rtspTimeoutSeconds) {
+          changes.push(`RTSP Timeout (${settings.rtspTimeoutSeconds}s)`)
+        }
 
         // API Key
         if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
@@ -1083,6 +1105,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         thumbnail_purge_smalls_on_completion:
           settings.purgeSmalllsOnCompletion.toString(),
         image_capture_type: settings.imageCaptureType,
+        image_quality: settings.imageQuality.toString(),
+        rtsp_timeout_seconds: settings.rtspTimeoutSeconds.toString(),
         log_retention_days: settings.dbLogRetentionDays.toString(),
         max_log_file_size: settings.maxLogFileSize.toString(),
         log_level: settings.dbLogLevel,
@@ -1168,6 +1192,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           smallGenerationMode: settings.smallGenerationMode,
           purgeSmalllsOnCompletion: settings.purgeSmalllsOnCompletion,
           imageCaptureType: settings.imageCaptureType,
+          imageQuality: settings.imageQuality,
+          rtspTimeoutSeconds: settings.rtspTimeoutSeconds,
           openWeatherApiKey: settings.openWeatherApiKey,
           apiKeyModified: false, // Reset after save
           originalApiKeyHash:
@@ -1276,6 +1302,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSmallGenerationMode,
     setPurgeSmallsOnCompletion,
     setImageCaptureType,
+    setImageQuality,
+    setRtspTimeoutSeconds,
     setOpenWeatherApiKey,
     setApiKeyModified,
     setWeatherIntegrationEnabled,
