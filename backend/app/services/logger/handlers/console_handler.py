@@ -11,7 +11,11 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from ....enums import LogEmoji, LoggerName, LogLevel, LogSource
-from ....utils.time_utils import format_datetime_for_console, utc_now
+from ....utils.time_utils import (
+    format_datetime_for_console,
+    utc_now,
+    get_timezone_from_cache_sync,
+)
 from ..constants import (
     ANSI_BOLD,
     ANSI_COLOR_CYAN,
@@ -62,6 +66,7 @@ class ConsoleHandler:
         use_colors: bool = True,
         include_timestamp: bool = True,
         include_source: bool = True,
+        settings_service=None,
     ):
         """
         Initialize the console handler.
@@ -71,11 +76,13 @@ class ConsoleHandler:
             use_colors: Whether to use ANSI colors (default: True)
             include_timestamp: Whether to include timestamps (default: True)
             include_source: Whether to include source information (default: True)
+            settings_service: Settings service for timezone-aware timestamps
         """
         self.min_level = min_level
         self.use_colors = use_colors
         self.include_timestamp = include_timestamp
         self.include_source = include_source
+        self.settings_service = settings_service
         self._healthy = True
 
         # Check if stdout supports colors (for production environments)
@@ -115,7 +122,9 @@ class ConsoleHandler:
 
             # Add timestamp if enabled
             if self.include_timestamp:
-                timestamp_str = format_datetime_for_console(timestamp)
+                # Convert to timezone-aware timestamp for console display
+                display_timestamp = self._get_timezone_aware_timestamp(timestamp)
+                timestamp_str = format_datetime_for_console(display_timestamp)
                 if self.use_colors:
                     output_parts.append(f"{self.DIM}[{timestamp_str}]{self.RESET}")
                 else:
@@ -175,47 +184,162 @@ class ConsoleHandler:
     def _format_level(self, level: LogLevel) -> str:
         """
         Format the log level with appropriate colors and styling.
+        Pads the level name to ensure consistent alignment.
 
         Args:
             level: Log level to format
 
         Returns:
-            Formatted level string
+            Formatted level string with consistent width
         """
         level_name = level.value
+        # Center-align to 8 characters to align all levels
+        padded_level = f"{level_name:^8}"
 
         if self.use_colors:
             color = self.COLORS.get(level, "")
             if level in [LogLevel.ERROR, LogLevel.CRITICAL]:
                 # Make errors bold for visibility
-                return f"{color}{self.BOLD}[{level_name}]{self.RESET}"
+                return f"{color}{self.BOLD}[{padded_level}]{self.RESET}"
             else:
-                return f"{color}[{level_name}]{self.RESET}"
+                return f"{color}[{padded_level}]{self.RESET}"
         else:
-            return f"[{level_name}]"
+            return f"[{padded_level}]"
 
     def _format_source(
         self, source: LogSource, logger_name: Optional[LoggerName] = None
     ) -> str:
         """
-        Format the source and logger name information.
+        Format the source and logger name information with consistent padding.
 
         Args:
             source: Log source
             logger_name: Optional logger name
 
         Returns:
-            Formatted source string
+            Formatted source string with consistent width
         """
         if logger_name:
-            source_str = f"{source.value}:{logger_name}"
+            # Extract subcategory from logger name if it follows the pattern
+            logger_str = (
+                str(logger_name.value)
+                if hasattr(logger_name, "value")
+                else str(logger_name)
+            )
+            subcategory = self._extract_subcategory(logger_str)
+
+            if subcategory:
+                # Format: (source) [subcategory] with tight, consistent padding
+                padded_source = f"{source.value:^8}"  # Center-align source to 8 chars
+                padded_subcategory = (
+                    f"{subcategory:^9}"  # Center-align subcategory to 9 chars
+                )
+                source_str = f"{padded_source} [{padded_subcategory}]"
+            else:
+                # No subcategory detected, show the full logger name with source
+                padded_source = f"{source.value:^8}"  # Center-align source to 8 chars
+                padded_logger = (
+                    f"{logger_str:^9}"  # Center-align logger name to 9 chars
+                )
+                source_str = f"{padded_source} [{padded_logger}]"
         else:
-            source_str = source.value
+            # No logger name, just center the source compactly
+            padded_source = f"{source.value:^10}"  # Center-align source to 10 chars
+            source_str = padded_source
 
         if self.use_colors:
             return f"{self.DIM}({source_str}){self.RESET}"
         else:
             return f"({source_str})"
+
+    def _extract_subcategory(self, logger_name: str) -> Optional[str]:
+        """
+        Extract subcategory from logger names for better formatting.
+
+        Args:
+            logger_name: The logger name string
+
+        Returns:
+            Extracted subcategory or None
+        """
+        # Map logger names to readable subcategories
+        subcategory_map = {
+            "SCHEDULER_WORKER": "Scheduler",
+            "WEATHER_SERVICE": "Weather",
+            "WEATHER_WORKER": "Weather",
+            "CAPTURE_WORKER": "Capture",
+            "VIDEO_WORKER": "Video",
+            "CLEANUP_WORKER": "Cleanup",
+            "OVERLAY_WORKER": "Overlay",
+            "THUMBNAIL_WORKER": "Thumbnail",
+            "SSE_WORKER": "SSE",
+            "HEALTH_WORKER": "Health",
+            "VIDEO_PIPELINE": "Video",
+            "CAPTURE_PIPELINE": "Capture",
+            "THUMBNAIL_PIPELINE": "Thumbnail",
+            "OVERLAY_PIPELINE": "Overlay",
+            "CORRUPTION_PIPELINE": "Corruption",
+        }
+
+        return subcategory_map.get(logger_name)
+
+    def _get_timezone_aware_timestamp(self, timestamp: datetime) -> datetime:
+        """
+        Convert timestamp to timezone-aware timestamp for display.
+
+        Args:
+            timestamp: UTC timestamp to convert
+
+        Returns:
+            Timezone-aware timestamp for display
+        """
+        try:
+            if self.settings_service:
+                # Get timezone from settings and convert timestamp
+                timezone_str = get_timezone_from_cache_sync(self.settings_service)
+                from zoneinfo import ZoneInfo
+
+                tz = ZoneInfo(timezone_str)
+
+                # Ensure timestamp has timezone info
+                if timestamp.tzinfo is None:
+                    from ....utils.time_utils import UTC_TIMEZONE
+
+                    timestamp = timestamp.replace(tzinfo=UTC_TIMEZONE)
+
+                # Convert to configured timezone
+                return timestamp.astimezone(tz)
+            else:
+                # Try to get timezone from global database connections
+                try:
+                    # Import here to avoid circular imports
+                    from ....database import sync_db
+                    from ....services.settings_service import SyncSettingsService
+
+                    # Create a temporary settings service to get timezone
+                    temp_settings_service = SyncSettingsService(sync_db)
+                    timezone_str = (
+                        temp_settings_service.get_setting("timezone") or "UTC"
+                    )
+
+                    from zoneinfo import ZoneInfo
+
+                    tz = ZoneInfo(timezone_str)
+
+                    # Ensure timestamp has timezone info
+                    if timestamp.tzinfo is None:
+                        from ....utils.time_utils import UTC_TIMEZONE
+
+                        timestamp = timestamp.replace(tzinfo=UTC_TIMEZONE)
+
+                    # Convert to configured timezone
+                    return timestamp.astimezone(tz)
+                except Exception:
+                    # Fallback to original timestamp if settings access fails
+                    return timestamp
+        except Exception:
+            # Error converting timezone, return original timestamp
+            return timestamp
 
     def set_min_level(self, level: LogLevel) -> None:
         """
