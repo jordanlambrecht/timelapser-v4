@@ -16,6 +16,7 @@ from ...enums import (
     JobPriority,
     JobStatus,
     LoggerName,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -35,7 +36,7 @@ from .utils import (
     validate_trigger_type,
 )
 
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 
 class VideoJobService:

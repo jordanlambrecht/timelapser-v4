@@ -65,11 +65,11 @@ from ..constants import EVENT_VIDEO_JOB_QUEUED, JOB_PRIORITY
 from ..database.core import SyncDatabase
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.timelapse_operations import SyncTimelapseOperations
-from ..enums import LoggerName, SSEPriority
+from ..enums import LoggerName, LogSource, SSEPriority
 from ..services.logger import get_service_logger
 from .utils import SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class AutomationEvaluator:

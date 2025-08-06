@@ -13,7 +13,7 @@ from ..constants import (
     DEFAULT_WEATHER_ENABLED,
     SETTING_KEY_WEATHER_ENABLED,
 )
-from ..enums import LoggerName, WorkerType
+from ..enums import LoggerName, LogSource, WorkerType
 from ..models.health_model import HealthStatus
 from ..services.logger import get_service_logger
 from ..workers.models.weather_responses import (
@@ -23,7 +23,7 @@ from ..workers.models.weather_responses import (
     WeatherWorkerStatus,
 )
 
-weather_service_logger = get_service_logger(LoggerName.WEATHER_WORKER)
+weather_service_logger = get_service_logger(LoggerName.WEATHER_WORKER, LogSource.WORKER)
 
 
 class WeatherWorkflowService:

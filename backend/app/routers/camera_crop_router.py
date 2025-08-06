@@ -11,7 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 
 from ..dependencies import AsyncRTSPServiceDep, CameraServiceDep
-from ..enums import LoggerName
+from ..enums import LogSource, LoggerName
 from ..exceptions import CameraNotFoundError, RTSPConnectionError
 from ..models.camera_model import (
     CropRotationSettings,
@@ -21,7 +21,7 @@ from ..services.logger import get_service_logger
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
 
-logger = get_service_logger(LoggerName.API)
+logger = get_service_logger(LoggerName.CAMERA_SERVICE, LogSource.API)
 
 router = APIRouter(prefix="/api/cameras", tags=["camera-crop"])
 

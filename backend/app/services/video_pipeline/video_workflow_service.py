@@ -38,8 +38,10 @@ from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
     JobPriority,
     JobStatus,
+    LogEmoji,
     LoggerName,
     LogLevel,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -68,7 +70,7 @@ from .overlay_integration_service import OverlayIntegrationService
 # from ..log_service import SyncLogService  # Removed: file does not exist
 from .video_job_service import VideoJobService
 
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 
 class VideoWorkflowService:
@@ -645,7 +647,9 @@ class VideoWorkflowService:
             Dict containing processing results
         """
         try:
-            logger.debug("Processing video queue (execution-only mode)")
+            logger.debug(
+                "Processing video queue (execution-only mode)", emoji=LogEmoji.QUEUE
+            )
 
             jobs_processed = 0
             errors: List[str] = []
@@ -657,7 +661,7 @@ class VideoWorkflowService:
 
                 if job_id:
                     jobs_processed += 1
-                    logger.info(f"Processed video job {job_id}")
+                    logger.info(f"Processed video job {job_id}", emoji=LogEmoji.JOB)
                 else:
                     # No more pending jobs
                     break

@@ -44,7 +44,7 @@ from ...constants import (
 )
 from ...database import sync_db
 from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import LoggerName, SSEPriority
+from ...enums import LoggerName, LogSource, SSEPriority
 
 # Import new weather models
 from ...models.weather_model import (
@@ -67,7 +67,7 @@ from ...utils.time_utils import (
     utc_now,
 )
 
-logger = get_service_logger(LoggerName.WEATHER_SERVICE)
+logger = get_service_logger(LoggerName.WEATHER_SERVICE, LogSource.SYSTEM)
 
 
 class OpenWeatherService:

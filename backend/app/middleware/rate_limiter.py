@@ -15,10 +15,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException, Request, Response, status
 
-from ..enums import LoggerName
+from ..enums import LogSource, LoggerName
 from ..services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.MIDDLEWARE)
+logger = get_service_logger(LoggerName.MIDDLEWARE, LogSource.MIDDLEWARE)
 
 
 class SlidingWindowRateLimiter:

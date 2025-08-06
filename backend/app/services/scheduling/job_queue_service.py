@@ -49,6 +49,7 @@ from ...enums import (
     JobTypes,
     LogEmoji,
     LoggerName,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -69,7 +70,7 @@ from ...utils.time_utils import (
     get_timezone_aware_timestamp_async,
 )
 
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
 
 class JobQueueService:

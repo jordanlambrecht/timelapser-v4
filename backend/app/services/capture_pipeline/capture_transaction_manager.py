@@ -17,10 +17,10 @@ from typing import Callable, List, Optional, Protocol
 
 from ...database.core import SyncDatabase
 from ...database.image_operations import SyncImageOperations
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 class ImageOperationsProtocol(Protocol):

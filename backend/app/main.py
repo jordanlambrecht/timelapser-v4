@@ -41,7 +41,7 @@ from app.utils.ascii_text import print_welcome_message
 from .config import settings
 from .constants import DEFAULT_TIMEZONE
 from .database import async_db, sync_db
-from .enums import LogEmoji, LoggerName
+from .enums import LogEmoji, LogSource, LoggerName
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
 from .services.logger import get_service_logger, initialize_global_logger
 
@@ -57,13 +57,13 @@ async def lifespan(_app: FastAPI):
         sync_db=sync_db,
         enable_console=True,
         enable_file_logging=True,
-        enable_sse_broadcasting=True,
+        enable_sse_broadcasting=False,
         enable_batching=True,
     )
 
     # Get the system logger
     global logger
-    logger = get_service_logger(LoggerName.SYSTEM)
+    logger = get_service_logger(LoggerName.SYSTEM, LogSource.SYSTEM)
 
     # Get the global logger service instance for app state
     from .services.logger.logger_service import log

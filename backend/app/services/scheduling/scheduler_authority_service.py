@@ -18,7 +18,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from ...database.core import AsyncDatabase
-from ...enums import LoggerName, SSEPriority
+from ...enums import LoggerName, LogSource, SSEPriority
 from ...services.logger import get_service_logger
 from ...services.settings_service import SettingsService
 from .capture_timing_service import CaptureTimingService
@@ -26,7 +26,7 @@ from .capture_timing_service import CaptureTimingService
 if TYPE_CHECKING:
     from ...workers.scheduler_worker import SchedulerWorker
 
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
 
 class SchedulerAuthorityService:

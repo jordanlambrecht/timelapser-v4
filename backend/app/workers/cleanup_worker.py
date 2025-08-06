@@ -66,8 +66,6 @@ from .utils.worker_status_builder import WorkerStatusBuilder
 # from ..models.health_model import HealthStatus  # Unused
 
 
-
-
 cleanup_logger = get_service_logger(LoggerName.CLEANUP_WORKER, LogSource.WORKER)
 
 

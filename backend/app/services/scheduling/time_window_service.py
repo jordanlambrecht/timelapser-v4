@@ -30,7 +30,7 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Optional, Tuple
 
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...services.logger import get_service_logger
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ from ...utils.time_utils import (
     parse_time_string,
 )
 
-logger = get_service_logger(LoggerName.SCHEDULING_SERVICE)
+logger = get_service_logger(LoggerName.SCHEDULING_SERVICE, LogSource.SCHEDULER)
 
 
 class TimeWindowService:

@@ -8,12 +8,12 @@ Converts raw data to typed objects at the service boundary.
 
 from typing import Any
 
-from ..enums import LoggerName, WorkerType
+from ..enums import LoggerName, LogSource, WorkerType
 from ..models.health_model import HealthStatus
 from ..services.logger import get_service_logger
 from ..workers.models.health_responses import CameraHealthSummary, HealthWorkerStatus
 
-health_service_logger = get_service_logger(LoggerName.HEALTH_WORKER)
+health_service_logger = get_service_logger(LoggerName.HEALTH_WORKER, LogSource.WORKER)
 
 
 class HealthWorkflowService:

@@ -18,14 +18,14 @@ Architecture: Service Layer - contains business logic separated from HTTP layer
 from typing import Any, Dict, List, Optional
 
 from ..database.scheduled_job_operations import ScheduledJobOperations
-from ..enums import JobPriority, LoggerName, ScheduledJobStatus, ScheduledJobType
+from ..enums import JobPriority, LoggerName, LogSource, ScheduledJobStatus, ScheduledJobType
 from ..models.health_model import HealthStatus
 from ..models.scheduled_job_model import ScheduledJobSummary, ScheduledJobUpdate
 from ..services.logger import get_service_logger
 from ..utils.pagination_helpers import calculate_pagination_params
 from ..utils.time_utils import utc_now
 
-logger = get_service_logger(LoggerName.ADMIN)
+logger = get_service_logger(LoggerName.ADMIN, LogSource.SYSTEM)
 
 
 class AdminService:

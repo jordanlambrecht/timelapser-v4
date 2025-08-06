@@ -32,7 +32,7 @@ from ..database.image_operations import (
     SyncImageOperations,
 )
 from ..database.sse_events_operations import SSEEventsOperations
-from ..enums import LoggerName, SSEEvent, SSEEventSource, SSEPriority
+from ..enums import LoggerName, LogSource, SSEEvent, SSEEventSource, SSEPriority
 from ..exceptions import (
     ImageNotFoundError,
     InvalidImageSizeError,
@@ -61,7 +61,7 @@ from ..utils.time_utils import (
 )
 from .logger import get_service_logger
 
-logger = get_service_logger(LoggerName.IMAGE_SERVICE)
+logger = get_service_logger(LoggerName.IMAGE_SERVICE, LogSource.SYSTEM)
 
 
 class ImageService:

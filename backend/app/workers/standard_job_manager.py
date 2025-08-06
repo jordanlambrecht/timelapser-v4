@@ -65,7 +65,7 @@ from ..constants import (
     WEATHER_REFRESH_MINUTE,
 )
 from ..database.core import SyncDatabase
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource
 from ..services.logger import get_service_logger
 from .constants import (  # TIMELAPSE_SYNC_INTERVAL_MINUTES,
     AUTOMATION_TRIGGER_INTERVAL_MINUTES,
@@ -78,7 +78,7 @@ from .constants import (  # TIMELAPSE_SYNC_INTERVAL_MINUTES,
 )
 from .utils import SchedulerJobTemplate, SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class StandardJobManager:

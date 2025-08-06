@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException, Response
 
 from ..dependencies import SettingsServiceDep, WeatherManagerDep
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource
 from ..models import (
     BulkSettingsUpdate,
     Setting,
@@ -36,7 +36,7 @@ from ..utils.router_helpers import handle_exceptions
 # - Write operations: SSE broadcasting - immediate real-time updates across system
 # - Different cache durations based on setting type (weather, system, user preferences)
 # Individual endpoint implementations are complete throughout this file.
-logger = get_service_logger(LoggerName.API)
+logger = get_service_logger(LoggerName.API, LogSource.API)
 
 router = APIRouter(tags=["settings"])
 

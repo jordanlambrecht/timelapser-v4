@@ -49,11 +49,11 @@ from ..services.settings_service import SyncSettingsService
 from ..workers.overlay_worker import OverlayWorker
 
 from ..database.core import SyncDatabase
-from ..enums import JobPriority, LoggerName, OverlayJobPriority
+from ..enums import JobPriority, LoggerName, LogSource, OverlayJobPriority
 from ..services.logger import get_service_logger
 from .utils import JobIdGenerator, SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class ImmediateJobManager:

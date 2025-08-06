@@ -19,6 +19,7 @@ from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
     LogEmoji,
     LoggerName,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -44,7 +45,7 @@ from .job_coordination_service import JobCoordinationService
 from .rtsp_service import RTSPService
 from .utils import generate_capture_filename
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 class WorkflowOrchestratorService:

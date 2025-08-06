@@ -13,10 +13,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from ..config import settings
-from ..enums import LogEmoji, LoggerName
+from ..enums import LogEmoji, LoggerName, LogSource
 from ..services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.MIDDLEWARE)
+logger = get_service_logger(LoggerName.MIDDLEWARE, LogSource.MIDDLEWARE)
 
 
 class RequestLoggerMiddleware(BaseHTTPMiddleware):
