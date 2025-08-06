@@ -495,18 +495,18 @@ class LogOperations:
                 },
             )
 
-    def _row_to_log(self, row: Tuple) -> Log:
+    def _row_to_log(self, row: Dict[str, Any]) -> Log:
         """Convert database row to Log model."""
         return Log(
-            id=row[0],
-            level=row[1],
-            message=row[2],
-            timestamp=row[3],
-            camera_id=row[4],
-            source=row[5],
-            logger_name=row[6],
-            extra_data=json.loads(row[7]) if row[7] else None,
-            camera_name=row[8] if len(row) > 8 else None,
+            id=row["id"],
+            level=row["level"],
+            message=row["message"],
+            timestamp=row["timestamp"],
+            camera_id=row["camera_id"],
+            source=row["source"],
+            logger_name=row["logger_name"],
+            extra_data=row["extra_data"] if row["extra_data"] else None,
+            camera_name=row.get("camera_name"),
         )
 
     def _row_to_log_with_count(self, row: Dict[str, Any]) -> Log:
@@ -519,7 +519,7 @@ class LogOperations:
             camera_id=row["camera_id"],
             source=row["source"],
             logger_name=row["logger_name"],
-            extra_data=json.loads(row["extra_data"]) if row["extra_data"] else None,
+            extra_data=row["extra_data"] if row["extra_data"] else None,
             camera_name=row["camera_name"],
         )
 
@@ -707,16 +707,16 @@ class SyncLogOperations:
                 },
             )
 
-    def _row_to_log(self, row: Tuple) -> Log:
+    def _row_to_log(self, row: Dict[str, Any]) -> Log:
         """Convert database row to Log model."""
         return Log(
-            id=row[0],
-            level=row[1],
-            message=row[2],
-            timestamp=row[3],
-            camera_id=row[4],
-            source=row[5],
-            logger_name=row[6],
-            extra_data=json.loads(row[7]) if row[7] else None,
-            camera_name=row[8] if len(row) > 8 else None,
+            id=row["id"],
+            level=row["level"],
+            message=row["message"],
+            timestamp=row["timestamp"],
+            camera_id=row["camera_id"],
+            source=row["source"],
+            logger_name=row["logger_name"],
+            extra_data=row["extra_data"] if row["extra_data"] else None,
+            camera_name=row.get("camera_name"),
         )
