@@ -113,13 +113,13 @@ class StatisticsQueryBuilder:
             SELECT
                 cs.*,
                 ts.*,
-                is.*,
+                imgs.*,
                 vs.*,
                 as_.*,
                 acts.*
             FROM camera_stats cs
             CROSS JOIN timelapse_stats ts
-            CROSS JOIN image_stats is
+            CROSS JOIN image_stats imgs
             CROSS JOIN video_stats vs
             CROSS JOIN automation_stats as_
             CROSS JOIN activity_stats acts

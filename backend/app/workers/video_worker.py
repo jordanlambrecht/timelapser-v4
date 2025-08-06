@@ -76,7 +76,6 @@ class VideoWorker(BaseWorker):
     async def initialize(self) -> None:
         """Initialize video worker resources using factory pattern."""
         try:
-
             # Create video pipeline using factory
             self.workflow_service = create_video_pipeline(self.db)
 
@@ -403,7 +402,7 @@ class VideoWorker(BaseWorker):
             logger.warning(f"Unexpected error cleaning old video jobs: {e}")
             return 0
 
-    async def get_video_pipeline_health(self) -> Dict[str, Any]:
+    async def check_pipeline_health(self) -> Dict[str, Any]:
         """
         Check video pipeline health using simplified architecture.
 
@@ -411,7 +410,6 @@ class VideoWorker(BaseWorker):
             Dict[str, Any]: Pipeline health status
         """
         try:
-
             # Service guaranteed to exist after initialization
             # Get pipeline health using helper function
             health_status_dict = await self.run_in_executor(

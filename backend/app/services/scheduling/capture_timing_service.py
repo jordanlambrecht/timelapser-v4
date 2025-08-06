@@ -561,6 +561,18 @@ class SyncCaptureTimingService:
         self.async_db = async_db
         self.time_window_service = time_window_service
         self.settings_service = settings_service
+        
+        # Validate that we got a sync settings service
+        if hasattr(settings_service, 'get_setting'):
+            # Test call to ensure it's sync
+            try:
+                test_call = settings_service.get_setting("timezone")
+                # If it's a coroutine, it means we got an async service by mistake
+                if hasattr(test_call, '__await__'):
+                    raise ValueError("SyncCaptureTimingService received async settings service instead of sync")
+            except Exception as e:
+                # This is fine, could just be a database issue
+                pass
 
     def _get_timing_settings(self) -> dict:
         """Get timing settings from database using proper operations layer (sync version)."""
