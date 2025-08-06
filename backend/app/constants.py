@@ -560,7 +560,7 @@ DEFAULT_IMAGE_EXTENSION = ".jpg"
 GENERATE_ALL_THUMBNAIL_SIZES = True
 
 # RTSP capture settings
-DEFAULT_RTSP_QUALITY = 85
+DEFAULT_RTSP_QUALITY = 90  # Consolidated from duplicate definition on line 890
 DEFAULT_RTSP_TIMEOUT_SECONDS = 10
 DEFAULT_CORRUPTION_SCORE = 100
 DEFAULT_IS_FLAGGED = False
@@ -884,10 +884,8 @@ EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
 # RTSP SERVICE CONSTANTS
 # ====================================================================
 
-# RTSP operation defaults
+# RTSP operation defaults (duplicate constants removed - see lines 558-566)
 DEFAULT_MAX_RETRIES = 3
-DEFAULT_RTSP_TIMEOUT_SECONDS = 10
-DEFAULT_RTSP_QUALITY = 90
 DEFAULT_IMAGE_EXTENSION = ".jpg"
 
 # RTSP capture defaults

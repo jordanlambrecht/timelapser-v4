@@ -1,5 +1,5 @@
-# start-services.sh 🧼
 #!/bin/bash
+# start-services.sh 🧼
 
 # Backend + Worker Startup Script with Health Checks
 # Starts all services with proper coordination and health monitoring

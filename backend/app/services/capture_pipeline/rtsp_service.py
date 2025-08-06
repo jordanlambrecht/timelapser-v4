@@ -540,7 +540,14 @@ class RTSPService:
             quality = DEFAULT_RTSP_QUALITY
             if quality_setting:
                 try:
-                    quality = int(quality_setting)
+                    parsed_quality = int(quality_setting)
+                    # Validate JPEG quality range (1-100)
+                    if 1 <= parsed_quality <= 100:
+                        quality = parsed_quality
+                    else:
+                        logger.warning(
+                            f"Image quality setting {parsed_quality} out of range (1-100), using default {DEFAULT_RTSP_QUALITY}"
+                        )
                 except (ValueError, TypeError):
                     logger.warning(
                         f"Invalid image_quality setting, using default {DEFAULT_RTSP_QUALITY}"
@@ -549,7 +556,14 @@ class RTSPService:
             timeout = DEFAULT_RTSP_TIMEOUT_SECONDS
             if timeout_setting:
                 try:
-                    timeout = int(timeout_setting)
+                    parsed_timeout = int(timeout_setting)
+                    # Validate timeout range (1-300 seconds)
+                    if 1 <= parsed_timeout <= 300:
+                        timeout = parsed_timeout
+                    else:
+                        logger.warning(
+                            f"RTSP timeout setting {parsed_timeout} out of range (1-300), using default {DEFAULT_RTSP_TIMEOUT_SECONDS}"
+                        )
                 except (ValueError, TypeError):
                     logger.warning(
                         f"Invalid rtsp_timeout_seconds setting, using default {DEFAULT_RTSP_TIMEOUT_SECONDS}"

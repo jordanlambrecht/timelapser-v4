@@ -19,13 +19,10 @@ Legacy Features (maintained for compatibility):
 - Validation and metrics helpers
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, Union
 import dataclasses
 
 from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    from dataclasses import Field as DataclassField
 
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..enums import LoggerName, LogLevel, LogSource
@@ -36,9 +33,11 @@ from .time_utils import utc_now
 # HELPER FUNCTIONS
 # =============================================================================
 
+
 def is_dataclass_instance(obj: Any) -> bool:
     """Check if an object is a dataclass instance (not the class itself)."""
     return dataclasses.is_dataclass(obj) and not isinstance(obj, type)
+
 
 # =============================================================================
 # PYDANTIC RESPONSE MODELS - Type-safe API response structures
@@ -67,12 +66,14 @@ class ApiResponse(BaseModel):
 
     class Config:
         """Pydantic configuration."""
-        
+
         json_encoders = {
             # Automatically convert nested BaseModel instances to dictionaries
-            BaseModel: lambda v: v.model_dump() if hasattr(v, 'model_dump') else v.dict()
+            BaseModel: lambda v: (
+                v.model_dump() if hasattr(v, "model_dump") else v.dict()
+            )
         }
-        
+
         # Allow arbitrary types (including dataclasses)
         arbitrary_types_allowed = True
 
@@ -92,16 +93,16 @@ class SuccessResponse(ApiResponse):
     ) -> "SuccessResponse":
         """Factory method to create success responses."""
         return cls(message=message, data=data, **kwargs)
-    
+
     def model_dump(self, **kwargs) -> Dict[str, Any]:
         """Override model_dump to handle dataclasses in the data field."""
         result = super().model_dump(**kwargs)
-        
+
         # Handle dataclass conversion in the data field
         if result.get("data") is not None and is_dataclass_instance(result["data"]):
             # Type checker needs explicit cast after our custom check
             result["data"] = dataclasses.asdict(result["data"])  # type: ignore[arg-type]
-            
+
         return result
 
 
@@ -222,7 +223,9 @@ class ResponseFormatter:
 
     @staticmethod
     def success(
-        message: str, data: Optional[Union[Dict[str, Any], List, BaseModel, Any]] = None, **kwargs
+        message: str,
+        data: Optional[Union[Dict[str, Any], List, BaseModel, Any]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Create a standardized success response.
@@ -930,12 +933,12 @@ MODERN USAGE (Recommended - Type-safe):
     # Success response with dictionary data
     response = SuccessResponse.create("Camera updated successfully", data={"id": 123})
     return response.model_dump()
-    
+
     # Success response with Pydantic model data
     camera_model = SomePydanticModel(...)  # Your Pydantic model
     response = SuccessResponse.create("Model data retrieved", data=camera_model)
     return response.model_dump()  # Automatically converts nested models
-    
+
     # Success response with dataclass data (NEW!)
     camera_stats = CameraStatisticsResponse(...)  # Your dataclass
     response = SuccessResponse.create("Statistics retrieved", data=camera_stats)
@@ -961,15 +964,15 @@ LEGACY USAGE (Maintained for compatibility):
 
     # Dictionary data (works as before)
     return ResponseFormatter.success("Camera updated", data={"id": 123})
-    
+
     # Pydantic model data (automatically converts!)
     camera_model = SomePydanticModel(...)
     return ResponseFormatter.success("Model data retrieved", data=camera_model)
-    
+
     # Dataclass data (NEW - automatically converts!)
     camera_stats = CameraStatisticsResponse(...)  # Your dataclass
     return ResponseFormatter.success("Statistics retrieved", data=camera_stats)
-    
+
     return ResponseFormatter.error("Camera not found", error_code="CAMERA_NOT_FOUND")
 """
 
