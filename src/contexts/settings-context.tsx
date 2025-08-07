@@ -44,6 +44,7 @@ interface SettingsContextType {
 
   // Database logging settings (for application events in PostgreSQL)
   dbLogRetentionDays: number
+  maxDatabaseLogs: number
   dbLogLevel: string
 
   // File logging settings (for system debugging with loguru)
@@ -105,6 +106,7 @@ interface SettingsContextType {
   setLatitude: (value: number | null) => void
   setLongitude: (value: number | null) => void
   setDbLogRetentionDays: (value: number) => void
+  setMaxDatabaseLogs: (value: number) => void
   setDbLogLevel: (value: string) => void
   setFileLogRetentionDays: (value: number) => void
   setMaxLogFileSize: (value: number) => void
@@ -170,6 +172,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
     // Database logging settings (for application events in PostgreSQL)
     dbLogRetentionDays: 30,
+    maxDatabaseLogs: 50000,
     dbLogLevel: "info",
 
     // File logging settings (for system debugging with loguru)
@@ -306,6 +309,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
           // Logging settings
           dbLogRetentionDays: parseInt(data.data.log_retention_days || "30"),
+          maxDatabaseLogs: parseInt(data.data.max_database_logs || "50000"),
           dbLogLevel: data.data.log_level || "info",
           fileLogRetentionDays: parseInt(
             data.data.file_log_retention_days || "7"
@@ -594,6 +598,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSettings((prev) => ({ ...prev, dbLogRetentionDays: value }))
   }, [])
 
+  const setMaxDatabaseLogs = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, maxDatabaseLogs: value }))
+  }, [])
+
   const setDbLogLevel = useCallback((value: string) => {
     setSettings((prev) => ({ ...prev, dbLogLevel: value }))
   }, [])
@@ -781,6 +789,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     // Logging settings
     if (settings.dbLogRetentionDays !== originalSettings.dbLogRetentionDays) {
       changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
+    }
+    if (settings.maxDatabaseLogs !== originalSettings.maxDatabaseLogs) {
+      changes.push(`Max Database Logs (${settings.maxDatabaseLogs})`)
     }
     if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
       changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
@@ -985,6 +996,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         ) {
           changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
         }
+        if (settings.maxDatabaseLogs !== originalSettings.maxDatabaseLogs) {
+          changes.push(`Max Database Logs (${settings.maxDatabaseLogs})`)
+        }
         if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
           changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
         }
@@ -1108,6 +1122,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         image_quality: settings.imageQuality.toString(),
         rtsp_timeout_seconds: settings.rtspTimeoutSeconds.toString(),
         log_retention_days: settings.dbLogRetentionDays.toString(),
+        max_database_logs: settings.maxDatabaseLogs.toString(),
         max_log_file_size: settings.maxLogFileSize.toString(),
         log_level: settings.dbLogLevel,
         file_log_retention_days: settings.fileLogRetentionDays.toString(),
@@ -1249,10 +1264,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         }
         setOriginalSettings(updatedSettings)
 
-        // REMOVED: Force fetch that was causing UI reversion
-        // setTimeout(() => {
-        //   fetchSettings(true)
-        // }, 500)
+        // Small delay to ensure React state batching completes and hasUnsavedChanges updates
+        setTimeout(() => {
+          // Force re-evaluation of hasUnsavedChanges by ensuring React has processed the state update
+        }, 50)
       }
 
       return changedSettings.length > 0
@@ -1313,6 +1328,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setLatitude,
     setLongitude,
     setDbLogRetentionDays,
+    setMaxDatabaseLogs,
     setMaxLogFileSize,
     setDbLogLevel,
     setFileLogRetentionDays,
