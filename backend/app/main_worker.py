@@ -402,6 +402,10 @@ class AsyncTimelapseWorker:
         """Clean up old SSE events (delegates to SSEWorker)."""
         return await self.sse_worker.cleanup_old_events()
 
+    async def execute_cleanup(self):
+        """Execute cleanup operations (delegates to CleanupWorker)."""
+        return await self.cleanup_worker.execute_cleanup()
+
     def get_worker_health(self) -> Dict[str, Any]:
         """
         Get comprehensive health status of all workers and services using structured models.
@@ -699,6 +703,7 @@ class AsyncTimelapseWorker:
                     weather_refresh_func=self.refresh_weather_data,
                     video_automation_func=self.process_video_automation,
                     sse_cleanup_func=self.cleanup_sse_events,
+                    cleanup_func=self.execute_cleanup,
                 )
 
                 if jobs_added == 0:
@@ -721,7 +726,50 @@ class AsyncTimelapseWorker:
                     store_in_db=False
                 )
 
-            # Step 5: Mark as running and start main loop
+            # Step 5: Perform comprehensive startup recovery
+            try:
+                logger.info(
+                    "Performing comprehensive startup recovery...",
+                    emoji=LogEmoji.TASK,
+                )
+                
+                # Import and create recovery service
+                from .services.recovery_service import SyncRecoveryService
+                
+                recovery_service = SyncRecoveryService(
+                    db=sync_db,
+                    scheduler_worker=self.scheduler_worker
+                )
+                
+                recovery_results = recovery_service.perform_startup_recovery(
+                    max_processing_age_minutes=30,
+                    log_recovery_details=True
+                )
+                
+                # Log recovery summary
+                total_recovered = recovery_results.get("total_jobs_recovered", 0)
+                timelapse_recovery = recovery_results.get("job_type_results", {}).get("timelapse_capture_jobs", {})
+                timelapses_recovered = timelapse_recovery.get("timelapses_recovered", 0)
+                
+                logger.info(
+                    f"Startup recovery completed - Jobs: {total_recovered}, Timelapses: {timelapses_recovered}",
+                    emoji=LogEmoji.SUCCESS,
+                    extra_context={
+                        "total_jobs_recovered": total_recovered,
+                        "timelapses_recovered": timelapses_recovered,
+                        "recovery_duration": recovery_results.get("recovery_duration_seconds", 0)
+                    }
+                )
+                
+            except Exception as e:
+                logger.error(f"Startup recovery failed: {e}")
+                # Don't fail worker startup for recovery issues
+                logger.warning(
+                    "Continuing startup - individual workers will attempt recovery later",
+                    store_in_db=False
+                )
+
+            # Step 6: Mark as running and start main loop
             self.running = True
             logger.info(
                 "Modular worker started successfully with full functionality",

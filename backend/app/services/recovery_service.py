@@ -18,6 +18,7 @@ from ..database.thumbnail_job_operations import (
     SyncThumbnailJobOperations,
     ThumbnailJobOperations,
 )
+from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
 from ..database.video_operations import SyncVideoOperations, VideoOperations
 from ..enums import LogEmoji, LoggerName, LogSource
 from ..services.logger.logger_service import LoggerService
@@ -40,18 +41,22 @@ class RecoveryService:
     Provides comprehensive recovery statistics and logging.
     """
 
-    def __init__(self, db: AsyncDatabase, sync_db: SyncDatabase) -> None:
+    def __init__(self, db: AsyncDatabase, sync_db: SyncDatabase, scheduler_worker=None) -> None:
         """
         Initialize recovery service with async database instance.
 
         Args:
             db: AsyncDatabase instance
             sync_db: SyncDatabase instance
+            scheduler_worker: Optional scheduler worker for timelapse recovery
         """
         self.db = db
+        self.sync_db = sync_db
         self.thumbnail_ops = ThumbnailJobOperations(db)
         self.video_ops = VideoOperations(db)
         self.overlay_ops = OverlayJobOperations(db)
+        self.timelapse_ops = TimelapseOperations(db)
+        self.scheduler_worker = scheduler_worker
         self.log = LoggerService(async_db=db, sync_db=sync_db)
 
     async def perform_startup_recovery(
@@ -122,6 +127,44 @@ class RecoveryService:
             recovery_results["overlay_jobs"] = overlay_results
             total_recovered += overlay_results.get("stuck_jobs_recovered", 0)
             total_failed += overlay_results.get("stuck_jobs_failed", 0)
+
+            # 4. Recover timelapse capture jobs
+            timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0}
+            if self.scheduler_worker:
+                if log_recovery_details:
+                    logger.info(
+                        "Recovering timelapse capture jobs...",
+                        emoji=LogEmoji.CAMERA,
+                    )
+                try:
+                    # Get running timelapses - need to use sync version since scheduler is sync
+                    from ..database.timelapse_operations import SyncTimelapseOperations
+                    sync_timelapse_ops = SyncTimelapseOperations(self.sync_db)
+                    active_timelapses = sync_timelapse_ops.get_running_and_paused_timelapses()
+                    timelapses_found = len(active_timelapses) if active_timelapses else 0
+                    
+                    if timelapses_found > 0:
+                        # Delegate to scheduler worker for timelapse recovery
+                        self.scheduler_worker.sync_running_timelapses()
+                        timelapse_results = {
+                            "timelapses_recovered": timelapses_found,
+                            "timelapses_found": timelapses_found
+                        }
+                        logger.info(
+                            f"Restored {timelapses_found} timelapse capture jobs",
+                            emoji=LogEmoji.SUCCESS
+                        )
+                    else:
+                        timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0}
+                        
+                except Exception as e:
+                    logger.error(f"Error recovering timelapse capture jobs: {e}")
+                    timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0, "error": str(e)}
+            else:
+                if log_recovery_details:
+                    logger.debug("Scheduler worker not available - skipping timelapse recovery")
+            
+            recovery_results["timelapse_capture_jobs"] = timelapse_results
 
             # Calculate recovery duration
             recovery_duration = (utc_now() - recovery_start_time).total_seconds()
@@ -228,17 +271,20 @@ class SyncRecoveryService:
     sync contexts like worker initialization.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, scheduler_worker=None):
         """
         Initialize sync recovery service with sync database instance.
 
         Args:
             db: SyncDatabase instance
+            scheduler_worker: Optional scheduler worker for timelapse recovery
         """
         self.db = db
         self.thumbnail_ops = SyncThumbnailJobOperations(db)
         self.video_ops = SyncVideoOperations(db)
         self.overlay_ops = SyncOverlayJobOperations(db)
+        self.timelapse_ops = SyncTimelapseOperations(db)
+        self.scheduler_worker = scheduler_worker
         self.cleanup_service = StartupCleanupService(db)
 
     def perform_startup_recovery(
@@ -311,7 +357,42 @@ class SyncRecoveryService:
             total_recovered += overlay_results.get("stuck_jobs_recovered", 0)
             total_failed += overlay_results.get("stuck_jobs_failed", 0)
 
-            # 4. Perform file cleanup
+            # 4. Recover timelapse capture jobs
+            timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0}
+            if self.scheduler_worker:
+                if log_recovery_details:
+                    logger.info(
+                        "Recovering timelapse capture jobs...",
+                        emoji=LogEmoji.CAMERA,
+                    )
+                try:
+                    active_timelapses = self.timelapse_ops.get_running_and_paused_timelapses()
+                    timelapses_found = len(active_timelapses) if active_timelapses else 0
+                    
+                    if timelapses_found > 0:
+                        # Delegate to scheduler worker for timelapse recovery
+                        self.scheduler_worker.sync_running_timelapses()
+                        timelapse_results = {
+                            "timelapses_recovered": timelapses_found,
+                            "timelapses_found": timelapses_found
+                        }
+                        logger.info(
+                            f"Restored {timelapses_found} timelapse capture jobs",
+                            emoji=LogEmoji.SUCCESS
+                        )
+                    else:
+                        timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0}
+                        
+                except Exception as e:
+                    logger.error(f"Error recovering timelapse capture jobs: {e}")
+                    timelapse_results = {"timelapses_recovered": 0, "timelapses_found": 0, "error": str(e)}
+            else:
+                if log_recovery_details:
+                    logger.debug("Scheduler worker not available - skipping timelapse recovery")
+            
+            recovery_results["timelapse_capture_jobs"] = timelapse_results
+
+            # 5. Perform file cleanup
             if log_recovery_details:
                 logger.info(
                     "Performing startup file cleanup...", emoji=LogEmoji.CLEANUP
