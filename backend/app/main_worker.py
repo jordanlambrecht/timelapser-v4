@@ -95,7 +95,8 @@ class AsyncTimelapseWorker:
 
         Sets up all necessary components including:
         - Signal handlers for graceful shutdown
-        - Composition-based services with dependency injection (databases already initialized)
+        - Composition-based services with dependency injection
+          (databases already initialized)
         - Specialized worker instances
         - Cross-worker coordination
 
@@ -265,7 +266,8 @@ class AsyncTimelapseWorker:
         except Exception as e:
             assert logger is not None, "Logger must be initialized"
             logger.warning(
-                f"Failed to initialize font cache (overlay performance may be reduced): {e}",
+                f"Failed to initialize font cache "
+                f"(overlay performance may be reduced): {e}",
                 store_in_db=False
             )
 
@@ -408,7 +410,8 @@ class AsyncTimelapseWorker:
 
     def get_worker_health(self) -> Dict[str, Any]:
         """
-        Get comprehensive health status of all workers and services using structured models.
+        Get comprehensive health status of all workers and services using
+        structured models.
 
         Returns:
             Dictionary with health status for monitoring and debugging
@@ -647,13 +650,16 @@ class AsyncTimelapseWorker:
             # Step 1: Validate worker ecosystem health before starting
             health_status = self.get_worker_health()
             ecosystem_status = health_status["ecosystem"]
-            if ecosystem_status["overall_status"] == HealthStatus.ERROR.value:
+            if (
+                ecosystem_status["overall_status"] == HealthStatus.ERROR.value
+            ):
                 errors = ecosystem_status.get("errors", [])
                 error_msg = errors[0] if errors else "Unknown error"
                 raise RuntimeError(f"Worker ecosystem unhealthy: {error_msg}")
 
             logger.info(
-                f"Worker ecosystem health check passed: {ecosystem_status['overall_status']}",
+                f"Worker ecosystem health check passed: "
+                f"{ecosystem_status['overall_status']}",
                 emoji=LogEmoji.HEALTH,
                 extra_context={
                     "workers_count": ecosystem_status["ecosystem_stats"][
@@ -674,7 +680,9 @@ class AsyncTimelapseWorker:
                     emoji=LogEmoji.SUCCESS,
                 )
             except Exception as e:
-                logger.error(f"Failed to start workers - attempting graceful recovery: {e}")
+                logger.error(
+                    f"Failed to start workers - attempting graceful recovery: {e}"
+                )
                 # Attempt to stop any workers that may have started
                 await self._stop_all_workers()
                 raise
@@ -708,7 +716,8 @@ class AsyncTimelapseWorker:
 
                 if jobs_added == 0:
                     logger.warning(
-                        "No standard jobs were added - worker may have reduced functionality",
+                        "No standard jobs were added - worker may have "
+                        "reduced functionality",
                         emoji=LogEmoji.WARNING,
                         store_in_db=False
                     )
@@ -732,40 +741,51 @@ class AsyncTimelapseWorker:
                     "Performing comprehensive startup recovery...",
                     emoji=LogEmoji.TASK,
                 )
-                
+
                 # Import and create recovery service
                 from .services.recovery_service import SyncRecoveryService
-                
+
                 recovery_service = SyncRecoveryService(
                     db=sync_db,
                     scheduler_worker=self.scheduler_worker
                 )
-                
+
                 recovery_results = recovery_service.perform_startup_recovery(
                     max_processing_age_minutes=30,
                     log_recovery_details=True
                 )
-                
+
                 # Log recovery summary
-                total_recovered = recovery_results.get("total_jobs_recovered", 0)
-                timelapse_recovery = recovery_results.get("job_type_results", {}).get("timelapse_capture_jobs", {})
-                timelapses_recovered = timelapse_recovery.get("timelapses_recovered", 0)
-                
+                total_recovered = recovery_results.get(
+                    "total_jobs_recovered", 0
+                )
+                timelapse_recovery = (
+                    recovery_results.get("job_type_results", {})
+                    .get("timelapse_capture_jobs", {})
+                )
+                timelapses_recovered = timelapse_recovery.get(
+                    "timelapses_recovered", 0
+                )
+
                 logger.info(
-                    f"Startup recovery completed - Jobs: {total_recovered}, Timelapses: {timelapses_recovered}",
+                    f"Startup recovery completed - Jobs: {total_recovered}, "
+                    f"Timelapses: {timelapses_recovered}",
                     emoji=LogEmoji.SUCCESS,
                     extra_context={
                         "total_jobs_recovered": total_recovered,
                         "timelapses_recovered": timelapses_recovered,
-                        "recovery_duration": recovery_results.get("recovery_duration_seconds", 0)
+                        "recovery_duration": recovery_results.get(
+                            "recovery_duration_seconds", 0
+                        )
                     }
                 )
-                
+
             except Exception as e:
                 logger.error(f"Startup recovery failed: {e}")
                 # Don't fail worker startup for recovery issues
                 logger.warning(
-                    "Continuing startup - individual workers will attempt recovery later",
+                    "Continuing startup - individual workers will attempt "
+                    "recovery later",
                     store_in_db=False
                 )
 

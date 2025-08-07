@@ -5,9 +5,12 @@ Health monitoring service for comprehensive system health checks.
 Provides detailed health monitoring for all system components including
 database connections, file system, external dependencies, and performance metrics.
 
-Design Decision: This service intentionally does NOT integrate with SSE (Server-Sent Events).
-Health monitoring is better served by HTTP caching + periodic polling rather than real-time
-streaming. Health status typically changes slowly and is checked every few minutes, making
+Design Decision: This service intentionally does NOT integrate with SSE
+(Server-Sent Events).
+Health monitoring is better served by HTTP caching + periodic polling
+rather than real-time
+streaming. Health status typically changes slowly and is checked every
+few minutes, making
 SSE overhead unnecessary. The current HTTP approach with ETag caching provides optimal
 balance between freshness and performance.
 
@@ -70,11 +73,11 @@ class HealthService:
     external dependencies, and provides detailed diagnostic information.
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, async_db: AsyncDatabase):
         """Initialize with database instance using composition pattern."""
-        self.db = db
-        self.health_ops = HealthOperations(db)
-        self.stats_ops = StatisticsOperations(db)
+        self.db = async_db
+        self.health_ops = HealthOperations(async_db)
+        self.stats_ops = StatisticsOperations(async_db)
         self.start_time: Optional[datetime] = None
 
     async def get_basic_health(self) -> BasicHealthCheck:
@@ -520,13 +523,15 @@ class HealthService:
             if app_metrics.pending_video_jobs > HEALTH_VIDEO_QUEUE_ERROR:
                 status = HealthStatus.UNHEALTHY
                 warnings.append(
-                    f"Critical video queue backlog: {app_metrics.pending_video_jobs} pending jobs"
+                    f"Critical video queue backlog: "
+                    f"{app_metrics.pending_video_jobs} pending jobs"
                 )
             elif app_metrics.pending_video_jobs > HEALTH_VIDEO_QUEUE_WARNING:
                 if status == HealthStatus.HEALTHY:
                     status = HealthStatus.DEGRADED
                 warnings.append(
-                    f"High video queue backlog: {app_metrics.pending_video_jobs} pending jobs"
+                    f"High video queue backlog: "
+                    f"{app_metrics.pending_video_jobs} pending jobs"
                 )
 
             message = "Application healthy"

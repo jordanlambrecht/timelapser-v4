@@ -15,6 +15,7 @@ Maintains all functionality while using shared infrastructure:
 - JobBatchProcessor for adaptive performance scaling (NEW!)
 """
 
+import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
@@ -52,9 +53,7 @@ from .utils.worker_status_builder import WorkerStatusBuilder
 overlay_logger = get_service_logger(LoggerName.OVERLAY_WORKER, LogSource.WORKER)
 
 
-class OverlayWorker(
-    StartupRecoveryMixin, JobProcessingMixin[OverlayGenerationJob]
-):
+class OverlayWorker(StartupRecoveryMixin, JobProcessingMixin[OverlayGenerationJob]):
     """
     Refactored high-performance background worker for overlay generation.
 
@@ -153,12 +152,16 @@ class OverlayWorker(
             f"OverlayWorker initialized with batch_size={batch_size}, "
             f"interval={worker_interval}s, max_retries={max_retries}",
             store_in_db=False,
-            emoji=LogEmoji.SYSTEM
+            emoji=LogEmoji.SYSTEM,
         )
 
     async def initialize(self) -> None:
         """Initialize overlay worker resources."""
-        overlay_logger.info("Initializing overlay worker resources...", store_in_db=False, emoji=LogEmoji.SYSTEM)
+        overlay_logger.info(
+            "Initializing overlay worker resources...",
+            store_in_db=False,
+            emoji=LogEmoji.SYSTEM,
+        )
 
         # Validate that overlay service is properly configured
         if not self.overlay_service:
@@ -184,7 +187,21 @@ class OverlayWorker(
         overlay_logger.info(
             "Overlay worker initialization complete",
             store_in_db=False,
-            emoji=LogEmoji.SUCCESS
+            emoji=LogEmoji.SUCCESS,
+        )
+
+    async def start(self) -> None:
+        """Start the overlay worker with background processing."""
+        # Call parent's start method to initialize
+        await super().start()
+
+        # Start the background processing loop
+        asyncio.create_task(self.run())
+
+        overlay_logger.info(
+            "Overlay worker started with background processing",
+            store_in_db=False,
+            emoji=LogEmoji.STARTUP,
         )
 
     async def cleanup(self) -> None:
@@ -192,7 +209,7 @@ class OverlayWorker(
         overlay_logger.info(
             "Starting overlay worker cleanup...",
             store_in_db=False,
-            emoji=LogEmoji.CLEANUP
+            emoji=LogEmoji.CLEANUP,
         )
 
         # Get final statistics before shutdown
@@ -203,7 +220,7 @@ class OverlayWorker(
             f"{final_stats['failed_jobs_total']} failed, "
             f"{final_stats['success_rate_percent']:.1f}% success rate",
             store_in_db=False,
-            emoji=LogEmoji.SYSTEM
+            emoji=LogEmoji.SYSTEM,
         )
 
         # Broadcast worker shutdown event using shared SSE broadcaster
@@ -211,7 +228,9 @@ class OverlayWorker(
             stop_reason="Normal shutdown", final_stats=final_stats
         )
 
-        overlay_logger.info("Overlay worker cleanup complete", store_in_db=False, emoji=LogEmoji.SUCCESS)
+        overlay_logger.info(
+            "Overlay worker cleanup complete", store_in_db=False, emoji=LogEmoji.SUCCESS
+        )
 
     # Abstract method implementations required by JobProcessingMixin
 
@@ -248,13 +267,13 @@ class OverlayWorker(
             if not self.overlay_job_service.mark_job_processing(job.id):
                 overlay_logger.warning(
                     f"Failed to mark overlay job {job.id} as processing",
-                    store_in_db=False
+                    store_in_db=False,
                 )
                 return False
 
             overlay_logger.debug(
                 f"Processing overlay job {job.id} for image {job.image_id}",
-                store_in_db=False
+                store_in_db=False,
             )
 
             # Generate overlay using the overlay service (overlay-specific logic)
@@ -279,19 +298,21 @@ class OverlayWorker(
                 else:
                     overlay_logger.error(
                         f"Failed to mark overlay job {job.id} as completed",
-                        store_in_db=False
+                        store_in_db=False,
                     )
                     return False
             else:
                 # Job failed - JobProcessingMixin will handle retry logic
                 overlay_logger.warning(
                     f"Overlay job {job.id} failed: Overlay generation failed",
-                    store_in_db=False
+                    store_in_db=False,
                 )
                 return False
 
         except Exception as e:
-            overlay_logger.error(f"Exception processing overlay job {job.id}: {e}", store_in_db=False)
+            overlay_logger.error(
+                f"Exception processing overlay job {job.id}: {e}", store_in_db=False
+            )
             return False
 
     def mark_job_failed(self, job_id: int, error_message: str) -> bool:
@@ -308,7 +329,9 @@ class OverlayWorker(
         try:
             return self.overlay_job_service.mark_job_failed(job_id, error_message)
         except Exception as e:
-            overlay_logger.error(f"Error marking overlay job {job_id} as failed: {e}", store_in_db=False)
+            overlay_logger.error(
+                f"Error marking overlay job {job_id} as failed: {e}", store_in_db=False
+            )
             return False
 
     # # TODO: Implement retry
@@ -333,7 +356,7 @@ class OverlayWorker(
         except Exception as e:
             overlay_logger.error(
                 f"Error scheduling retry for overlay job {job_id}: {e}",
-                store_in_db=False
+                store_in_db=False,
             )
             return False
 
@@ -350,7 +373,9 @@ class OverlayWorker(
         try:
             return self.overlay_job_service.cleanup_completed_jobs(hours_to_keep)
         except Exception as e:
-            overlay_logger.error(f"Error cleaning up overlay jobs: {e}", store_in_db=False)
+            overlay_logger.error(
+                f"Error cleaning up overlay jobs: {e}", store_in_db=False
+            )
             return 0
 
     def get_queue_statistics(self) -> Dict[str, int]:
@@ -369,7 +394,9 @@ class OverlayWorker(
                 "completed_jobs": int(getattr(stats, "completed_jobs", 0)),
             }
         except Exception as e:
-            overlay_logger.error(f"Error getting overlay queue statistics: {e}", store_in_db=False)
+            overlay_logger.error(
+                f"Error getting overlay queue statistics: {e}", store_in_db=False
+            )
             return {"pending_jobs": 0, "processing_jobs": 0, "completed_jobs": 0}
 
     # Overlay-specific helper methods
@@ -419,7 +446,8 @@ class OverlayWorker(
         """
         Get comprehensive overlay worker status.
 
-        Extends the base status from JobProcessingMixin with overlay-specific information.
+        Extends the base status from JobProcessingMixin with overlay-specific
+        information.
 
         Returns:
             Dictionary with complete worker status
@@ -464,5 +492,5 @@ class OverlayWorker(
                 "overlay_service_available": self.overlay_service is not None,
                 "job_service_available": self.job_service is not None,
                 "weather_manager_available": self.weather_manager is not None,
-            }
+            },
         )

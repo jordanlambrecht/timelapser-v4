@@ -9,6 +9,7 @@ Maintains all functionality while using shared infrastructure:
 - JobBatchProcessor for adaptive performance scaling
 """
 
+import asyncio
 import time
 from typing import Any, Dict, List
 
@@ -130,8 +131,10 @@ class ThumbnailWorker(
     async def initialize(self) -> None:
         """Initialize thumbnail worker resources."""
         logger.info(
-            f"Initialized with batch_size={self.job_batch_processor.current_batch_size}, "
-            f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}",
+            f"Initialized with batch_size="
+            f"{self.job_batch_processor.current_batch_size}, "
+            f"interval={self.worker_interval}s, "
+            f"max_retries={self.retry_manager.max_retries}",
             store_in_db=False,
             emoji=LogEmoji.SYSTEM,
             extra_context={
@@ -154,6 +157,20 @@ class ThumbnailWorker(
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
             worker_config=self._get_worker_config()
+        )
+
+    async def start(self) -> None:
+        """Start the thumbnail worker with background processing."""
+        # Call parent's start method to initialize
+        await super().start()
+
+        # Start the background processing loop
+        asyncio.create_task(self.run())
+
+        logger.info(
+            "Thumbnail worker started with background processing",
+            store_in_db=False,
+            emoji=LogEmoji.STARTUP,
         )
 
     async def cleanup(self) -> None:
@@ -235,7 +252,8 @@ class ThumbnailWorker(
                 self.thumbnail_pipeline.process_image_thumbnails(job.image_id)
             )
 
-            # Ensure result_dict contains all required fields for ThumbnailGenerationResult
+            # Ensure result_dict contains all required fields for
+            # ThumbnailGenerationResult
             if not isinstance(result_dict, dict):
                 logger.error(
                     f"Invalid result type from thumbnail pipeline: {type(result_dict)}",
@@ -292,7 +310,8 @@ class ThumbnailWorker(
                 # Log slow processing as warning (thumbnail-specific threshold)
                 if processing_time_ms > THUMBNAIL_PROCESSING_TIME_WARNING_MS:
                     logger.warning(
-                        f"Slow thumbnail processing detected: job {job.id} took {processing_time_ms}ms",
+                        f"Slow thumbnail processing detected: job {job.id} "
+                        f"took {processing_time_ms}ms",
                         store_in_db=False,
                         extra_context={
                             "job_id": job.id,
@@ -304,7 +323,8 @@ class ThumbnailWorker(
                     )
 
                 logger.debug(
-                    f"Successfully completed thumbnail job {job.id} in {processing_time_ms}ms",
+                    f"Successfully completed thumbnail job {job.id} "
+                    f"in {processing_time_ms}ms",
                     store_in_db=False,
                     extra_context={
                         "job_id": job.id,
@@ -459,7 +479,8 @@ class ThumbnailWorker(
                     )
                 else:
                     logger.warning(
-                        f"Failed to update thumbnail counts for timelapse {result.timelapse_id}",
+                        f"Failed to update thumbnail counts for timelapse "
+                        f"{result.timelapse_id}",
                         store_in_db=False,
                         extra_context={
                             "timelapse_id": result.timelapse_id,
@@ -472,7 +493,8 @@ class ThumbnailWorker(
 
         except Exception as e:
             logger.error(
-                f"Error updating thumbnail counts for timelapse {result.timelapse_id}: {e}",
+                f"Error updating thumbnail counts for timelapse "
+                f"{result.timelapse_id}: {e}",
                 store_in_db=False,
             )
 
@@ -509,7 +531,9 @@ class ThumbnailWorker(
             # Get service-specific status
             service_status = self.thumbnail_service.get_worker_status(
                 thumbnail_pipeline=self.thumbnail_pipeline,
-                processing_time_warning_threshold_ms=THUMBNAIL_PROCESSING_TIME_WARNING_MS,
+                processing_time_warning_threshold_ms=(
+                    THUMBNAIL_PROCESSING_TIME_WARNING_MS
+                ),
                 concurrent_jobs_limit=THUMBNAIL_CONCURRENT_JOBS,
                 base_status=base_status,
             )
