@@ -71,9 +71,9 @@ class ThumbnailPipeline:
         Args:
             database: Sync database instance (for creating sync services)
             async_database: Async database instance (for async services)
-            settings_service: Settings service for configuration access (required for production)
-            image_service: Image service for image-related operations (required for production)
-            timelapse_service: Timelapse service for timelapse-related operations (required for production)
+            settings_service: Settings service for configuration access (required)
+            image_service: Image service for image-related operations (required)
+            timelapse_service: Timelapse service (optional - uses DB directly)
         """
         self.database = database
         self.async_database = async_database
@@ -83,17 +83,10 @@ class ThumbnailPipeline:
 
         # Validate that we have the necessary dependencies for production use
         if not settings_service:
-            logger.warning(
-                "⚠️ ThumbnailPipeline instantiated without settings_service - should only happen in tests"
-            )
+            logger.warning("⚠️ ThumbnailPipeline instantiated without settings_service")
         if not image_service:
-            logger.warning(
-                "⚠️ ThumbnailPipeline instantiated without image_service - should only happen in tests"
-            )
-        if not timelapse_service:
-            logger.warning(
-                "⚠️ ThumbnailPipeline instantiated without timelapse_service - should only happen in tests"
-            )
+            logger.warning("⚠️ ThumbnailPipeline instantiated without image_service")
+        # Note: timelapse_service optional - uses database operations directly
 
         # Settings cache for performance optimization
         self._settings_cache = {}
@@ -128,10 +121,22 @@ class ThumbnailPipeline:
         return await self.image_service.get_image_by_id(image_id)
 
     async def _get_timelapse_by_id_safe(self, timelapse_id: int):
-        """Get timelapse by ID through timelapse service."""
-        if not self.timelapse_service:
-            raise ValueError("Timelapse service is required but not provided")
-        return await self.timelapse_service.get_timelapse_by_id(timelapse_id)
+        """Get timelapse by ID through database operations."""
+        if not self.async_database:
+            raise ValueError("Async database is required but not provided")
+        from ...database.timelapse_operations import TimelapseOperations
+
+        timelapse_ops = TimelapseOperations(self.async_database)
+        return await timelapse_ops.get_timelapse_by_id(timelapse_id)
+
+    def _get_timelapse_by_id_safe_sync(self, timelapse_id: int):
+        """Get timelapse by ID through database operations - sync version."""
+        if not self.database:
+            raise ValueError("Database is required but not provided")
+        from ...database.timelapse_operations import SyncTimelapseOperations
+
+        timelapse_ops = SyncTimelapseOperations(self.database)
+        return timelapse_ops.get_timelapse_by_id(timelapse_id)
 
     async def _get_images_by_timelapse_safe(self, timelapse_id: int):
         """Get images by timelapse through image service."""
@@ -502,9 +507,27 @@ class ThumbnailPipeline:
                     success=False, image_id=image_id, error="Database not available"
                 ).__dict__
 
+            # Log detailed error context for debugging
+            logger.debug(f"Processing thumbnails for image {image_id}")
             # Use direct database operations for thumbnail-specific functionality
             # image_ops = SyncImageOperations(self.database)
-            image = self._get_image_by_id_safe(image_id)
+            try:
+                image = self._get_image_by_id_safe(image_id)
+            except Exception as e:
+                logger.error(
+                    f"Failed to get image {image_id}: {e}",
+                    exception=e,
+                    extra_context={
+                        "image_id": image_id,
+                        "operation": "get_image_by_id",
+                        "image_service_available": self.image_service is not None,
+                    },
+                )
+                return ThumbnailGenerationResult(
+                    success=False,
+                    image_id=image_id,
+                    error=f"Failed to retrieve image: {e}",
+                ).__dict__
 
             if not image:
                 return ThumbnailGenerationResult(
@@ -518,7 +541,8 @@ class ThumbnailPipeline:
                 return ThumbnailGenerationResult(
                     success=False,
                     image_id=image_id,
-                    error=f"Image {image_id} has no timelapse_id - cannot generate thumbnails",
+                    error=f"Image {image_id} has no timelapse_id - cannot generate "
+                    f"thumbnails",
                 ).__dict__
 
             # Use proper file structure helper to create thumbnail directories
@@ -556,9 +580,47 @@ class ThumbnailPipeline:
             small_path = str(small_dir / small_filename)
 
             # Always generate regular thumbnails
-            thumbnail_result = self.thumbnail_generator.generate_thumbnail(
-                source_path=image.file_path, output_path=thumbnail_path
-            )
+            try:
+                # Convert relative path to full path for file access
+                from ...config import settings
+
+                full_source_path = str(settings.get_full_file_path(image.file_path))
+
+                logger.debug(
+                    f"Generating thumbnail for image {image_id}",
+                    extra_context={
+                        "source_path": full_source_path,
+                        "thumbnail_path": thumbnail_path,
+                        "operation": "generate_thumbnail",
+                    },
+                )
+                thumbnail_result = self.thumbnail_generator.generate_thumbnail(
+                    source_path=full_source_path, output_path=thumbnail_path
+                )
+                logger.debug(
+                    f"Thumbnail generation result for image {image_id}: "
+                    f"{thumbnail_result.get('success', False)}",
+                    extra_context={
+                        "thumbnail_result": thumbnail_result,
+                        "operation": "generate_thumbnail_result",
+                    },
+                )
+            except Exception as e:
+                logger.error(
+                    f"Exception during thumbnail generation for image {image_id}: {e}",
+                    exception=e,
+                    extra_context={
+                        "image_id": image_id,
+                        "source_path": image.file_path,
+                        "thumbnail_path": thumbnail_path,
+                        "operation": "generate_thumbnail_exception",
+                    },
+                )
+                return ThumbnailGenerationResult(
+                    success=False,
+                    image_id=image_id,
+                    error=f"Thumbnail generation failed: {e}",
+                ).__dict__
 
             # Check small generation mode setting
             small_generation_mode = self._get_small_generation_mode()
@@ -569,38 +631,49 @@ class ThumbnailPipeline:
             # Generate small image based on settings
             small_result = {
                 "success": True,
-                "path": None,
+                "output_path": None,
             }  # Default to success for skipped generation
             if should_generate_small:
                 small_result = self.small_generator.generate_small_image(
-                    source_path=image.file_path, output_path=small_path
+                    source_path=full_source_path, output_path=small_path
                 )
 
-                # If in "latest" mode and small generation was successful, cleanup old small images
+                # If in "latest" mode and small generation was successful,
+                # cleanup old small images
                 if small_result.get("success") and small_generation_mode == "latest":
                     # We already verified timelapse_id is not None above
-                    self._cleanup_old_small_images(image.camera_id, image.timelapse_id, image_id)  # type: ignore
+                    self._cleanup_old_small_images(
+                        image.camera_id, image.timelapse_id, image_id
+                    )  # type: ignore
             else:
                 logger.debug(
-                    f"Skipping small image generation for image {image_id} (mode: {small_generation_mode})"
+                    f"Skipping small image generation for image {image_id} "
+                    f"(mode: {small_generation_mode})"
                 )
 
-            # Determine success - thumbnail is required, small is optional based on settings
+            # Determine success - thumbnail required, small optional based on settings
             success = thumbnail_result.get("success", False)
+            # Create detailed error message if thumbnail generation failed
+            error_message = None
+            if not success:
+                thumbnail_error = thumbnail_result.get("error", "Unknown error")
+                error_message = f"Thumbnail generation failed: {thumbnail_error}"
 
             result = ThumbnailGenerationResult(
                 success=success,
                 image_id=image_id,
                 timelapse_id=getattr(image, "timelapse_id", None),
                 thumbnail_path=(
-                    thumbnail_result.get("path")
+                    thumbnail_result.get("output_path")  # Returns "output_path"
                     if thumbnail_result.get("success")
                     else None
                 ),
                 small_path=(
-                    small_result.get("path") if small_result.get("success") else None
+                    small_result.get("output_path")  # Generator returns "output_path"
+                    if small_result.get("success")
+                    else None
                 ),
-                error=None if success else "Failed to generate thumbnails",
+                error=error_message,
             )
 
             return result.__dict__
