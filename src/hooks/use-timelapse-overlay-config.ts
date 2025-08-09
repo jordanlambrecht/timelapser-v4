@@ -3,34 +3,17 @@
 
 import { useState, useEffect } from "react"
 import { toast } from "sonner"
+import type { OverlayConfig } from "@/hooks/use-overlay-presets"
 
 export interface TimelapseOverlayConfig {
   timelapse_id: number
-  overlay_config: {
-    overlayPositions: Record<string, any>
-    globalOptions: {
-      opacity: number
-      dropShadow: number
-      font: string
-      xMargin: number
-      yMargin: number
-    }
-  }
+  overlay_config: OverlayConfig
   created_at: string
   updated_at: string
 }
 
 export interface OverlayConfigCreate {
-  overlay_config: {
-    overlayPositions: Record<string, any>
-    globalOptions: {
-      opacity: number
-      dropShadow: number
-      font: string
-      xMargin: number
-      yMargin: number
-    }
-  }
+  overlay_config: OverlayConfig
 }
 
 export interface UseTimelapseOverlayConfigReturn {

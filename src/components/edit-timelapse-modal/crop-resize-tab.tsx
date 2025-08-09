@@ -180,12 +180,20 @@ export function CropResizeTab({
     setIsGrabbingFrame(true)
     try {
       // Trigger a manual capture to get fresh frame
-      const response = await fetch(`/api/cameras/${cameraId}/capture-now`, {
+      const response = await fetch(`/api/overlays/fresh-photo/${cameraId}`, {
         method: "POST",
       })
 
       if (!response.ok) {
-        throw new Error("Failed to capture fresh frame")
+        // If fresh capture fails, fall back to refreshing the latest image
+        console.warn(
+          "Fresh capture failed, falling back to latest image refresh"
+        )
+        setImageUrl(
+          `/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`
+        )
+        toast.success("Image refreshed!")
+        return
       }
 
       // Wait a moment for the capture to process, then refresh image
@@ -197,7 +205,9 @@ export function CropResizeTab({
       }, 2000)
     } catch (error) {
       console.error("Failed to grab fresh frame:", error)
-      toast.error("Failed to capture fresh frame")
+      // Fall back to refreshing the latest image
+      setImageUrl(`/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`)
+      toast.error("Fresh capture failed, refreshed latest image instead")
     } finally {
       setIsGrabbingFrame(false)
     }

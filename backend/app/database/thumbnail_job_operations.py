@@ -99,8 +99,18 @@ class ThumbnailJobOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.recovery_ops = RecoveryOperations(db)
-        self.cache_invalidation = CacheInvalidationService()
+        self.recovery_ops = self._get_recovery_operations()
+        
+    def _get_recovery_operations(self):
+        """Get RecoveryOperations singleton to avoid connection multiplication"""
+        try:
+            from ..dependencies.specialized import get_sync_recovery_operations
+            return get_sync_recovery_operations()
+        except (RuntimeError, ImportError):
+            # Fallback if singleton not available
+            from .recovery_operations import RecoveryOperations
+            return RecoveryOperations(self.db)
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_thumbnail_job_caches(
         self,
@@ -127,7 +137,7 @@ class ThumbnailJobOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(job_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"thumbnail_job:metadata:{job_id}", etag
                 )
 
@@ -723,7 +733,17 @@ class SyncThumbnailJobOperations:
     def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
-        self.recovery_ops = SyncRecoveryOperations(db)
+        self.recovery_ops = self._get_recovery_operations()
+        
+    def _get_recovery_operations(self):
+        """Get SyncRecoveryOperations singleton to avoid connection multiplication"""
+        try:
+            from ..dependencies.specialized import get_sync_recovery_operations
+            return get_sync_recovery_operations()
+        except ImportError:
+            # Fallback if singleton not available
+            from .recovery_operations import SyncRecoveryOperations
+            return SyncRecoveryOperations(self.db)
 
     def create_job(
         self, job_data: ThumbnailGenerationJobCreate
@@ -1007,7 +1027,7 @@ class SyncThumbnailJobOperations:
                 FROM thumbnail_generation_jobs
                 WHERE status = %(status)s
                     AND error_message LIKE %(message_pattern)s
-                    AND created_at > %(current_time)s - %(hours)s * INTERVAL '1 hour'
+                    AND created_at > %(current_time)s - INTERVAL '1 hour' * %(hours)s
                 ORDER BY created_at DESC
             """
 
@@ -1213,7 +1233,7 @@ class SyncThumbnailJobOperations:
                                 ELSE 'high'
                             END
                 WHERE status = 'pending'
-                AND created_at < %(current_time)s - %(minutes)s * INTERVAL '1 minute'
+                AND created_at < %(current_time)s - INTERVAL '1 minute' * %(minutes)s
                 AND priority != 'high'
             """
             current_time = utc_now()

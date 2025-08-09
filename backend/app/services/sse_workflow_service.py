@@ -9,12 +9,12 @@ Converts raw data to typed objects at the service boundary.
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from ..enums import LoggerName, WorkerType
+from ..enums import LoggerName, LogSource, WorkerType
 from ..models.health_model import HealthStatus
 from ..services.logger import get_service_logger
 from ..workers.models.sse_responses import SSEWorkerStatus
 
-sse_service_logger = get_service_logger(LoggerName.SSE_WORKER)
+sse_service_logger = get_service_logger(LoggerName.SSE_WORKER, LogSource.WORKER)
 
 
 class SSEWorkflowService:

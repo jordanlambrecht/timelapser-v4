@@ -1,198 +1,88 @@
+#!/usr/bin/env python3
 # backend/app/services/overlay_pipeline/adapters/frontend_adapter.py
+
 """
-Frontend Adapter - Transforms frontend overlay JSON to backend OverlayConfiguration format.
-
-This adapter bridges the gap between frontend and backend data structures:
-- Frontend: overlayItems array with position property
-- Backend: overlayPositions dict with GridPosition keys
-
-Provides backward compatibility with existing overlay configurations.
+Frontend adapter for overlay pipeline - transforms frontend data to backend format.
+Handles the modern unified overlay format with overlayItems array structure.
 """
 
-from typing import Any, Dict
-
-from ....enums import LoggerName, LogSource, OverlayGridPosition
-from ....models.overlay_model import (
-    GlobalOverlayOptions,
-    OverlayConfiguration,
-    OverlayItem,
-)
-from ....services.logger import get_service_logger
-from ....utils.enum_helpers import parse_enum
-
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
+from typing import Dict, Any
+from app.models.overlay_model import OverlayConfiguration, OverlayItem, GlobalSettings
 
 
-class FrontendOverlayAdapter:
-    """
-    Adapter for transforming frontend overlay configurations to backend format.
-
-    Handles type differences between frontend and backend overlay data:
-    - Frontend overlay type mappings → Backend overlay type constants
-    - Frontend unit/display format mappings → Backend property values
-    - Validation and error handling for malformed configurations
-    """
+class FrontendAdapter:
+    """Adapter to transform frontend overlay data to backend pipeline format."""
 
     @staticmethod
-    def transform_frontend_config(
-        frontend_data: Dict[str, Any],
-    ) -> OverlayConfiguration:
+    def transform_overlay_config(config: OverlayConfiguration) -> Dict[str, Any]:
         """
-        Transform frontend overlay configuration to backend OverlayConfiguration.
+        Transform modern OverlayConfiguration to backend pipeline format.
 
         Args:
-            frontend_data: Frontend JSON structure with overlayPositions and globalOptions
+            config: Modern OverlayConfiguration with overlay_items array
 
         Returns:
-            Backend OverlayConfiguration ready for processing
-
-        Example frontend_data:
-        {
-            "overlayPositions": {
-                "topLeft": {
-                    "type": "date_time",
-                    "textSize": 16,
-                    "textColor": "#FFFFFF",
-                    "backgroundOpacity": 0,
-                    "imageScale": 100,
-                    "dateFormat": "MM/dd/yyyy HH:mm"
-                }
-            },
-            "globalOptions": {
-                "opacity": 90,
-                "dropShadow": 3,
-                "font": "Arial",
-                "xMargin": 25,
-                "yMargin": 25
-            }
-        }
+            Dict formatted for backend overlay pipeline processing
         """
-        try:
-            # Extract global options (frontend sends "globalOptions", not "globalSettings")
-            global_options_data = frontend_data.get("globalOptions", {})
-            global_options = FrontendOverlayAdapter._transform_global_options(
-                global_options_data
-            )
-
-            # Extract and transform overlay positions
-            overlay_positions_data = frontend_data.get("overlayPositions", {})
-            overlay_positions = FrontendOverlayAdapter._transform_overlay_positions(
-                overlay_positions_data, global_options
-            )
-
-            return OverlayConfiguration(
-                overlay_positions=overlay_positions, global_options=global_options
-            )
-
-        except Exception as e:
-            logger.error(
-                "Failed to transform frontend overlay configuration", exception=e
-            )
-            logger.debug(f"Frontend data: {frontend_data}")
-            raise ValueError(f"Invalid frontend overlay configuration: {e}")
-
-    @staticmethod
-    def _transform_global_options(
-        global_options: Dict[str, Any],
-    ) -> GlobalOverlayOptions:
-        """Transform frontend globalOptions to backend GlobalOverlayOptions."""
-        return GlobalOverlayOptions(
-            opacity=global_options.get("opacity", 100),
-            font=global_options.get("font", "Arial"),
-            x_margin=global_options.get("xMargin", 20),
-            y_margin=global_options.get("yMargin", 20),
-            background_color=global_options.get("backgroundColor", "#000000"),
-            background_opacity=global_options.get("backgroundOpacity", 50),
-            fill_color=global_options.get("fillColor", "#FFFFFF"),
-            drop_shadow=global_options.get("dropShadow", 2),
-            preset=global_options.get("preset"),
-        )
-
-    @staticmethod
-    def _transform_overlay_positions(
-        overlay_positions_data: Dict[str, Any], global_options: GlobalOverlayOptions
-    ) -> Dict[OverlayGridPosition, OverlayItem]:
-        """Transform frontend overlayPositions dict to backend overlayPositions dict."""
-        overlay_positions = {}
-        for position_str, item_data in overlay_positions_data.items():
-            # Safely parse position string to GridPosition enum with fallback
-            grid_position = parse_enum(
-                OverlayGridPosition, position_str, default=OverlayGridPosition.TOP_LEFT
-            )
-
-            # Log if position needed fallback
-            if grid_position.value != position_str:
-                logger.warning(
-                    f"Invalid grid position '{position_str}' converted to '{grid_position.value}'"
+        # Transform overlay items array to processing format
+        overlay_items = []
+        for item in config.overlay_items:
+            if item.enabled:  # Only include enabled items
+                overlay_items.append(
+                    {
+                        "id": item.id,
+                        "type": item.type,
+                        "position": item.position,
+                        "settings": item.settings or {},
+                    }
                 )
 
-            overlay_item = FrontendOverlayAdapter._transform_overlay_item(
-                item_data, global_options
-            )
-            overlay_positions[grid_position] = overlay_item
-        return overlay_positions
+        # Create backend processing format
+        return {
+            "global_settings": {
+                "opacity": config.global_settings.opacity,
+                "font": config.global_settings.font,
+                "x_margin": config.global_settings.x_margin,
+                "y_margin": config.global_settings.y_margin,
+                "background_color": config.global_settings.background_color,
+                "background_opacity": config.global_settings.background_opacity,
+                "fill_color": config.global_settings.fill_color,
+                "drop_shadow": config.global_settings.drop_shadow,
+            },
+            "overlay_items": overlay_items,
+        }
 
     @staticmethod
-    def _transform_overlay_item(
-        item_data: Dict[str, Any], global_options: GlobalOverlayOptions
-    ) -> OverlayItem:
-        """Transform individual frontend overlay item to backend OverlayItem."""
-        # Directly assign frontend values, trusting input
-        return OverlayItem(
-            type=item_data["type"],
-            text_size=item_data.get("textSize", 16),
-            text_color=item_data.get("textColor", global_options.fill_color),
-            background_color=item_data.get(
-                "backgroundColor", global_options.background_color
-            ),
-            background_opacity=item_data.get(
-                "backgroundOpacity", global_options.background_opacity
-            ),
-            date_format=item_data.get("dateFormat", "MM/dd/yyyy HH:mm"),
-            image_url=item_data.get("imageUrl"),
-            image_scale=item_data.get("imageScale", 100),
-            custom_text=item_data.get("customText"),
-            enable_background=item_data.get("enableBackground"),
-            unit=item_data.get("unit"),
-            display=item_data.get("display"),
-            leading_zeros=item_data.get("leadingZeros"),
-            hide_prefix=item_data.get("hidePrefix"),
-        )
+    def validate_overlay_config(config: OverlayConfiguration) -> bool:
+        """
+        Validate that the overlay configuration is properly formatted.
 
-    # @staticmethod
-    # def handle_legacy_config(config_data: Dict[str, Any]) -> OverlayConfiguration:
-    #     """
-    #     Handle legacy backend configuration format for backward compatibility.
+        Args:
+            config: OverlayConfiguration to validate
 
-    #     Args:
-    #         config_data: Legacy OverlayConfiguration dict format
+        Returns:
+            bool: True if valid, False otherwise
+        """
+        if not isinstance(config, OverlayConfiguration):
+            return False
 
-    #     Returns:
-    #         OverlayConfiguration object
-    #     """
-    #     try:
-    #         # Direct instantiation from legacy format
-    #         return OverlayConfiguration(**config_data)
-    #     except Exception as e:
-    #         logger.error("Failed to parse legacy overlay configuration", exception=e)
-    #         raise ValueError(f"Invalid legacy overlay configuration: {e}")
+        if not config.global_settings or not isinstance(
+            config.global_settings, GlobalSettings
+        ):
+            return False
 
+        if not hasattr(config, "overlay_items") or not isinstance(
+            config.overlay_items, list
+        ):
+            return False
 
-def transform_overlay_config(config_data: Dict[str, Any]) -> OverlayConfiguration:
-    """
-    Main entry point for overlay configuration transformation.
+        # Validate each overlay item
+        for item in config.overlay_items:
+            if not isinstance(item, OverlayItem):
+                return False
+            if not all(
+                hasattr(item, attr) for attr in ["id", "type", "position", "enabled"]
+            ):
+                return False
 
-    Automatically detects frontend vs legacy format and transforms accordingly.
-
-    Args:
-        config_data: Either frontend or legacy backend format
-
-    Returns:
-        Backend OverlayConfiguration ready for processing
-    """
-    # if FrontendOverlayAdapter.is_legacy_format(config_data):
-    #     logger.debug("Processing legacy overlay configuration format")
-    #     return FrontendOverlayAdapter.handle_legacy_config(config_data)
-    # else:
-    logger.debug("Processing frontend overlay configuration format")
-    return FrontendOverlayAdapter.transform_frontend_config(config_data)
+        return True

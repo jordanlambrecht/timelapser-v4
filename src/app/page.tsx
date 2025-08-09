@@ -252,12 +252,7 @@ export default function Dashboard() {
             )
           )
 
-          // Show toast notification for image capture
-          const camera = cameras.find((c) => c.id === event.data.camera_id)
-          if (camera) {
-            toast.imageCaptured(camera.name)
-          }
-
+          // Note: Toast notification is now handled globally by GlobalToastProvider
           // Note: Removed redundant API call that was causing performance issues.
           // Camera data updates should come through dedicated SSE events.
           break

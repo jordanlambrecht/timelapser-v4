@@ -1,24 +1,32 @@
 # Overlay Template System
 
-This directory contains JSON template files for built-in overlay presets that are automatically seeded into fresh database deployments.
+This directory contains JSON template files for built-in overlay presets that
+are automatically seeded into fresh database deployments.
 
 ## Template Files
 
 ### 1. `basic_timestamp.json`
+
 - **Name**: Basic Timestamp
-- **Description**: Simple date and time overlay in bottom-left corner with clean styling
+- **Description**: Simple date and time overlay in bottom-left corner with clean
+  styling
 - **Use Case**: General purpose timestamp overlay for most timelapses
 - **Features**: Clean white text with semi-transparent background
 
 ### 2. `weather_info.json`
+
 - **Name**: Weather & Time
-- **Description**: Weather conditions with timestamp - perfect for outdoor timelapses
+- **Description**: Weather conditions with timestamp - perfect for outdoor
+  timelapses
 - **Use Case**: Outdoor timelapses where weather context is important
-- **Features**: Weather temperature + conditions in top-left, timestamp in bottom-left
+- **Features**: Weather temperature + conditions in top-left, timestamp in
+  bottom-left
 
 ### 3. `complete_overlay.json`
+
 - **Name**: Complete Information
-- **Description**: Comprehensive overlay with timelapse name, weather, timestamp, and frame count
+- **Description**: Comprehensive overlay with timelapse name, weather,
+  timestamp, and frame count
 - **Use Case**: Professional timelapses requiring full metadata
 - **Features**: All four corners utilized with different data types
 
@@ -31,13 +39,30 @@ Each template file follows this JSON structure:
   "name": "Template Name",
   "description": "Template description",
   "overlay_config": {
-    "overlayPositions": {
-      "topLeft": { /* overlay item config */ },
-      "topRight": { /* overlay item config */ },
-      "bottomLeft": { /* overlay item config */ },
-      "bottomRight": { /* overlay item config */ }
-    },
-    "globalOptions": { /* global styling options */ }
+    "overlay_items": [
+      {
+        "id": "item_1",
+        "type": "date_time",
+        "position": "bottomLeft",
+        "enabled": true,
+        "settings": {
+          "textSize": 16,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 60,
+          "dateFormat": "MM/dd/yyyy HH:mm:ss"
+        }
+      }
+    ],
+    "global_settings": {
+      "opacity": 100,
+      "font": "Arial",
+      "x_margin": 25,
+      "y_margin": 25,
+      "background_color": "#000000",
+      "background_opacity": 55,
+      "fill_color": "#FFFFFF",
+      "drop_shadow": 3
+    }
   },
   "is_builtin": true
 }
@@ -46,10 +71,17 @@ Each template file follows this JSON structure:
 ## Overlay Item Types
 
 - `date_time`: Date and time display
-- `weather_temp_conditions`: Weather temperature and conditions
+- `weather`: Weather temperature and conditions
 - `timelapse_name`: Name of the timelapse
 - `frame_number`: Current frame number
 - `custom_text`: Static custom text
+
+## Position Values
+
+- `topLeft`: Top-left corner positioning
+- `topRight`: Top-right corner positioning
+- `bottomLeft`: Bottom-left corner positioning
+- `bottomRight`: Bottom-right corner positioning
 
 ## Usage in Docker Deployments
 
@@ -77,7 +109,8 @@ Templates are only inserted if they don't already exist (by name). To update:
 
 ### Docker Integration
 
-The template initialization is integrated into the database initialization process:
+The template initialization is integrated into the database initialization
+process:
 
 - Fresh databases automatically get templates seeded
 - Existing databases are not affected

@@ -12,7 +12,7 @@ This module handles all log-related database operations including:
 
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, cast
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 import psycopg
 
@@ -135,7 +135,7 @@ class LogOperations:
 
     def __init__(self, db: AsyncDatabase) -> None:
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_log_caches(
         self, log_id: Optional[int] = None, updated_at: Optional[datetime] = None
@@ -155,7 +155,7 @@ class LogOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(log_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"log:metadata:{log_id}", etag
                 )
 
@@ -408,10 +408,19 @@ class LogOperations:
                     await self._clear_log_caches()
 
                     return logs
-        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
-            raise LogOperationError(
-                "Failed to bulk create log entries", operation="bulk_create_logs"
-            )
+        except (
+            psycopg.Error,
+            psycopg.OperationalError,
+            psycopg.DatabaseError,
+            ConnectionError,
+            RuntimeError,
+            KeyError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as e:
+            # Provide more specific error information for debugging
+            error_msg = f"Failed to bulk create log entries: {type(e).__name__}: {e}"
+            raise LogOperationError(error_msg, operation="bulk_create_logs")
 
     @cached_response(ttl_seconds=30, key_prefix="log")
     async def get_camera_logs(
@@ -495,18 +504,18 @@ class LogOperations:
                 },
             )
 
-    def _row_to_log(self, row: Tuple) -> Log:
+    def _row_to_log(self, row: Dict[str, Any]) -> Log:
         """Convert database row to Log model."""
         return Log(
-            id=row[0],
-            level=row[1],
-            message=row[2],
-            timestamp=row[3],
-            camera_id=row[4],
-            source=row[5],
-            logger_name=row[6],
-            extra_data=json.loads(row[7]) if row[7] else None,
-            camera_name=row[8] if len(row) > 8 else None,
+            id=row["id"],
+            level=row["level"],
+            message=row["message"],
+            timestamp=row["timestamp"],
+            camera_id=row["camera_id"],
+            source=row["source"],
+            logger_name=row["logger_name"],
+            extra_data=row["extra_data"] if row["extra_data"] else None,
+            camera_name=row.get("camera_name"),
         )
 
     def _row_to_log_with_count(self, row: Dict[str, Any]) -> Log:
@@ -519,7 +528,7 @@ class LogOperations:
             camera_id=row["camera_id"],
             source=row["source"],
             logger_name=row["logger_name"],
-            extra_data=json.loads(row["extra_data"]) if row["extra_data"] else None,
+            extra_data=row["extra_data"] if row["extra_data"] else None,
             camera_name=row["camera_name"],
         )
 
@@ -674,7 +683,7 @@ class SyncLogOperations:
             else:
                 query = """
                     DELETE FROM logs
-                    WHERE timestamp < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
+                    WHERE timestamp < %(now)s - INTERVAL '1 day' * %(days)s
                 """
                 params = {"now": utc_now(), "days": days_to_keep}
 
@@ -707,16 +716,16 @@ class SyncLogOperations:
                 },
             )
 
-    def _row_to_log(self, row: Tuple) -> Log:
+    def _row_to_log(self, row: Dict[str, Any]) -> Log:
         """Convert database row to Log model."""
         return Log(
-            id=row[0],
-            level=row[1],
-            message=row[2],
-            timestamp=row[3],
-            camera_id=row[4],
-            source=row[5],
-            logger_name=row[6],
-            extra_data=json.loads(row[7]) if row[7] else None,
-            camera_name=row[8] if len(row) > 8 else None,
+            id=row["id"],
+            level=row["level"],
+            message=row["message"],
+            timestamp=row["timestamp"],
+            camera_id=row["camera_id"],
+            source=row["source"],
+            logger_name=row["logger_name"],
+            extra_data=row["extra_data"] if row["extra_data"] else None,
+            camera_name=row.get("camera_name"),
         )

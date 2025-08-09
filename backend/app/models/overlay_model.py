@@ -10,16 +10,14 @@ This module provides type-safe interfaces for the overlay generation system incl
 """
 
 from datetime import datetime
-from typing import Dict, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..enums import (
-    OverlayGridPosition,
     OverlayJobPriority,
     OverlayJobStatus,
     OverlayJobType,
-    OverlayType,
 )
 
 # Type definitions for overlay system
@@ -30,48 +28,17 @@ from ..enums import (
 
 
 class OverlayItem(BaseModel):
-    """Individual overlay item configuration"""
+    """Individual overlay item configuration - Modern Format."""
 
-    type: OverlayType = Field(..., description="Type of overlay content")
-    custom_text: Optional[str] = Field(
-        None, description="Custom text for text overlays"
-    )
-    text_size: int = Field(16, ge=8, le=72, description="Font size in pixels")
-    text_color: str = Field("#FFFFFF", description="Text color in hex format")
-    background_color: Optional[str] = Field(
-        None, description="Background color in hex or rgba format"
-    )
-    background_opacity: int = Field(
-        0, ge=0, le=100, description="Background opacity percentage"
-    )
-    date_format: Optional[str] = Field(
-        "MM/dd/yyyy HH:mm", description="Date format for date/time overlays"
-    )
-    image_url: Optional[str] = Field(None, description="URL or path to image asset")
-    image_scale: int = Field(100, ge=10, le=500, description="Image scale percentage")
-
-    # New frontend properties
-    enable_background: Optional[bool] = Field(
-        None, description="Whether to enable background for this overlay item"
-    )
-    unit: Optional[Literal["F", "C"]] = Field(
-        None, description="Temperature unit for weather overlays"
-    )
-    display: Optional[
-        Literal["temp_only", "with_unit", "conditions_only", "temp_and_conditions"]
-    ] = Field(None, description="Display format for weather overlays")
-    leading_zeros: Optional[bool] = Field(
-        None, description="Whether to use leading zeros for sequence numbers"
-    )
-    hide_prefix: Optional[bool] = Field(
-        None, description="Whether to hide prefix text for sequence overlays"
-    )
-
-    model_config = ConfigDict(from_attributes=True)
+    id: str
+    type: str  # weather, watermark, frame_number, date_time, day_counter, custom_text, timelapse_name, temperature, weather_conditions
+    position: str  # grid position like "top-left", "center", etc.
+    enabled: bool = True
+    settings: Dict[str, Any] = {}
 
 
-class GlobalOverlayOptions(BaseModel):
-    """Global overlay configuration options"""
+class GlobalSettings(BaseModel):
+    """Global overlay settings - Modern Format."""
 
     opacity: int = Field(
         100, ge=0, le=100, description="Global overlay opacity percentage"
@@ -98,9 +65,9 @@ class GlobalOverlayOptions(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-def _default_global_overlay_options() -> GlobalOverlayOptions:
-    """Default factory for GlobalOverlayOptions"""
-    return GlobalOverlayOptions(
+def _default_global_settings() -> GlobalSettings:
+    """Default factory for GlobalSettings"""
+    return GlobalSettings(
         opacity=100,
         font="Arial",
         x_margin=20,
@@ -114,14 +81,14 @@ def _default_global_overlay_options() -> GlobalOverlayOptions:
 
 
 class OverlayConfiguration(BaseModel):
-    """Complete overlay configuration for timelapses"""
+    """Complete overlay configuration - Modern Format"""
 
-    overlay_positions: Dict[OverlayGridPosition, OverlayItem] = Field(
-        default_factory=dict, description="Overlay items positioned on 9-position grid"
-    )
-    global_options: GlobalOverlayOptions = Field(
-        default_factory=_default_global_overlay_options,
+    global_settings: GlobalSettings = Field(
+        default_factory=_default_global_settings,
         description="Global overlay settings",
+    )
+    overlay_items: List[OverlayItem] = Field(
+        default_factory=list, description="List of overlay items with positions"
     )
 
     model_config = ConfigDict(from_attributes=True)

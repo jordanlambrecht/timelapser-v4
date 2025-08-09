@@ -56,12 +56,12 @@ CONFIGURATION STANDARDS:
 from typing import Any, Callable, Dict
 
 from ...constants import SCHEDULER_MAX_INSTANCES
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...services.logger import get_service_logger
 from ...utils.time_utils import utc_now
 from .scheduler_time_utils import SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class SchedulerJobTemplate:

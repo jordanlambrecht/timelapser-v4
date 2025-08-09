@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 from PIL import Image, ImageColor, ImageDraw
 
 from ....constants import OVERLAY_TYPE_WATERMARK
-from ....enums import LoggerName, LogSource, OverlayGridPosition
+from ....enums import LoggerName, LogSource, OverlayType
 from ....models.image_model import Image as ImageModel
 from ....models.overlay_model import OverlayConfiguration, OverlayItem
 from ....models.timelapse_model import Timelapse as TimelapseModel
@@ -149,14 +149,19 @@ class OverlayRenderer:
         overlay_layer = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay_layer)
 
-        # Render each positioned overlay
-        for position, overlay_item in self.config.overlay_positions.items():
-            self._render_overlay_item(
-                draw, overlay_layer, position, overlay_item, context_data
-            )
+        # Render each overlay item
+        for overlay_item in self.config.overlay_items:
+            if overlay_item.enabled:
+                self._render_overlay_item(
+                    draw,
+                    overlay_layer,
+                    overlay_item.position,
+                    overlay_item,
+                    context_data,
+                )
 
         # Apply global opacity
-        if self.config.global_options.opacity < 100:
+        if self.config.global_settings.opacity < 100:
             overlay_layer = self._apply_global_opacity(overlay_layer)
 
         # Composite overlay onto base image
@@ -168,7 +173,7 @@ class OverlayRenderer:
         self,
         draw: ImageDraw.ImageDraw,
         overlay_layer: Image.Image,
-        position: OverlayGridPosition,
+        position: str,
         overlay_item: OverlayItem,
         context_data: Dict[str, Any],
     ) -> None:
@@ -196,13 +201,14 @@ class OverlayRenderer:
             context = self._create_generation_context(context_data)
 
             # Get appropriate generator for this overlay type
-            if not overlay_generator_registry.has_generator(overlay_item.type):
+            overlay_type = OverlayType(overlay_item.type)
+            if not overlay_generator_registry.has_generator(overlay_type):
                 logger.warning(
                     f"No generator found for overlay type: {overlay_item.type}"
                 )
                 return ""
 
-            generator = overlay_generator_registry.get_generator(overlay_item.type)
+            generator = overlay_generator_registry.get_generator(overlay_type)
 
             # Generate content using the appropriate generator
             content = generator.generate_content(overlay_item, context)
@@ -270,15 +276,12 @@ class OverlayRenderer:
             day_number=context_data.get("day_number", 1),
             temperature=context_data.get("temperature"),
             weather_conditions=context_data.get("weather_conditions"),
+            weather_icon=context_data.get("weather_icon"),
             temperature_unit=context_data.get("temperature_unit", "F"),
             settings_service=context_data.get("settings_service"),
-            global_font=self.config.global_options.font,
-            global_fill_color=getattr(
-                self.config.global_options, "fillColor", "#FFFFFF"
-            ),
-            global_background_color=getattr(
-                self.config.global_options, "background_color", "#000000"
-            ),
+            global_font=self.config.global_settings.font,
+            global_fill_color=self.config.global_settings.fill_color,
+            global_background_color=self.config.global_settings.background_color,
         )
 
     def _render_text_overlay(
@@ -292,11 +295,15 @@ class OverlayRenderer:
         """Render text overlay with background and styling."""
 
         # Get font using global cache
-        font = get_font_fast(self.config.global_options.font, overlay_item.text_size)
+        font = get_font_fast(
+            self.config.global_settings.font, overlay_item.settings.get("text_size", 16)
+        )
 
         # Calculate text dimensions using cached font
         text_width, text_height = get_text_size_fast(
-            text, self.config.global_options.font, overlay_item.text_size
+            text,
+            self.config.global_settings.font,
+            overlay_item.settings.get("text_size", 16),
         )
 
         # Adjust position based on text dimensions (for proper positioning)
@@ -305,19 +312,21 @@ class OverlayRenderer:
         )
 
         # Draw background if specified
-        if overlay_item.background_opacity > 0 and overlay_item.background_color:
+        background_opacity = overlay_item.settings.get("background_opacity", 0)
+        background_color = overlay_item.settings.get("background_color")
+        if background_opacity > 0 and background_color:
             self._draw_text_background(
                 draw,
                 adjusted_x,
                 adjusted_y,
                 text_width,
                 text_height,
-                overlay_item.background_color,
-                overlay_item.background_opacity,
+                background_color,
+                background_opacity,
             )
 
         # Draw text
-        text_color = overlay_item.text_color or "#FFFFFF"
+        text_color = overlay_item.settings.get("text_color", "#FFFFFF")
         draw.text((adjusted_x, adjusted_y), text, font=font, fill=text_color)
 
     def _render_image_overlay(
@@ -325,14 +334,15 @@ class OverlayRenderer:
     ) -> None:
         """Render image overlay (watermark) at specified position."""
 
-        if not overlay_item.image_url:
+        image_url = overlay_item.settings.get("image_url")
+        if not image_url:
             return
 
         try:
             # Load overlay image
-            overlay_image_path = Path(overlay_item.image_url)
+            overlay_image_path = Path(image_url)
             if not overlay_image_path.exists():
-                logger.warning(f"Overlay image not found: {overlay_item.image_url}")
+                logger.warning(f"Overlay image not found: {image_url}")
                 return
 
             with Image.open(overlay_image_path) as img:
@@ -341,8 +351,9 @@ class OverlayRenderer:
                     img = img.convert("RGBA")
 
                 # Scale image if needed
-                if overlay_item.image_scale != 100:
-                    scale_factor = overlay_item.image_scale / 100.0
+                image_scale = overlay_item.settings.get("image_scale", 100)
+                if image_scale != 100:
+                    scale_factor = image_scale / 100.0
                     new_size = (
                         int(img.width * scale_factor),
                         int(img.height * scale_factor),
@@ -359,13 +370,13 @@ class OverlayRenderer:
             logger.error("Failed to render image overlay", exception=e)
 
     def _calculate_position(
-        self, position: OverlayGridPosition, image_size: Tuple[int, int]
+        self, position: str, image_size: Tuple[int, int]
     ) -> Tuple[int, int]:
         """Calculate x,y coordinates for grid position."""
 
         width, height = image_size
-        margin_x = self.config.global_options.x_margin
-        margin_y = self.config.global_options.y_margin
+        margin_x = self.config.global_settings.x_margin
+        margin_y = self.config.global_settings.y_margin
 
         # Define grid positions
         positions = {
@@ -432,11 +443,11 @@ class OverlayRenderer:
     def _apply_global_opacity(self, overlay_layer: Image.Image) -> Image.Image:
         """Apply global opacity to the overlay layer."""
 
-        if self.config.global_options.opacity >= 100:
+        if self.config.global_settings.opacity >= 100:
             return overlay_layer
 
         # Create alpha mask
-        alpha = int(255 * (self.config.global_options.opacity / 100.0))
+        alpha = int(255 * (self.config.global_settings.opacity / 100.0))
 
         # Apply opacity
         overlay_array = overlay_layer.split()
@@ -492,41 +503,97 @@ def validate_overlay_configuration(config: OverlayConfiguration) -> bool:
         True if configuration is valid for rendering
     """
     try:
-        # Check for at least one overlay position
-        if not config.overlay_positions:
+        # Check for at least one overlay item
+        if not config.overlay_items:
             return False
 
+        # Track enabled overlay positions to detect duplicates
+        enabled_positions = set()
+
         # Validate each overlay item
-        for position, overlay_item in config.overlay_positions.items():
+        for overlay_item in config.overlay_items:
             if not overlay_item.type:
                 return False
 
-            # Validate text size range
-            if not (8 <= overlay_item.text_size <= 72):
+            # Check for duplicate positions among enabled overlays
+            if overlay_item.enabled:
+                if overlay_item.position in enabled_positions:
+                    # Try to log the error, but don't fail validation if logger isn't available
+                    try:
+                        logger.error(
+                            f"Duplicate position detected: '{overlay_item.position}' is used by multiple enabled overlays",
+                            emoji=LogEmoji.ERROR,
+                        )
+                    except Exception:
+                        # Logger not available (e.g., in tests), continue without logging
+                        pass
+                    return False
+                enabled_positions.add(overlay_item.position)
+
+            # Validate position is a known grid position
+            valid_positions = {
+                "topLeft",
+                "topCenter",
+                "topRight",
+                "centerLeft",
+                "center",
+                "centerRight",
+                "bottomLeft",
+                "bottomCenter",
+                "bottomRight",
+            }
+            if overlay_item.position not in valid_positions:
+                # Try to log the error, but don't fail validation if logger isn't available
+                try:
+                    logger.error(
+                        f"Invalid position '{overlay_item.position}'. Must be one of: {', '.join(valid_positions)}",
+                        emoji=LogEmoji.ERROR,
+                    )
+                except Exception:
+                    # Logger not available (e.g., in tests), continue without logging
+                    pass
                 return False
 
-            # Validate opacity range
-            if not (0 <= overlay_item.background_opacity <= 100):
+            # Validate text size range (from settings)
+            text_size = overlay_item.settings.get(
+                "text_size", overlay_item.settings.get("textSize", 16)
+            )
+            if not (8 <= text_size <= 72):
                 return False
 
-            # Validate image scale range
-            if not (10 <= overlay_item.image_scale <= 500):
+            # Validate opacity range (from settings)
+            background_opacity = overlay_item.settings.get(
+                "background_opacity", overlay_item.settings.get("backgroundOpacity", 0)
+            )
+            if not (0 <= background_opacity <= 100):
                 return False
 
-        # Validate global options
-        if not (0 <= config.global_options.opacity <= 100):
+            # Validate image scale range (from settings)
+            image_scale = overlay_item.settings.get(
+                "image_scale", overlay_item.settings.get("imageScale", 100)
+            )
+            if not (10 <= image_scale <= 500):
+                return False
+
+        # Validate global settings
+        if not (0 <= config.global_settings.opacity <= 100):
             return False
 
-        if not (0 <= config.global_options.x_margin <= 200):
+        if not (0 <= config.global_settings.x_margin <= 200):
             return False
 
-        if not (0 <= config.global_options.y_margin <= 200):
+        if not (0 <= config.global_settings.y_margin <= 200):
             return False
 
         return True
 
     except Exception as e:
-        logger.error("Failed to validate overlay configuration", exception=e)
+        # Try to log the error, but don't fail validation if logger isn't available
+        try:
+            logger.error("Failed to validate overlay configuration", exception=e)
+        except Exception:
+            # Logger not available (e.g., in tests), continue without logging
+            pass
         return False
 
 

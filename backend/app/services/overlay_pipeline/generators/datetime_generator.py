@@ -11,7 +11,7 @@ from typing import Union
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
-from ....models.overlay_model import OverlayItem, OverlayType
+from ....models.overlay_model import OverlayItem
 from ....services.logger import get_service_logger
 from ....utils.time_utils import convert_to_db_timezone_sync
 from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
@@ -23,18 +23,45 @@ class DateTimeGenerator(BaseOverlayGenerator):
     """
     Generator for date and time overlay content.
 
-    Handles:
-    - date: Date only overlays
-    - time: Time only overlays
-    - date_time: Combined date and time overlays
+    Handles unified date/time overlays with customizable format strings.
+    The frontend provides a drag-and-drop format builder that allows users
+    to create any combination of date/time components (YYYY, MM, DD, HH, mm, etc.).
+
+    Supported types:
+    - date_time: Customizable date and time overlay with format builder
+
+    Format Support:
+    - Uses moment.js style format tokens (YYYY, MM, DD, HH, mm, ss, etc.)
+    - Converts to Python strftime format for rendering
+    - Supports custom separators and text
+
+    Examples:
+    - "YYYY-MM-DD HH:mm:ss" → "2025-08-06 14:30:15"
+    - "MMM DD, YYYY h:mm A" → "Aug 06, 2025 2:30 PM"
+    - "dddd, MMMM DD" → "Tuesday, August 06"
 
     Supports custom date formatting and timezone-aware rendering.
     """
 
     @property
-    def supported_types(self) -> list[OverlayType]:
-        """Date/time generator supports date, time, and date_time overlays."""
-        return [OverlayType.DATE, OverlayType.TIME, OverlayType.DATE_TIME]
+    def generator_type(self) -> str:
+        """Return the primary generator type."""
+        return "date_time"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for this generator."""
+        return "Date & Time"
+
+    @property
+    def description(self) -> str:
+        """Description of what this generator does."""
+        return "Displays timestamps with customizable date and time formats"
+
+    @property
+    def supported_types(self) -> list[str]:
+        """Return list of overlay types this generator supports."""
+        return ["date_time"]
 
     @property
     def is_static(self) -> bool:
@@ -80,18 +107,14 @@ class DateTimeGenerator(BaseOverlayGenerator):
                 )
 
             # Get date format from overlay item
-            date_format = overlay_item.date_format or self._get_default_format(
-                overlay_item.type
-            )
+            date_format = overlay_item.settings.get(
+                "date_format"
+            ) or self._get_default_format(overlay_item.type)
             logger.debug(f"Using date format: {date_format}")
 
-            # Generate content based on overlay type
+            # Generate content using custom format
             logger.debug(f"Generating {overlay_item.type} content")
-            if overlay_item.type == "date":
-                result = self._format_date(timestamp, date_format)
-            elif overlay_item.type == "time":
-                result = self._format_time(timestamp, date_format)
-            elif overlay_item.type == "date_time":
+            if overlay_item.type == "date_time":
                 result = self._format_datetime(timestamp, date_format)
             else:
                 logger.error(f"Unsupported overlay type: {overlay_item.type}")
@@ -109,14 +132,9 @@ class DateTimeGenerator(BaseOverlayGenerator):
             logger.error("Failed to generate date/time overlay content", exception=e)
             raise RuntimeError(f"Failed to generate date/time content: {e}")
 
-    def _get_default_format(self, overlay_type: OverlayType) -> str:
+    def _get_default_format(self, overlay_type: str) -> str:
         """Get default date format for the given overlay type."""
-        defaults = {
-            "date": "MM/dd/yyyy",
-            "time": "HH:mm",
-            "date_time": "MM/dd/yyyy HH:mm",
-        }
-        return defaults.get(overlay_type, "MM/dd/yyyy HH:mm")
+        return "MM/dd/yyyy HH:mm"
 
     def _format_date(self, timestamp: datetime, date_format: str) -> str:
         """Format date-only content."""
@@ -216,14 +234,17 @@ class DateTimeGenerator(BaseOverlayGenerator):
         super().validate_overlay_item(overlay_item)
 
         # Validate date format if provided
-        if overlay_item.date_format:
+        date_format = overlay_item.settings.get("date_format")
+        if date_format:
             try:
                 # Test format with a sample date (naive datetime is intentional for format testing)
                 test_date = datetime(
                     2025, 1, 15, 14, 30, 45
                 )  # Test data - timezone-irrelevant
-                self._apply_format(test_date, overlay_item.date_format)
+                self._apply_format(test_date, date_format)
             except Exception as e:
-                raise ValueError(
-                    f"Invalid date format '{overlay_item.date_format}': {e}"
+                logger.error(
+                    f"Invalid date format '{date_format}' for overlay item",
+                    exception=e,
                 )
+                raise ValueError(f"Invalid date format '{date_format}': {e}")

@@ -12,7 +12,6 @@ from ..models.health_model import HealthStatus
 from ..services.camera_service import SyncCameraService
 from ..services.capture_pipeline.rtsp_service import RTSPService
 from ..services.health_workflow_service import HealthWorkflowService
-from ..services.logger import get_service_logger
 from ..utils.validation_helpers import validate_camera_exists, validate_camera_id
 from .base_worker import BaseWorker
 from .exceptions import (
@@ -23,7 +22,8 @@ from .exceptions import (
 from .models.health_responses import HealthWorkerStatus
 from .utils.worker_status_builder import WorkerStatusBuilder
 
-# Initialize health worker logger
+from ..services.logger import get_service_logger
+
 health_logger = get_service_logger(LoggerName.HEALTH_WORKER, LogSource.WORKER)
 
 
@@ -58,8 +58,9 @@ class HealthWorker(BaseWorker):
         # Store async services for performance optimization
         self.async_camera_service = async_camera_service
 
-        # Initialize health workflow service for Service Layer Boundary Pattern
-        self.health_service = HealthWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_health_workflow_service
+        self.health_service = get_health_workflow_service()
 
     async def initialize(self) -> None:
         """Initialize health worker resources."""

@@ -1,7 +1,7 @@
 // src/components/video-automation-badge.tsx
 "use client"
 
-import { VideoAutomationMode } from "@/types"
+import { VideoAutomationMode } from "@/types/video-automation"
 import { Badge } from "@/components/ui/badge"
 import {
   Tooltip,
@@ -42,12 +42,12 @@ export function VideoAutomationBadge({
           variant: "secondary" as const,
           description: "Videos generated manually only",
         }
-      case VideoAutomationMode.PER_CAPTURE:
+      case VideoAutomationMode.CONTINUOUS:
         return {
           icon: <Zap className='h-3 w-3' />,
-          label: "Per Capture",
+          label: "Continuous",
           variant: "default" as const,
-          description: "Generate video after each image (throttled)",
+          description: "Generate video continuously",
         }
       case VideoAutomationMode.SCHEDULED:
         return {

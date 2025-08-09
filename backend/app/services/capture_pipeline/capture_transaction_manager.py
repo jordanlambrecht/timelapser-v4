@@ -16,11 +16,10 @@ from pathlib import Path
 from typing import Callable, List, Optional, Protocol
 
 from ...database.core import SyncDatabase
-from ...database.image_operations import SyncImageOperations
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 class ImageOperationsProtocol(Protocol):
@@ -64,15 +63,22 @@ class CaptureTransactionManager:
     - Consistent state across all systems
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, image_ops=None):
         """
-        Initialize transaction manager.
+        Initialize transaction manager with injected dependencies.
 
         Args:
             db: Synchronized database connection for atomic operations
+            image_ops: Optional SyncImageOperations instance
         """
         self.db = db
-        self.image_ops = SyncImageOperations(db)
+        self.image_ops = image_ops or self._get_default_image_ops()
+
+    def _get_default_image_ops(self):
+        """Fallback to get SyncImageOperations singleton"""
+        from ...dependencies.specialized import get_sync_image_operations
+
+        return get_sync_image_operations()
 
     @contextmanager
     def capture_transaction(self, camera_id: int, timelapse_id: Optional[int] = None):

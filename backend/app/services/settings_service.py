@@ -21,7 +21,6 @@ from ..constants import (
 from ..database.settings_operations import (
     SettingsOperationError,
     SettingsOperations,
-    SyncSettingsOperations,
 )
 from ..database.sse_events_operations import SSEEventsOperations
 from ..enums import LoggerName, LogSource, SSEEvent, SSEEventSource, SSEPriority
@@ -31,7 +30,6 @@ from ..utils.conversion_utils import safe_int
 from ..utils.hashing import mask_api_key
 from ..utils.time_utils import utc_timestamp
 from .logger import get_service_logger
-from .weather.api_key_service import APIKeyService, SyncAPIKeyService
 
 logger = get_service_logger(LoggerName.SETTINGS_SERVICE, LogSource.SYSTEM)
 
@@ -53,12 +51,18 @@ class SettingsService:
     - Broadcasts configuration changes
     """
 
-    def __init__(self, db):
-        """Initialize service with async database instance."""
+    def __init__(
+        self,
+        db,
+        settings_ops: SettingsOperations,
+        sse_ops: SSEEventsOperations,
+        api_key_service,
+    ):
+        """Initialize service with injected dependencies."""
         self.db = db
-        self.settings_ops = SettingsOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
-        self.api_key_service = APIKeyService(db)
+        self.settings_ops = settings_ops
+        self.sse_ops = sse_ops
+        self.api_key_service = api_key_service
 
         # Settings caching (extracted from RTSPService)
         self._settings_cache: Dict[str, Dict[str, Any]] = {}
@@ -566,11 +570,11 @@ class SettingsService:
 class SyncSettingsService:
     """Sync settings service for worker processes."""
 
-    def __init__(self, db):
-        """Initialize service with sync database instance."""
+    def __init__(self, db, settings_ops, api_key_service):
+        """Initialize service with injected dependencies."""
         self.db = db
-        self.settings_ops = SyncSettingsOperations(db)
-        self.api_key_service = SyncAPIKeyService(db)
+        self.settings_ops = settings_ops
+        self.api_key_service = api_key_service
 
     def get_all_settings(self) -> Dict[str, Any]:
         """Get all settings as a dictionary."""

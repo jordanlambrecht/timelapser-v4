@@ -102,10 +102,10 @@ export function DashboardAutomationSummary({
 
   const totalAutomatedCameras = Object.entries(stats.automation_modes)
     .filter(([mode]) => mode !== "manual")
-    .reduce((sum, [, count]) => sum + count, 0)
+    .reduce((sum, [, count]) => sum + (count as number), 0)
 
   const totalTriggers = Object.values(stats.triggers_week).reduce(
-    (sum, count) => sum + count,
+    (sum, count) => (sum as number) + (count as number),
     0
   )
 
@@ -187,7 +187,7 @@ export function DashboardAutomationSummary({
                   <span className='text-sm'>{getModeLabel(mode)}</span>
                 </div>
                 <Badge variant={mode === "manual" ? "secondary" : "default"}>
-                  {count}
+                  {count as number}
                 </Badge>
               </div>
             ))}
@@ -202,7 +202,7 @@ export function DashboardAutomationSummary({
           </div>
           <div className='flex items-center justify-between text-sm'>
             <span className='text-muted-foreground'>Triggers This Week:</span>
-            <span className='font-medium'>{totalTriggers}</span>
+            <span className='font-medium'>{totalTriggers as number}</span>
           </div>
         </div>
 

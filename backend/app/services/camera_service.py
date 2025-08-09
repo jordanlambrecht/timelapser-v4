@@ -40,11 +40,10 @@ from ..constants import (  # Camera health constants
     CAMERA_STATUSES,
     CAMERA_TIMELAPSE_READY_STATUSES,
 )
-from ..database.camera_operations import AsyncCameraOperations, SyncCameraOperations
+
 from ..database.core import AsyncDatabase, SyncDatabase
 from ..database.exceptions import CameraOperationError
-from ..database.sse_events_operations import SSEEventsOperations
-from ..database.timelapse_operations import SyncTimelapseOperations, TimelapseOperations
+
 from ..enums import (
     JobPriority,
     LoggerName,
@@ -112,6 +111,9 @@ class CameraService:
         db: AsyncDatabase,
         sync_db: SyncDatabase,
         settings_service,
+        camera_ops,
+        timelapse_ops,
+        sse_ops,
         rtsp_service=None,
         # corruption_service=None,  # Removed - using corruption_pipeline
         scheduling_service=None,
@@ -119,12 +121,15 @@ class CameraService:
         scheduler_authority_service=None,
     ):
         """
-        Initialize CameraService with async database instance, settings service, and service dependencies.
+        Initialize CameraService with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
             sync_db: SyncDatabase instance
             settings_service: SettingsService instance
+            camera_ops: Injected AsyncCameraOperations singleton
+            timelapse_ops: Injected TimelapseOperations singleton
+            sse_ops: Injected SSEEventsOperations singleton
             rtsp_service: Optional AsyncRTSPService for RTSP operations
             # corruption_service: Optional CorruptionService for health monitoring (removed)
             scheduling_service: Optional SchedulingService for capture scheduling
@@ -132,9 +137,9 @@ class CameraService:
         """
         self.db = db
         self.settings_service = settings_service
-        self.camera_ops = AsyncCameraOperations(db, settings_service)
-        self.timelapse_ops = TimelapseOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
+        self.camera_ops = camera_ops
+        self.timelapse_ops = timelapse_ops
+        self.sse_ops = sse_ops
         self.rtsp_service = rtsp_service
         # self.corruption_service = corruption_service  # Removed
         self.scheduling_service = scheduling_service
@@ -240,6 +245,27 @@ class CameraService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error retrieving cameras: {e}")
+            raise
+
+    async def get_active_cameras(self) -> List[Camera]:
+        """
+        Retrieve all active/enabled cameras for health monitoring.
+
+        Returns:
+            List of active Camera model instances
+        """
+        try:
+            all_cameras = await self.camera_ops.get_cameras()
+            # Filter for active cameras only
+            active_cameras = [
+                camera for camera in all_cameras if camera.status == "active"
+            ]
+            return active_cameras
+        except CameraOperationError as e:
+            logger.error(f"Database error retrieving active cameras: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving active cameras: {e}")
             raise
 
     async def get_camera_by_id(self, camera_id: int) -> Optional[Camera]:
@@ -918,6 +944,41 @@ class CameraService:
                 "⚠️ Scheduler authority service not available - immediate capture skipped",
             )
 
+        # 🎯 SCHEDULER-CENTRIC: Add recurring capture job for ongoing captures
+        if self.scheduler_authority_service:
+            logger.info(
+                f"🔄 Adding recurring capture job for timelapse {timelapse.id} (interval: {timelapse.capture_interval_seconds}s)",
+            )
+            try:
+                job_result = await self.scheduler_authority_service.add_timelapse_job(
+                    timelapse_id=timelapse.id,
+                    capture_interval_seconds=timelapse.capture_interval_seconds,
+                )
+                if job_result.get("success"):
+                    logger.info(
+                        f"✅ Recurring capture job added successfully for timelapse {timelapse.id}",
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.CAMERA_SERVICE,
+                    )
+                else:
+                    logger.error(
+                        f"❌ Failed to add recurring capture job for timelapse {timelapse.id}: {job_result.get('error', 'Unknown error')}",
+                        source=LogSource.SYSTEM,
+                        logger_name=LoggerName.CAMERA_SERVICE,
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Error adding recurring capture job for timelapse {timelapse.id}",
+                    error_context={"timelapse_id": timelapse.id},
+                    source=LogSource.SYSTEM,
+                    logger_name=LoggerName.CAMERA_SERVICE,
+                    exception=e,
+                )
+        else:
+            logger.warning(
+                "⚠️ Scheduler authority service not available - recurring captures will not be scheduled",
+            )
+
         # Note: First capture scheduled immediately, then will follow normal scheduled interval
 
         logger.info(
@@ -1358,7 +1419,7 @@ class CameraService:
 
             if success:
                 logger.debug(
-                    f"Updated connectivity status for camera {camera_id}",
+                    f"Updated connectivity status for camera {camera_id}. is_connected: {is_connected}",
                     extra_context={
                         "camera_id": camera_id,
                         "is_connected": is_connected,
@@ -1835,9 +1896,11 @@ class SyncCameraService:
         rtsp_service=None,
         scheduling_service=None,
         settings_service=None,
+        camera_ops=None,
+        timelapse_ops=None,
     ):
         """
-        Initialize SyncCameraService with sync database instance.
+        Initialize SyncCameraService with injected dependencies.
 
         Args:
             db: SyncDatabase instance
@@ -1845,14 +1908,30 @@ class SyncCameraService:
             rtsp_service: Optional RTSPService for RTSP operations
             scheduling_service: Optional SyncSchedulingService for capture scheduling
             settings_service: Optional SyncSettingsService for timezone operations
+            camera_ops: Optional SyncCameraOperations instance
+            timelapse_ops: Optional SyncTimelapseOperations instance
         """
         self.db = db
-        self.camera_ops = SyncCameraOperations(db, async_db)
-        self.timelapse_ops = SyncTimelapseOperations(db)
+        self.async_db = async_db
+        # Use dependency injection for Operations
+        self.camera_ops = camera_ops or self._get_default_camera_ops()
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
         # Direct SettingsOperations removed - use injected settings_service instead
         self.rtsp_service = rtsp_service
         self.scheduling_service = scheduling_service
         self.settings_service = settings_service
+
+    def _get_default_camera_ops(self):
+        """Fallback to get SyncCameraOperations singleton"""
+        from ..dependencies.specialized import get_sync_camera_operations
+
+        return get_sync_camera_operations()
+
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ..dependencies.specialized import get_sync_timelapse_operations
+
+        return get_sync_timelapse_operations()
 
     # ====================================================================
     # BUSINESS LOGIC HELPER METHODS (SYNC)

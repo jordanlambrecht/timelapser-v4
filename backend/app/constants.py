@@ -401,6 +401,12 @@ LOG_BATCH_TIMEOUT_SECONDS = 5.0  # Maximum time to wait before flush
 LOG_BATCH_MAX_RETRIES = 3  # Number of retries for failed batch inserts
 LOG_BATCH_RETRY_DELAY = 1.0  # Seconds to wait between retries
 
+# SSE Event Batching Configuration
+SSE_BATCH_SIZE = 10  # Maximum SSE events to batch before flush
+SSE_BATCH_TIMEOUT_SECONDS = 0.5  # Maximum time to wait before flush (500ms for responsive UI)
+SSE_BATCH_MAX_RETRIES = 2  # Number of retries for failed SSE batch inserts
+SSE_BATCH_RETRY_DELAY = 0.5  # Seconds to wait between SSE batch retries
+
 # Context extraction limits
 LOG_CONTEXT_MAX_STACK_DEPTH = 10
 LOG_CONTEXT_MAX_SIZE = 1000  # characters
@@ -465,6 +471,10 @@ MAX_LOG_RETENTION_DAYS = 365
 DEFAULT_LOG_PAGE_SIZE = 100
 MAX_LOG_PAGE_SIZE = 1000
 BULK_LOG_PAGE_SIZE = 10000
+
+# Database log limits
+DEFAULT_MAX_DATABASE_LOGS = 50000  # Default maximum number of database logs to keep
+MAX_DATABASE_LOGS_LIMIT = 200000   # Maximum allowed limit for database logs
 
 # Log UI constants
 LOG_SEARCH_DEBOUNCE_MS = 500  # 500ms debounce for log search input
@@ -560,7 +570,7 @@ DEFAULT_IMAGE_EXTENSION = ".jpg"
 GENERATE_ALL_THUMBNAIL_SIZES = True
 
 # RTSP capture settings
-DEFAULT_RTSP_QUALITY = 85
+DEFAULT_RTSP_QUALITY = 90  # Consolidated from duplicate definition on line 890
 DEFAULT_RTSP_TIMEOUT_SECONDS = 10
 DEFAULT_CORRUPTION_SCORE = 100
 DEFAULT_IS_FLAGGED = False
@@ -884,10 +894,8 @@ EVENT_HEALTH_CHECK_COMPLETED = "health_check_completed"
 # RTSP SERVICE CONSTANTS
 # ====================================================================
 
-# RTSP operation defaults
+# RTSP operation defaults (duplicate constants removed - see lines 558-566)
 DEFAULT_MAX_RETRIES = 3
-DEFAULT_RTSP_TIMEOUT_SECONDS = 10
-DEFAULT_RTSP_QUALITY = 90
 DEFAULT_IMAGE_EXTENSION = ".jpg"
 
 # RTSP capture defaults

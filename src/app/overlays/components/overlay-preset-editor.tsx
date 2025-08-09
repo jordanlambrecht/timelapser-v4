@@ -24,29 +24,11 @@ import {
   type GridPosition,
   type OverlayType,
 } from "@/lib/overlay-presets-data"
-
-interface OverlayItem {
-  type: OverlayType
-  customText?: string
-  textSize: number
-  textColor: string
-  backgroundColor?: string
-  backgroundOpacity: number
-  dateFormat?: string
-  imageUrl?: string
-  imageScale: number
-}
-
-interface OverlayConfig {
-  overlayPositions: Partial<Record<GridPosition, OverlayItem>>
-  globalOptions: {
-    opacity: number
-    dropShadow: number
-    font: string
-    xMargin: number
-    yMargin: number
-  }
-}
+import type {
+  OverlayConfig,
+  OverlayItem,
+  GlobalSettings,
+} from "@/hooks/use-overlay-presets"
 
 interface OverlayPresetEditorProps {
   preset?: {
@@ -90,49 +72,63 @@ export function OverlayPresetEditor({
 
   const [overlayConfig, setOverlayConfig] = useState<OverlayConfig>(
     preset?.overlay_config || {
-      overlayPositions: {},
-      globalOptions: {
+      overlayItems: [],
+      globalSettings: {
         opacity: 100,
         dropShadow: 0,
         font: "Arial",
         xMargin: 20,
         yMargin: 20,
+        backgroundColor: "rgba(0,0,0,0.5)",
+        backgroundOpacity: 50,
+        fillColor: "#ffffff",
       },
     }
   )
 
+  // Helper functions to work with overlay items
+  const getOverlayAtPosition = (
+    position: GridPosition
+  ): OverlayItem | undefined => {
+    return overlayConfig.overlayItems.find((item) => item.position === position)
+  }
+
+  const hasOverlayAtPosition = (position: GridPosition): boolean => {
+    return overlayConfig.overlayItems.some((item) => item.position === position)
+  }
+
   const handleAddOverlay = (position: GridPosition, type: OverlayType) => {
     const newOverlay: OverlayItem = {
-      type,
-      textSize: 16,
-      textColor: "#FFFFFF",
-      backgroundOpacity: 0, // This will be ignored - using global backgroundOpacity
-      imageScale: 100,
-      ...(type === "custom_text" && { customText: "Enter text here" }),
-      ...(type.includes("date") && { dateFormat: "MM/dd/yyyy HH:mm" }),
+      id: `${type}_${Date.now()}`,
+      type: type as any, // Type mismatch will be resolved by updating interfaces
+      position: position,
+      enabled: true,
+      settings: {
+        textSize: 16,
+        textColor: "#FFFFFF",
+        backgroundOpacity: 0, // This will be ignored - using global backgroundOpacity
+        imageScale: 100,
+        ...(type === "custom_text" && { customText: "Enter text here" }),
+        ...(type.includes("date") && { dateFormat: "MM/dd/yyyy HH:mm" }),
+      },
     }
 
     setOverlayConfig((prev) => ({
       ...prev,
-      overlayPositions: {
-        ...prev.overlayPositions,
-        [position]: newOverlay,
-      },
+      overlayItems: [...prev.overlayItems, newOverlay],
     }))
-    
+
     // Auto-switch to the newly added overlay's settings
     setSelectedPosition(position)
   }
 
   const handleRemoveOverlay = (position: GridPosition) => {
-    setOverlayConfig((prev) => {
-      const newPositions = { ...prev.overlayPositions }
-      delete newPositions[position]
-      return {
-        ...prev,
-        overlayPositions: newPositions,
-      }
-    })
+    setOverlayConfig((prev) => ({
+      ...prev,
+      overlayItems: prev.overlayItems.filter(
+        (item) => item.position !== position
+      ),
+    }))
   }
 
   const handleUpdateOverlay = (
@@ -141,23 +137,17 @@ export function OverlayPresetEditor({
   ) => {
     setOverlayConfig((prev) => ({
       ...prev,
-      overlayPositions: {
-        ...prev.overlayPositions,
-        [position]: {
-          ...prev.overlayPositions[position]!,
-          ...updates,
-        },
-      },
+      overlayItems: prev.overlayItems.map((item) =>
+        item.position === position ? { ...item, ...updates } : item
+      ),
     }))
   }
 
-  const handleUpdateGlobalOptions = (
-    updates: Partial<OverlayConfig["globalOptions"]>
-  ) => {
+  const handleUpdateGlobalSettings = (updates: Partial<GlobalSettings>) => {
     setOverlayConfig((prev) => ({
       ...prev,
-      globalOptions: {
-        ...prev.globalOptions,
+      globalSettings: {
+        ...prev.globalSettings,
         ...updates,
       },
     }))
@@ -200,7 +190,7 @@ export function OverlayPresetEditor({
             <SuperSwitch
               checked={livePreview}
               onCheckedChange={setLivePreview}
-              colorTheme="cyan"
+              colorTheme='cyan'
             />
           </div>
 
@@ -216,36 +206,59 @@ export function OverlayPresetEditor({
             }}
           >
             {/* Dark overlay to make content visible when not in live preview */}
-            {!livePreview && <div className='absolute inset-0 bg-black/60'></div>}
-            
+            {!livePreview && (
+              <div className='absolute inset-0 bg-black/60'></div>
+            )}
+
             {/* Margin Guidelines - Highest z-index */}
-            <div 
+            <div
               className='absolute border-2 border-dashed border-yellow-400/80 z-50 pointer-events-none'
               style={{
-                top: `${overlayConfig.globalOptions.yMargin}px`,
-                left: `${overlayConfig.globalOptions.xMargin}px`,
-                right: `${overlayConfig.globalOptions.xMargin}px`,
-                bottom: `${overlayConfig.globalOptions.yMargin}px`,
+                top: `${overlayConfig.globalSettings.yMargin}px`,
+                left: `${overlayConfig.globalSettings.xMargin}px`,
+                right: `${overlayConfig.globalSettings.xMargin}px`,
+                bottom: `${overlayConfig.globalSettings.yMargin}px`,
               }}
             ></div>
-            
+
             <OverlayGrid
-              overlayPositions={overlayConfig.overlayPositions}
-              selectedPosition={selectedPosition}
-              onPositionSelect={setSelectedPosition}
+              overlayItems={overlayConfig.overlayItems}
+              selectedItemId={
+                selectedPosition
+                  ? getOverlayAtPosition(selectedPosition)?.id || null
+                  : null
+              }
+              onItemSelect={(itemId) => {
+                // Find the position of the selected item
+                const item = overlayConfig.overlayItems.find(
+                  (i) => i.id === itemId
+                )
+                if (item) setSelectedPosition(item.position as GridPosition)
+              }}
               onAddOverlay={handleAddOverlay}
-              onRemoveOverlay={handleRemoveOverlay}
+              onRemoveOverlay={(itemId) => {
+                // Find the position of the item to remove
+                const item = overlayConfig.overlayItems.find(
+                  (i) => i.id === itemId
+                )
+                if (item) handleRemoveOverlay(item.position as GridPosition)
+              }}
               livePreview={livePreview}
-              globalOptions={overlayConfig.globalOptions}
+              globalSettings={overlayConfig.globalSettings}
             />
           </div>
         </div>
 
         {/* Right Column - Sticky Preset Info, Global Settings, and Selected Overlay Configuration */}
-        <div ref={rightColumnRef} className='sticky top-0 space-y-4 max-h-[600px] overflow-y-auto pr-2'>
+        <div
+          ref={rightColumnRef}
+          className='sticky top-0 space-y-4 max-h-[600px] overflow-y-auto pr-2'
+        >
           {/* Compact Basic Information */}
           <div className='space-y-3 p-4 bg-purple/10 rounded-lg border border-purple/20'>
-            <h4 className='text-sm font-medium text-white'>Preset Information</h4>
+            <h4 className='text-sm font-medium text-white'>
+              Preset Information
+            </h4>
             <div className='space-y-2'>
               <Input
                 value={name}
@@ -269,9 +282,9 @@ export function OverlayPresetEditor({
               <div className='space-y-1'>
                 <Label className='text-white text-xs'>Font</Label>
                 <Select
-                  value={overlayConfig.globalOptions.font}
+                  value={overlayConfig.globalSettings.font}
                   onValueChange={(value) =>
-                    handleUpdateGlobalOptions({ font: value })
+                    handleUpdateGlobalSettings({ font: value })
                   }
                 >
                   <SelectTrigger className='bg-blue/20 border-purple-muted/50 text-white h-8 text-xs'>
@@ -280,7 +293,9 @@ export function OverlayPresetEditor({
                   <SelectContent className='bg-black border-purple-muted/50'>
                     <SelectItem value='Arial'>Arial</SelectItem>
                     <SelectItem value='Helvetica'>Helvetica</SelectItem>
-                    <SelectItem value='Times New Roman'>Times New Roman</SelectItem>
+                    <SelectItem value='Times New Roman'>
+                      Times New Roman
+                    </SelectItem>
                     <SelectItem value='Courier'>Courier</SelectItem>
                   </SelectContent>
                 </Select>
@@ -289,9 +304,9 @@ export function OverlayPresetEditor({
               <div className='space-y-1 col-span-2'>
                 <ThemedSlider
                   label='Opacity'
-                  value={overlayConfig.globalOptions.opacity}
+                  value={overlayConfig.globalSettings.opacity}
                   onChange={(value) =>
-                    handleUpdateGlobalOptions({ opacity: value })
+                    handleUpdateGlobalSettings({ opacity: value })
                   }
                   max={100}
                   step={5}
@@ -302,9 +317,9 @@ export function OverlayPresetEditor({
               <div className='space-y-1'>
                 <Label className='text-white text-xs'>X Margin</Label>
                 <NumberInput
-                  value={overlayConfig.globalOptions.xMargin}
+                  value={overlayConfig.globalSettings.xMargin}
                   onChange={(value) =>
-                    handleUpdateGlobalOptions({ xMargin: value })
+                    handleUpdateGlobalSettings({ xMargin: value })
                   }
                   min={0}
                   max={200}
@@ -315,9 +330,9 @@ export function OverlayPresetEditor({
               <div className='space-y-1'>
                 <Label className='text-white text-xs'>Y Margin</Label>
                 <NumberInput
-                  value={overlayConfig.globalOptions.yMargin}
+                  value={overlayConfig.globalSettings.yMargin}
                   onChange={(value) =>
-                    handleUpdateGlobalOptions({ yMargin: value })
+                    handleUpdateGlobalSettings({ yMargin: value })
                   }
                   min={0}
                   max={200}
@@ -328,9 +343,9 @@ export function OverlayPresetEditor({
               <div className='space-y-1 col-span-2'>
                 <ThemedSlider
                   label='Drop Shadow'
-                  value={overlayConfig.globalOptions.dropShadow}
+                  value={overlayConfig.globalSettings.dropShadow}
                   onChange={(value) =>
-                    handleUpdateGlobalOptions({ dropShadow: value })
+                    handleUpdateGlobalSettings({ dropShadow: value })
                   }
                   max={10}
                   step={1}
@@ -341,15 +356,20 @@ export function OverlayPresetEditor({
           </div>
 
           {/* Selected Overlay Configuration */}
-          {selectedPosition && overlayConfig.overlayPositions[selectedPosition] && (
+          {selectedPosition && getOverlayAtPosition(selectedPosition) && (
             <div className='space-y-3 p-4 bg-cyan/10 rounded-lg border border-cyan/20 transition-all duration-300'>
               <h4 className='text-sm font-medium text-cyan'>
-                {selectedPosition.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} Overlay Settings
+                {selectedPosition
+                  .replace("_", " ")
+                  .replace(/\b\w/g, (l) => l.toUpperCase())}{" "}
+                Overlay Settings
               </h4>
               <OverlayConfigComponent
-                overlayPositions={{ [selectedPosition]: overlayConfig.overlayPositions[selectedPosition] }}
-                onUpdateOverlay={handleUpdateOverlay}
-                selectedPosition={selectedPosition}
+                overlayItems={[getOverlayAtPosition(selectedPosition)!]}
+                onUpdateOverlay={(itemId, updates) => {
+                  handleUpdateOverlay(selectedPosition, updates)
+                }}
+                selectedItemId={getOverlayAtPosition(selectedPosition)?.id}
               />
             </div>
           )}

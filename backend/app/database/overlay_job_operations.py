@@ -29,7 +29,6 @@ from ..utils.cache_manager import cache, cached_response, generate_composite_eta
 from ..utils.time_utils import utc_now
 from .core import AsyncDatabase, SyncDatabase
 from .exceptions import OverlayOperationError
-from .recovery_operations import RecoveryOperations, SyncRecoveryOperations
 
 
 class OverlayJobQueryBuilder:
@@ -170,8 +169,7 @@ class OverlayJobOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.recovery_ops = RecoveryOperations(db)
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_overlay_job_caches(
         self,
@@ -198,7 +196,7 @@ class OverlayJobOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(job_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"overlay_job:metadata:{job_id}", etag
                 )
 
@@ -501,7 +499,7 @@ class OverlayJobOperations:
                         """
                         DELETE FROM overlay_generation_jobs
                         WHERE status IN (%(completed)s, %(failed)s, %(cancelled)s)
-                            AND completed_at < %(now)s - INTERVAL %(hours)s * INTERVAL '1 hour'
+                            AND completed_at < %(now)s - INTERVAL '1 hour' * %(hours)s
                         """,
                         {
                             "completed": JobStatus.COMPLETED,
@@ -623,7 +621,8 @@ class OverlayJobOperations:
         """
         Recover overlay generation jobs stuck in 'processing' status by resetting them to 'pending'.
 
-        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+        Note: This is a basic fallback implementation. For full recovery functionality,
+        use the RecoveryService which coordinates recovery across all job types.
 
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status
@@ -633,12 +632,57 @@ class OverlayJobOperations:
         Returns:
             Dictionary with comprehensive recovery statistics
         """
-        return await self.recovery_ops.recover_stuck_jobs_for_table(
-            table_name="overlay_generation_jobs",
-            max_processing_age_minutes=max_processing_age_minutes,
-            job_type_name="overlay generation jobs",
-            sse_broadcaster=sse_broadcaster,
+        from datetime import timedelta
+
+        recovery_start_time = utc_now()
+        cutoff_time = recovery_start_time - timedelta(
+            minutes=max_processing_age_minutes
         )
+
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Reset stuck jobs to pending
+                    await cur.execute(
+                        """
+                        UPDATE overlay_generation_jobs
+                        SET status = %(new_status)s,
+                            error_message = %(error_message)s,
+                            started_at = NULL
+                        WHERE status = %(current_status)s
+                            AND started_at IS NOT NULL
+                            AND started_at < %(cutoff_time)s
+                        """,
+                        {
+                            "new_status": JobStatus.PENDING,
+                            "error_message": "Job recovered from stuck processing state - reset to pending for retry",
+                            "current_status": JobStatus.PROCESSING,
+                            "cutoff_time": cutoff_time,
+                        },
+                    )
+
+                    recovered_count = cur.rowcount
+
+                    # Clear related caches after successful recovery
+                    if recovered_count > 0:
+                        await self._clear_overlay_job_caches()
+
+                    return {
+                        "stuck_jobs_found": recovered_count,
+                        "stuck_jobs_recovered": recovered_count,
+                        "stuck_jobs_failed": 0,
+                        "recovery_duration_seconds": (
+                            utc_now() - recovery_start_time
+                        ).total_seconds(),
+                        "cutoff_time": cutoff_time.isoformat(),
+                        "recovery_successful": True,
+                    }
+
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise OverlayOperationError(
+                f"Failed to recover stuck overlay jobs: {e}",
+                operation="recover_stuck_jobs",
+            ) from e
 
 
 class SyncOverlayJobOperations:
@@ -652,7 +696,6 @@ class SyncOverlayJobOperations:
     def __init__(self, db: SyncDatabase) -> None:
         """Initialize with sync database instance."""
         self.db = db
-        self.recovery_ops = SyncRecoveryOperations(db)
 
     def create_job(
         self, job_data: OverlayGenerationJobCreate
@@ -813,22 +856,63 @@ class SyncOverlayJobOperations:
         """
         Recover overlay generation jobs stuck in 'processing' status by resetting them to 'pending' (sync version).
 
-        Uses shared RecoveryUtilities for consistent recovery behavior across all job types.
+        Note: This is a basic fallback implementation. For full recovery functionality,
+        use the SyncRecoveryService which coordinates recovery across all job types.
 
         Args:
             max_processing_age_minutes: Maximum time a job can be in 'processing' status before being considered stuck (default: 30 minutes)
-
             sse_broadcaster: Optional SSE broadcaster for real-time updates
 
         Returns:
             Dictionary with comprehensive recovery statistics
         """
-        return self.recovery_ops.recover_stuck_jobs_for_table(
-            table_name="overlay_generation_jobs",
-            max_processing_age_minutes=max_processing_age_minutes,
-            job_type_name="overlay generation jobs",
-            sse_broadcaster=sse_broadcaster,
+        from datetime import timedelta
+
+        recovery_start_time = utc_now()
+        cutoff_time = recovery_start_time - timedelta(
+            minutes=max_processing_age_minutes
         )
+
+        try:
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Reset stuck jobs to pending
+                    cur.execute(
+                        """
+                        UPDATE overlay_generation_jobs
+                        SET status = %(new_status)s,
+                            error_message = %(error_message)s,
+                            started_at = NULL
+                        WHERE status = %(current_status)s
+                            AND started_at IS NOT NULL
+                            AND started_at < %(cutoff_time)s
+                        """,
+                        {
+                            "new_status": JobStatus.PENDING,
+                            "error_message": "Job recovered from stuck processing state - reset to pending for retry",
+                            "current_status": JobStatus.PROCESSING,
+                            "cutoff_time": cutoff_time,
+                        },
+                    )
+
+                    recovered_count = cur.rowcount
+
+                    return {
+                        "stuck_jobs_found": recovered_count,
+                        "stuck_jobs_recovered": recovered_count,
+                        "stuck_jobs_failed": 0,
+                        "recovery_duration_seconds": (
+                            utc_now() - recovery_start_time
+                        ).total_seconds(),
+                        "cutoff_time": cutoff_time.isoformat(),
+                        "recovery_successful": True,
+                    }
+
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise OverlayOperationError(
+                f"Failed to recover stuck overlay jobs: {e}",
+                operation="recover_stuck_jobs",
+            ) from e
 
     def cleanup_completed_jobs(self, hours: int = 24) -> int:
         """
@@ -847,7 +931,7 @@ class SyncOverlayJobOperations:
                         """
                         DELETE FROM overlay_generation_jobs
                         WHERE status IN (%(completed)s, %(failed)s, %(cancelled)s)
-                            AND completed_at < %(now)s - INTERVAL %(hours)s * INTERVAL '1 hour'
+                            AND completed_at < %(now)s - INTERVAL '1 hour' * %(hours)s
                         """,
                         {
                             "completed": JobStatus.COMPLETED,

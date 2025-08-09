@@ -81,7 +81,13 @@ class LogMessageFormatter:
                     )
 
                 if chosen_emoji:
-                    formatted_message = f"{chosen_emoji.value} {formatted_message}"
+                    # Handle both LogEmoji enum and string values
+                    emoji_str = (
+                        chosen_emoji.value
+                        if hasattr(chosen_emoji, "value")
+                        else str(chosen_emoji)
+                    )
+                    formatted_message = f"{emoji_str} {formatted_message}"
 
             # Apply level-specific formatting
             formatted_message = self._apply_level_formatting(formatted_message, level)

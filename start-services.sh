@@ -1,4 +1,5 @@
 #!/bin/bash
+# start-services.sh 🧼
 
 # Backend + Worker Startup Script with Health Checks
 # Starts all services with proper coordination and health monitoring
@@ -65,28 +66,28 @@ cleanup() {
             kill -9 $FASTAPI_PID 2>/dev/null || true
         fi
         if [ ! -z "$WORKER_PID" ]; then
-            kill -9 $WORKER_PID 2>/dev/null || true
+            kill -9 "$WORKER_PID" 2>/dev/null || true
         fi
         if [ ! -z "$NEXTJS_PID" ]; then
-            kill -9 $NEXTJS_PID 2>/dev/null || true
+            kill -9 "$NEXTJS_PID" 2>/dev/null || true
         fi
         echo "💀 All services force-killed"
         exit 1
     fi
-    
+
     CLEANUP_CALLED=1
     echo "🛑 Shutting down services... (Press Ctrl+C again to force kill)"
-    
+
     if [ ! -z "$FASTAPI_PID" ]; then
         kill -9 $FASTAPI_PID 2>/dev/null || true
         echo "🔧 FastAPI stopped"
     fi
     if [ ! -z "$WORKER_PID" ]; then
-        kill -9 $WORKER_PID 2>/dev/null || true
+        kill -9 "$WORKER_PID" 2>/dev/null || true
         echo "⚙️ Worker stopped"
     fi
     if [ ! -z "$NEXTJS_PID" ]; then
-        kill -9 $NEXTJS_PID 2>/dev/null || true
+        kill -9 "$NEXTJS_PID" 2>/dev/null || true
         echo "🖥️ Next.js stopped"
     fi
     echo "✅ All services stopped"
@@ -118,7 +119,7 @@ fi
 echo "⚙️ Starting capture worker..."
 cd backend
 source venv/bin/activate
-python worker.py &
+python -m app.main_worker &
 WORKER_PID=$!
 cd ..
 

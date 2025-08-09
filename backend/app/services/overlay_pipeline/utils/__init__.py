@@ -6,6 +6,16 @@ Contains all overlay utilities including overlay rendering, font caching, templa
 """
 
 from .font_cache import GlobalFontCache, get_font_fast, get_text_size_fast
+from .image_path_utils import load_image_from_path
+from .image_utils import (
+    apply_blur,
+    apply_drop_shadow,
+    apply_opacity,
+    ensure_rgba_mode,
+    rotate_image,
+    scale_image,
+    validate_image_format,
+)
 from .overlay_helpers import OverlaySettingsResolver
 from .overlay_template_cache import (
     OverlayTemplate,
@@ -31,4 +41,13 @@ __all__ = [
     "GlobalFontCache",
     "get_font_fast",
     "get_text_size_fast",
+    # Image processing utilities
+    "load_image_from_path",
+    "apply_blur",
+    "apply_drop_shadow",
+    "apply_opacity",
+    "ensure_rgba_mode",
+    "rotate_image",
+    "scale_image",
+    "validate_image_format",
 ]

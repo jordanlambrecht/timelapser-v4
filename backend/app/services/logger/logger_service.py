@@ -23,7 +23,6 @@ from loguru import logger
 
 # Database operations will be injected to avoid circular imports
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.log_operations import LogOperations
 from ...enums import LogEmoji, LoggerName, LogLevel, LogSource, SSEEvent, SSEPriority
 
 # from ...database.log_operations import LogOperations, SyncLogOperations
@@ -147,25 +146,30 @@ class LoggerService:
 
     def _ensure_database_operations(self):
         """
-        Lazy initialization of database operations to avoid circular imports.
+        Lazy initialization of database operations using singletons to avoid circular imports.
         Only imports and initializes when actually needed.
         """
         if self.async_log_ops is None or self.sync_log_ops is None:
-            # Import here to avoid circular imports
-            from ...database.log_operations import LogOperations, SyncLogOperations
-            from ...database.sse_events_operations import (
-                SSEEventsOperations,
-                SyncSSEEventsOperations,
+            # Import singleton factories to avoid circular imports
+            from ...dependencies.specialized import (
+                get_sync_log_operations,
+                get_sync_sse_events_operations,
             )
 
             if self.async_db and self.async_log_ops is None:
+                # Direct instantiation since this is a sync method
+                from ...database.log_operations import LogOperations
+
                 self.async_log_ops = LogOperations(self.async_db)
             if self.sync_db and self.sync_log_ops is None:
-                self.sync_log_ops = SyncLogOperations(self.sync_db)
+                self.sync_log_ops = get_sync_log_operations()
             if self.async_db and self.sse_ops is None:
+                # Direct instantiation since this is a sync method
+                from ...database.sse_events_operations import SSEEventsOperations
+
                 self.sse_ops = SSEEventsOperations(self.async_db)
             if self.sync_db and self.sync_sse_ops is None:
-                self.sync_sse_ops = SyncSSEEventsOperations(self.sync_db)
+                self.sync_sse_ops = get_sync_sse_events_operations()
 
             # Initialize cleanup service if both operations are now available
             if (
@@ -1583,7 +1587,9 @@ class LoggerService:
         if not self.async_db:
             raise ValueError("Async database required for log retrieval")
 
-        log_ops = LogOperations(self.async_db)
+        # Use the singleton LogOperations instance
+        await self._ensure_operations()
+        log_ops = self.async_log_ops
 
         # Use the existing get_logs method from log_operations
         result = await log_ops.get_logs(
@@ -1623,8 +1629,9 @@ class LoggerService:
         if not self.async_db:
             raise ValueError("Async database required for log deletion")
 
-        log_ops = LogOperations(self.async_db)
-        return await log_ops.delete_old_logs(days_to_keep)
+        # Use the singleton LogOperations instance
+        await self._ensure_operations()
+        return await self.async_log_ops.delete_old_logs(days_to_keep)
 
     async def get_logs_for_camera(self, camera_id: int, limit: int = 50) -> List[Log]:
         """
@@ -1637,13 +1644,13 @@ class LoggerService:
         Returns:
             List of Log models
         """
-        from ...database.log_operations import LogOperations
 
         if not self.async_db:
             raise ValueError("Async database required for camera logs")
 
-        log_ops = LogOperations(self.async_db)
-        result = await log_ops.get_logs(limit=limit, camera_id=camera_id)
+        # Use the singleton LogOperations instance
+        await self._ensure_operations()
+        result = await self.async_log_ops.get_logs(limit=limit, camera_id=camera_id)
         return result.get("logs", [])
 
     async def get_log_sources(self) -> List[LogSourceModel]:

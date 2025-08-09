@@ -97,7 +97,7 @@ from .services import (
 logger = get_service_logger(LoggerName.CORRUPTION_PIPELINE)
 
 
-def create_corruption_pipeline(
+async def create_corruption_pipeline(
     database: Optional[SyncDatabase] = None,
     async_database: Optional[AsyncDatabase] = None,
 ) -> CorruptionPipeline:
@@ -121,22 +121,34 @@ def create_corruption_pipeline(
     try:
         logger.info("Creating corruption pipeline with dependency injection...")
 
-        # Step 1: Create database instances
+        # Step 1: Use shared database instances
         if database is None:
-            database = SyncDatabase()
-            database.initialize()
+            from ...database import sync_db
+            database = sync_db
 
         if async_database is None:
-            async_database = AsyncDatabase()
+            from ...database import async_db
+            async_database = async_db
 
-        # Step 2: Create service layer using existing database layer
-        logger.debug("Creating corruption services")
-        # Create async services for pipeline (API endpoints)
-        evaluation_service = CorruptionEvaluationService(db=async_database)
-
-        health_service = CorruptionHealthService(db=async_database)
-
-        statistics_service = CorruptionStatisticsService(db=async_database)
+        # Step 2: Create service layer using dependency injection to prevent connection multiplication
+        logger.debug("Creating corruption services with dependency injection")
+        try:
+            # Use dependency injection singletons where available
+            from ...dependencies.async_services import (
+                get_corruption_evaluation_service,
+                get_corruption_health_service, 
+                get_corruption_statistics_service
+            )
+            evaluation_service = await get_corruption_evaluation_service()
+            health_service = await get_corruption_health_service()
+            statistics_service = await get_corruption_statistics_service()
+        except (RuntimeError, ImportError, AttributeError) as e:
+            logger.warning(f"Failed to use DI for corruption services, falling back to direct instantiation: {e}")
+            # Fallback: still use async singletons since this is an async factory function
+            from ...dependencies.async_services import get_corruption_evaluation_service, get_corruption_health_service, get_corruption_statistics_service
+            evaluation_service = await get_corruption_evaluation_service()
+            health_service = await get_corruption_health_service()
+            statistics_service = await get_corruption_statistics_service()
 
         # Step 3: Create main pipeline
         logger.debug("Creating main corruption pipeline")

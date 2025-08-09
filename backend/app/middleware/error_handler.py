@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from ..config import settings
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource
 from ..services.logger import get_service_logger
 from ..utils.time_utils import (
     get_timezone_aware_timestamp_from_settings,
@@ -25,7 +25,7 @@ from ..utils.time_utils import (
     utc_timestamp,
 )
 
-logger = get_service_logger(LoggerName.ERROR_HANDLER)
+logger = get_service_logger(LoggerName.ERROR_HANDLER, LogSource.MIDDLEWARE)
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):

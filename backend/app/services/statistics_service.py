@@ -59,16 +59,18 @@ class StatisticsService:
     - Provides aggregated system views
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, stats_ops, settings_service):
         """
-        Initialize service with async database instance.
+        Initialize service with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
+            stats_ops: Injected StatisticsOperations singleton
+            settings_service: Injected SettingsService singleton
         """
         self.db = db
-        self.stats_ops = StatisticsOperations(db)
-        self.settings_service = SettingsService(db)
+        self.stats_ops = stats_ops
+        self.settings_service = settings_service
 
     async def get_dashboard_stats(self) -> DashboardStatsModel:
         """Get comprehensive dashboard statistics from operations layer."""
@@ -343,11 +345,11 @@ class StatisticsService:
 class SyncStatisticsService:
     """Sync statistics service for worker processes."""
 
-    def __init__(self, db: SyncDatabase):
-        """Initialize service with sync database instance."""
+    def __init__(self, db: SyncDatabase, stats_ops, settings_service):
+        """Initialize service with injected dependencies."""
         self.db = db
-        self.stats_ops = SyncStatisticsOperations(db)
-        self.settings_service = SyncSettingsService(db)
+        self.stats_ops = stats_ops
+        self.settings_service = settings_service
 
     def get_system_performance_metrics(self) -> Dict[str, Any]:
         """Get system performance metrics for monitoring."""

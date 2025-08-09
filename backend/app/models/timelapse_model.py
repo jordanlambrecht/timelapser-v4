@@ -74,6 +74,10 @@ class TimelapseCreateData(BaseModel):
     generation_schedule: Optional[GenerationSchedule] = None
     milestone_config: Optional[MilestoneConfig] = None
 
+    # Overlay settings (optional)
+    overlay_config: Optional[dict] = Field(default=None, description="JSON configuration for overlay rendering")
+    enable_overlays: bool = Field(default=False, description="Whether overlay rendering is enabled for this timelapse")
+
 
 class TimelapseCreate(TimelapseBase):
     """Model for creating a new timelapse with optional video settings override"""
@@ -229,6 +233,10 @@ class Timelapse(TimelapseBase):
     video_automation_mode: Optional[VideoAutomationMode] = None
     generation_schedule: Optional[GenerationSchedule] = None
     milestone_config: Optional[MilestoneConfig] = None
+
+    # Overlay settings
+    overlay_config: dict = Field(default_factory=dict, description="JSON configuration for overlay rendering")
+    enable_overlays: bool = Field(default=False, description="Whether overlay rendering is enabled for this timelapse")
 
     model_config = ConfigDict(from_attributes=True)
 

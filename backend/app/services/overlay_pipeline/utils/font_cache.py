@@ -98,7 +98,10 @@ class GlobalFontCache:
         if font_families is None:
             font_families = list(cls.FONT_FALLBACKS.keys())
 
-        logger.info(f"Preloading fonts: {font_families} in sizes: {cls.COMMON_SIZES}")
+        logger.info(
+            f"Preloading fonts: {font_families} in sizes: {cls.COMMON_SIZES}",
+            send_to_database=False,
+        )
         start_time = time.time()
 
         preloaded_count = 0
@@ -112,7 +115,10 @@ class GlobalFontCache:
 
         cls._preloaded = True
         elapsed = time.time() - start_time
-        logger.info(f"Preloaded {preloaded_count} font combinations in {elapsed:.2f}s")
+        logger.debug(
+            f"Preloaded {preloaded_count} font combinations in {elapsed:.2f}s",
+            send_to_database=False,
+        )
 
     @classmethod
     def get_font(cls, font_family: str, size: int) -> ImageFont.FreeTypeFont:

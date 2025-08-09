@@ -14,6 +14,8 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { useTimezoneSettings } from "@/contexts/settings-context"
 import {
@@ -96,6 +98,9 @@ export default function LogsPage() {
   // ETag caching for logs and stats
   const [logsETag, setLogsETag] = useState<string | null>(null)
   const [statsETag, setStatsETag] = useState<string | null>(null)
+
+  // Expanded exception messages state
+  const [expandedExceptions, setExpandedExceptions] = useState<Set<number>>(new Set())
 
   // Fetch cameras for filter dropdown
   useEffect(() => {
@@ -287,8 +292,9 @@ export default function LogsPage() {
     setFilters((prev) => {
       const newFilters = { ...prev, [key]: value }
 
-      // Clear camera filter when source is set to system
-      if (key === "source" && value === "system") {
+      // Clear camera filter when source is set to system, api, worker, etc.
+      // Only allow camera filter when source is 'all' or 'camera'
+      if (key === "source" && value !== "all" && value !== "camera") {
         newFilters.camera = "all"
       }
 
@@ -354,7 +360,7 @@ export default function LogsPage() {
   )
 
   // Check if camera filter should be disabled
-  const isCameraFilterDisabled = filters.source === "system"
+  const isCameraFilterDisabled = filters.source !== "all" && filters.source !== "camera"
 
   const getLogLevelColor = (level: string) => {
     switch (level.toLowerCase()) {
@@ -395,6 +401,70 @@ export default function LogsPage() {
   const getSourceIcon = (log: Log) => {
     if (log.camera_id) return "📹"
     return "⚙️"
+  }
+
+  const detectExceptionMessage = (message: string) => {
+    // Common exception patterns
+    const exceptionPatterns = [
+      /exception=\{[^}]*[^}]*Error[^}]*\}/gi,
+      /exception=.*Error.*$/gi,
+      /Traceback \(most recent call last\):/gi,
+      /\b[A-Z][a-zA-Z]*Error:/gi,
+      /\bException:/gi,
+      /\bFailed to.*:\s*.*$/gi
+    ];
+    
+    return exceptionPatterns.some(pattern => pattern.test(message));
+  }
+
+  const formatExceptionMessage = (message: string, logId: number) => {
+    const isException = detectExceptionMessage(message);
+    const isExpanded = expandedExceptions.has(logId);
+    
+    if (!isException) {
+      return <div className='break-words'>{message}</div>;
+    }
+    
+    // For exception messages, show abbreviated version with expand/collapse
+    const shortMessage = message.length > 100 ? message.substring(0, 100) + '...' : message;
+    
+    return (
+      <div className='break-words'>
+        {isExpanded ? (
+          <div>
+            <pre className='whitespace-pre-wrap text-xs bg-gray-700 p-2 rounded mt-2 text-red-300'>
+              {message}
+            </pre>
+            <button
+              onClick={() => {
+                const newSet = new Set(expandedExceptions);
+                newSet.delete(logId);
+                setExpandedExceptions(newSet);
+              }}
+              className='mt-2 text-blue-400 hover:text-blue-300 flex items-center text-sm'
+            >
+              <ChevronUp className='w-4 h-4 mr-1' />
+              Show less
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div className='text-red-300'>{shortMessage}</div>
+            <button
+              onClick={() => {
+                const newSet = new Set(expandedExceptions);
+                newSet.add(logId);
+                setExpandedExceptions(newSet);
+              }}
+              className='mt-1 text-blue-400 hover:text-blue-300 flex items-center text-sm'
+            >
+              <ChevronDown className='w-4 h-4 mr-1' />
+              Show full exception
+            </button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const StatCard = ({
@@ -559,7 +629,14 @@ export default function LogsPage() {
                   >
                     <option value='all'>All Sources</option>
                     <option value='system'>System</option>
-                    <option value='camera'>Camera</option>
+                    <option value='api'>API</option>
+                    <option value='worker'>Worker</option>
+                    <option value='pipeline'>Pipeline</option>
+                    <option value='database'>Database</option>
+                    <option value='scheduler'>Scheduler</option>
+                    <option value='middleware'>Middleware</option>
+                    <option value='health'>Health</option>
+                    <option value='camera'>Camera-Specific</option>
                   </select>
                 </div>
 
@@ -734,7 +811,7 @@ export default function LogsPage() {
                           </div>
                         </td>
                         <td className='max-w-md px-6 py-4 text-sm text-gray-300'>
-                          <div className='break-words'>{log.message}</div>
+                          {formatExceptionMessage(log.message, log.id)}
                         </td>
                       </tr>
                     ))}

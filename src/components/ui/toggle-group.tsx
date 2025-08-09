@@ -77,9 +77,6 @@ const toggleGroupVariants = cva(
         false: "cursor-pointer",
       },
     },
-    defaultVariants: {
-      orientation: "horizontal",
-    },
     compoundVariants: [
       // Pink variants
       {

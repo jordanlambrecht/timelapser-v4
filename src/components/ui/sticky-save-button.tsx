@@ -44,7 +44,7 @@ export function StickySaveButton({
       className={cn(
         "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
-        "border-t border-border shadow-lg",
+        " shadow-lg",
         isVisible && show ? "translate-y-0" : "translate-y-full"
       )}
     >
@@ -57,7 +57,7 @@ export function StickySaveButton({
             className={cn(
               "transition-all duration-300 ease-in-out",
               "min-w-[200px] font-medium",
-              "bg-primary hover:bg-primary/80 text-primary-foreground",
+              "bg-yellow hover:bg-yellow/80 text-blue",
               "shadow-md hover:shadow-lg",
               saving && "cursor-not-allowed opacity-75"
             )}

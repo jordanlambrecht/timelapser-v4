@@ -38,8 +38,10 @@ from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
     JobPriority,
     JobStatus,
+    LogEmoji,
     LoggerName,
     LogLevel,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -68,7 +70,7 @@ from .overlay_integration_service import OverlayIntegrationService
 # from ..log_service import SyncLogService  # Removed: file does not exist
 from .video_job_service import VideoJobService
 
-logger = get_service_logger(LoggerName.VIDEO_PIPELINE)
+logger = get_service_logger(LoggerName.VIDEO_PIPELINE, LogSource.PIPELINE)
 
 
 class VideoWorkflowService:
@@ -129,17 +131,21 @@ class VideoWorkflowService:
         else:
             from ...services.video_service import SyncVideoService
 
-            self.video_service = SyncVideoService(db, settings_service)
+            # Use dependency injection singleton to prevent database connection multiplication
+            from ...dependencies.sync_services import get_sync_video_service
+            self.video_service = get_sync_video_service()
 
         if timelapse_service:
             self.timelapse_service = timelapse_service
         else:
-            from ...services.timelapse_service import SyncTimelapseService
-
-            self.timelapse_service = SyncTimelapseService(db)
+            # Use dependency injection singleton to prevent database connection multiplication
+            from ...dependencies.sync_services import get_sync_timelapse_service
+            self.timelapse_service = get_sync_timelapse_service()
 
         # SSE operations (keep for now until we have a dedicated SSE service)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        # Using injected SyncSSEEventsOperations singleton
+        from ...dependencies.specialized import get_sync_sse_events_operations
+        self.sse_ops = get_sync_sse_events_operations()
 
         # Processing limits
         self.max_concurrent_jobs = max_concurrent_jobs
@@ -645,7 +651,9 @@ class VideoWorkflowService:
             Dict containing processing results
         """
         try:
-            logger.debug("Processing video queue (execution-only mode)")
+            logger.debug(
+                "Processing video queue (execution-only mode)", emoji=LogEmoji.QUEUE
+            )
 
             jobs_processed = 0
             errors: List[str] = []
@@ -657,7 +665,7 @@ class VideoWorkflowService:
 
                 if job_id:
                     jobs_processed += 1
-                    logger.info(f"Processed video job {job_id}")
+                    logger.info(f"Processed video job {job_id}", emoji=LogEmoji.JOB)
                 else:
                     # No more pending jobs
                     break

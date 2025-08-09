@@ -42,9 +42,7 @@ from ...constants import (
     WEATHER_LOCATION_INVALID,
     WEATHER_REFRESH_SKIPPED_LOCATION,
 )
-from ...database import sync_db
-from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import LoggerName, SSEPriority
+from ...enums import LoggerName, LogSource, SSEPriority
 
 # Import new weather models
 from ...models.weather_model import (
@@ -67,7 +65,7 @@ from ...utils.time_utils import (
     utc_now,
 )
 
-logger = get_service_logger(LoggerName.WEATHER_SERVICE)
+logger = get_service_logger(LoggerName.WEATHER_SERVICE, LogSource.SYSTEM)
 
 
 class OpenWeatherService:
@@ -766,27 +764,28 @@ class WeatherManager:
             if weather_date_fetched:
 
                 # Get configured timezone using cached approach
-                timezone_str = await get_timezone_from_cache_async(
-                    self.settings_service
-                )
+                # timezone_str = await get_timezone_from_cache_async(
+                #     self.settings_service
+                # )
 
-                # Convert UTC timestamp to configured timezone
+                # Weather timestamp is already in the correct timezone when stored
+                # No need for timezone conversion - just format for frontend
                 try:
                     if isinstance(weather_date_fetched, str):
-                        # Parse string to datetime if needed
-
-                        weather_date_fetched = datetime.fromisoformat(
-                            weather_date_fetched.replace("Z", "+00:00")
+                        # If it's already a string, use as-is
+                        settings_dict["weather_date_fetched"] = weather_date_fetched
+                    elif hasattr(weather_date_fetched, "isoformat"):
+                        # If it's a datetime object, convert to ISO format
+                        settings_dict["weather_date_fetched"] = (
+                            weather_date_fetched.isoformat()
                         )
-
-                    # Convert to configured timezone
-                    tz = ZoneInfo(timezone_str)
-                    local_time = weather_date_fetched.astimezone(tz)
-                    settings_dict["weather_date_fetched"] = local_time.isoformat()
+                    else:
+                        # Fallback to string conversion
+                        settings_dict["weather_date_fetched"] = str(
+                            weather_date_fetched
+                        )
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to convert weather timestamp to timezone {timezone_str}: {e}"
-                    )
+                    logger.warning(f"Failed to format weather timestamp: {e}")
                     # Fallback to original timestamp with safe conversion
                     settings_dict["weather_date_fetched"] = str(weather_date_fetched)
             else:
@@ -936,7 +935,10 @@ class WeatherManager:
         """
         try:
 
-            sse_ops = SyncSSEEventsOperations(sync_db)
+            # Using injected SSEEventsOperations singleton
+            from ...dependencies.specialized import get_sync_sse_events_operations
+
+            sse_ops = get_sync_sse_events_operations()
             event_id = sse_ops.create_event(
                 EVENT_WEATHER_UPDATED,
                 {
@@ -955,3 +957,58 @@ class WeatherManager:
             logger.info(f"Created weather update SSE event with ID: {event_id}")
         except Exception as e:
             logger.error(f"Failed to create weather update SSE event: {e}")
+
+    async def get_current_weather_data(self) -> Dict[str, Any]:
+        """
+        Get current weather data from database.
+
+        Returns:
+            Dictionary with current weather data and status
+        """
+        try:
+            # Get weather integration status from settings
+            settings = await self.get_weather_settings()
+            weather_enabled = settings.get("weather_integration_enabled", False)
+
+            # Get latest weather data from database
+            if inspect.iscoroutinefunction(self.weather_ops.get_latest_weather):
+                weather_data = await self.weather_ops.get_latest_weather()
+            else:
+                weather_data = self.weather_ops.get_latest_weather()
+
+            if weather_data:
+                return {
+                    "current_temp": weather_data.get("current_temp"),
+                    "current_weather_description": weather_data.get(
+                        "current_weather_description", ""
+                    ),
+                    "current_weather_icon": weather_data.get(
+                        "current_weather_icon", ""
+                    ),
+                    "last_updated": weather_data.get("weather_date_fetched"),
+                    "sunrise_timestamp": weather_data.get("sunrise_timestamp"),
+                    "sunset_timestamp": weather_data.get("sunset_timestamp"),
+                    "enabled": weather_enabled,
+                }
+            else:
+                return {
+                    "current_temp": None,
+                    "current_weather_description": "",
+                    "current_weather_icon": "",
+                    "last_updated": None,
+                    "sunrise_timestamp": None,
+                    "sunset_timestamp": None,
+                    "enabled": weather_enabled,
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get current weather data: {e}")
+            return {
+                "current_temp": None,
+                "current_weather_description": "",
+                "current_weather_icon": "",
+                "last_updated": None,
+                "sunrise_timestamp": None,
+                "sunset_timestamp": None,
+                "enabled": False,
+            }

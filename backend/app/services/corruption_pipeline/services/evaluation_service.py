@@ -59,15 +59,21 @@ class CorruptionEvaluationService:
     with clean interfaces and proper error handling.
     """
 
-    def __init__(self, db: AsyncDatabase):
-        """Initialize with async database instance"""
+    def __init__(self, db: AsyncDatabase, db_ops=None):
+        """Initialize with injected dependencies"""
         self.db = db
-        self.db_ops = CorruptionOperations(db)
+        self.db_ops = db_ops or self._get_default_operations()
 
         # Initialize detectors with default config
         self.fast_detector = FastCorruptionDetector()
         self.heavy_detector = HeavyCorruptionDetector()
         self.score_calculator = CorruptionScoreCalculator()
+
+    def _get_default_operations(self):
+        """Fallback to get CorruptionOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ....database.corruption_operations import CorruptionOperations
+        return CorruptionOperations(self.db)
 
     async def evaluate_image_quality(
         self,
@@ -516,15 +522,20 @@ class SyncCorruptionEvaluationService:
     with synchronous database operations for worker processes.
     """
 
-    def __init__(self, db: SyncDatabase):
-        """Initialize with sync database instance"""
+    def __init__(self, db: SyncDatabase, corruption_ops=None):
+        """Initialize with sync database instance and optional injected Operations"""
         self.db = db
-        self.db_ops = SyncCorruptionOperations(db)
-
+        self.db_ops = corruption_ops or self._get_default_corruption_ops()
+        
         # Initialize detectors with default config
         self.fast_detector = FastCorruptionDetector()
         self.heavy_detector = HeavyCorruptionDetector()
         self.score_calculator = CorruptionScoreCalculator()
+        
+    def _get_default_corruption_ops(self):
+        """Fallback to get SyncCorruptionOperations singleton"""
+        from ....dependencies.specialized import get_sync_corruption_operations
+        return get_sync_corruption_operations()
 
     def evaluate_captured_image(
         self,

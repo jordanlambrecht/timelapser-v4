@@ -12,11 +12,20 @@ from fastapi import Depends
 
 # Direct imports for type annotations (to avoid string references)
 from ..database.core import AsyncDatabase, SyncDatabase
+from ..database.corruption_operations import CorruptionOperations
+from ..database.overlay_job_operations import OverlayJobOperations
 from ..database.scheduled_job_operations import ScheduledJobOperations
+from ..database.sse_events_operations import SSEEventsOperations
+from ..database.thumbnail_job_operations import ThumbnailJobOperations
 from ..services.admin_service import AdminService
 from ..services.camera_service import CameraService
 from ..services.capture_pipeline import AsyncRTSPService, WorkflowOrchestratorService
 from ..services.capture_pipeline.rtsp_service import RTSPService
+from ..services.corruption_pipeline.services import (
+    CorruptionEvaluationService,
+    CorruptionHealthService,
+    CorruptionStatisticsService,
+)
 from ..services.health_service import HealthService
 from ..services.image_service import ImageService
 from ..services.logger.logger_service import LoggerService
@@ -42,6 +51,9 @@ from ..services.weather.service import WeatherManager
 from .async_services import (
     get_admin_service,
     get_camera_service,
+    get_corruption_evaluation_service,
+    get_corruption_health_service,
+    get_corruption_statistics_service,
     get_health_service,
     get_image_service,
     get_logger_service,
@@ -74,7 +86,11 @@ from .scheduling import (
     get_time_window_service,
 )
 from .specialized import (
+    get_async_sse_events_operations,
+    get_corruption_operations,
+    get_overlay_job_operations,
     get_scheduled_job_operations,
+    get_thumbnail_job_operations,
 )
 from .sync_services import (
     get_rtsp_service,
@@ -105,6 +121,11 @@ OverlayServiceDep = Annotated[AsyncOverlayService, Depends(get_overlay_service)]
 OverlayJobServiceDep = Annotated[
     AsyncOverlayJobService, Depends(get_overlay_job_service)
 ]
+
+# Corruption Service Type Annotations
+CorruptionStatisticsServiceDep = Annotated[CorruptionStatisticsService, Depends(get_corruption_statistics_service)]
+CorruptionHealthServiceDep = Annotated[CorruptionHealthService, Depends(get_corruption_health_service)]
+CorruptionEvaluationServiceDep = Annotated[CorruptionEvaluationService, Depends(get_corruption_evaluation_service)]
 
 # Sync Service Type Annotations
 SyncSettingsServiceDep = Annotated[SettingsService, Depends(get_sync_settings_service)]
@@ -145,8 +166,20 @@ OverlayIntegrationServiceDep = Annotated[
 ]
 
 # Specialized Type Annotations
+CorruptionOperationsDep = Annotated[
+    CorruptionOperations, Depends(get_corruption_operations)
+]
+OverlayJobOperationsDep = Annotated[
+    OverlayJobOperations, Depends(get_overlay_job_operations)
+]
 ScheduledJobOperationsDep = Annotated[
     ScheduledJobOperations, Depends(get_scheduled_job_operations)
+]
+SSEEventsOperationsDep = Annotated[
+    SSEEventsOperations, Depends(get_async_sse_events_operations)
+]
+ThumbnailJobOperationsDep = Annotated[
+    ThumbnailJobOperations, Depends(get_thumbnail_job_operations)
 ]
 
 # Export all type annotations
@@ -190,5 +223,9 @@ __all__ = [
     "VideoJobServiceDep",
     "OverlayIntegrationServiceDep",
     # Specialized
+    "CorruptionOperationsDep",
+    "OverlayJobOperationsDep",
+    "SSEEventsOperationsDep",
     "ScheduledJobOperationsDep",
+    "ThumbnailJobOperationsDep",
 ]

@@ -33,10 +33,11 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, TypedDict
 
 from ..enums import LogEmoji, LoggerName, LogSource
-from ..services.logger import get_service_logger
 from ..utils.time_utils import utc_now
 
 # Worker logger initialized at module level
+from ..services.logger import get_service_logger
+
 worker_logger = get_service_logger(LoggerName.SYSTEM, LogSource.WORKER)
 
 

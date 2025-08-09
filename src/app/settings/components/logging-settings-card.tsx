@@ -30,6 +30,8 @@ export function LoggingSettingsCard() {
   const {
     dbLogRetentionDays,
     setDbLogRetentionDays,
+    maxDatabaseLogs,
+    setMaxDatabaseLogs,
     fileLogRetentionDays,
     setFileLogRetentionDays,
     maxLogFileSize,
@@ -137,7 +139,7 @@ export function LoggingSettingsCard() {
                 Database Log Configuration
               </Label>
 
-              <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+              <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
                 <div className='flex flex-col justify-between gap-y-2'>
                   <NumberInput
                     id='db-log-retention'
@@ -150,6 +152,22 @@ export function LoggingSettingsCard() {
                   />
                   <p className='text-xs text-muted-foreground'>
                     How long to keep application events in the database
+                  </p>
+                </div>
+
+                <div className='flex flex-col justify-between gap-y-2'>
+                  <NumberInput
+                    id='max-db-logs'
+                    label='Max Database Logs'
+                    value={maxDatabaseLogs}
+                    onChange={setMaxDatabaseLogs}
+                    min={1000}
+                    max={100000}
+                    step={1000}
+                    className='bg-background/50 border-blue-500/30 focus:border-blue-400/50'
+                  />
+                  <p className='text-xs text-muted-foreground'>
+                    Maximum number of log entries to keep in database
                   </p>
                 </div>
 

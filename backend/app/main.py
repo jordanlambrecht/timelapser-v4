@@ -36,12 +36,13 @@ from app.routers import thumbnail_routers as thumbnails
 from app.routers import timelapse_routers as timelapses
 from app.routers import video_automation_routers as video_automation
 from app.routers import video_routers as videos
+from app.routers import weather_routers as weather
 from app.utils.ascii_text import print_welcome_message
 
 from .config import settings
 from .constants import DEFAULT_TIMEZONE
 from .database import async_db, sync_db
-from .enums import LogEmoji, LoggerName
+from .enums import LogEmoji, LogSource, LoggerName
 from .middleware import ErrorHandlerMiddleware, RequestLoggerMiddleware
 from .services.logger import get_service_logger, initialize_global_logger
 
@@ -57,13 +58,13 @@ async def lifespan(_app: FastAPI):
         sync_db=sync_db,
         enable_console=True,
         enable_file_logging=True,
-        enable_sse_broadcasting=True,
+        enable_sse_broadcasting=False,
         enable_batching=True,
     )
 
     # Get the system logger
     global logger
-    logger = get_service_logger(LoggerName.SYSTEM)
+    logger = get_service_logger(LoggerName.SYSTEM, LogSource.SYSTEM)
 
     # Get the global logger service instance for app state
     from .services.logger.logger_service import log
@@ -252,12 +253,13 @@ app.include_router(
 app.include_router(timelapses.router, prefix="/api", tags=["timelapses"])
 app.include_router(videos.router, prefix="/api", tags=["videos"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
+app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(images.router, prefix="/api", tags=["images"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(thumbnails.router, prefix="/api", tags=["thumbnails"])
-app.include_router(overlay.router, prefix="/api", tags=["overlays"])
+app.include_router(overlay.router, prefix="/api/overlays", tags=["overlays"])
 # Add image serving endpoints for thumbnail display
 # from app.routers import image_serving_routers
 

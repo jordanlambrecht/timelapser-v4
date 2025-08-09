@@ -22,7 +22,10 @@ from pydantic import ValidationError
 from ..models.camera_model import Camera, ImageForCamera
 from ..models.corruption_model import CorruptionSettingsModel
 from ..models.shared_models import CameraHealthStatus, CameraStatistics
-from ..services.settings_service import SettingsService
+from ..services.settings_service import SyncSettingsService
+from ..database.settings_operations import SyncSettingsOperations
+from ..services.weather.api_key_service import SyncAPIKeyService
+from ..dependencies.sync_services import get_sync_settings_service
 from ..utils.cache_invalidation import CacheInvalidationService
 from ..utils.cache_manager import cache, cached_response, generate_composite_etag
 from ..utils.database_helpers import CameraDataProcessor, DatabaseQueryBuilder
@@ -181,7 +184,7 @@ class AsyncCameraOperations:
     def __init__(self, db: AsyncDatabase, settings_service: Any) -> None:
         self.db = db
         self.settings_service = settings_service
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     @cached_response(ttl_seconds=30, key_prefix="camera")
     async def get_active_cameras(self) -> List[Camera]:
@@ -897,8 +900,6 @@ class AsyncCameraOperations:
                     success = cur.rowcount > 0
                     if success:
                         # Clear related caches after successful update
-                        from ..utils.time_utils import utc_now
-
                         current_time = utc_now()
                         await self._clear_camera_caches(
                             camera_id, updated_at=current_time
@@ -1241,7 +1242,7 @@ class AsyncCameraOperations:
     ) -> None:
         """Clear caches related to a specific camera using sophisticated cache system."""
         # Use event-driven cache invalidation for camera status changes
-        await self.cache_invalidation.invalidate_camera_status_cache(camera_id)
+        await CacheInvalidationService.invalidate_camera_status_cache(camera_id)
 
         # Clear general camera caches using advanced cache manager
         camera_patterns = [
@@ -1260,7 +1261,7 @@ class AsyncCameraOperations:
         # If timestamp provided, use ETag-aware invalidation
         if updated_at:
             etag = generate_composite_etag(camera_id, updated_at)
-            await self.cache_invalidation.invalidate_with_etag_validation(
+            await CacheInvalidationService.invalidate_with_etag_validation(
                 f"camera:metadata:{camera_id}", etag
             )
 
@@ -1273,7 +1274,18 @@ class SyncCameraOperations:
 
         self.db = db
         self.async_db = async_db
-        self.settings_service = SettingsService(self.async_db)
+        # Use singleton to prevent database connection multiplication
+        self.settings_service = self._get_settings_service()
+
+    def _get_settings_service(self):
+        """Get SettingsService singleton to avoid connection multiplication."""
+        try:
+            return get_sync_settings_service()
+        except (RuntimeError, ImportError):
+            # Fallback if singleton not available - direct instantiation with required dependencies
+            settings_ops = SyncSettingsOperations(self.db)
+            api_key_service = SyncAPIKeyService(self.db)
+            return SyncSettingsService(self.db, settings_ops, api_key_service)
 
     def _prepare_camera_data(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -15,7 +15,9 @@ import { Badge } from "@/components/ui/badge"
 import { ToggleGroup } from "@/components/ui/toggle-group"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { SuperSwitch } from "@/components/ui/switch"
-import { Image as ImageIcon, Zap } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Slider } from "@/components/ui/slider"
+import { Image as ImageIcon, Zap, Settings } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { useSettings } from "@/contexts/settings-context"
@@ -23,9 +25,13 @@ import { useSettings } from "@/contexts/settings-context"
 export function ImageSettingsCard() {
   const {
     imageCaptureType,
+    imageQuality,
+    rtspTimeoutSeconds,
     saving,
 
     setImageCaptureType,
+    setImageQuality,
+    setRtspTimeoutSeconds,
   } = useSettings()
   // Local state for thumbnail regeneration
   const [thumbnailRegenerateConfirmOpen, setThumbnailRegenerateConfirmOpen] =
@@ -123,7 +129,7 @@ export function ImageSettingsCard() {
             <span>Image Settings</span>
           </CardTitle>
           <CardDescription>
-            Configure thumbnail generation and image capture type
+            Configure image quality, RTSP timeouts, and capture format
           </CardDescription>
         </CardHeader>
         <CardContent className='space-y-6'>
@@ -231,6 +237,66 @@ export function ImageSettingsCard() {
                 borderNone={true}
                 size='lg'
               />
+            </div>
+
+            {/* Image Quality Setting */}
+            <div className='space-y-3 my-8'>
+              <div className='space-y-1'>
+                <div className='flex items-center space-x-2'>
+                  <Settings className='w-4 h-4 text-green-400' />
+                  <span className='text-sm font-medium'>
+                    Image Quality
+                  </span>
+                </div>
+                <p className='text-xs text-muted-foreground'>
+                  JPEG compression quality (1-100, higher = better quality, larger files)
+                </p>
+              </div>
+              <div className='space-y-4'>
+                <div className='px-3'>
+                  <Slider
+                    value={[imageQuality]}
+                    onValueChange={([value]) => setImageQuality(value)}
+                    min={1}
+                    max={100}
+                    step={1}
+                    className='w-full'
+                  />
+                  <div className='flex justify-between text-xs text-muted-foreground mt-2'>
+                    <span>Low (1)</span>
+                    <span className='font-medium text-primary'>Current: {imageQuality}</span>
+                    <span>High (100)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* RTSP Timeout Setting */}
+            <div className='space-y-3 my-8'>
+              <div className='space-y-1'>
+                <div className='flex items-center space-x-2'>
+                  <Zap className='w-4 h-4 text-orange-400' />
+                  <span className='text-sm font-medium'>
+                    RTSP Connection Timeout
+                  </span>
+                </div>
+                <p className='text-xs text-muted-foreground'>
+                  Maximum time in seconds to wait for camera connections
+                </p>
+              </div>
+              <div className='space-y-2'>
+                <Input
+                  type='number'
+                  value={rtspTimeoutSeconds}
+                  onChange={(e) => setRtspTimeoutSeconds(parseInt(e.target.value) || 10)}
+                  min={1}
+                  max={60}
+                  className='w-full'
+                />
+                <p className='text-xs text-muted-foreground'>
+                  Recommended: 5-15 seconds. Lower values = faster failure detection, higher = more reliable for slow cameras.
+                </p>
+              </div>
             </div>
           </div>
         </CardContent>

@@ -19,6 +19,7 @@ from ...database.sse_events_operations import SyncSSEEventsOperations
 from ...enums import (
     LogEmoji,
     LoggerName,
+    LogSource,
     SSEEvent,
     SSEEventSource,
     SSEPriority,
@@ -34,7 +35,9 @@ from ...services.weather.service import WeatherManager
 from ...utils.database_helpers import DatabaseUtilities
 from ...utils.file_helpers import ensure_entity_directory, get_relative_path
 from ...utils.time_utils import (
+    create_timezone_aware_datetime,
     get_timezone_aware_timestamp_sync,
+    get_timezone_from_cache_sync,
     utc_now,
 )
 from ..corruption_pipeline.services.evaluation_service import (
@@ -44,7 +47,7 @@ from .job_coordination_service import JobCoordinationService
 from .rtsp_service import RTSPService
 from .utils import generate_capture_filename
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 class WorkflowOrchestratorService:
@@ -170,15 +173,20 @@ class WorkflowOrchestratorService:
                 )
 
             # Create output path for captured image following FILE_STRUCTURE_GUIDE.md
-            timestamp = utc_now()
+            # Use timezone-aware timestamp for filename generation
+            if self.settings_service:
+                timezone_str = get_timezone_from_cache_sync(self.settings_service)
+                timestamp = create_timezone_aware_datetime(timezone_str)
+            else:
+                timestamp = utc_now()
             filename = generate_capture_filename(timelapse_id, timestamp)
 
             # Use existing file_helpers to create entity directory structure
             frames_dir = ensure_entity_directory(camera_id, timelapse_id, "frames")
             output_path = frames_dir / filename
 
-            # Prepare capture settings
-            capture_settings = self.rtsp_service._get_capture_settings()
+            # Prepare capture settings with camera-specific optimizations
+            capture_settings = self.rtsp_service._get_capture_settings(camera)
             capture_settings.update({"quality": 90})
 
             logger.debug(
@@ -485,7 +493,7 @@ class WorkflowOrchestratorService:
                 "camera_id": camera_id,
                 "timelapse_id": timelapse_id,
                 "file_path": file_path,
-                "filename": filename,
+                "file_name": filename,
                 "captured_at": captured_time,
                 "corruption_score": int(quality_data.get("final_score", 0.0)),
                 "is_flagged": quality_data.get("quality_verdict") == "warning",
@@ -496,6 +504,7 @@ class WorkflowOrchestratorService:
                 "corruption_detected": quality_data.get("quality_verdict") == "warning",
                 "day_number": day_number,
                 "thumbnail_path": None,  # Will be set by thumbnail worker
+                "has_valid_overlay": False,  # Required NOT NULL field - default to False
                 # Weather data from current weather_data table
                 "weather_conditions": weather_data.get("current_weather_description"),
                 "weather_fetched_at": weather_data.get("weather_date_fetched"),
@@ -503,7 +512,7 @@ class WorkflowOrchestratorService:
                 "weather_temperature": weather_data.get("current_temp"),
             }
 
-            # Add quality metadata
+            # Add quality metadata (always include corruption_details for database compatibility)
             if quality_data.get("success", True):
                 image_data["corruption_details"] = {
                     "fast_score": quality_data.get("fast_score"),
@@ -511,19 +520,31 @@ class WorkflowOrchestratorService:
                     "quality_verdict": quality_data.get("quality_verdict"),
                     "workflow_context": workflow_context,
                 }
+            else:
+                # Include empty corruption_details if quality check failed
+                image_data["corruption_details"] = {
+                    "fast_score": None,
+                    "heavy_score": None,
+                    "quality_verdict": "error",
+                    "workflow_context": workflow_context,
+                    "error": "Quality assessment failed"
+                }
 
             # Create record using ImageService
+            logger.debug(f"🐞 Attempting to create image record with data keys: {list(image_data.keys())}")
             image_record = self.image_service.record_captured_image(image_data)
 
             if image_record:
                 logger.debug(f"Created image record {image_record.id}")
                 return image_record
             else:
-                logger.error("ImageService failed to create record")
+                logger.error("ImageService failed to create record - returned None instead of Image object")
+                logger.error(f"Image data that failed: {image_data}")
                 return None
 
         except Exception as e:
-            logger.error("Error creating image record", exception=e)
+            logger.error(f"Exception creating image record: {type(e).__name__}: {str(e)}", exception=e)
+            logger.error(f"Image data that caused exception: {image_data}")
             return None
 
     def _calculate_day_number(self, timelapse_id: int, captured_time) -> int:

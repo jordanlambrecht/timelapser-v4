@@ -8,6 +8,7 @@ without mixin inheritance, eliminating type safety issues.
 """
 
 import asyncio
+import logging
 import time
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncGenerator, Dict, Generator, Optional
@@ -35,6 +36,7 @@ class AsyncDatabaseCore:
         self._failed_connections = 0
         self._last_health_check = None
         self._pool_created_at = None
+        self._logger = logging.getLogger(__name__)
 
     async def initialize(self) -> None:
         """
@@ -52,16 +54,26 @@ class AsyncDatabaseCore:
         try:
             self._pool = AsyncConnectionPool(
                 settings.database_url,
-                min_size=5,  # Keep more idle connections for faster response
-                max_size=settings.db_pool_size,
-                max_waiting=settings.db_max_overflow,
-                timeout=settings.db_pool_timeout,
-                kwargs={"row_factory": dict_row},
+                min_size=5,  # Increase minimum pool size for stability
+                max_size=min(15, settings.db_pool_size),  # Reduce max pool size
+                max_waiting=min(15, settings.db_max_overflow),  # Reduce waiting queue
+                timeout=60,  # Increase timeout to 60 seconds
+                kwargs={
+                    "row_factory": dict_row,
+                    "connect_timeout": 15,  # Increase connect timeout
+                    "keepalives_idle": 300,  # Keep alive for 5 minutes (reduced)
+                    "keepalives_interval": 60,  # Send keepalive every 60s (reduced frequency)
+                    "keepalives_count": 5,  # Increase keepalive attempts
+                },
                 open=False,
             )
             await self._pool.open()
             self._pool_created_at = utc_now()
-        except (psycopg.Error, ConnectionError, OSError):
+            self._connection_attempts = 0
+            self._failed_connections = 0
+        except (psycopg.Error, ConnectionError, OSError) as e:
+            self._failed_connections += 1
+            self._logger.error(f"Failed to initialize async database pool: {e}")
             raise
 
     async def close(self) -> None:
@@ -74,16 +86,89 @@ class AsyncDatabaseCore:
         if self._pool:
             await self._pool.close()
 
-    @asynccontextmanager
-    async def get_connection(self) -> AsyncGenerator[Any, None]:
+    async def check_pool_health(self) -> bool:
         """
-        Get an async database connection from the pool with automatic transaction management.
+        Check if the async database connection pool is healthy.
+
+        Returns:
+            True if pool is healthy, False otherwise
+        """
+        if not self._pool:
+            return False
+
+        try:
+            # Try to get a connection briefly
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+                    await cur.fetchone()
+
+            self._last_health_check = utc_now()
+            return True
+        except Exception as e:
+            self._failed_connections += 1
+            self._logger.warning(f"Async database health check failed: {e}")
+            return False
+
+    async def recover_connection_pool(self) -> bool:
+        """
+        Attempt to recover the async connection pool after failures.
+
+        Returns:
+            True if recovery successful, False otherwise
+        """
+        try:
+            self._logger.warning(
+                "Attempting async database connection pool recovery..."
+            )
+
+            # Close existing pool if it exists
+            if self._pool:
+                try:
+                    await self._pool.close()
+                    self._logger.debug("Closed old async connection pool")
+                except Exception as e:
+                    self._logger.warning(f"Error closing old async pool: {e}")
+
+            # Wait briefly before re-initializing to avoid rapid reconnection attempts
+            await asyncio.sleep(1)
+
+            # Re-initialize the pool
+            await self.initialize()
+            self._logger.info("Re-initialized async connection pool")
+
+            # Wait and then verify recovery worked
+            await asyncio.sleep(0.5)
+            if await self.check_pool_health():
+                self._logger.info("Async database connection pool recovery successful")
+                return True
+            else:
+                self._logger.error(
+                    "Async database connection pool recovery failed - "
+                    "health check failed"
+                )
+                return False
+
+        except Exception as e:
+            self._logger.error(f"Async database connection pool recovery failed: {e}")
+            return False
+
+    @asynccontextmanager
+    async def get_connection(
+        self, auto_recover: bool = True, max_retries: int = 2
+    ) -> AsyncGenerator[Any, None]:
+        """
+        Get an async database connection with automatic recovery.
+
+        Args:
+            auto_recover: Whether to attempt automatic recovery on failures
+            max_retries: Maximum number of recovery attempts
 
         Yields:
             Connection: An async database connection with dict_row factory
 
         Raises:
-            Exception: If connection pool is not initialized or connection fails
+            Exception: If pool not initialized or connection fails after retries
 
         Usage:
             async with db.get_connection() as conn:
@@ -94,28 +179,58 @@ class AsyncDatabaseCore:
         if not self._pool:
             raise RuntimeError("Database pool not initialized")
 
-        self._connection_attempts += 1
+        retries = 0
+        while retries <= max_retries:
+            try:
+                self._connection_attempts += 1
+                async with self._pool.connection() as conn:
+                    async with conn.transaction():
+                        yield conn
+                return  # Success, exit the retry loop
 
-        try:
-            async with self._pool.connection() as conn:
-                async with conn.transaction():
-                    yield conn
-        except (
-            psycopg.Error,
-            psycopg.OperationalError,
-            psycopg.DatabaseError,
-            Exception,
-        ) as e:
-            self._failed_connections += 1
-            if isinstance(e, psycopg.OperationalError):
-                # Handle specific operational errors
-                raise ConnectionError("Database connection failed") from e
-            elif isinstance(e, psycopg.DatabaseError):
-                # Handle database-specific errors
-                raise RuntimeError("Database operation failed") from e
-            else:
-                # For any other exceptions, re-raise
-                raise
+            except (
+                psycopg.Error,
+                psycopg.OperationalError,
+                psycopg.DatabaseError,
+                Exception,
+            ) as e:
+                self._failed_connections += 1
+                self._logger.warning(
+                    f"Async database connection failed "
+                    f"(attempt {retries + 1}/{max_retries + 1}): {e}"
+                )
+
+                if retries >= max_retries:
+                    # Final attempt failed, handle specific error types
+                    self._logger.error(
+                        f"Async database connection failed after "
+                        f"{max_retries + 1} attempts"
+                    )
+                    if isinstance(e, psycopg.OperationalError):
+                        raise ConnectionError("Database connection failed") from e
+                    elif isinstance(e, psycopg.DatabaseError):
+                        raise RuntimeError("Database operation failed") from e
+                    else:
+                        raise
+
+                if auto_recover and retries < max_retries:
+                    # Only attempt recovery for operational errors or after waiting
+                    if isinstance(e, (psycopg.OperationalError, psycopg.DatabaseError)):
+                        self._logger.info(
+                            f"Attempting async database recovery (retry {retries + 1})"
+                        )
+                        recovery_success = await self.recover_connection_pool()
+
+                        if not recovery_success:
+                            # Recovery failed, but we might still try one more time
+                            self._logger.warning(
+                                f"Async database recovery attempt {retries + 1} failed"
+                            )
+                    else:
+                        # For other errors, just wait before retry
+                        await asyncio.sleep(0.5)
+
+                retries += 1
 
     async def get_pool_stats(self) -> Dict[str, Any]:
         """
@@ -145,14 +260,15 @@ class AsyncDatabaseCore:
                 / max(self._connection_attempts, 1)
                 * 100,
                 "configuration": {
-                    "min_size": 5,
+                    "min_size": 2,
                     "max_size": settings.db_pool_size,
                     "max_waiting": settings.db_max_overflow,
                     "timeout": settings.db_pool_timeout,
                 },
             }
 
-            # Try to get pool status (this may not be available in all psycopg3 versions)
+            # Try to get pool status (this may not be available in all psycopg3
+            # versions)
             try:
                 if hasattr(self._pool, "get_stats"):
                     pool_stats = self._pool.get_stats()
@@ -212,7 +328,9 @@ class AsyncDatabaseCore:
                         await cur.execute("SELECT NOW()")
                         result = await cur.fetchone()
 
-            connection_time = time.time() - start_time  # Performance timing - timezone-irrelevant
+            connection_time = (
+                time.time() - start_time
+            )  # Performance timing - timezone-irrelevant
             self._last_health_check = utc_now()
 
             return {
@@ -226,13 +344,17 @@ class AsyncDatabaseCore:
             return {
                 "status": "unhealthy",
                 "error": f"Health check timed out after {timeout}s",
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),  # Performance timing - timezone-irrelevant
+                "response_time_ms": round(
+                    (time.time() - start_time) * 1000, 2
+                ),  # Performance timing - timezone-irrelevant
             }
         except (psycopg.Error, ConnectionError, RuntimeError) as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),  # Performance timing - timezone-irrelevant
+                "response_time_ms": round(
+                    (time.time() - start_time) * 1000, 2
+                ),  # Performance timing - timezone-irrelevant
             }
 
 
@@ -247,6 +369,11 @@ class SyncDatabaseCore:
     def __init__(self) -> None:
         """Initialize the SyncDatabaseCore instance with empty connection pool."""
         self._pool: Optional[ConnectionPool] = None
+        self._connection_attempts = 0
+        self._failed_connections = 0
+        self._last_health_check = None
+        self._pool_created_at = None
+        self._logger = logging.getLogger(__name__)
 
     def initialize(self) -> None:
         """
@@ -264,17 +391,28 @@ class SyncDatabaseCore:
         try:
             self._pool = ConnectionPool(
                 settings.database_url,
-                min_size=2,  # Keep a couple idle connections for sync operations
+                min_size=3,  # Increase minimum pool size for stability
                 max_size=max(
-                    5, settings.db_pool_size // 2
-                ),  # Smaller but reasonable pool for sync
-                max_waiting=settings.db_max_overflow,
-                timeout=settings.db_pool_timeout,
-                kwargs={"row_factory": dict_row},
+                    5, min(10, settings.db_pool_size // 2)
+                ),  # Conservative pool size
+                max_waiting=min(10, settings.db_max_overflow),
+                timeout=60,  # Increase timeout to 60 seconds
+                kwargs={
+                    "row_factory": dict_row,
+                    "connect_timeout": 15,  # Increase connect timeout
+                    "keepalives_idle": 300,  # Keep alive for 5 minutes (reduced)
+                    "keepalives_interval": 60,  # Send keepalive every 60s (reduced frequency)
+                    "keepalives_count": 5,  # Increase keepalive attempts
+                },
                 open=False,
             )
             self._pool.open()
-        except Exception:
+            self._pool_created_at = utc_now()
+            self._connection_attempts = 0
+            self._failed_connections = 0
+        except Exception as e:
+            self._failed_connections += 1
+            self._logger.error(f"Failed to initialize database pool: {e}")
             raise
 
     def close(self) -> None:
@@ -287,16 +425,106 @@ class SyncDatabaseCore:
         if self._pool:
             self._pool.close()
 
-    @contextmanager
-    def get_connection(self) -> Generator[Any, None, None]:
+    def check_pool_health(self) -> bool:
         """
-        Get a sync database connection from the pool with automatic transaction management.
+        Check if the database connection pool is healthy.
+
+        Returns:
+            True if pool is healthy, False otherwise
+        """
+        if not self._pool:
+            return False
+
+        try:
+            # Try to get a connection briefly
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+
+            self._last_health_check = utc_now()
+            return True
+        except Exception as e:
+            self._failed_connections += 1
+            self._logger.warning(f"Database health check failed: {e}")
+            return False
+
+    def recover_connection_pool(self) -> bool:
+        """
+        Attempt to recover the connection pool after failures.
+
+        Returns:
+            True if recovery successful, False otherwise
+        """
+        try:
+            self._logger.warning("Attempting sync database connection pool recovery...")
+
+            # Close existing pool if it exists
+            if self._pool:
+                try:
+                    self._pool.close()
+                    self._logger.debug("Closed old sync connection pool")
+                except Exception as e:
+                    self._logger.warning(f"Error closing old pool: {e}")
+
+            # Wait briefly before re-initializing
+            time.sleep(1)
+
+            # Re-initialize the pool
+            self.initialize()
+            self._logger.info("Re-initialized sync connection pool")
+
+            # Wait and then verify recovery worked
+            time.sleep(0.5)
+            if self.check_pool_health():
+                self._logger.info("Sync database connection pool recovery successful")
+                return True
+            else:
+                self._logger.error(
+                    "Sync database connection pool recovery failed - health check failed"
+                )
+                return False
+
+        except Exception as e:
+            self._logger.error(f"Sync database connection pool recovery failed: {e}")
+            return False
+
+    def get_pool_stats(self) -> Dict[str, Any]:
+        """
+        Get connection pool statistics.
+
+        Returns:
+            Dictionary with pool statistics
+        """
+        if not self._pool:
+            return {"pool_initialized": False}
+
+        return {
+            "pool_initialized": True,
+            "pool_created_at": self._pool_created_at,
+            "connection_attempts": self._connection_attempts,
+            "failed_connections": self._failed_connections,
+            "last_health_check": self._last_health_check,
+            "pool_size": getattr(self._pool, "size", 0),
+            "pool_available": getattr(self._pool, "available", 0),
+        }
+
+    @contextmanager
+    def get_connection(
+        self, auto_recover: bool = True, max_retries: int = 2
+    ) -> Generator[Any, None, None]:
+        """
+        Get a sync database connection with automatic recovery.
+
+        Args:
+            auto_recover: Whether to attempt automatic recovery on failures
+            max_retries: Maximum number of recovery attempts
 
         Yields:
             Connection: A sync database connection with dict_row factory
 
         Raises:
-            Exception: If connection pool is not initialized or connection fails
+            Exception: If pool not initialized or connection fails after retries
 
         Usage:
             with db.get_connection() as conn:
@@ -307,9 +535,47 @@ class SyncDatabaseCore:
         if not self._pool:
             raise RuntimeError("Database pool not initialized")
 
-        with self._pool.connection() as conn:
-            with conn.transaction():
-                yield conn
+        retries = 0
+        while retries <= max_retries:
+            try:
+                self._connection_attempts += 1
+                with self._pool.connection() as conn:
+                    with conn.transaction():
+                        yield conn
+                return  # Success, exit the retry loop
+
+            except Exception as e:
+                self._failed_connections += 1
+                self._logger.warning(
+                    f"Database connection failed "
+                    f"(attempt {retries + 1}/{max_retries + 1}): {e}"
+                )
+
+                if retries >= max_retries:
+                    # Final attempt failed, raise the error
+                    self._logger.error(
+                        f"Database connection failed after {max_retries + 1} attempts"
+                    )
+                    raise
+
+                if auto_recover and retries < max_retries:
+                    # Only attempt recovery for connection-related errors
+                    if isinstance(e, (psycopg.OperationalError, psycopg.DatabaseError)):
+                        self._logger.info(
+                            f"Attempting sync database recovery (retry {retries + 1})"
+                        )
+                        recovery_success = self.recover_connection_pool()
+
+                        if not recovery_success:
+                            # Recovery failed, but we might still try one more time
+                            self._logger.warning(
+                                f"Sync database recovery attempt {retries + 1} failed"
+                            )
+                    else:
+                        # For other errors, just wait before retry
+                        time.sleep(0.5)
+
+                retries += 1
 
 
 # Composition-based database classes for services and routers

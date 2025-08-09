@@ -77,6 +77,8 @@ class TimelapseService:
     def __init__(
         self,
         db: AsyncDatabase,
+        timelapse_ops: TimelapseOperations,
+        sse_ops: SSEEventsOperations,
         camera_service=None,
         video_automation_service=None,
         image_service=None,
@@ -84,10 +86,12 @@ class TimelapseService:
         thumbnail_pipeline=None,
     ):
         """
-        Initialize TimelapseService with async database instance and service dependencies.
+        Initialize TimelapseService with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
+            timelapse_ops: Injected TimelapseOperations singleton
+            sse_ops: Injected SSEEventsOperations singleton
             camera_service: Optional CameraService for active timelapse coordination
             video_automation_service: Optional VideoAutomationService for automation triggers
             image_service: Optional ImageService for image operations
@@ -95,8 +99,8 @@ class TimelapseService:
             thumbnail_pipeline: Optional ThumbnailPipeline for thumbnail operations
         """
         self.db = db
-        self.timelapse_ops = TimelapseOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
+        self.timelapse_ops = timelapse_ops
+        self.sse_ops = sse_ops
         self.camera_service = camera_service
         self.video_automation_service = video_automation_service
         self.image_service = image_service
@@ -1395,15 +1399,16 @@ class SyncTimelapseService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, timelapse_ops: SyncTimelapseOperations):
         """
-        Initialize SyncTimelapseService with sync database instance.
+        Initialize SyncTimelapseService with injected dependencies.
 
         Args:
             db: SyncDatabase instance
+            timelapse_ops: Injected SyncTimelapseOperations singleton
         """
         self.db = db
-        self.timelapse_ops = SyncTimelapseOperations(db)
+        self.timelapse_ops = timelapse_ops
 
     def get_active_timelapse_for_camera(self, camera_id: int) -> Optional[Timelapse]:
         """

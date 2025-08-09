@@ -538,8 +538,10 @@ async def process_uploaded_image_for_corruption_test(uploaded_file, db) -> dict:
         temp_file_path = temp_file.name
 
     try:
-        # Create evaluation service and test the image
-        evaluation_service = CorruptionEvaluationService(db)
+        # Use singleton evaluation service to prevent database connection multiplication
+        # Use singleton to prevent connection multiplication
+        from ..dependencies.async_services import get_corruption_evaluation_service
+        evaluation_service = await get_corruption_evaluation_service()
 
         # Use camera_id=0 for test images (no camera association)
         result = await evaluation_service.evaluate_image_quality(

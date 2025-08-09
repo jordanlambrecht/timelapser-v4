@@ -1,16 +1,17 @@
 // src/app/api/overlays/presets/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server"
 
-const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
+const FASTAPI_URL =
+  process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await context.params
 
-    const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
+    const response = await fetch(`${FASTAPI_URL}/api/overlays/${id}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -37,13 +38,13 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await context.params
     const body = await request.json()
-    
-    const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
+
+    const response = await fetch(`${FASTAPI_URL}/api/overlays/${id}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -72,12 +73,12 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
-    
-    const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
+    const { id } = await context.params
+
+    const response = await fetch(`${FASTAPI_URL}/api/overlays/${id}`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json",
@@ -85,9 +86,13 @@ export async function DELETE(
     })
 
     if (!response.ok) {
-      console.log("Backend overlay DELETE endpoint not available, simulating success")
+      console.log(
+        "Backend overlay DELETE endpoint not available, simulating success"
+      )
       // Simulate success for now
-      return NextResponse.json({ message: "Overlay preset deleted successfully" })
+      return NextResponse.json({
+        message: "Overlay preset deleted successfully",
+      })
     }
 
     const data = await response.json()

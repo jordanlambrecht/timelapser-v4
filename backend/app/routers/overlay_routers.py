@@ -9,6 +9,7 @@ Interactions: Uses OverlayService for business logic, returns Pydantic models, h
 Architecture: API Layer - delegates all business logic to services
 """
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,7 +32,6 @@ from fastapi.responses import FileResponse
 from ..dependencies import (
     OverlayJobServiceDep,
     OverlayServiceDep,
-    SchedulerServiceDep,
 )
 from ..models.overlay_model import (  # OverlayAssetCreate,; OverlayConfiguration,
     OverlayAsset,
@@ -62,8 +62,8 @@ router = APIRouter(tags=["overlays"])
 # ============================================================================
 
 
-@router.get("/presets", response_model=List[OverlayPreset])
-@handle_exceptions("fetch overlay presets")
+@router.get("/", response_model=List[OverlayPreset])
+@handle_exceptions("get overlay presets")
 async def get_overlay_presets(
     overlay_service: OverlayServiceDep,
     include_builtin: bool = Query(True, description="Include built-in presets"),
@@ -86,9 +86,9 @@ async def get_overlay_presets(
     return presets
 
 
-@router.get("/presets/{preset_id}", response_model=OverlayPreset)
-@handle_exceptions("fetch overlay preset")
-async def get_overlay_preset(
+@router.get("/{preset_id}", response_model=OverlayPreset)
+@handle_exceptions("get overlay preset by ID")
+async def get_overlay_preset_by_id(
     overlay_service: OverlayServiceDep,
     preset_id: int = FastAPIPath(..., description="Preset ID", ge=1),
 ) -> OverlayPreset:
@@ -99,9 +99,7 @@ async def get_overlay_preset(
     return preset
 
 
-@router.post(
-    "/presets", response_model=OverlayPreset, status_code=status.HTTP_201_CREATED
-)
+@router.post("/", response_model=OverlayPreset, status_code=status.HTTP_201_CREATED)
 @handle_exceptions("create overlay preset")
 async def create_overlay_preset(
     preset_data: OverlayPresetCreate,
@@ -132,7 +130,7 @@ async def create_overlay_preset(
     return preset
 
 
-@router.put("/presets/{preset_id}", response_model=OverlayPreset)
+@router.put("/{preset_id}", response_model=OverlayPreset)
 @handle_exceptions("update overlay preset")
 async def update_overlay_preset(
     preset_data: OverlayPresetUpdate,
@@ -177,7 +175,7 @@ async def update_overlay_preset(
     return preset
 
 
-@router.delete("/presets/{preset_id}")
+@router.delete("/{preset_id}")
 @handle_exceptions("delete overlay preset")
 async def delete_overlay_preset(
     overlay_service: OverlayServiceDep,
@@ -462,55 +460,23 @@ async def generate_overlay_preview(
     return preview_result
 
 
-@router.post("/fresh-photo/{camera_id}", response_class=FileResponse)
-@handle_exceptions("capture fresh photo for overlay preview")
+@router.post("/fresh-photo/{camera_id}")
 async def capture_fresh_photo_for_preview(
-    overlay_service: OverlayServiceDep,
-    scheduler_service: SchedulerServiceDep,
     camera_id: int = FastAPIPath(..., description="Camera ID", ge=1),
-) -> FileResponse:
+):
     """
-    Capture a fresh photo from the specified camera for overlay preview.
+    Get the most recent photo from the specified camera for overlay preview.
 
-    This endpoint captures a temporary image that is not stored in the database.
-    The image is used for overlay preview purposes only.
-
-    Following CEO architecture: Camera capture operations are timing-sensitive
-    and must be coordinated through the SchedulerWorker authority.
+    This endpoint redirects to the camera's latest image endpoint to avoid
+    complex dependencies and scheduler requirements.
     """
-    # Schedule immediate capture through scheduler authority (CEO architecture)
-    # For preview purposes, we use a temporary timelapse context (timelapse_id = -1 indicates preview)
-    capture_result = await scheduler_service.schedule_immediate_capture(
-        camera_id=camera_id,
-        timelapse_id=-1,  # Special ID for preview captures
-        priority="high",
-    )
+    from fastapi.responses import RedirectResponse
 
-    if not capture_result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to schedule camera capture: {capture_result.get('error', 'Unknown error')}",
-        )
-
-    # After successful capture scheduling, get the captured image for preview
-    temp_image_path = await overlay_service.capture_fresh_photo_for_preview(camera_id)
-    if not temp_image_path:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to capture fresh photo from camera",
-        )
-
-    temp_path = Path(temp_image_path)
-    if not temp_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Captured image file not found",
-        )
-
-    return FileResponse(
-        path=str(temp_path),
-        media_type="image/jpeg",
-        filename=f"camera_{camera_id}_preview.jpg",
+    # Redirect to the camera's latest image endpoint
+    # This avoids all overlay service dependencies and scheduler issues
+    return RedirectResponse(
+        url=f"/api/cameras/{camera_id}/latest-image/small?t={int(time.time())}",
+        status_code=307,  # Temporary redirect that preserves the POST method
     )
 
 

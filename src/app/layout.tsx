@@ -9,6 +9,7 @@ import { Toaster } from "sonner"
 import Footer from "@/components/footer"
 import { SSEProvider } from "@/contexts/sse-context"
 import { SettingsProvider } from "@/contexts/settings-context"
+import { GlobalToastProvider } from "@/components/global-toast-provider"
 import Link from "next/link"
 
 const inter = Inter({
@@ -82,6 +83,8 @@ export default function RootLayout({
         {/* Main content */}
         <SettingsProvider>
           <SSEProvider>
+            {/* Global toast notifications */}
+            <GlobalToastProvider />
             <main className='relative z-10'>
               <div className='px-6 py-8 mx-auto max-w-7xl'>{children}</div>
             </main>

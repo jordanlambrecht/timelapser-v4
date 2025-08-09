@@ -14,9 +14,8 @@ from typing import AsyncGenerator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from ..database.sse_events_operations import SSEEventsOperations
-from ..dependencies import AsyncDatabaseDep
-from ..enums import LoggerName
+from ..dependencies import AsyncDatabaseDep, SSEEventsOperationsDep
+from ..enums import LogEmoji, LoggerName
 from ..services.logger import get_service_logger
 from ..utils.cache_invalidation import CacheInvalidationService
 from ..utils.response_helpers import ResponseFormatter
@@ -30,7 +29,7 @@ logger = get_service_logger(LoggerName.API)
 
 @router.get("/events")
 @handle_exceptions("SSE event stream")
-async def sse_event_stream(db: AsyncDatabaseDep):
+async def sse_event_stream(db: AsyncDatabaseDep, sse_ops: SSEEventsOperationsDep):
     """
     Server-Sent Events endpoint for real-time event streaming using database polling.
 
@@ -48,7 +47,10 @@ async def sse_event_stream(db: AsyncDatabaseDep):
         Yields:
             SSE-formatted event strings
         """
-        logger.info("SSE client connected, starting event stream (polling mode)")
+        logger.info(
+            "SSE client connected, starting event stream (polling mode)",
+            emoji=LogEmoji.SESSION,
+        )
 
         try:
             # Send immediate test event to confirm stream is working
@@ -58,10 +60,9 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                 "timestamp": utc_now().isoformat(),
             }
             yield f"data: {json.dumps(test_event)}\n\n"
-            logger.info("🔄 Sent initial test event")
+            logger.debug("🔄 Sent initial test event")
 
-            # Initialize SSE operations after first yield
-            sse_ops = SSEEventsOperations(db)
+            # Use injected SSE operations
             last_heartbeat = utc_now()
 
             # Process any existing events first
@@ -124,11 +125,6 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                                     exception=cache_error,
                                 )
 
-                            # Log events for debugging
-                            logger.info(
-                                f"🔄 Sending {event['type']} SSE event: {event_data}"
-                            )
-
                             # Yield SSE-formatted data
                             yield f"data: {json.dumps(event_data)}\n\n"
                             event_ids.append(event["id"])
@@ -137,9 +133,9 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         await sse_ops.mark_events_processed(event_ids)
                         logger.debug(f"Streamed {len(events)} SSE events to client")
 
-                    # Send heartbeat every 5 seconds (temporarily for debugging)
+                    # Send heartbeat every 30 seconds for optimal balance between responsiveness and spam
                     now = utc_now()
-                    if (now - last_heartbeat).total_seconds() > 5:
+                    if (now - last_heartbeat).total_seconds() > 30:
                         heartbeat_event = {
                             "type": "heartbeat",
                             "data": {"timestamp": now.isoformat()},
@@ -147,7 +143,11 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                         }
                         yield f"data: {json.dumps(heartbeat_event)}\n\n"
                         last_heartbeat = now
-                        logger.debug("Sent SSE heartbeat", icon="💓")
+                        logger.debug(
+                            "Sent SSE heartbeat",
+                            emoji=LogEmoji.HEALTH,
+                            store_in_db=False,
+                        )
 
                     # Wait 3 seconds before next poll (industry standard)
                     await asyncio.sleep(3)
@@ -164,7 +164,7 @@ async def sse_event_stream(db: AsyncDatabaseDep):
                     await asyncio.sleep(5)  # Wait longer on error
 
         except asyncio.CancelledError:
-            logger.info("SSE client disconnected")
+            logger.info("SSE client disconnected", emoji=LogEmoji.SESSION)
             raise
         except Exception as e:
             logger.error("Fatal error in SSE stream", exception=e)
@@ -185,14 +185,13 @@ async def sse_event_stream(db: AsyncDatabaseDep):
 
 @router.get("/events/stats")
 @handle_exceptions("get SSE event statistics")
-async def get_sse_stats(db: AsyncDatabaseDep):
+async def get_sse_stats(sse_ops: SSEEventsOperationsDep):
     """
     Get SSE event statistics for monitoring and debugging.
 
     Returns:
         Dictionary with event statistics
     """
-    sse_ops = SSEEventsOperations(db)
     stats = await sse_ops.get_event_stats()
 
     return ResponseFormatter.success(
@@ -202,7 +201,7 @@ async def get_sse_stats(db: AsyncDatabaseDep):
 
 @router.post("/events/cleanup")
 @handle_exceptions("cleanup old SSE events")
-async def cleanup_old_events(db: AsyncDatabaseDep, max_age_hours: int = 24):
+async def cleanup_old_events(sse_ops: SSEEventsOperationsDep, max_age_hours: int = 24):
     """
     Clean up old processed SSE events to prevent database bloat.
 
@@ -212,7 +211,6 @@ async def cleanup_old_events(db: AsyncDatabaseDep, max_age_hours: int = 24):
     Returns:
         Number of events cleaned up
     """
-    sse_ops = SSEEventsOperations(db)
     deleted_count = await sse_ops.cleanup_old_events(max_age_hours)
 
     return ResponseFormatter.success(

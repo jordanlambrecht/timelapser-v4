@@ -53,11 +53,28 @@ class CorruptionPipeline:
         self.database = database
         self.async_database = async_database
 
-        # Create sync services if sync database provided
+        # Create sync services if sync database provided - use dependency injection to avoid cascade multiplication
         if database:
-            self.sync_evaluation_service = SyncCorruptionEvaluationService(database)
-            self.sync_health_service = SyncCorruptionHealthService(database)
-            self.sync_statistics_service = SyncCorruptionStatisticsService(database)
+            # Use singleton factories to prevent database connection multiplication
+            from ...dependencies.sync_services import (
+                get_sync_corruption_evaluation_service,
+                # Note: Other sync corruption services not yet available in DI system
+            )
+            try:
+                # Use singleton for available services
+                self.sync_evaluation_service = get_sync_corruption_evaluation_service()
+                
+                # Use singletons to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_corruption_health_service, get_sync_corruption_statistics_service
+                self.sync_health_service = get_sync_corruption_health_service()
+                self.sync_statistics_service = get_sync_corruption_statistics_service()
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Failed to use DI for corruption services, falling back to direct instantiation: {e}")
+                # Fallback: still use singletons to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_corruption_evaluation_service, get_sync_corruption_health_service, get_sync_corruption_statistics_service
+                self.sync_evaluation_service = get_sync_corruption_evaluation_service()
+                self.sync_health_service = get_sync_corruption_health_service()
+                self.sync_statistics_service = get_sync_corruption_statistics_service()
         else:
             self.sync_evaluation_service = None
             self.sync_health_service = None

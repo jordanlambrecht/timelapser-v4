@@ -162,7 +162,7 @@ class ScheduledJobOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def create_or_update_job(
         self, job_data: ScheduledJobCreate
@@ -529,7 +529,12 @@ class ScheduledJobOperations:
 
     def _row_to_scheduled_job(self, row: Dict[str, Any]) -> ScheduledJob:
         """Convert database row to ScheduledJob model."""
-        config = json.loads(row["config"]) if row["config"] else {}
+        # Handle JSONB column which PostgreSQL auto-deserializes
+        config = (
+            row["config"]
+            if isinstance(row["config"], dict)
+            else (json.loads(row["config"]) if row["config"] else {})
+        )
 
         return ScheduledJob(
             id=row["id"],
@@ -555,7 +560,12 @@ class ScheduledJobOperations:
 
     def _row_to_execution(self, row: Dict[str, Any]) -> ScheduledJobExecution:
         """Convert database row to ScheduledJobExecution model."""
-        metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        # Handle JSONB column which PostgreSQL auto-deserializes
+        metadata = (
+            row["metadata"]
+            if isinstance(row["metadata"], dict)
+            else (json.loads(row["metadata"]) if row["metadata"] else {})
+        )
 
         return ScheduledJobExecution(
             id=row["id"],
@@ -865,7 +875,7 @@ class ScheduledJobOperations:
         # Use ETag-aware invalidation if timestamp provided
         if updated_at:
             etag = generate_composite_etag(job_id, updated_at)
-            await self.cache_invalidation.invalidate_with_etag_validation(
+            await CacheInvalidationService.invalidate_with_etag_validation(
                 f"scheduled_job:metadata:{job_id}", etag
             )
 
@@ -877,7 +887,12 @@ class ScheduledJobOperations:
         self, row: Dict[str, Any]
     ) -> ScheduledJobExecution:
         """Convert database row to ScheduledJobExecution model."""
-        metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        # Handle JSONB column which PostgreSQL auto-deserializes
+        metadata = (
+            row["metadata"]
+            if isinstance(row["metadata"], dict)
+            else (json.loads(row["metadata"]) if row["metadata"] else {})
+        )
 
         return ScheduledJobExecution(
             id=row["id"],
@@ -1051,7 +1066,12 @@ class SyncScheduledJobOperations:
 
     def _row_to_scheduled_job(self, row: Dict[str, Any]) -> ScheduledJob:
         """Convert database row to ScheduledJob model."""
-        config = json.loads(row["config"]) if row["config"] else {}
+        # Handle JSONB column which PostgreSQL auto-deserializes
+        config = (
+            row["config"]
+            if isinstance(row["config"], dict)
+            else (json.loads(row["config"]) if row["config"] else {})
+        )
 
         return ScheduledJob(
             id=row["id"],

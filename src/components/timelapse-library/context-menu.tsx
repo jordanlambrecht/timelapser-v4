@@ -141,11 +141,11 @@ export function ContextMenu({
                 onClick={() => handleAction(item.action)}
                 disabled={item.disabled}
                 className={`w-full px-4 py-2 text-left text-sm flex items-center space-x-3 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed ${
-                  item.destructive
+                  (item as any).destructive ?? false
                     ? "text-red-600 hover:bg-red-50"
                     : "text-gray-700"
                 }`}
-                title={item.tooltip}
+                title={(item as any).tooltip}
               >
                 <item.icon className='h-4 w-4' />
                 <span>{item.label}</span>

@@ -390,20 +390,29 @@ def upgrade() -> None:
                 "name": "Basic Timestamp",
                 "description": "Simple date and time overlay in bottom-left corner",
                 "overlay_config": {
-                    "overlayPositions": {
-                        "bottomLeft": {
+                    "overlay_items": [
+                        {
+                            "id": "timestamp_1",
                             "type": "date_time",
-                            "textSize": 16,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 50,
-                            "dateFormat": "MM/dd/yyyy HH:mm",
+                            "position": "bottomLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 16,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 50,
+                                "dateFormat": "MM/dd/yyyy HH:mm",
+                            },
                         }
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "Arial",
-                        "xMargin": 20,
-                        "yMargin": 20,
+                        "x_margin": 20,
+                        "y_margin": 20,
+                        "background_color": "#000000",
+                        "background_opacity": 50,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
                 "is_builtin": True,
@@ -412,26 +421,40 @@ def upgrade() -> None:
                 "name": "Weather + Time",
                 "description": "Weather conditions with timestamp and temperature",
                 "overlay_config": {
-                    "overlayPositions": {
-                        "topLeft": {
+                    "overlay_items": [
+                        {
+                            "id": "weather_1",
                             "type": "weather_temp_conditions",
-                            "textSize": 14,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 40,
+                            "position": "topLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 14,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 40,
+                            },
                         },
-                        "bottomLeft": {
+                        {
+                            "id": "datetime_1",
                             "type": "date_time",
-                            "textSize": 16,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 50,
-                            "dateFormat": "MM/dd/yyyy HH:mm",
+                            "position": "bottomLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 16,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 50,
+                                "dateFormat": "MM/dd/yyyy HH:mm",
+                            },
                         },
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "Arial",
-                        "xMargin": 20,
-                        "yMargin": 20,
+                        "x_margin": 20,
+                        "y_margin": 20,
+                        "background_color": "#000000",
+                        "background_opacity": 45,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
                 "is_builtin": True,
@@ -440,19 +463,28 @@ def upgrade() -> None:
                 "name": "Minimal",
                 "description": "Just frame count in corner",
                 "overlay_config": {
-                    "overlayPositions": {
-                        "bottomRight": {
+                    "overlay_items": [
+                        {
+                            "id": "frame_count_1",
                             "type": "frame_number",
-                            "textSize": 14,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 30,
+                            "position": "bottomRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 14,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 30,
+                            },
                         }
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "Arial",
-                        "xMargin": 15,
-                        "yMargin": 15,
+                        "x_margin": 15,
+                        "y_margin": 15,
+                        "background_color": "#000000",
+                        "background_opacity": 30,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 1,
                     },
                 },
                 "is_builtin": True,
@@ -461,38 +493,62 @@ def upgrade() -> None:
                 "name": "Complete Info",
                 "description": "Comprehensive overlay with multiple data points",
                 "overlay_config": {
-                    "overlayPositions": {
-                        "topLeft": {
+                    "overlay_items": [
+                        {
+                            "id": "timelapse_name_1",
                             "type": "timelapse_name",
-                            "textSize": 18,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 60,
+                            "position": "topLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 18,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 60,
+                            },
                         },
-                        "topRight": {
+                        {
+                            "id": "weather_2",
                             "type": "weather_temp_conditions",
-                            "textSize": 14,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 40,
+                            "position": "topRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 14,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 40,
+                            },
                         },
-                        "bottomLeft": {
+                        {
+                            "id": "datetime_2",
                             "type": "date_time",
-                            "textSize": 16,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 50,
-                            "dateFormat": "MM/dd/yyyy HH:mm",
+                            "position": "bottomLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 16,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 50,
+                                "dateFormat": "MM/dd/yyyy HH:mm",
+                            },
                         },
-                        "bottomRight": {
+                        {
+                            "id": "frame_count_2",
                             "type": "frame_number",
-                            "textSize": 14,
-                            "textColor": "#FFFFFF",
-                            "backgroundOpacity": 30,
+                            "position": "bottomRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 14,
+                                "textColor": "#FFFFFF",
+                                "backgroundOpacity": 30,
+                            },
                         },
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "Arial",
-                        "xMargin": 20,
-                        "yMargin": 20,
+                        "x_margin": 20,
+                        "y_margin": 20,
+                        "background_color": "#000000",
+                        "background_opacity": 45,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
                 "is_builtin": True,

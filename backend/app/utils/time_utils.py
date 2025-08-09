@@ -54,10 +54,31 @@ def get_timezone_from_cache_sync(settings_service) -> str:
     to avoid event loop conflicts in worker processes.
     """
     try:
-        # Direct sync access without async cache to avoid event loop conflicts
+        # Check if we have a sync settings service
         if hasattr(settings_service, "get_setting"):
-            timezone = settings_service.get_setting("timezone")
-            return timezone or DEFAULT_TIMEZONE
+            try:
+                timezone = settings_service.get_setting("timezone")
+                # Debug check: ensure we didn't get a coroutine
+                if hasattr(timezone, '__await__'):
+                    # If we got a coroutine, this is an async settings service being used in sync context
+                    # Try to get the timezone from the database directly
+                    try:
+                        from ..dependencies.sync_services import get_sync_settings_service
+                        sync_settings = get_sync_settings_service()
+                        return sync_settings.get_setting("timezone") or DEFAULT_TIMEZONE
+                    except Exception:
+                        # Fallback to default if we can't create a sync service
+                        return DEFAULT_TIMEZONE
+                return timezone or DEFAULT_TIMEZONE
+            except Exception:
+                # If get_setting fails, try to create a sync service as fallback
+                try:
+                    from ..database import sync_db
+                    from ..dependencies.sync_services import get_sync_settings_service
+                    sync_settings = get_sync_settings_service()
+                    return sync_settings.get_setting("timezone") or DEFAULT_TIMEZONE
+                except Exception:
+                    return DEFAULT_TIMEZONE
         else:
             # Settings service doesn't have expected method - fall back to UTC
             return DEFAULT_TIMEZONE
@@ -1031,7 +1052,8 @@ def validate_timezone_cache_consistency() -> dict:
         from app.database import sync_db
         from app.services.settings_service import SyncSettingsService
 
-        settings_service = SyncSettingsService(sync_db)
+        from ..dependencies.sync_services import get_sync_settings_service
+        settings_service = get_sync_settings_service()
 
         # Get timezone from database directly
         db_timezone = settings_service.get_setting("timezone", DEFAULT_TIMEZONE)

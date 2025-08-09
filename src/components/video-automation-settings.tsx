@@ -71,12 +71,13 @@ export function VideoAutomationSettings({
 }: VideoAutomationSettingsProps) {
   const [settings, setSettings] = useState<CameraAutomationSettings>({
     video_automation_mode: VideoAutomationMode.MANUAL,
-    automation_schedule: undefined,
+    enabled: false,
+    schedule_config: undefined,
     milestone_config: {
       enabled: false,
       thresholds: DEFAULT_MILESTONES,
       reset_on_complete: false,
-    },
+    } as any,
   })
 
   // Initialize settings from props

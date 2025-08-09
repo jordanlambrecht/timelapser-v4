@@ -348,21 +348,30 @@ def upgrade() -> None:
                 "name": "Basic Timestamp",
                 "description": "Simple date and time overlay in bottom-right corner",
                 "config": {
-                    "overlayPositions": {
-                        "bottomRight": {
+                    "overlay_items": [
+                        {
+                            "id": "timestamp_1",
                             "type": "date_time",
-                            "textSize": 24,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#000000",
-                            "backgroundOpacity": 50,
-                            "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            "position": "bottomRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 24,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#000000",
+                                "backgroundOpacity": 50,
+                                "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            },
                         }
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "arial.ttf",
-                        "xMargin": 20,
-                        "yMargin": 20,
+                        "x_margin": 20,
+                        "y_margin": 20,
+                        "background_color": "#000000",
+                        "background_opacity": 50,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
             },
@@ -370,28 +379,42 @@ def upgrade() -> None:
                 "name": "Weather + Time",
                 "description": "Date, time, and weather information overlay",
                 "config": {
-                    "overlayPositions": {
-                        "bottomLeft": {
+                    "overlay_items": [
+                        {
+                            "id": "datetime_1",
                             "type": "date_time",
-                            "textSize": 20,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#000000",
-                            "backgroundOpacity": 60,
-                            "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            "position": "bottomLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 20,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#000000",
+                                "backgroundOpacity": 60,
+                                "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            },
                         },
-                        "topRight": {
+                        {
+                            "id": "weather_1",
                             "type": "weather_temp_conditions",
-                            "textSize": 18,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#1a472a",
-                            "backgroundOpacity": 70,
+                            "position": "topRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 18,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#1a472a",
+                                "backgroundOpacity": 70,
+                            },
                         },
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "arial.ttf",
-                        "xMargin": 15,
-                        "yMargin": 15,
+                        "x_margin": 15,
+                        "y_margin": 15,
+                        "background_color": "#000000",
+                        "background_opacity": 60,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
             },
@@ -399,21 +422,30 @@ def upgrade() -> None:
                 "name": "Minimal",
                 "description": "Clean date-only overlay",
                 "config": {
-                    "overlayPositions": {
-                        "bottomCenter": {
+                    "overlay_items": [
+                        {
+                            "id": "date_1",
                             "type": "date",
-                            "textSize": 18,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#000000",
-                            "backgroundOpacity": 40,
-                            "dateFormat": "%B %d, %Y",
+                            "position": "bottomCenter",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 18,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#000000",
+                                "backgroundOpacity": 40,
+                                "dateFormat": "%B %d, %Y",
+                            },
                         }
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 90,
                         "font": "arial.ttf",
-                        "xMargin": 20,
-                        "yMargin": 15,
+                        "x_margin": 20,
+                        "y_margin": 15,
+                        "background_color": "#000000",
+                        "background_opacity": 40,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
             },
@@ -421,35 +453,54 @@ def upgrade() -> None:
                 "name": "Complete Info",
                 "description": "Comprehensive overlay with day counter, time, and weather",
                 "config": {
-                    "overlayPositions": {
-                        "topLeft": {
+                    "overlay_items": [
+                        {
+                            "id": "day_counter_1",
                             "type": "day_number",
-                            "textSize": 28,
-                            "textColor": "#FFFF00",
-                            "backgroundColor": "#000000",
-                            "backgroundOpacity": 80,
+                            "position": "topLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 28,
+                                "textColor": "#FFFF00",
+                                "backgroundColor": "#000000",
+                                "backgroundOpacity": 80,
+                            },
                         },
-                        "bottomLeft": {
+                        {
+                            "id": "datetime_2",
                             "type": "date_time",
-                            "textSize": 16,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#000000",
-                            "backgroundOpacity": 60,
-                            "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            "position": "bottomLeft",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 16,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#000000",
+                                "backgroundOpacity": 60,
+                                "dateFormat": "%m/%d/%Y %H:%M:%S",
+                            },
                         },
-                        "topRight": {
+                        {
+                            "id": "weather_2",
                             "type": "weather_temp_conditions",
-                            "textSize": 16,
-                            "textColor": "#FFFFFF",
-                            "backgroundColor": "#1a472a",
-                            "backgroundOpacity": 70,
+                            "position": "topRight",
+                            "enabled": True,
+                            "settings": {
+                                "textSize": 16,
+                                "textColor": "#FFFFFF",
+                                "backgroundColor": "#1a472a",
+                                "backgroundOpacity": 70,
+                            },
                         },
-                    },
-                    "globalOptions": {
+                    ],
+                    "global_settings": {
                         "opacity": 100,
                         "font": "arial.ttf",
-                        "xMargin": 25,
-                        "yMargin": 25,
+                        "x_margin": 25,
+                        "y_margin": 25,
+                        "background_color": "#000000",
+                        "background_opacity": 60,
+                        "fill_color": "#FFFFFF",
+                        "drop_shadow": 2,
                     },
                 },
             },

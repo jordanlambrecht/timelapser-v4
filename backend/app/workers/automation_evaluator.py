@@ -65,11 +65,11 @@ from ..constants import EVENT_VIDEO_JOB_QUEUED, JOB_PRIORITY
 from ..database.core import SyncDatabase
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.timelapse_operations import SyncTimelapseOperations
-from ..enums import LoggerName, SSEPriority
+from ..enums import LoggerName, LogSource, SSEPriority
 from ..services.logger import get_service_logger
 from .utils import SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class AutomationEvaluator:
@@ -80,13 +80,32 @@ class AutomationEvaluator:
         db: SyncDatabase,
         time_utils: SchedulerTimeUtils,
         logger_prefix: str = "AutomationEvaluator",
+        timelapse_ops=None,
+        sse_ops=None,
+        video_ops=None,
     ):
-        """Initialize automation evaluator."""
+        """Initialize automation evaluator with dependency injection."""
         self.db = db
         self.time_utils = time_utils
-        self.timelapse_ops = SyncTimelapseOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
+        self.video_ops = video_ops or self._get_default_video_ops()
         self.logger_prefix = logger_prefix
+        
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ..dependencies.specialized import get_sync_timelapse_operations
+        return get_sync_timelapse_operations()
+        
+    def _get_default_sse_ops(self):
+        """Fallback to get SyncSSEEventsOperations singleton"""
+        from ..dependencies.specialized import get_sync_sse_events_operations
+        return get_sync_sse_events_operations()
+        
+    def _get_default_video_ops(self):
+        """Fallback to get SyncVideoOperations singleton"""
+        from ..dependencies.specialized import get_sync_video_operations
+        return get_sync_video_operations()
 
         # External function references (injected by parent)
         self.schedule_immediate_video_func: Optional[Callable] = None
@@ -95,20 +114,13 @@ class AutomationEvaluator:
         """Log info message with prefix."""
         logger.info(f"{self.logger_prefix}: {message}")
 
-    def log_error(self, message: str, exception: Optional[Exception] = None) -> None:
-        """Log error message with prefix."""
-        if exception:
-            logger.error(f"{self.logger_prefix}: {message}: {exception}")
-        else:
-            logger.error(f"{self.logger_prefix}: {message}")
-
     def log_warning(self, message: str) -> None:
         """Log warning message with prefix."""
         logger.warning(f"{self.logger_prefix}: {message}")
 
     def log_debug(self, message: str) -> None:
         """Log debug message with prefix."""
-        logger.debug(f"{self.logger_prefix}: {message}")
+        logger.debug(f" {message}")
 
     def evaluate_automation_triggers(self) -> Dict[str, List[str]]:
         """
@@ -133,17 +145,15 @@ class AutomationEvaluator:
 
             total_jobs = len(milestone_jobs) + len(scheduled_jobs)
             if total_jobs > 0:
-                self.log_info(
-                    f"🎯 Automation evaluation complete: {len(milestone_jobs)} milestone, "
+                logger.info(
+                    f"Automation evaluation complete: {len(milestone_jobs)} milestone, "
                     f"{len(scheduled_jobs)} scheduled jobs created"
                 )
             else:
-                self.log_debug(
-                    "🎯 Automation evaluation complete: No triggers activated"
-                )
+                logger.debug("Automation evaluation complete: No triggers activated")
 
         except Exception as e:
-            self.log_error("Error evaluating automation triggers", e)
+            logger.error("Error evaluating automation triggers", e)
 
         return result
 
@@ -155,7 +165,7 @@ class AutomationEvaluator:
             List of job IDs created for milestone videos
         """
         if not self.schedule_immediate_video_func:
-            self.log_warning("No video scheduling function configured")
+            logger.warning("No video scheduling function configured")
             return []
 
         try:
@@ -180,7 +190,7 @@ class AutomationEvaluator:
                         if success:
                             job_id = f"milestone_{timelapse.id}_{int(time.time())}"
                             job_ids.append(job_id)
-                            self.log_info(
+                            logger.info(
                                 f"✅ Scheduler authority: Created milestone video for timelapse {timelapse.id}"
                             )
 
@@ -198,16 +208,16 @@ class AutomationEvaluator:
                                     source="scheduler_worker",
                                 )
                             except Exception as sse_error:
-                                self.log_warning(
+                                logger.warning(
                                     f"Failed to emit SSE event for milestone video job: {sse_error}"
                                 )
                         else:
-                            self.log_warning(
-                                f"❌ Failed to schedule milestone video for timelapse {timelapse.id}"
+                            logger.warning(
+                                f"Failed to schedule milestone video for timelapse {timelapse.id}"
                             )
 
                 except Exception as e:
-                    self.log_error(
+                    logger.error(
                         f"Error evaluating milestone trigger for timelapse {timelapse.id}",
                         e,
                     )
@@ -215,7 +225,7 @@ class AutomationEvaluator:
             return job_ids
 
         except Exception as e:
-            self.log_error("Error evaluating milestone automation triggers", e)
+            logger.error("Error evaluating milestone automation triggers", e)
             return []
 
     def _evaluate_scheduled_triggers(self) -> List[str]:
@@ -226,7 +236,7 @@ class AutomationEvaluator:
             List of job IDs created for scheduled videos
         """
         if not self.schedule_immediate_video_func:
-            self.log_warning("No video scheduling function configured")
+            logger.warning("No video scheduling function configured")
             return []
 
         try:
@@ -251,7 +261,7 @@ class AutomationEvaluator:
                         if success:
                             job_id = f"scheduled_{timelapse.id}_{int(time.time())}"
                             job_ids.append(job_id)
-                            self.log_info(
+                            logger.info(
                                 f"✅ Scheduler authority: Created scheduled video for timelapse {timelapse.id}"
                             )
 
@@ -269,16 +279,16 @@ class AutomationEvaluator:
                                     source="scheduler_worker",
                                 )
                             except Exception as sse_error:
-                                self.log_warning(
+                                logger.warning(
                                     f"Failed to emit SSE event for scheduled video job: {sse_error}"
                                 )
                         else:
-                            self.log_warning(
-                                f"❌ Failed to schedule scheduled video for timelapse {timelapse.id}"
+                            logger.warning(
+                                f"Failed to schedule scheduled video for timelapse {timelapse.id}"
                             )
 
                 except Exception as e:
-                    self.log_error(
+                    logger.error(
                         f"Error evaluating scheduled trigger for timelapse {timelapse.id}",
                         e,
                     )
@@ -286,7 +296,7 @@ class AutomationEvaluator:
             return job_ids
 
         except Exception as e:
-            self.log_error("Error evaluating scheduled automation triggers", e)
+            logger.error("Error evaluating scheduled automation triggers", e)
             return []
 
     def _should_create_milestone_video_authority(self, timelapse) -> bool:
@@ -321,12 +331,8 @@ class AutomationEvaluator:
             if current_count > 0 and current_count % milestone_interval == 0:
                 # Check if we already generated a video for this milestone
                 try:
-                    # Import video operations for milestone checking
-                    from ..database.video_operations import SyncVideoOperations
-
-                    video_ops = SyncVideoOperations(self.db)
-
-                    last_milestone_video = video_ops.get_last_milestone_video(
+                    # Use injected video operations for milestone checking
+                    last_milestone_video = self.video_ops.get_last_milestone_video(
                         timelapse.id
                     )
                     if last_milestone_video:
@@ -336,12 +342,12 @@ class AutomationEvaluator:
                         if last_milestone_count >= current_count:
                             return False  # Already generated video for this milestone
                 except Exception as e:
-                    self.log_warning(
+                    logger.warning(
                         f"Could not check last milestone video for timelapse {timelapse.id}: {e}"
                     )
                     # Continue with milestone creation if we can't check (safe approach)
 
-                self.log_debug(
+                logger.debug(
                     f"🎯 Milestone trigger: Scheduler authority approves timelapse {timelapse.id} at {current_count} images"
                 )
                 return True
@@ -349,7 +355,7 @@ class AutomationEvaluator:
             return False
 
         except Exception as e:
-            self.log_error(
+            logger.error(
                 f"Error checking milestone trigger for timelapse {timelapse.id}", e
             )
             return False
@@ -385,18 +391,14 @@ class AutomationEvaluator:
 
             # Check if we already generated a video today
             try:
-                # Import video operations for scheduled checking
-                from ..database.video_operations import SyncVideoOperations
-
-                video_ops = SyncVideoOperations(self.db)
-
-                last_scheduled_video = video_ops.get_last_scheduled_video(timelapse.id)
+                # Use injected video operations for scheduled checking
+                last_scheduled_video = self.video_ops.get_last_scheduled_video(timelapse.id)
                 if last_scheduled_video:
                     last_video_date = last_scheduled_video.created_at.date()
                     if last_video_date >= current_time.date():
                         return False  # Already generated video today
             except Exception as e:
-                self.log_warning(
+                logger.warning(
                     f"Could not check last scheduled video for timelapse {timelapse.id}: {e}"
                 )
                 # Continue with scheduled creation if we can't check (safe approach)
@@ -409,12 +411,12 @@ class AutomationEvaluator:
                     and current_time.minute >= scheduled_minute
                     and current_time.minute < scheduled_minute + 5
                 ):  # 5-minute window
-                    self.log_debug(
+                    logger.debug(
                         f"🎯 Scheduled trigger: Scheduler authority approves timelapse {timelapse.id} daily at {schedule_time}"
                     )
                     return True
             except Exception as e:
-                self.log_error(
+                logger.error(
                     f"Error parsing schedule time '{schedule_time}' for timelapse {timelapse.id}: {e}"
                 )
                 return False
@@ -424,7 +426,7 @@ class AutomationEvaluator:
             return False
 
         except Exception as e:
-            self.log_error(
+            logger.error(
                 f"Error checking scheduled trigger for timelapse {timelapse.id}", e
             )
             return False

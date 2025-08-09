@@ -8,11 +8,11 @@ Converts raw data to typed objects at the service boundary.
 
 from typing import Any, Dict
 
-from ..enums import LoggerName, WorkerType
+from ..enums import LoggerName, LogSource, WorkerType
 from ..services.logger import get_service_logger
 from ..workers.models.thumbnail_responses import ThumbnailWorkerStatus
 
-thumbnail_service_logger = get_service_logger(LoggerName.THUMBNAIL_WORKER)
+thumbnail_service_logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 
 
 class ThumbnailWorkflowService:

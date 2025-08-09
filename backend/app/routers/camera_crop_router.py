@@ -8,10 +8,10 @@ Provides REST interface for crop configuration and testing.
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..dependencies import AsyncRTSPServiceDep, CameraServiceDep
-from ..enums import LoggerName
+from ..enums import LogSource, LoggerName
 from ..exceptions import CameraNotFoundError, RTSPConnectionError
 from ..models.camera_model import (
     CropRotationSettings,
@@ -21,14 +21,14 @@ from ..services.logger import get_service_logger
 from ..utils.response_helpers import ResponseFormatter
 from ..utils.router_helpers import handle_exceptions
 
-logger = get_service_logger(LoggerName.API)
+logger = get_service_logger(LoggerName.CAMERA_SERVICE, LogSource.API)
 
 router = APIRouter(prefix="/api/cameras", tags=["camera-crop"])
 
 
 @router.get("/{camera_id}/crop-settings", response_model=Dict[str, Any])
 @handle_exceptions("get camera crop settings")
-async def get_camera_crop_settings(camera_id: int, camera_service: CameraServiceDep):
+async def get_camera_crop_settings(camera_id: int, camera_service: CameraServiceDep = Depends()):
     """
     Get crop/rotation settings for a camera.
 
@@ -58,7 +58,7 @@ async def get_camera_crop_settings(camera_id: int, camera_service: CameraService
 async def update_camera_crop_settings(
     camera_id: int,
     settings_update: CropRotationUpdate,
-    camera_service: CameraServiceDep,
+    camera_service: CameraServiceDep = Depends(),
 ):
     """
     Update crop/rotation settings for a camera.
@@ -83,7 +83,7 @@ async def update_camera_crop_settings(
 @router.delete("/{camera_id}/crop-settings", response_model=Dict[str, Any])
 @handle_exceptions("disable camera crop settings")
 async def disable_camera_crop_settings(
-    camera_id: int, camera_service: CameraServiceDep
+    camera_id: int, camera_service: CameraServiceDep = Depends()
 ):
     """
     Disable crop/rotation settings for a camera.
@@ -106,7 +106,7 @@ async def disable_camera_crop_settings(
 @router.get("/{camera_id}/source-resolution", response_model=Dict[str, Any])
 @handle_exceptions("get camera source resolution")
 async def get_camera_source_resolution(
-    camera_id: int, camera_service: CameraServiceDep
+    camera_id: int, camera_service: CameraServiceDep = Depends()
 ):
     """
     Get the detected source resolution for a camera.
@@ -133,7 +133,7 @@ async def get_camera_source_resolution(
 @router.post("/{camera_id}/detect-resolution", response_model=Dict[str, Any])
 @handle_exceptions("detect camera source resolution")
 async def detect_camera_source_resolution(
-    camera_id: int, camera_service: CameraServiceDep, rtsp_service: AsyncRTSPServiceDep
+    camera_id: int, camera_service: CameraServiceDep = Depends(), rtsp_service: AsyncRTSPServiceDep = Depends()
 ):
     """
     Detect and store the source resolution for a camera.
@@ -173,7 +173,7 @@ async def detect_camera_source_resolution(
 async def test_camera_crop_settings(
     camera_id: int,
     settings: CropRotationSettings,
-    rtsp_service: AsyncRTSPServiceDep,
+    rtsp_service: AsyncRTSPServiceDep = Depends(),
 ):
     """
     Test crop/rotation settings by processing a live frame.

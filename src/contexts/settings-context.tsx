@@ -18,6 +18,8 @@ interface SettingsContextType {
   smallGenerationMode: "all" | "latest" | "disabled"
   purgeSmalllsOnCompletion: boolean
   imageCaptureType: "PNG" | "JPG"
+  imageQuality: number
+  rtspTimeoutSeconds: number
 
   // API settings
   openWeatherApiKey: string
@@ -42,6 +44,7 @@ interface SettingsContextType {
 
   // Database logging settings (for application events in PostgreSQL)
   dbLogRetentionDays: number
+  maxDatabaseLogs: number
   dbLogLevel: string
 
   // File logging settings (for system debugging with loguru)
@@ -92,6 +95,8 @@ interface SettingsContextType {
   ) => Promise<void>
   setPurgeSmallsOnCompletion: (value: boolean) => Promise<void>
   setImageCaptureType: (value: "PNG" | "JPG") => void
+  setImageQuality: (value: number) => void
+  setRtspTimeoutSeconds: (value: number) => void
   setOpenWeatherApiKey: (value: string) => void
   setApiKeyModified: (value: boolean) => void
   setWeatherIntegrationEnabled: (value: boolean) => void
@@ -101,6 +106,7 @@ interface SettingsContextType {
   setLatitude: (value: number | null) => void
   setLongitude: (value: number | null) => void
   setDbLogRetentionDays: (value: number) => void
+  setMaxDatabaseLogs: (value: number) => void
   setDbLogLevel: (value: string) => void
   setFileLogRetentionDays: (value: number) => void
   setMaxLogFileSize: (value: number) => void
@@ -140,6 +146,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     smallGenerationMode: "disabled" as "all" | "latest" | "disabled",
     purgeSmalllsOnCompletion: false,
     imageCaptureType: "JPG" as "PNG" | "JPG",
+    imageQuality: 90,
+    rtspTimeoutSeconds: 10,
 
     // API settings
     openWeatherApiKey: "",
@@ -164,6 +172,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
     // Database logging settings (for application events in PostgreSQL)
     dbLogRetentionDays: 30,
+    maxDatabaseLogs: 50000,
     dbLogLevel: "info",
 
     // File logging settings (for system debugging with loguru)
@@ -263,6 +272,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           imageCaptureType: (data.data.image_capture_type || "JPG") as
             | "PNG"
             | "JPG",
+          imageQuality: parseInt(data.data.image_quality || "90"),
+          rtspTimeoutSeconds: parseInt(data.data.rtsp_timeout_seconds || "10"),
 
           // API settings - the backend now returns the actual key for display
           openWeatherApiKey: data.data.openweather_api_key || "", // Store actual key for display
@@ -298,6 +309,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
           // Logging settings
           dbLogRetentionDays: parseInt(data.data.log_retention_days || "30"),
+          maxDatabaseLogs: parseInt(data.data.max_database_logs || "50000"),
           dbLogLevel: data.data.log_level || "info",
           fileLogRetentionDays: parseInt(
             data.data.file_log_retention_days || "7"
@@ -538,6 +550,14 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSettings((prev) => ({ ...prev, imageCaptureType: value }))
   }, [])
 
+  const setImageQuality = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, imageQuality: value }))
+  }, [])
+
+  const setRtspTimeoutSeconds = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, rtspTimeoutSeconds: value }))
+  }, [])
+
   const setOpenWeatherApiKey = useCallback((value: string) => {
     setSettings((prev) => ({
       ...prev,
@@ -576,6 +596,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
   const setDbLogRetentionDays = useCallback((value: number) => {
     setSettings((prev) => ({ ...prev, dbLogRetentionDays: value }))
+  }, [])
+
+  const setMaxDatabaseLogs = useCallback((value: number) => {
+    setSettings((prev) => ({ ...prev, maxDatabaseLogs: value }))
   }, [])
 
   const setDbLogLevel = useCallback((value: string) => {
@@ -766,6 +790,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     if (settings.dbLogRetentionDays !== originalSettings.dbLogRetentionDays) {
       changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
     }
+    if (settings.maxDatabaseLogs !== originalSettings.maxDatabaseLogs) {
+      changes.push(`Max Database Logs (${settings.maxDatabaseLogs})`)
+    }
     if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
       changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
     }
@@ -907,6 +934,12 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         if (settings.imageCaptureType !== originalSettings.imageCaptureType) {
           changes.push(`Image Type (${settings.imageCaptureType})`)
         }
+        if (settings.imageQuality !== originalSettings.imageQuality) {
+          changes.push(`Image Quality (${settings.imageQuality})`)
+        }
+        if (settings.rtspTimeoutSeconds !== originalSettings.rtspTimeoutSeconds) {
+          changes.push(`RTSP Timeout (${settings.rtspTimeoutSeconds}s)`)
+        }
 
         // API Key
         if (settings.apiKeyModified && settings.openWeatherApiKey.trim()) {
@@ -962,6 +995,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           settings.dbLogRetentionDays !== originalSettings.dbLogRetentionDays
         ) {
           changes.push(`DB Log Retention (${settings.dbLogRetentionDays} days)`)
+        }
+        if (settings.maxDatabaseLogs !== originalSettings.maxDatabaseLogs) {
+          changes.push(`Max Database Logs (${settings.maxDatabaseLogs})`)
         }
         if (settings.maxLogFileSize !== originalSettings.maxLogFileSize) {
           changes.push(`Max Log Size (${settings.maxLogFileSize}MB)`)
@@ -1083,7 +1119,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         thumbnail_purge_smalls_on_completion:
           settings.purgeSmalllsOnCompletion.toString(),
         image_capture_type: settings.imageCaptureType,
+        image_quality: settings.imageQuality.toString(),
+        rtsp_timeout_seconds: settings.rtspTimeoutSeconds.toString(),
         log_retention_days: settings.dbLogRetentionDays.toString(),
+        max_database_logs: settings.maxDatabaseLogs.toString(),
         max_log_file_size: settings.maxLogFileSize.toString(),
         log_level: settings.dbLogLevel,
         file_log_retention_days: settings.fileLogRetentionDays.toString(),
@@ -1168,6 +1207,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
           smallGenerationMode: settings.smallGenerationMode,
           purgeSmalllsOnCompletion: settings.purgeSmalllsOnCompletion,
           imageCaptureType: settings.imageCaptureType,
+          imageQuality: settings.imageQuality,
+          rtspTimeoutSeconds: settings.rtspTimeoutSeconds,
           openWeatherApiKey: settings.openWeatherApiKey,
           apiKeyModified: false, // Reset after save
           originalApiKeyHash:
@@ -1223,10 +1264,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
         }
         setOriginalSettings(updatedSettings)
 
-        // REMOVED: Force fetch that was causing UI reversion
-        // setTimeout(() => {
-        //   fetchSettings(true)
-        // }, 500)
+        // Small delay to ensure React state batching completes and hasUnsavedChanges updates
+        setTimeout(() => {
+          // Force re-evaluation of hasUnsavedChanges by ensuring React has processed the state update
+        }, 50)
       }
 
       return changedSettings.length > 0
@@ -1276,6 +1317,8 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSmallGenerationMode,
     setPurgeSmallsOnCompletion,
     setImageCaptureType,
+    setImageQuality,
+    setRtspTimeoutSeconds,
     setOpenWeatherApiKey,
     setApiKeyModified,
     setWeatherIntegrationEnabled,
@@ -1285,6 +1328,7 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setLatitude,
     setLongitude,
     setDbLogRetentionDays,
+    setMaxDatabaseLogs,
     setMaxLogFileSize,
     setDbLogLevel,
     setFileLogRetentionDays,

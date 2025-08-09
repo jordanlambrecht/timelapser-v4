@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional
 
 import cv2
 
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...models.capture_pipeline_models import (
     CameraInfo,
     TimelapseInfo,
@@ -66,7 +66,7 @@ from .constants import (
     WORKFLOW_VERSION,
 )
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 
 
 def create_workflow_context(

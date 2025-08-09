@@ -28,7 +28,6 @@ from ..utils.cache_manager import (
     cache,
     cached_response,
     generate_composite_etag,
-    get_setting_cached,
 )
 from ..utils.time_utils import utc_now
 from .core import AsyncDatabase, SyncDatabase
@@ -98,7 +97,7 @@ class SettingsOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_settings_caches(
         self, setting_key: Optional[str] = None, updated_at: Optional[datetime] = None
@@ -126,7 +125,7 @@ class SettingsOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(setting_key, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"settings:metadata:{setting_key}", etag
                 )
 
@@ -183,20 +182,31 @@ class SettingsOperations:
                 operation="get_all_setting_records",
             ) from e
 
-    @cached_response(ttl_seconds=300, key_prefix="settings")
-    async def get_setting(self, key: str) -> Optional[str]:
+    async def get_setting(
+        self, key: str, default: Optional[str] = None
+    ) -> Optional[str]:
         """
-        Retrieve a specific setting value by key using sophisticated caching.
+        Retrieve a specific setting value by key using direct database access.
 
         Args:
             key: Setting key to retrieve
+            default: Default value if setting not found
 
         Returns:
-            Setting value, or None if not found
-
-        Note: Uses the sophisticated cache manager's get_setting_cached function
+            Setting value, default value, or None if not found
         """
-        return await get_setting_cached(self, key)
+        try:
+            async with self.db.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT value FROM settings WHERE key = %s", (key,)
+                    )
+                    results = await cur.fetchall()
+                    return results[0]["value"] if results else default
+        except (psycopg.Error, KeyError, ValueError) as e:
+            raise SettingsOperationError(
+                f"Database operation failed: {e}", operation="get_setting"
+            ) from e
 
     @cached_response(ttl_seconds=300, key_prefix="settings")
     async def get_setting_record(self, key: str) -> Optional[Setting]:

@@ -82,14 +82,21 @@ class OverlayTemplateInitializer:
                     f"Template {template_path.name} has invalid overlay_config"
                 )
 
-            if "overlayPositions" not in overlay_config:
+            if "overlay_items" not in overlay_config:
                 raise TemplateInitializationError(
-                    f"Template {template_path.name} missing overlayPositions in overlay_config"
+                    f"Template {template_path.name} missing overlay_items in overlay_config"
                 )
 
-            if "globalOptions" not in overlay_config:
+            if "global_settings" not in overlay_config:
                 raise TemplateInitializationError(
-                    f"Template {template_path.name} missing globalOptions in overlay_config"
+                    f"Template {template_path.name} missing global_settings in overlay_config"
+                )
+
+            # Validate overlay_items is a list
+            overlay_items = overlay_config["overlay_items"]
+            if not isinstance(overlay_items, list):
+                raise TemplateInitializationError(
+                    f"Template {template_path.name} overlay_items must be a list"
                 )
 
             return template

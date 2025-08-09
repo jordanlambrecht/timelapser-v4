@@ -19,12 +19,12 @@ from ..constants import (
     MAX_CORRUPTION_LOGS_PAGE_SIZE,
 )
 
-# NOTE: Some operations still use database operations directly until
-# they are moved into the corruption pipeline services
-from ..database.corruption_operations import CorruptionOperations
+# NOTE: All operations now use dependency injection for singleton pattern
 from ..dependencies import (
-    AsyncDatabaseDep,
     CameraServiceDep,
+    CorruptionHealthServiceDep,
+    CorruptionOperationsDep,
+    CorruptionStatisticsServiceDep,
     SettingsServiceDep,
 )
 from ..enums import LoggerName
@@ -60,9 +60,11 @@ router = APIRouter()
 # ETag based on latest corruption log timestamp + total count
 @router.get("/corruption/stats")
 @handle_exceptions("get corruption system stats")
-async def get_corruption_system_stats(response: Response, db: AsyncDatabaseDep):
+async def get_corruption_system_stats(
+    response: Response,
+    statistics_service: CorruptionStatisticsServiceDep,
+):
     """Get system-wide corruption detection statistics"""
-    statistics_service = CorruptionStatisticsService(db)
     stats = await statistics_service.get_system_statistics()
 
     # Generate ETag based on stats content for cache validation
@@ -87,13 +89,12 @@ async def get_camera_corruption_stats(
     response: Response,
     camera_id: int,
     camera_service: CameraServiceDep,
-    db: AsyncDatabaseDep,
+    statistics_service: CorruptionStatisticsServiceDep,
 ):
     """Get corruption statistics for a specific camera"""
     # Validate camera exists
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
 
-    statistics_service = CorruptionStatisticsService(db)
     stats = await statistics_service.get_camera_statistics(camera_id)
 
     # Generate ETag based on camera ID and stats content
@@ -120,7 +121,7 @@ async def get_camera_corruption_history(
     response: Response,
     camera_id: int,
     camera_service: CameraServiceDep,
-    db: AsyncDatabaseDep,
+    corruption_ops: CorruptionOperationsDep,
     hours: Optional[int] = Query(
         DEFAULT_CORRUPTION_HISTORY_HOURS,
         description="Number of hours of history to retrieve",
@@ -131,7 +132,6 @@ async def get_camera_corruption_history(
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
 
     hours_int = hours if hours is not None else DEFAULT_CORRUPTION_HISTORY_HOURS
-    corruption_ops = CorruptionOperations(db)
     history = await corruption_ops.get_camera_corruption_history(
         camera_id, hours=hours_int
     )
@@ -209,7 +209,7 @@ async def update_corruption_settings(
 async def get_corruption_logs(
     response: Response,
     camera_service: CameraServiceDep,
-    db: AsyncDatabaseDep,
+    corruption_ops: CorruptionOperationsDep,
     camera_id: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(
@@ -224,8 +224,6 @@ async def get_corruption_logs(
         await validate_entity_exists(
             camera_service.get_camera_by_id, camera_id, "camera"
         )
-
-    corruption_ops = CorruptionOperations(db)
     logs = await corruption_ops.get_corruption_logs(
         camera_id=camera_id,
         page=page,
@@ -255,13 +253,11 @@ async def get_corruption_logs(
 async def reset_camera_degraded_mode(
     camera_id: int,
     camera_service: CameraServiceDep,
-    db: AsyncDatabaseDep,
+    corruption_ops: CorruptionOperationsDep,
 ):
     """Reset degraded mode for a specific camera"""
     # Validate camera exists
     await validate_entity_exists(camera_service.get_camera_by_id, camera_id, "camera")
-
-    corruption_ops = CorruptionOperations(db)
     success = await corruption_ops.reset_camera_degraded_mode(camera_id)
 
     if success:
@@ -274,7 +270,7 @@ async def reset_camera_degraded_mode(
         )
 
 
-# TODO: No caching needed - image testing is dynamic operation
+# NOTE: No caching needed - image testing is dynamic operation
 @router.post("/corruption/test-image", response_model=CorruptionTestResponse)
 @handle_exceptions("test image corruption")
 async def test_image_corruption(
@@ -305,9 +301,8 @@ async def test_image_corruption(
 # Use very short cache (1-2 minutes max) or preferably SSE events via services layer
 @router.get("/system-health")
 @handle_exceptions("get system health")
-async def get_system_health(db: AsyncDatabaseDep):
+async def get_system_health(health_service: CorruptionHealthServiceDep):
     """Get current system health overview."""
-    health_service = CorruptionHealthService(db)
     health_data = await health_service.get_system_health_overview()
     return ResponseFormatter.success(
         "System health retrieved successfully", data=health_data

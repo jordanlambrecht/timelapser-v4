@@ -33,6 +33,8 @@ from ..services.capture_pipeline.workflow_orchestrator_service import (
 )
 from ..services.weather.service import WeatherManager
 
+from ..services.logger import get_service_logger
+
 capture_logger = get_service_logger(LoggerName.CAPTURE_WORKER, LogSource.WORKER)
 
 
@@ -89,8 +91,9 @@ class CaptureWorker(BaseWorker):
         self.async_timelapse_service = async_timelapse_service
         self.async_camera_service = async_camera_service
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.capture_service = CaptureWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_capture_workflow_service
+        self.capture_service = get_capture_workflow_service()
 
     async def initialize(self) -> None:
         """Initialize capture worker resources."""

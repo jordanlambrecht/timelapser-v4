@@ -442,7 +442,7 @@ export default function TimelapseDetailPage() {
         <TabsContent value="overlays">
           <TimelapseOverlaySettings 
             timelapseId={timelapseId} 
-            timelapseName={timelapse.name}
+            timelapseName={timelapse.name || undefined}
           />
         </TabsContent>
 

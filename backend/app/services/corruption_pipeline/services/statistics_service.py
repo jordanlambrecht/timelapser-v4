@@ -54,10 +54,16 @@ class CorruptionStatisticsService:
     detection across the entire system.
     """
 
-    def __init__(self, db: AsyncDatabase):
-        """Initialize with async database instance"""
+    def __init__(self, db: AsyncDatabase, corruption_ops=None):
+        """Initialize with async database instance and optional injected Operations"""
         self.db = db
-        self.db_ops = CorruptionOperations(db)
+        self.db_ops = corruption_ops or self._get_default_corruption_ops()
+    
+    def _get_default_corruption_ops(self):
+        """Fallback to get CorruptionOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ....database.corruption_operations import CorruptionOperations
+        return CorruptionOperations(self.db)
 
     async def get_system_statistics(self) -> Dict[str, Any]:
         """
@@ -520,10 +526,15 @@ class SyncCorruptionStatisticsService:
     that need to report metrics or make decisions based on stats.
     """
 
-    def __init__(self, db: SyncDatabase):
-        """Initialize with sync database instance"""
+    def __init__(self, db: SyncDatabase, corruption_ops=None):
+        """Initialize with sync database instance and optional injected Operations"""
         self.db = db
-        self.db_ops = SyncCorruptionOperations(db)
+        self.db_ops = corruption_ops or self._get_default_corruption_ops()
+        
+    def _get_default_corruption_ops(self):
+        """Fallback to get SyncCorruptionOperations singleton"""
+        from ....dependencies.specialized import get_sync_corruption_operations
+        return get_sync_corruption_operations()
 
     def get_basic_camera_stats(self, camera_id: int) -> Dict[str, Any]:
         """

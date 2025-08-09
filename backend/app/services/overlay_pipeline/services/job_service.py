@@ -12,10 +12,7 @@ from ....constants import (
     DEFAULT_OVERLAY_JOB_BATCH_SIZE,
 )
 from ....database.core import AsyncDatabase, SyncDatabase
-from ....database.overlay_job_operations import (
-    OverlayJobOperations,
-    SyncOverlayJobOperations,
-)
+from ....database.overlay_job_operations import OverlayJobOperations
 from ....enums import (
     LogEmoji,
     LoggerName,
@@ -60,22 +57,29 @@ class SyncOverlayJobService:
     - No shared state between instances
     """
 
-    def __init__(self, db: SyncDatabase, settings_service=None):
+    def __init__(self, db: SyncDatabase, settings_service=None, overlay_job_ops=None):
         """
-        Initialize overlay job service with database and optional settings.
+        Initialize overlay job service with injected dependencies.
 
         Args:
             db: Synchronous database connection for worker operations
             settings_service: Optional SettingsService for configuration access
-                            Required for overlay generation settings validation
+            overlay_job_ops: Optional SyncOverlayJobOperations instance
 
         Note:
             The db is exposed as self.sync_db to allow worker classes
             direct access for performance-critical database operations.
         """
         self.sync_db = db  # Expose for worker access
-        self.overlay_job_ops = SyncOverlayJobOperations(db)
+        self.overlay_job_ops = overlay_job_ops or self._get_default_overlay_job_ops()
         self.settings_service = settings_service
+
+    def _get_default_overlay_job_ops(self):
+        """Fallback to create SyncOverlayJobOperations directly if not injected"""
+        # Using injected SyncOverlayJobOperations singleton
+        from ....dependencies.specialized import get_sync_overlay_job_operations
+
+        return get_sync_overlay_job_operations()
 
     def queue_job(
         self, image_id: int, priority: OverlayJobPriority = OverlayJobPriority.MEDIUM
@@ -322,17 +326,22 @@ class AsyncOverlayJobService:
     endpoints and other async contexts.
     """
 
-    def __init__(self, db: AsyncDatabase, settings_service=None):
+    def __init__(self, db: AsyncDatabase, settings_service=None, overlay_job_ops=None):
         """
-        Initialize async overlay job service with database and optional settings.
+        Initialize async overlay job service with injected dependencies.
 
         Args:
             db: Asynchronous database connection for API operations
             settings_service: Optional SettingsService for configuration access
+            overlay_job_ops: Optional OverlayJobOperations instance
         """
         self.async_db = db
-        self.overlay_job_ops = OverlayJobOperations(db)
+        self.overlay_job_ops = overlay_job_ops or self._get_default_overlay_job_ops()
         self.settings_service = settings_service
+
+    def _get_default_overlay_job_ops(self):
+        """Fallback to create OverlayJobOperations directly if not injected"""
+        return OverlayJobOperations(self.async_db)
 
     async def queue_job(
         self, image_id: int, priority: OverlayJobPriority = OverlayJobPriority.MEDIUM

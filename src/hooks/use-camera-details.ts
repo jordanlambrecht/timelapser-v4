@@ -43,6 +43,7 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
   const [videos, setVideos] = useState<VideoWithDetails[]>([])
   const [recentImages, setRecentImages] = useState<ImageForCamera[]>([])
   const [recentActivity, setRecentActivity] = useState<LogForCamera[]>([])
+  const [stats, setStats] = useState<CameraDetailStats | null>(null)
 
   // Main camera loading state
   const [loading, setLoading] = useState(true)
@@ -63,7 +64,7 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
       setLoading(true)
       setError(null)
 
-      // Only fetch camera data (lightweight) - no related data
+      // Fetch camera data (which now includes statistics)
       const cameraResponse = await fetch(`/api/cameras/${cameraId}`)
       if (!cameraResponse.ok) {
         if (cameraResponse.status === 404) {
@@ -71,8 +72,14 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
         }
         throw new Error(`Failed to fetch camera: ${cameraResponse.status}`)
       }
+      
       const cameraData = await cameraResponse.json()
       setCamera(cameraData)
+      
+      // Extract statistics from camera data if available
+      if (cameraData.stats) {
+        setStats(cameraData.stats)
+      }
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to fetch camera details"
@@ -85,8 +92,8 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     }
   }
 
-  const loadTimelapses = async () => {
-    if (timelapsesLoaded || timelapsesLoading) return
+  const loadTimelapses = async (force = false) => {
+    if (!force && (timelapsesLoaded || timelapsesLoading)) return
 
     try {
       setTimelapsesLoading(true)
@@ -109,8 +116,8 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     }
   }
 
-  const loadVideos = async () => {
-    if (videosLoaded || videosLoading) return
+  const loadVideos = async (force = false) => {
+    if (!force && (videosLoaded || videosLoading)) return
 
     try {
       setVideosLoading(true)
@@ -133,9 +140,20 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     }
   }
 
+  // Comprehensive refetch that updates all data
+  const refetchAll = async () => {
+    await Promise.all([
+      fetchCameraDetails(),
+      timelapsesLoaded ? loadTimelapses(true) : Promise.resolve(),
+      videosLoaded ? loadVideos(true) : Promise.resolve(),
+    ])
+  }
+
   useEffect(() => {
     if (cameraId) {
       fetchCameraDetails()
+      // Auto-load timelapses on camera details page for immediate status visibility
+      loadTimelapses()
     }
   }, [cameraId])
 
@@ -152,7 +170,7 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     videos,
     recentImages,
     recentActivity,
-    stats: null, // TODO: Implement camera stats endpoint
+    stats,
 
     // State
     loading,
@@ -163,7 +181,7 @@ export function useCameraDetails(cameraId: number): UseCameraDetailsResult {
     videosError,
 
     // Actions
-    refetch: fetchCameraDetails,
+    refetch: refetchAll,
     loadTimelapses,
     loadVideos,
   }

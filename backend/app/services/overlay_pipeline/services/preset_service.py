@@ -6,7 +6,7 @@ Overlay Preset Service - Management of system-wide overlay presets.
 from typing import Any, Dict, List, Optional
 
 from ....database.core import AsyncDatabase, SyncDatabase
-from ....database.overlay_operations import OverlayOperations, SyncOverlayOperations
+from ....database.overlay_operations import OverlayOperations
 from ....enums import LoggerName, LogSource
 from ....models.overlay_model import (
     OverlayPreset,
@@ -15,7 +15,7 @@ from ....models.overlay_model import (
 )
 from ....services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
+logger = get_service_logger(LoggerName.OVERLAY_PRESET_SERVICE, LogSource.PIPELINE)
 
 
 class SyncOverlayPresetService:
@@ -24,10 +24,17 @@ class SyncOverlayPresetService:
     Handles system-wide overlay presets for worker processes.
     """
 
-    def __init__(self, db: SyncDatabase):
-        """Initialize with sync database."""
+    def __init__(self, db: SyncDatabase, overlay_ops=None):
+        """Initialize with injected dependencies."""
         self.db = db
-        self.overlay_ops = SyncOverlayOperations(db)
+        self.overlay_ops = overlay_ops or self._get_default_overlay_ops()
+
+    def _get_default_overlay_ops(self):
+        """Fallback to create SyncOverlayOperations directly if not injected"""
+        # Using injected SyncOverlayOperations singleton
+        from ....dependencies.specialized import get_sync_overlay_operations
+
+        return get_sync_overlay_operations()
 
     def get_all_presets(self) -> List[OverlayPreset]:
         """Get all available overlay presets."""
@@ -137,17 +144,21 @@ class OverlayPresetService:
     Provides async versions for use in API endpoints.
     """
 
-    def __init__(self, db: AsyncDatabase):
-        """Initialize with async database."""
+    def __init__(self, db: AsyncDatabase, overlay_ops=None):
+        """Initialize with injected dependencies."""
         self.db = db
-        self.overlay_ops = OverlayOperations(db)
+        self.overlay_ops = overlay_ops or self._get_default_overlay_ops()
+
+    def _get_default_overlay_ops(self):
+        """Fallback to create OverlayOperations directly if not injected"""
+        return OverlayOperations(self.db)
 
     async def get_all_presets(self) -> List[OverlayPreset]:
         """Get all available overlay presets (async)."""
         try:
             return await self.overlay_ops.get_all_presets()
         except Exception as e:
-            logger.error("Failed to get overlay presets", exception=e)
+            logger.error("Failed to get overlay presets:", exception=e)
             return []
 
     async def get_preset_by_id(self, preset_id: int) -> Optional[OverlayPreset]:

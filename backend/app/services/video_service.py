@@ -84,17 +84,20 @@ class VideoService:
     - Provides type-safe Pydantic model interfaces
     """
 
-    def __init__(self, db: AsyncDatabase, sync_db: SyncDatabase, settings_service):
+    def __init__(self, db: AsyncDatabase, sync_db: SyncDatabase, settings_service, video_ops: VideoOperations, sse_ops: SSEEventsOperations):
         """
-        Initialize VideoService with async database instance.
+        Initialize VideoService with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
             sync_db: SyncDatabase instance
+            settings_service: Settings service instance
+            video_ops: Injected VideoOperations singleton
+            sse_ops: Injected SSEEventsOperations singleton
         """
         self.db = db
-        self.video_ops = VideoOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
+        self.video_ops = video_ops
+        self.sse_ops = sse_ops
         self.settings_service = settings_service
 
     async def get_videos(
@@ -822,16 +825,19 @@ class SyncVideoService:
     that need to create or manage video records without async/await complexity.
     """
 
-    def __init__(self, db: SyncDatabase, settings_service):
+    def __init__(self, db: SyncDatabase, settings_service, video_ops: SyncVideoOperations, sse_ops: SyncSSEEventsOperations):
         """
-        Initialize SyncVideoService with sync database instance.
+        Initialize SyncVideoService with injected dependencies.
 
         Args:
             db: SyncDatabase instance
+            settings_service: Settings service instance
+            video_ops: Injected SyncVideoOperations singleton
+            sse_ops: Injected SyncSSEEventsOperations singleton
         """
         self.db = db
-        self.video_ops = SyncVideoOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        self.video_ops = video_ops
+        self.sse_ops = sse_ops
         self.settings_service = settings_service
 
     def get_videos(

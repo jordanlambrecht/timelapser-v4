@@ -37,7 +37,7 @@ from ..dependencies import (
     ImageServiceDep,
     SettingsServiceDep,
 )
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource
 from ..models import Camera, CameraCreate, CameraUpdate
 from ..models.camera_action_models import (
     CameraStatusResponse,
@@ -74,7 +74,7 @@ from ..utils.time_utils import (
     get_timezone_aware_timestamp_async,
 )
 
-logger = get_service_logger(LoggerName.API)
+logger = get_service_logger(LoggerName.API, LogSource.API)
 
 # NOTE: CACHING STRATEGY - IMPLEMENTED THROUGHOUT THIS FILE
 # Camera operations use mixed caching strategy implemented across endpoints:

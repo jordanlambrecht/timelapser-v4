@@ -65,7 +65,7 @@ from ..constants import (
     WEATHER_REFRESH_MINUTE,
 )
 from ..database.core import SyncDatabase
-from ..enums import LoggerName
+from ..enums import LoggerName, LogSource
 from ..services.logger import get_service_logger
 from .constants import (  # TIMELAPSE_SYNC_INTERVAL_MINUTES,
     AUTOMATION_TRIGGER_INTERVAL_MINUTES,
@@ -78,7 +78,7 @@ from .constants import (  # TIMELAPSE_SYNC_INTERVAL_MINUTES,
 )
 from .utils import SchedulerJobTemplate, SchedulerTimeUtils
 
-logger = get_service_logger(LoggerName.SCHEDULER_WORKER)
+logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.SCHEDULER)
 
 
 class StandardJobManager:
@@ -107,7 +107,8 @@ class StandardJobManager:
         self.automation_triggers_func: Optional[Callable] = None
         self.sync_timelapses_func: Optional[Callable] = None
         self.sse_cleanup_func: Optional[Callable] = None
-        self.database_cleanup_func: Optional[Callable] = None
+        self.cleanup_func: Optional[Callable] = None
+        self.database_cleanup_func: Optional[Callable] = None  # Legacy - keep for compatibility
 
     def log_info(self, message: str) -> None:
         """Log info message with prefix."""
@@ -330,15 +331,16 @@ class StandardJobManager:
 
     def _add_database_cleanup_job(self) -> bool:
         """Add database cleanup job (CEO compliant - replaces CleanupWorker autonomous run)."""
-        if not self.database_cleanup_func:
+        cleanup_func = self.cleanup_func or self.database_cleanup_func
+        if not cleanup_func:
             self.log_debug(
-                "Database cleanup function not configured, skipping database cleanup job"
+                "Cleanup function not configured, skipping database cleanup job"
             )
             return False
 
         return self.job_template.schedule_interval_job(
             job_id="database_cleanup_job",
-            func=self.database_cleanup_func,
+            func=cleanup_func,
             interval_seconds=CLEANUP_INTERVAL_HOURS_DEFAULT
             * SECONDS_PER_HOUR,  # 6 hours
         )

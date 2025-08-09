@@ -9,11 +9,11 @@ Completely separate from other settings to avoid confusion.
 from typing import Optional
 
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...enums import LoggerName
+from ...enums import LoggerName, LogSource
 from ...services.logger import get_service_logger
 from ...utils.hashing import hash_api_key
 
-logger = get_service_logger(LoggerName.WEATHER_SERVICE)
+logger = get_service_logger(LoggerName.WEATHER_SERVICE, LogSource.SYSTEM)
 
 
 class APIKeyService:
@@ -24,23 +24,21 @@ class APIKeyService:
         self.settings_service = settings_service
 
     async def _get_setting(self, key: str):
-        """Get setting using injected service or fallback to operations."""
+        """Get setting using injected service or fallback to singleton operations."""
         if self.settings_service:
             return await self.settings_service.get_setting(key)
         else:
-            from ...database.settings_operations import SettingsOperations
-
-            settings_ops = SettingsOperations(self.db)
+            from ...dependencies.specialized import get_settings_operations
+            settings_ops = await get_settings_operations()
             return await settings_ops.get_setting(key)
 
     async def _set_setting(self, key: str, value: str):
-        """Set setting using injected service or fallback to operations."""
+        """Set setting using injected service or fallback to singleton operations."""
         if self.settings_service:
             await self.settings_service.set_setting(key, value)
         else:
-            from ...database.settings_operations import SettingsOperations
-
-            settings_ops = SettingsOperations(self.db)
+            from ...dependencies.specialized import get_settings_operations
+            settings_ops = await get_settings_operations()
             await settings_ops.set_setting(key, value)
 
     async def store_api_key(self, api_key: str) -> bool:
@@ -119,23 +117,21 @@ class SyncAPIKeyService:
         self.settings_service = settings_service
 
     def _get_setting(self, key: str):
-        """Get setting using injected service or fallback to operations."""
+        """Get setting using injected service or fallback to singleton operations."""
         if self.settings_service:
             return self.settings_service.get_setting(key)
         else:
-            from ...database.settings_operations import SyncSettingsOperations
-
-            settings_ops = SyncSettingsOperations(self.db)
+            from ...dependencies.specialized import get_sync_settings_operations
+            settings_ops = get_sync_settings_operations()
             return settings_ops.get_setting(key)
 
     def _set_setting(self, key: str, value: str):
-        """Set setting using injected service or fallback to operations."""
+        """Set setting using injected service or fallback to singleton operations."""
         if self.settings_service:
             self.settings_service.set_setting(key, value)
         else:
-            from ...database.settings_operations import SyncSettingsOperations
-
-            settings_ops = SyncSettingsOperations(self.db)
+            from ...dependencies.specialized import get_sync_settings_operations
+            settings_ops = get_sync_settings_operations()
             settings_ops.set_setting(key, value)
 
     def store_api_key(self, api_key: str) -> bool:

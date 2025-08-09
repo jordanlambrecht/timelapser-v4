@@ -36,53 +36,57 @@ const overlayTypes: OverlayType[] = [
     name: "Weather",
     icon: Cloud,
     color: "text-purple",
-    description: "Display weather information and temperature"
+    description: "Display weather information and temperature",
   },
   {
     id: "watermark",
     name: "Watermark",
     icon: ImageIcon,
     color: "text-cyan",
-    description: "Add logo or image watermark"
+    description: "Add logo or image watermark",
   },
   {
     id: "frame_number",
     name: "Frame Number",
     icon: Hash,
     color: "text-pink",
-    description: "Show current frame number in sequence"
+    description: "Show current frame number in sequence",
   },
   {
     id: "date_time",
     name: "Date & Time",
     icon: Calendar,
     color: "text-cyan",
-    description: "Display capture date and time"
+    description: "Display capture date and time",
   },
   {
-    id: "day_counter",
+    id: "day_number",
     name: "Day Counter",
     icon: Activity,
     color: "text-purple",
-    description: "Count days since timelapse started"
+    description: "Count days since timelapse started",
   },
   {
     id: "custom_text",
     name: "Custom Text",
     icon: Type,
     color: "text-pink",
-    description: "Add custom text overlay"
+    description: "Add custom text overlay",
   },
   {
     id: "timelapse_name",
     name: "Timelapse Name",
     icon: FileText,
     color: "text-cyan",
-    description: "Display the timelapse name"
+    description: "Display the timelapse name",
   },
 ]
 
-export function AddOverlayModal({ isOpen, onClose, onAdd }: AddOverlayModalProps) {
+export function AddOverlayModal({
+  isOpen,
+  onClose,
+  onAdd,
+}: AddOverlayModalProps) {
   const [selectedType, setSelectedType] = useState<string | null>(null)
 
   if (!isOpen) return null
@@ -96,30 +100,30 @@ export function AddOverlayModal({ isOpen, onClose, onAdd }: AddOverlayModalProps
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className='fixed inset-0 z-50 flex items-center justify-center'>
       {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
+      <div
+        className='absolute inset-0 bg-black/50 backdrop-blur-sm'
         onClick={onClose}
       />
-      
+
       {/* Modal */}
-      <div className="relative bg-gray-900/95 border border-gray-600/30 rounded-xl p-6 max-w-md w-full mx-4 backdrop-blur-sm">
+      <div className='relative bg-gray-900/95 border border-gray-600/30 rounded-xl p-6 max-w-md w-full mx-4 backdrop-blur-sm'>
         {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">Add New Overlay</h3>
+        <div className='flex items-center justify-between mb-4'>
+          <h3 className='text-lg font-semibold text-white'>Add New Overlay</h3>
           <Button
-            variant="ghost"
-            size="sm"
+            variant='ghost'
+            size='sm'
             onClick={onClose}
-            className="text-gray-400 hover:text-white"
+            className='text-gray-400 hover:text-white'
           >
-            <X className="w-4 h-4" />
+            <X className='w-4 h-4' />
           </Button>
         </div>
-        
+
         {/* Overlay Types */}
-        <div className="space-y-2 mb-6">
+        <div className='space-y-2 mb-6'>
           {overlayTypes.map((type) => (
             <div
               key={type.id}
@@ -132,30 +136,32 @@ export function AddOverlayModal({ isOpen, onClose, onAdd }: AddOverlayModalProps
               onClick={() => setSelectedType(type.id)}
             >
               <type.icon className={cn("w-5 h-5", type.color)} />
-              <div className="flex-1">
-                <div className="text-white font-medium text-sm">{type.name}</div>
-                <div className="text-gray-400 text-xs">{type.description}</div>
+              <div className='flex-1'>
+                <div className='text-white font-medium text-sm'>
+                  {type.name}
+                </div>
+                <div className='text-gray-400 text-xs'>{type.description}</div>
               </div>
               {selectedType === type.id && (
-                <div className="w-2 h-2 rounded-full bg-purple" />
+                <div className='w-2 h-2 rounded-full bg-purple' />
               )}
             </div>
           ))}
         </div>
-        
+
         {/* Actions */}
-        <div className="flex items-center gap-3">
+        <div className='flex items-center gap-3'>
           <Button
-            variant="outline"
+            variant='outline'
             onClick={onClose}
-            className="flex-1 border-gray-500 text-gray-400 hover:text-white"
+            className='flex-1 border-gray-500 text-gray-400 hover:text-white'
           >
             Cancel
           </Button>
           <Button
             onClick={handleAdd}
             disabled={!selectedType}
-            className="flex-1 bg-purple hover:bg-purple/80 text-white disabled:opacity-50"
+            className='flex-1 bg-purple hover:bg-purple/80 text-white disabled:opacity-50'
           >
             Add Overlay
           </Button>

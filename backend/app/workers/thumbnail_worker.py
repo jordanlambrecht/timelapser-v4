@@ -9,6 +9,7 @@ Maintains all functionality while using shared infrastructure:
 - JobBatchProcessor for adaptive performance scaling
 """
 
+import asyncio
 import time
 from typing import Any, Dict, List
 
@@ -25,7 +26,6 @@ from ..constants import (
     THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD,
 )
 from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.timelapse_operations import SyncTimelapseOperations
 from ..enums import (
     JobTypes,
     LogEmoji,
@@ -35,14 +35,14 @@ from ..enums import (
     WorkerType,
 )
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
-from ..services.logger import get_service_logger
 from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
 from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
-from ..services.thumbnail_workflow_service import ThumbnailWorkflowService
 from .constants import MILLISECONDS_PER_SECOND
 from .mixins.job_processing_mixin import JobProcessingMixin
 from .mixins.startup_recovery_mixin import StartupRecoveryMixin
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 
@@ -91,6 +91,7 @@ class ThumbnailWorker(
         worker_interval: int = DEFAULT_THUMBNAIL_WORKER_INTERVAL,
         max_retries: int = DEFAULT_THUMBNAIL_MAX_RETRIES,
         cleanup_hours: int = DEFAULT_THUMBNAIL_CLEANUP_HOURS,
+        timelapse_ops=None,
     ):
         """
         Initialize ThumbnailWorker with shared job processing infrastructure.
@@ -103,6 +104,7 @@ class ThumbnailWorker(
             worker_interval: Seconds between job queue polling
             max_retries: Maximum retry attempts for failed jobs
             cleanup_hours: Hours to keep completed jobs before cleanup
+            timelapse_ops: Optional SyncTimelapseOperations instance
         """
         # Initialize shared job processing infrastructure
         super().__init__(
@@ -123,9 +125,18 @@ class ThumbnailWorker(
         # Thumbnail-specific services
         self.thumbnail_job_service = thumbnail_job_service
         self.thumbnail_pipeline = thumbnail_pipeline
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.thumbnail_service = ThumbnailWorkflowService()
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ..dependencies.specialized import get_sync_timelapse_operations
+
+        return get_sync_timelapse_operations()
+
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_thumbnail_workflow_service
+
+        self.thumbnail_service = get_thumbnail_workflow_service()
 
     async def initialize(self) -> None:
         """Initialize thumbnail worker resources."""
@@ -154,6 +165,20 @@ class ThumbnailWorker(
         # Broadcast worker startup event using shared SSE broadcaster
         self.sse_broadcaster.broadcast_worker_started(
             worker_config=self._get_worker_config()
+        )
+
+    async def start(self) -> None:
+        """Start the thumbnail worker with background processing."""
+        # Call parent's start method to initialize
+        await super().start()
+
+        # Start the background processing loop
+        asyncio.create_task(self.run())
+
+        logger.info(
+            "Thumbnail worker started with background processing",
+            store_in_db=False,
+            emoji=LogEmoji.STARTUP,
         )
 
     async def cleanup(self) -> None:
@@ -437,10 +462,8 @@ class ThumbnailWorker(
 
             if increment_thumbnail or increment_small:
 
-                timelapse_ops = SyncTimelapseOperations(self.thumbnail_job_service.db)
-
-                # Update counts synchronously in worker
-                success = timelapse_ops.increment_thumbnail_counts_sync(
+                # Update counts synchronously in worker using injected operations
+                success = self.timelapse_ops.increment_thumbnail_counts_sync(
                     result.timelapse_id,
                     increment_thumbnail=increment_thumbnail,
                     increment_small=increment_small,

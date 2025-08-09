@@ -1,4 +1,3 @@
-# backend/app/services/overlay_pipeline/utils/overlay_helpers.py
 """
 Overlay Helpers - Settings inheritance and configuration management for overlay system.
 
@@ -9,7 +8,7 @@ merging preset settings with timelapse overrides, and validating overlay configu
 from typing import Any, Dict, Optional
 
 from ....models.overlay_model import (
-    GlobalOverlayOptions,
+    GlobalSettings,
     OverlayConfiguration,
     OverlayItem,
     OverlayPreset,
@@ -63,16 +62,16 @@ class OverlaySettingsResolver:
     def _get_default_configuration() -> OverlayConfiguration:
         """Get the built-in default overlay configuration."""
         return OverlayConfiguration(
-            overlayPositions={},
-            globalOptions=GlobalOverlayOptions(
+            overlay_items=[],
+            global_settings=GlobalSettings(
                 opacity=100,
                 font="Arial",
-                xMargin=20,
-                yMargin=20,
-                backgroundColor="#000000",
-                backgroundOpacity=50,
-                fillColor="#FFFFFF",
-                dropShadow=True,
+                x_margin=20,
+                y_margin=20,
+                background_color="#000000",
+                background_opacity=50,
+                fill_color="#FFFFFF",
+                drop_shadow=True,
                 preset=None,
             ),
         )
@@ -91,65 +90,80 @@ class OverlaySettingsResolver:
         Returns:
             Merged configuration
         """
-        # Start with base configuration
-        merged_positions = dict(base.overlayPositions)
+        # Start with base overlay items
+        merged_items = list(base.overlay_items)
 
-        # Override with new positions
-        merged_positions.update(override.overlayPositions)
+        # Override with new items (based on position matching)
+        for override_item in override.overlay_items:
+            # Find existing item with same position
+            existing_index = None
+            for i, base_item in enumerate(merged_items):
+                if base_item.position == override_item.position:
+                    existing_index = i
+                    break
 
-        # Merge global options
-        merged_global_options = GlobalOverlayOptions(
+            if existing_index is not None:
+                # Replace existing item
+                merged_items[existing_index] = override_item
+            else:
+                # Add new item
+                merged_items.append(override_item)
+
+        # Merge global settings
+        merged_global_settings = GlobalSettings(
             opacity=(
-                override.globalOptions.opacity
-                if override.globalOptions.opacity != base.globalOptions.opacity
-                else base.globalOptions.opacity
+                override.global_settings.opacity
+                if override.global_settings.opacity != base.global_settings.opacity
+                else base.global_settings.opacity
             ),
             font=(
-                override.globalOptions.font
-                if override.globalOptions.font != base.globalOptions.font
-                else base.globalOptions.font
+                override.global_settings.font
+                if override.global_settings.font != base.global_settings.font
+                else base.global_settings.font
             ),
-            xMargin=(
-                override.globalOptions.xMargin
-                if override.globalOptions.xMargin != base.globalOptions.xMargin
-                else base.globalOptions.xMargin
+            x_margin=(
+                override.global_settings.x_margin
+                if override.global_settings.x_margin != base.global_settings.x_margin
+                else base.global_settings.x_margin
             ),
-            yMargin=(
-                override.globalOptions.yMargin
-                if override.globalOptions.yMargin != base.globalOptions.yMargin
-                else base.globalOptions.yMargin
+            y_margin=(
+                override.global_settings.y_margin
+                if override.global_settings.y_margin != base.global_settings.y_margin
+                else base.global_settings.y_margin
             ),
-            backgroundColor=(
-                override.globalOptions.backgroundColor
-                if override.globalOptions.backgroundColor
-                != base.globalOptions.backgroundColor
-                else base.globalOptions.backgroundColor
+            background_color=(
+                override.global_settings.background_color
+                if override.global_settings.background_color
+                != base.global_settings.background_color
+                else base.global_settings.background_color
             ),
-            backgroundOpacity=(
-                override.globalOptions.backgroundOpacity
-                if override.globalOptions.backgroundOpacity
-                != base.globalOptions.backgroundOpacity
-                else base.globalOptions.backgroundOpacity
+            background_opacity=(
+                override.global_settings.background_opacity
+                if override.global_settings.background_opacity
+                != base.global_settings.background_opacity
+                else base.global_settings.background_opacity
             ),
-            fillColor=(
-                override.globalOptions.fillColor
-                if override.globalOptions.fillColor != base.globalOptions.fillColor
-                else base.globalOptions.fillColor
+            fill_color=(
+                override.global_settings.fill_color
+                if override.global_settings.fill_color
+                != base.global_settings.fill_color
+                else base.global_settings.fill_color
             ),
-            dropShadow=(
-                override.globalOptions.dropShadow
-                if override.globalOptions.dropShadow != base.globalOptions.dropShadow
-                else base.globalOptions.dropShadow
+            drop_shadow=(
+                override.global_settings.drop_shadow
+                if override.global_settings.drop_shadow
+                != base.global_settings.drop_shadow
+                else base.global_settings.drop_shadow
             ),
             preset=(
-                override.globalOptions.preset
-                if override.globalOptions.preset != base.globalOptions.preset
-                else base.globalOptions.preset
+                override.global_settings.preset
+                if override.global_settings.preset != base.global_settings.preset
+                else base.global_settings.preset
             ),
         )
 
         return OverlayConfiguration(
-            overlayPositions=merged_positions, globalOptions=merged_global_options
+            overlay_items=merged_items, global_settings=merged_global_settings
         )
 
     @staticmethod
@@ -169,19 +183,17 @@ class OverlaySettingsResolver:
         warnings = []
 
         # Check if any overlays are defined
-        if not config.overlayPositions:
-            warnings.append("No overlay positions defined - overlay will be empty")
+        if not config.overlay_items:
+            warnings.append("No overlay items defined - overlay will be empty")
 
         # Validate each overlay item
-        for position, overlay_item in config.overlayPositions.items():
-            position_issues = OverlaySettingsResolver._validate_overlay_item(
-                position, overlay_item
-            )
-            issues.extend(position_issues)
+        for overlay_item in config.overlay_items:
+            item_issues = OverlaySettingsResolver._validate_overlay_item(overlay_item)
+            issues.extend(item_issues)
 
-        # Validate global options
-        global_issues = OverlaySettingsResolver._validate_global_options(
-            config.globalOptions
+        # Validate global settings
+        global_issues = OverlaySettingsResolver._validate_global_settings(
+            config.global_settings
         )
         issues.extend(global_issues)
 
@@ -189,72 +201,82 @@ class OverlaySettingsResolver:
             "valid": len(issues) == 0,
             "issues": issues,
             "warnings": warnings,
-            "overlay_count": len(config.overlayPositions),
+            "overlay_count": len(config.overlay_items),
         }
 
     @staticmethod
-    def _validate_overlay_item(position: str, overlay_item: OverlayItem) -> list:
+    def _validate_overlay_item(overlay_item: OverlayItem) -> list:
         """Validate a single overlay item configuration."""
         issues = []
 
         # Validate overlay type
         if not overlay_item.type:
-            issues.append(f"Position {position}: Missing overlay type")
+            issues.append(f"Position {overlay_item.position}: Missing overlay type")
 
         # Validate text size
-        if overlay_item.textSize < 8 or overlay_item.textSize > 72:
+        text_size = overlay_item.settings.get("text_size", 16)
+        if text_size < 8 or text_size > 72:
             issues.append(
-                f"Position {position}: Text size must be between 8 and 72 pixels"
+                f"Position {overlay_item.position}: Text size must be between 8 and 72 pixels"
             )
 
         # Validate text color format
-        if overlay_item.textColor and not overlay_item.textColor.startswith("#"):
+        text_color = overlay_item.settings.get("text_color")
+        if text_color and not text_color.startswith("#"):
             issues.append(
-                f"Position {position}: Text color must be in hex format (#RRGGBB)"
+                f"Position {overlay_item.position}: Text color must be in hex format (#RRGGBB)"
             )
 
         # Validate background opacity
-        if overlay_item.backgroundOpacity < 0 or overlay_item.backgroundOpacity > 100:
+        background_opacity = overlay_item.settings.get("background_opacity", 0)
+        if background_opacity < 0 or background_opacity > 100:
             issues.append(
-                f"Position {position}: Background opacity must be between 0 and 100"
+                f"Position {overlay_item.position}: Background opacity must be between 0 and 100"
             )
 
         # Validate image scale
-        if overlay_item.imageScale < 10 or overlay_item.imageScale > 500:
+        image_scale = overlay_item.settings.get("image_scale", 100)
+        if image_scale < 10 or image_scale > 500:
             issues.append(
-                f"Position {position}: Image scale must be between 10% and 500%"
+                f"Position {overlay_item.position}: Image scale must be between 10% and 500%"
             )
 
         # Validate custom text for custom text overlays
-        if overlay_item.type == "custom_text" and not overlay_item.customText:
-            issues.append(
-                f"Position {position}: Custom text overlay requires text content"
-            )
+        if overlay_item.type == "custom_text":
+            custom_text = overlay_item.settings.get("custom_text")
+            if not custom_text:
+                issues.append(
+                    f"Position {overlay_item.position}: Custom text overlay requires text content"
+                )
 
         # Validate image URL for watermark overlays
-        if overlay_item.type == "watermark" and not overlay_item.imageUrl:
-            issues.append(f"Position {position}: Watermark overlay requires image URL")
+        if overlay_item.type == "watermark":
+            image_url = overlay_item.settings.get("image_url")
+            if not image_url:
+                issues.append(
+                    f"Position {overlay_item.position}: Watermark overlay requires image URL"
+                )
 
         return issues
 
     @staticmethod
-    def _validate_global_options(global_options: GlobalOverlayOptions) -> list:
-        """Validate global overlay options."""
+    def _validate_global_settings(global_settings: GlobalSettings) -> list:
+        """Validate global overlay settings."""
         issues = []
 
         # Validate opacity
-        if global_options.opacity < 0 or global_options.opacity > 100:
+        if global_settings.opacity < 0 or global_settings.opacity > 100:
             issues.append("Global opacity must be between 0 and 100")
 
         # Validate margins
-        if global_options.xMargin < 0 or global_options.xMargin > 200:
+        if global_settings.x_margin < 0 or global_settings.x_margin > 200:
             issues.append("X margin must be between 0 and 200 pixels")
 
-        if global_options.yMargin < 0 or global_options.yMargin > 200:
+        if global_settings.y_margin < 0 or global_settings.y_margin > 200:
             issues.append("Y margin must be between 0 and 200 pixels")
 
         # Validate font family
-        if not global_options.font:
+        if not global_settings.font:
             issues.append("Font family cannot be empty")
 
         return issues
@@ -303,14 +325,14 @@ class OverlayPresetManager:
         Returns:
             Summary dictionary with key preset information
         """
-        overlay_count = len(preset.overlay_config.overlayPositions)
+        overlay_count = len(preset.overlay_config.overlay_items)
 
         # Categorize overlay types
         text_overlays = []
         weather_overlays = []
         image_overlays = []
 
-        for position, overlay_item in preset.overlay_config.overlayPositions.items():
+        for overlay_item in preset.overlay_config.overlay_items:
             if overlay_item.type in [
                 "date",
                 "date_time",
@@ -324,7 +346,7 @@ class OverlayPresetManager:
             elif overlay_item.type in [
                 "temperature",
                 "weather_conditions",
-                "weather_temp_conditions",
+                "weather",  # Unified weather type
             ]:
                 weather_overlays.append(overlay_item.type)
             elif overlay_item.type == "watermark":
@@ -342,8 +364,8 @@ class OverlayPresetManager:
             "text_overlay_types": text_overlays,
             "weather_overlay_types": weather_overlays,
             "image_overlay_types": image_overlays,
-            "global_opacity": preset.overlay_config.globalOptions.opacity,
-            "font_family": preset.overlay_config.globalOptions.font,
+            "global_opacity": preset.overlay_config.global_settings.opacity,
+            "font_family": preset.overlay_config.global_settings.font,
             "created_at": preset.created_at,
             "updated_at": preset.updated_at,
         }
@@ -442,8 +464,8 @@ def get_overlay_type_metadata() -> Dict[str, Dict[str, Any]]:
             "requires_format": False,
             "requires_weather": True,
         },
-        "weather_temp_conditions": {
-            "label": "Temperature & Conditions",
+        "weather": {
+            "label": "Weather (Temperature & Conditions)",
             "description": "Combined temperature and weather",
             "category": "weather",
             "requires_format": False,
