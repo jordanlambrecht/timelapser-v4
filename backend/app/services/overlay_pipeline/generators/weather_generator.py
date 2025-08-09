@@ -10,7 +10,7 @@ from typing import Union
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
-from ....models.overlay_model import OverlayItem, OverlayType
+from ....models.overlay_model import OverlayItem
 from ....services.logger import get_service_logger
 from ....utils.validation_helpers import (
     validate_display_format,
@@ -28,19 +28,39 @@ class WeatherGenerator(BaseOverlayGenerator):
     Handles:
     - temperature: Current temperature reading
     - weather_conditions: Weather description (sunny, cloudy, etc.)
-    - weather_temp_conditions: Combined temperature and conditions
+    - weather: Combined temperature and conditions (unified weather type)
 
     All types produce dynamic content that changes based on weather data.
     """
 
     @property
-    def supported_types(self) -> list[OverlayType]:
+    def generator_type(self) -> str:
+        """Return the primary generator type."""
+        return "weather"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for this generator."""
+        return "Weather Data"
+
+    @property
+    def description(self) -> str:
+        """Description of what this generator does."""
+        return "Displays temperature and weather conditions with icon support"
+
+    @property
+    def supported_types(self) -> list[str]:
         """Weather generator supports temperature and weather condition overlays."""
         return [
-            OverlayType.TEMPERATURE,
-            OverlayType.WEATHER_CONDITIONS,
-            OverlayType.WEATHER_TEMP_CONDITIONS,
+            "temperature",
+            "weather_conditions",
+            "weather",  # Unified weather type
         ]
+
+    def supports_type(self, overlay_type: str) -> bool:
+        """Check if this generator supports the given overlay type."""
+        # Since supported_types now returns strings, we can directly check
+        return overlay_type in self.supported_types
 
     @property
     def is_static(self) -> bool:
@@ -68,7 +88,7 @@ class WeatherGenerator(BaseOverlayGenerator):
         try:
             self.validate_overlay_item(overlay_item)
             logger.debug(
-                f"Weather overlay validation passed for type: {overlay_item.type}"
+                f"Weather overlay type '{overlay_item.type}' processed successfully"
             )
 
             if overlay_item.type == "temperature":
@@ -77,9 +97,10 @@ class WeatherGenerator(BaseOverlayGenerator):
             elif overlay_item.type == "weather_conditions":
                 result = self._generate_weather_conditions(overlay_item, context)
                 logger.debug(f"Generated weather conditions overlay: '{result}'")
-            elif overlay_item.type == "weather_temp_conditions":
+            elif overlay_item.type in ["weather", "weather_temp_conditions"]:
+                # Support both unified and legacy weather types
                 result = self._generate_temp_and_conditions(overlay_item, context)
-                logger.debug(f"Generated combined weather overlay: '{result}'")
+                logger.debug(f"Generated unified weather overlay: '{result}'")
             else:
                 logger.error(f"Unsupported weather overlay type: {overlay_item.type}")
                 raise ValueError(f"Unsupported overlay type: {overlay_item.type}")
@@ -87,10 +108,10 @@ class WeatherGenerator(BaseOverlayGenerator):
             return result
 
         except ValueError as e:
-            logger.error("Validation error in weather overlay generation", exception=e)
+            logger.error(f"Validation error in weather overlay generation: {e}")
             raise
         except Exception as e:
-            logger.error("Failed to generate weather overlay content", exception=e)
+            logger.error(f"Failed to generate weather overlay content: {e}")
             raise RuntimeError(f"Failed to generate weather content: {e}")
 
     def _generate_temperature(
@@ -120,7 +141,7 @@ class WeatherGenerator(BaseOverlayGenerator):
         )
 
         # Get temperature unit preference
-        unit = overlay_item.unit or context.temperature_unit or "F"
+        unit = overlay_item.settings.get("unit") or context.temperature_unit or "F"
         logger.debug(f"Target unit: {unit}")
 
         # Convert temperature if needed
@@ -130,7 +151,7 @@ class WeatherGenerator(BaseOverlayGenerator):
         logger.debug(f"Converted temperature: {temp_value}°{unit}")
 
         # Format based on display preference
-        display = overlay_item.display or "with_unit"
+        display = overlay_item.settings.get("display", "with_unit")
         logger.debug(f"Display format: {display}")
 
         if display == "temp_only":
@@ -156,10 +177,24 @@ class WeatherGenerator(BaseOverlayGenerator):
             context: Generation context with weather condition data
 
         Returns:
-            Weather conditions string
+            Weather conditions string or icon based on settings
         """
         logger.debug("Processing weather conditions overlay generation")
 
+        # Check display preference - default to icon if weather_icon is available
+        display_mode = overlay_item.settings.get(
+            "conditions_display", "icon"
+        )  # "icon" or "text"
+
+        # Try to use weather icon first if available and preferred
+        if display_mode == "icon" and context.weather_icon:
+            logger.debug(f"Using weather icon: {context.weather_icon}")
+            icon = self._get_weather_icon_emoji(context.weather_icon)
+            if icon:
+                logger.debug("Weather conditions icon overlay generated successfully")
+                return icon
+
+        # Fall back to text conditions
         if not context.weather_conditions:
             logger.warning("Weather conditions data not available, using fallback")
             return "N/A"  # Graceful fallback
@@ -174,8 +209,44 @@ class WeatherGenerator(BaseOverlayGenerator):
             logger.debug("Capitalizing first letter of conditions")
             conditions = conditions[0].upper() + conditions[1:]
 
-        logger.debug("Weather conditions overlay generated successfully")
+        logger.debug("Weather conditions text overlay generated successfully")
         return conditions
+
+    def _get_weather_icon_emoji(self, icon_code: str) -> str:
+        """
+        Convert OpenWeather icon code to emoji.
+
+        Args:
+            icon_code: OpenWeather icon code (e.g., "01d", "02n")
+
+        Returns:
+            Weather emoji string
+        """
+        # OpenWeather icon codes mapping to emoji
+        icon_map = {
+            "01d": "☀️",  # clear sky day
+            "01n": "🌙",  # clear sky night
+            "02d": "⛅",  # few clouds day
+            "02n": "☁️",  # few clouds night
+            "03d": "☁️",  # scattered clouds
+            "03n": "☁️",  # scattered clouds
+            "04d": "☁️",  # broken clouds
+            "04n": "☁️",  # broken clouds
+            "09d": "🌧️",  # shower rain
+            "09n": "🌧️",  # shower rain
+            "10d": "🌦️",  # rain day
+            "10n": "🌧️",  # rain night
+            "11d": "⛈️",  # thunderstorm
+            "11n": "⛈️",  # thunderstorm
+            "13d": "❄️",  # snow
+            "13n": "❄️",  # snow
+            "50d": "🌫️",  # mist
+            "50n": "🌫️",  # mist
+        }
+
+        emoji = icon_map.get(icon_code, "🌤️")  # default to partly sunny
+        logger.debug(f"Mapped icon code '{icon_code}' to emoji '{emoji}'")
+        return emoji
 
     def _generate_temp_and_conditions(
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
@@ -256,7 +327,7 @@ class WeatherGenerator(BaseOverlayGenerator):
         else:
             # Unknown unit conversion, return original
             logger.warning(
-                f"⚠️ Unknown unit conversion {from_unit} → {to_unit}, returning original value"
+                f"Unknown unit conversion {from_unit} → {to_unit}, returning original value"
             )
             return temperature
 
@@ -277,31 +348,36 @@ class WeatherGenerator(BaseOverlayGenerator):
         # Use validation helpers for consistent validation
         try:
             # Validate temperature unit
-            validated_unit = validate_temperature_unit(overlay_item.unit)
-            if validated_unit:
-                logger.debug(f"🌡️ Validated temperature unit: {validated_unit}")
+            unit = overlay_item.settings.get("unit")
+            if unit:
+                validated_unit = validate_temperature_unit(unit)
+                if validated_unit:
+                    logger.debug(f"🌡️ Validated temperature unit: {validated_unit}")
 
             # Validate display format
-            validated_display = validate_display_format(overlay_item.display)
-            if validated_display:
-                logger.debug(f"🎨 Validated display format: {validated_display}")
+            display = overlay_item.settings.get("display")
+            if display:
+                validated_display = validate_display_format(display)
+                if validated_display:
+                    logger.debug(f"🎨 Validated display format: {validated_display}")
 
         except ValueError as e:
-            logger.error(f"❌ Weather validation failed: {e}")
+            logger.error(f"Weather validation failed: {e}")
             raise
 
         # Type-specific validation
-        if overlay_item.type in ["temperature", "weather_temp_conditions"]:
+        if overlay_item.type in ["temperature", "weather"]:
             logger.debug("🌡️ Temperature-based overlay validation")
             # These types should have unit preference
-            if not overlay_item.unit and overlay_item.type == "temperature":
+            unit = overlay_item.settings.get("unit")
+            if not unit and overlay_item.type == "temperature":
                 logger.debug("🌡️ No unit specified, will use default from context")
                 # Will use default from context, no error needed
                 pass
-            elif overlay_item.unit:
-                logger.debug(f"🌡️ Unit specified: {overlay_item.unit}")
+            elif unit:
+                logger.debug(f"🌡️ Unit specified: {unit}")
 
-        if overlay_item.type in ["weather_conditions", "weather_temp_conditions"]:
+        if overlay_item.type in ["weather_conditions", "weather"]:
             logger.debug("🌤️ Weather conditions overlay validation")
             # These types require weather conditions data at runtime
             # Can't validate here without context, will check at generation time
@@ -310,7 +386,9 @@ class WeatherGenerator(BaseOverlayGenerator):
         logger.debug(
             f"✅ Weather overlay validation completed for type: {overlay_item.type}"
         )
-        if overlay_item.unit:
-            logger.debug(f"🌡️ Temperature unit: {overlay_item.unit}")
-        if overlay_item.display:
-            logger.debug(f"🎨 Display format: {overlay_item.display}")
+        unit = overlay_item.settings.get("unit")
+        display = overlay_item.settings.get("display")
+        if unit:
+            logger.debug(f"🌡️ Temperature unit: {unit}")
+        if display:
+            logger.debug(f"🎨 Display format: {display}")
