@@ -44,8 +44,6 @@ from app.constants import (
     HEALTH_VIDEO_QUEUE_WARNING,
 )
 from app.database.core import AsyncDatabase
-from app.database.health_operations import HealthOperations
-from app.database.statistics_operations import StatisticsOperations
 from app.enums import LoggerName, LogSource
 from app.models.health_model import (
     ApplicationMetrics,
@@ -73,11 +71,11 @@ class HealthService:
     external dependencies, and provides detailed diagnostic information.
     """
 
-    def __init__(self, async_db: AsyncDatabase):
-        """Initialize with database instance using composition pattern."""
+    def __init__(self, async_db: AsyncDatabase, health_ops, stats_ops):
+        """Initialize with injected dependencies."""
         self.db = async_db
-        self.health_ops = HealthOperations(async_db)
-        self.stats_ops = StatisticsOperations(async_db)
+        self.health_ops = health_ops
+        self.stats_ops = stats_ops
         self.start_time: Optional[datetime] = None
 
     async def get_basic_health(self) -> BasicHealthCheck:

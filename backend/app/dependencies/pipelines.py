@@ -16,66 +16,95 @@ if TYPE_CHECKING:
     from ..services.video_pipeline.video_workflow_service import VideoWorkflowService
 
 
-# Thumbnail Pipeline Factory
-async def get_thumbnail_pipeline() -> "ThumbnailPipeline":
-    """Get ThumbnailPipeline with database and settings service dependency injection."""
+# Thumbnail Pipeline Factory (Singleton)
+def _create_thumbnail_pipeline() -> "ThumbnailPipeline":
+    """Factory for creating ThumbnailPipeline."""
     from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
     from .sync_services import get_sync_settings_service
 
     settings_service = get_sync_settings_service()
-    return ThumbnailPipeline(database=sync_db, settings_service=settings_service)
+    from .sync_services import get_sync_image_service
+
+    image_service = get_sync_image_service()
+    # timelapse_service removed to break circular dependency
+
+    return ThumbnailPipeline(
+        database=sync_db,
+        settings_service=settings_service,
+        image_service=image_service,
+        # timelapse_service removed - pipeline uses database operations directly
+    )
 
 
-# Corruption Pipeline Factory
+from .registry import register_singleton_factory, get_singleton_service
+register_singleton_factory("thumbnail_pipeline", _create_thumbnail_pipeline)
+
+
+async def get_thumbnail_pipeline() -> "ThumbnailPipeline":
+    """Get ThumbnailPipeline singleton with database and settings service dependency injection."""
+    return get_singleton_service("thumbnail_pipeline")
+
+
+# Corruption Pipeline Factory (Singleton)
+def _create_corruption_pipeline():
+    """Factory for creating CorruptionPipeline."""
+    from ..services.corruption_pipeline import create_corruption_pipeline
+    return create_corruption_pipeline(async_database=async_db)
+
+
+register_singleton_factory("corruption_pipeline", _create_corruption_pipeline)
+
+
 async def get_corruption_pipeline():
-    """Get CorruptionPipeline with async database dependency injection."""
-    factory = PipelineFactory(
-        factory_module="app.services.corruption_pipeline",
-        factory_function="create_corruption_pipeline",
-        factory_args={"async_database": async_db},
-    )
-    return factory.get_service()
+    """Get CorruptionPipeline singleton with async database dependency injection."""
+    return get_singleton_service("corruption_pipeline")
 
 
-# Video Pipeline Factory (Sync)
+# Video Pipeline Factory (Singleton)
+def _create_video_pipeline() -> "VideoWorkflowService":
+    """Factory for creating VideoWorkflowService."""
+    from ..services.video_pipeline import create_video_pipeline
+    return create_video_pipeline(sync_db=sync_db)
+
+
+register_singleton_factory("video_pipeline", _create_video_pipeline)
+
+
 def get_video_pipeline() -> "VideoWorkflowService":
-    """Get complete video pipeline with factory pattern dependency injection."""
-    factory = PipelineFactory(
-        factory_module="app.services.video_pipeline",
-        factory_function="create_video_pipeline",
-        factory_args={"sync_db": sync_db},
-    )
-    return factory.get_service()
+    """Get VideoWorkflowService singleton with sync database dependency injection."""
+    return get_singleton_service("video_pipeline")
 
 
-# Video Pipeline Factory (Async)
 async def get_async_video_pipeline() -> "VideoWorkflowService":
-    """Get video pipeline for async operations (using sync db for consistency)."""
-    factory = PipelineFactory(
-        factory_module="app.services.video_pipeline",
-        factory_function="create_video_pipeline",
-        factory_args={"sync_db": sync_db},
-    )
-    return factory.get_service()
+    """Get VideoWorkflowService singleton for async operations (same instance as sync)."""
+    return get_singleton_service("video_pipeline")
 
 
-# Video Job Service Factory
+# Video Job Service Factory (Singleton)
+def _create_video_job_service():
+    """Factory for creating VideoJobService."""
+    from ..services.video_pipeline import create_video_job_service
+    return create_video_job_service(sync_db=sync_db)
+
+
+register_singleton_factory("video_job_service", _create_video_job_service)
+
+
 def get_video_job_service():
-    """Get VideoJobService with sync database dependency injection."""
-    factory = PipelineFactory(
-        factory_module="app.services.video_pipeline",
-        factory_function="create_video_job_service",
-        factory_args={"sync_db": sync_db},
-    )
-    return factory.get_service()
+    """Get VideoJobService singleton with sync database dependency injection."""
+    return get_singleton_service("video_job_service")
 
 
-# Overlay Integration Service Factory
+# Overlay Integration Service Factory (Singleton)
+def _create_overlay_integration_service():
+    """Factory for creating OverlayIntegrationService."""
+    from ..services.video_pipeline import create_overlay_integration_service
+    return create_overlay_integration_service(sync_db=sync_db)
+
+
+register_singleton_factory("overlay_integration_service", _create_overlay_integration_service)
+
+
 def get_overlay_integration_service():
-    """Get OverlayIntegrationService with sync database dependency injection."""
-    factory = PipelineFactory(
-        factory_module="app.services.video_pipeline",
-        factory_function="create_overlay_integration_service",
-        factory_args={"sync_db": sync_db},
-    )
-    return factory.get_service()
+    """Get OverlayIntegrationService singleton with sync database dependency injection."""
+    return get_singleton_service("overlay_integration_service")

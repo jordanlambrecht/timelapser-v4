@@ -44,18 +44,42 @@ class StartupCleanupService:
     - Orphaned files that don't have corresponding database records
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, thumbnail_ops=None, image_ops=None, video_ops=None, settings_service=None):
         """
-        Initialize startup cleanup service.
+        Initialize startup cleanup service with injected dependencies.
 
         Args:
             db: SyncDatabase instance
+            thumbnail_ops: Optional SyncThumbnailJobOperations instance
+            image_ops: Optional SyncImageOperations instance
+            video_ops: Optional SyncVideoOperations instance
+            settings_service: Optional SyncSettingsService instance
         """
         self.db = db
-        self.thumbnail_ops = SyncThumbnailJobOperations(db)
-        self.image_ops = SyncImageOperations(db)
-        self.video_ops = SyncVideoOperations(db)
-        self.settings_service = SyncSettingsService(db)
+        self.thumbnail_ops = thumbnail_ops or self._get_default_thumbnail_ops()
+        self.image_ops = image_ops or self._get_default_image_ops()
+        self.video_ops = video_ops or self._get_default_video_ops()
+        self.settings_service = settings_service or self._get_default_settings_service()
+        
+    def _get_default_thumbnail_ops(self):
+        """Fallback to get SyncThumbnailJobOperations singleton"""
+        from ..dependencies.specialized import get_sync_thumbnail_job_operations
+        return get_sync_thumbnail_job_operations()
+        
+    def _get_default_image_ops(self):
+        """Fallback to get SyncImageOperations singleton"""
+        from ..dependencies.specialized import get_sync_image_operations
+        return get_sync_image_operations()
+        
+    def _get_default_video_ops(self):
+        """Fallback to get SyncVideoOperations singleton"""
+        from ..dependencies.specialized import get_sync_video_operations
+        return get_sync_video_operations()
+        
+    def _get_default_settings_service(self):
+        """Fallback to get SyncSettingsService singleton"""
+        from ..dependencies.sync_services import get_sync_settings_service
+        return get_sync_settings_service()
 
     def perform_startup_cleanup(
         self,

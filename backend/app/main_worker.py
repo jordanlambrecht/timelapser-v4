@@ -172,25 +172,22 @@ class AsyncTimelapseWorker:
             self.overlay_worker = background_workers["overlay"]
 
             # Create missing workers that aren't in the service locator yet
-            from .services.camera_service import SyncCameraService
+            # from .services.camera_service import SyncCameraService
 
             # Create health worker
-            from .services.capture_pipeline.rtsp_service import RTSPService
+            # from .services.capture_pipeline.rtsp_service import RTSPService
             from .workers.health_worker import HealthWorker
             from .workers.scheduler_worker import SchedulerWorker
             from .workers.sse_worker import SSEWorker
 
-            sync_camera_service = SyncCameraService(
-                db=service_locator.sync_db,
-                async_db=service_locator.async_db,
-                settings_service=service_locator.get_sync_settings_service(),
+            # Use singleton services instead of creating new instances
+            from .dependencies.sync_services import (
+                get_sync_camera_service,
+                get_rtsp_service,
             )
 
-            rtsp_service = RTSPService(
-                db=service_locator.sync_db,
-                async_db=service_locator.async_db,
-                settings_service=service_locator.get_sync_settings_service(),
-            )
+            sync_camera_service = get_sync_camera_service()
+            rtsp_service = get_rtsp_service()
 
             self.health_worker = HealthWorker(
                 camera_service=sync_camera_service,
@@ -198,27 +195,14 @@ class AsyncTimelapseWorker:
                 async_camera_service=service_locator.get_camera_service(),
             )
 
-            # Create scheduler worker with dependencies
-            from .services.scheduling.capture_timing_service import (
-                SyncCaptureTimingService,
+            # Create scheduler worker with singleton services
+            from .dependencies.sync_services import (
+                # get_sync_time_window_service,
+                get_sync_capture_timing_service,
             )
 
-            # Get time window service from service locator
-            from .services.scheduling.time_window_service import (
-                SyncTimeWindowService,
-            )
-
-            time_window_service = SyncTimeWindowService(
-                db=service_locator.sync_db,
-                settings_service=service_locator.get_sync_settings_service(),
-            )
-
-            scheduling_service = SyncCaptureTimingService(
-                db=service_locator.sync_db,
-                async_db=service_locator.async_db,
-                time_window_service=time_window_service,
-                settings_service=service_locator.get_sync_settings_service(),
-            )
+            # time_window_service = get_sync_time_window_service()
+            scheduling_service = get_sync_capture_timing_service()
 
             self.scheduler_worker = SchedulerWorker(
                 settings_service=service_locator.get_sync_settings_service(),
@@ -268,15 +252,14 @@ class AsyncTimelapseWorker:
             logger.warning(
                 f"Failed to initialize font cache "
                 f"(overlay performance may be reduced): {e}",
-                store_in_db=False
+                store_in_db=False,
             )
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
         assert logger is not None, "Logger must be initialized"
         logger.info(
-            f"Received signal {signum}, shutting down gracefully...",
-            store_in_db=False
+            f"Received signal {signum}, shutting down gracefully...", store_in_db=False
         )
         self.running = False
         # Don't shut down scheduler here - let the main loop handle it
@@ -650,9 +633,7 @@ class AsyncTimelapseWorker:
             # Step 1: Validate worker ecosystem health before starting
             health_status = self.get_worker_health()
             ecosystem_status = health_status["ecosystem"]
-            if (
-                ecosystem_status["overall_status"] == HealthStatus.ERROR.value
-            ):
+            if ecosystem_status["overall_status"] == HealthStatus.ERROR.value:
                 errors = ecosystem_status.get("errors", [])
                 error_msg = errors[0] if errors else "Unknown error"
                 raise RuntimeError(f"Worker ecosystem unhealthy: {error_msg}")
@@ -719,7 +700,7 @@ class AsyncTimelapseWorker:
                         "No standard jobs were added - worker may have "
                         "reduced functionality",
                         emoji=LogEmoji.WARNING,
-                        store_in_db=False
+                        store_in_db=False,
                     )
                 else:
                     logger.info(
@@ -732,7 +713,7 @@ class AsyncTimelapseWorker:
                 # Don't fail startup for job configuration issues
                 logger.warning(
                     "Continuing startup with reduced scheduler functionality",
-                    store_in_db=False
+                    store_in_db=False,
                 )
 
             # Step 5: Perform comprehensive startup recovery
@@ -742,30 +723,21 @@ class AsyncTimelapseWorker:
                     emoji=LogEmoji.TASK,
                 )
 
-                # Import and create recovery service
-                from .services.recovery_service import SyncRecoveryService
+                # Use dependency injection singleton to prevent database connection multiplication
+                from .dependencies.sync_services import get_sync_recovery_service
 
-                recovery_service = SyncRecoveryService(
-                    db=sync_db,
-                    scheduler_worker=self.scheduler_worker
-                )
+                recovery_service = get_sync_recovery_service(scheduler_worker=self.scheduler_worker)
 
                 recovery_results = recovery_service.perform_startup_recovery(
-                    max_processing_age_minutes=30,
-                    log_recovery_details=True
+                    max_processing_age_minutes=30, log_recovery_details=True
                 )
 
                 # Log recovery summary
-                total_recovered = recovery_results.get(
-                    "total_jobs_recovered", 0
+                total_recovered = recovery_results.get("total_jobs_recovered", 0)
+                timelapse_recovery = recovery_results.get("job_type_results", {}).get(
+                    "timelapse_capture_jobs", {}
                 )
-                timelapse_recovery = (
-                    recovery_results.get("job_type_results", {})
-                    .get("timelapse_capture_jobs", {})
-                )
-                timelapses_recovered = timelapse_recovery.get(
-                    "timelapses_recovered", 0
-                )
+                timelapses_recovered = timelapse_recovery.get("timelapses_recovered", 0)
 
                 logger.info(
                     f"Startup recovery completed - Jobs: {total_recovered}, "
@@ -776,8 +748,8 @@ class AsyncTimelapseWorker:
                         "timelapses_recovered": timelapses_recovered,
                         "recovery_duration": recovery_results.get(
                             "recovery_duration_seconds", 0
-                        )
-                    }
+                        ),
+                    },
                 )
 
             except Exception as e:
@@ -786,7 +758,7 @@ class AsyncTimelapseWorker:
                 logger.warning(
                     "Continuing startup - individual workers will attempt "
                     "recovery later",
-                    store_in_db=False
+                    store_in_db=False,
                 )
 
             # Step 6: Mark as running and start main loop

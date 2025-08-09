@@ -29,15 +29,21 @@ import {
   X,
   ChevronDown,
   Upload,
-  Margins,
   Activity,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "@/lib/toast"
 import { useOverlayPresets } from "@/hooks/use-overlay-presets"
 import { AddOverlayModal } from "./add-overlay-modal"
-import { DateTimeFormatBuilder } from "./date-time-format-builder"
+import { WatermarkConfig } from "@/components/overlay-config/watermark-config"
+import { CustomTextConfig } from "@/components/overlay-config/custom-text-config"
+import { FrameNumberConfig } from "@/components/overlay-config/frame-number-config"
+import { DayNumberConfig } from "@/components/overlay-config/day-number-config"
+import { TimelapseNameConfig } from "@/components/overlay-config/timelapse-name-config"
+import { DateTimeOverlayEditor } from "@/app/overlays/components/date-time-overlay-editor"
+import { WeatherOverlayEditor } from "@/app/overlays/components/weather-overlay-editor"
 import { formatDateTime } from "@/utils/date-format-utils"
+import { getWeatherIcon } from "@/lib/weather-api"
 
 interface OverlaysTabProps {
   timelapse: {
@@ -56,11 +62,17 @@ interface OverlaysTabProps {
 interface OverlayItem {
   id: string
   name: string
-  type: "weather" | "watermark" | "frame_number" | "date_time" | "day_counter" | "custom_text" | "timelapse_name"
+  type:
+    | "weather"
+    | "watermark"
+    | "frame_number"
+    | "date_time"
+    | "day_number"
+    | "custom_text"
+    | "timelapse_name"
   enabled: boolean
   position: string
   icon: any
-  color: string
   settings?: any
 }
 
@@ -91,6 +103,7 @@ interface WatermarkSettings {
 }
 
 interface FrameNumberSettings {
+  prefix: string
   textSize: number
   leadingZeros: boolean
   enableBackground: boolean
@@ -125,6 +138,23 @@ interface DayCounterSettings {
   enabled: boolean
 }
 
+const overlayTypeMap: Record<
+  string,
+  { name: string; icon: any; color: string }
+> = {
+  weather: { name: "Weather Overlay", icon: Cloud, color: "text-purple" },
+  watermark: { name: "Watermark Overlay", icon: ImageIcon, color: "text-cyan" },
+  frame_number: { name: "Frame Number", icon: Hash, color: "text-pink" },
+  date_time: { name: "Date & Time", icon: Calendar, color: "text-cyan" },
+  day_number: { name: "Day Counter", icon: Activity, color: "text-purple" },
+  custom_text: { name: "Custom Text", icon: Type, color: "text-pink" },
+  timelapse_name: {
+    name: "Timelapse Name",
+    icon: FileText,
+    color: "text-cyan",
+  },
+}
+
 export function OverlaysTab({
   timelapse,
   cameraId,
@@ -140,9 +170,9 @@ export function OverlaysTab({
   const [globalsExpanded, setGlobalsExpanded] = useState(true)
   const [selectedOverlay, setSelectedOverlay] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
-  
+
   const { presets, loading, fetchPresets } = useOverlayPresets()
-  
+
   // Global settings state
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>({
     opacity: 90,
@@ -153,7 +183,7 @@ export function OverlaysTab({
     backgroundOpacity: 50,
     fillColor: "#FFFFFF",
     dropShadow: 50,
-    preset: "Weather Tracking"
+    preset: "Weather Tracking",
   })
 
   // Sample overlay items - in real implementation this would come from API
@@ -165,14 +195,13 @@ export function OverlaysTab({
       enabled: true,
       position: "topLeft",
       icon: Cloud,
-      color: "text-purple",
       settings: {
         unit: "Celsius",
         display: "both",
         textSize: 16,
         enableBackground: true,
-        enabled: true
-      }
+        enabled: true,
+      },
     },
     {
       id: "watermark",
@@ -181,11 +210,10 @@ export function OverlaysTab({
       enabled: false,
       position: "bottomRight",
       icon: ImageIcon,
-      color: "text-cyan",
       settings: {
         imageScale: 100,
-        imageUrl: ""
-      }
+        imageUrl: "",
+      },
     },
     {
       id: "frame_number",
@@ -194,13 +222,12 @@ export function OverlaysTab({
       enabled: false,
       position: "bottomLeft",
       icon: Hash,
-      color: "text-pink",
       settings: {
         textSize: 16,
         leadingZeros: false,
         enableBackground: false,
-        enabled: false
-      }
+        enabled: false,
+      },
     },
     {
       id: "date_time",
@@ -209,13 +236,12 @@ export function OverlaysTab({
       enabled: false,
       position: "topRight",
       icon: Calendar,
-      color: "text-cyan",
       settings: {
         dateFormat: "MM/dd/yyyy HH:mm",
         textSize: 16,
         enableBackground: false,
-        enabled: false
-      }
+        enabled: false,
+      },
     },
   ])
 
@@ -232,45 +258,48 @@ export function OverlaysTab({
   const handleGrabFreshFrame = async () => {
     setIsGrabbingFrame(true)
     try {
-      const response = await fetch(`/api/cameras/${cameraId}/capture-now`, {
+      const response = await fetch(`/api/overlays/fresh-photo/${cameraId}`, {
         method: "POST",
       })
 
       if (!response.ok) {
-        throw new Error("Failed to capture fresh frame")
+        // If fresh capture fails, fall back to refreshing the latest image
+        console.warn(
+          "Fresh capture failed, falling back to latest image refresh"
+        )
+        setImageUrl(
+          `/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`
+        )
+        toast.success("Image refreshed!")
+        return
       }
 
       setTimeout(() => {
-        setImageUrl(`/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`)
+        setImageUrl(
+          `/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`
+        )
         toast.success("Fresh frame captured!")
       }, 2000)
-      
     } catch (error) {
       console.error("Failed to grab fresh frame:", error)
-      toast.error("Failed to capture fresh frame")
+      // Fall back to refreshing the latest image
+      setImageUrl(`/api/cameras/${cameraId}/latest-image/small?t=${Date.now()}`)
+      toast.error("Fresh capture failed, refreshed latest image instead")
     } finally {
       setIsGrabbingFrame(false)
     }
   }
 
   const toggleOverlayItem = (id: string) => {
-    setOverlayItems(prev => prev.map(item => 
-      item.id === id ? { ...item, enabled: !item.enabled } : item
-    ))
+    setOverlayItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, enabled: !item.enabled } : item
+      )
+    )
     onDataChange?.()
   }
 
   const handleAddOverlay = (overlayType: string) => {
-    const overlayTypeMap: Record<string, { name: string; icon: any; color: string }> = {
-      weather: { name: "Weather Overlay", icon: Cloud, color: "text-purple" },
-      watermark: { name: "Watermark Overlay", icon: ImageIcon, color: "text-cyan" },
-      frame_number: { name: "Frame Number", icon: Hash, color: "text-pink" },
-      date_time: { name: "Date & Time", icon: Calendar, color: "text-cyan" },
-      day_counter: { name: "Day Counter", icon: Activity, color: "text-purple" },
-      custom_text: { name: "Custom Text", icon: Type, color: "text-pink" },
-      timelapse_name: { name: "Timelapse Name", icon: FileText, color: "text-cyan" },
-    }
-
     const config = overlayTypeMap[overlayType]
     if (!config) return
 
@@ -278,17 +307,44 @@ export function OverlaysTab({
     const getDefaultSettings = (type: string) => {
       switch (type) {
         case "weather":
-          return { unit: "Celsius", display: "both", textSize: 16, enableBackground: false, enabled: true }
+          return {
+            unit: "Celsius",
+            display: "both",
+            textSize: 16,
+            enableBackground: false,
+            enabled: true,
+          }
         case "watermark":
           return { imageScale: 100, imageUrl: "" }
         case "frame_number":
-          return { textSize: 16, leadingZeros: false, enableBackground: false, enabled: true }
+          return {
+            textSize: 16,
+            leadingZeros: false,
+            enableBackground: false,
+            enabled: true,
+          }
         case "date_time":
-          return { dateFormat: "YYYY-MM-DD HH:mm:ss", textSize: 16, enableBackground: false, enabled: true }
-        case "day_counter":
-          return { leadingZeros: false, textSize: 16, hidePrefix: false, enableBackground: false, enabled: true }
+          return {
+            dateFormat: "YYYY-MM-DD HH:mm:ss",
+            textSize: 16,
+            enableBackground: false,
+            enabled: true,
+          }
+        case "day_number":
+          return {
+            leadingZeros: false,
+            textSize: 16,
+            hidePrefix: false,
+            enableBackground: false,
+            enabled: true,
+          }
         case "custom_text":
-          return { customText: "Custom Text", textSize: 16, enableBackground: false, enabled: true }
+          return {
+            customText: "Custom Text",
+            textSize: 16,
+            enableBackground: false,
+            enabled: true,
+          }
         case "timelapse_name":
           return { textSize: 16, enableBackground: false, enabled: true }
         default:
@@ -303,11 +359,10 @@ export function OverlaysTab({
       enabled: true,
       position: "topLeft",
       icon: config.icon,
-      color: config.color,
-      settings: getDefaultSettings(overlayType)
+      settings: getDefaultSettings(overlayType),
     }
 
-    setOverlayItems(prev => [...prev, newOverlay])
+    setOverlayItems((prev) => [...prev, newOverlay])
     setSelectedOverlay(newOverlay.id)
     onDataChange?.()
     toast.success(`${config.name} added!`)
@@ -322,536 +377,195 @@ export function OverlaysTab({
   }
 
   const renderOverlaySettings = (overlayId: string) => {
-    const overlay = overlayItems.find(item => item.id === overlayId)
+    const overlay = overlayItems.find((item) => item.id === overlayId)
     if (!overlay) return null
 
     switch (overlay.type) {
       case "weather":
         return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Cloud className="w-4 h-4 text-purple" />
-              <Label className="text-white text-sm font-medium">Weather Overlay</Label>
-            </div>
-            
-            {/* Unit */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Unit</Label>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant={overlay.settings?.unit === "Fahrenheit" ? "default" : "outline"}
-                  className={cn(
-                    "text-xs h-7",
-                    overlay.settings?.unit === "Fahrenheit" 
-                      ? "bg-red-500 text-white" 
-                      : "border-gray-500 text-gray-400"
-                  )}
-                  onClick={() => {
-                    setOverlayItems(prev => prev.map(item => 
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, unit: "Fahrenheit" } }
-                        : item
-                    ))
-                  }}
-                >
-                  Fahrenheit
-                </Button>
-                <Button
-                  size="sm"
-                  variant={overlay.settings?.unit === "Celsius" ? "default" : "outline"}
-                  className={cn(
-                    "text-xs h-7",
-                    overlay.settings?.unit === "Celsius" 
-                      ? "bg-red-500 text-white" 
-                      : "border-gray-500 text-gray-400"
-                  )}
-                  onClick={() => {
-                    setOverlayItems(prev => prev.map(item => 
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, unit: "Celsius" } }
-                        : item
-                    ))
-                  }}
-                >
-                  Celsius
-                </Button>
-              </div>
-            </div>
-            
-            {/* Display */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Display</Label>
-              <div className="space-y-1">
-                {[
-                  { key: "temp_only", label: "Temperature Only" },
-                  { key: "conditions_only", label: "Conditions Only" },
-                  { key: "both", label: "Temp + Conditions" }
-                ].map((option) => (
-                  <Button
-                    key={option.key}
-                    size="sm"
-                    variant={overlay.settings?.display === option.key ? "default" : "outline"}
-                    className={cn(
-                      "w-full text-xs h-7 justify-start",
-                      overlay.settings?.display === option.key 
-                        ? "bg-red-500 text-white" 
-                        : "border-gray-500 text-gray-400"
-                    )}
-                    onClick={() => {
-                      setOverlayItems(prev => prev.map(item => 
-                        item.id === overlayId 
-                          ? { ...item, settings: { ...item.settings, display: option.key } }
-                          : item
-                      ))
-                    }}
-                  >
-                    {option.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Text Size */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Text Size</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.textSize || 16]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item => 
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, textSize: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={72}
-                  min={8}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-8 text-right">{overlay.settings?.textSize || 16}px</span>
-              </div>
-            </div>
-
-            {/* Enable Background */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Enable Background</Label>
-              <Switch
-                checked={overlay.settings?.enableBackground || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item => 
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, enableBackground: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="purple"
-                size="sm"
-              />
-            </div>
-            
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-600/30">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
-              <Switch
-                checked={overlay.enabled}
-                onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="purple"
-              />
-            </div>
-          </div>
-        )
-        
-      case "watermark":
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <ImageIcon className="w-4 h-4 text-cyan" />
-              <Label className="text-white text-sm font-medium">Watermark Overlay</Label>
-            </div>
-            
-            {/* Image Scale */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Image Scale</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.imageScale || 100]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item => 
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, imageScale: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={500}
-                  min={10}
-                  step={5}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-12 text-right">{overlay.settings?.imageScale || 100}%</span>
-              </div>
-            </div>
-            
-            {/* Upload Image */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Upload Image</Label>
-              <div className="border-2 border-dashed border-gray-500/50 rounded-lg p-4 text-center">
-                <Upload className="w-6 h-6 mx-auto text-gray-400 mb-2" />
-                <p className="text-gray-400 text-xs">Drag image here or click to upload</p>
-                {overlay.settings?.imageUrl && (
-                  <p className="text-cyan text-xs mt-1">Image uploaded</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-        
-      case "frame_number":
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Hash className="w-4 h-4 text-pink" />
-              <Label className="text-white text-sm font-medium">Frame Number</Label>
-            </div>
-            
-            {/* Text Size */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Text Size</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.textSize || 16]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item =>
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, textSize: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={72}
-                  min={8}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-8 text-right">{overlay.settings?.textSize || 16}px</span>
-              </div>
-            </div>
-            
-            {/* Leading Zeros */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Leading Zeros</Label>
-              <Switch
-                checked={overlay.settings?.leadingZeros || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item =>
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, leadingZeros: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="pink"
-                size="sm"
-              />
-            </div>
-
-            {/* Enable Background */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Enable Background</Label>
-              <Switch
-                checked={overlay.settings?.enableBackground || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item => 
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, enableBackground: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="pink"
-                size="sm"
-              />
-            </div>
-            
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-600/30">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
-              <Switch
-                checked={overlay.enabled}
-                onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="pink"
-              />
-            </div>
-          </div>
-        )
-        
-      case "custom_text":
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Type className="w-4 h-4 text-pink" />
-              <Label className="text-white text-sm font-medium">Custom Text</Label>
-            </div>
-            
-            {/* Text Input */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Custom Text</Label>
-              <Input
-                value={overlay.settings?.customText || ""}
-                onChange={(e) => {
-                  setOverlayItems(prev => prev.map(item =>
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, customText: e.target.value } }
-                      : item
-                  ))
-                }}
-                placeholder="Enter custom text..."
-                className="bg-gray-800/50 border-gray-600/50 text-white placeholder-gray-400"
-              />
-            </div>
-            
-            {/* Text Size */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Text Size</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.textSize || 16]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item =>
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, textSize: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={72}
-                  min={8}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-8 text-right">{overlay.settings?.textSize || 16}px</span>
-              </div>
-            </div>
-
-            {/* Enable Background */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Enable Background</Label>
-              <Switch
-                checked={overlay.settings?.enableBackground || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item => 
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, enableBackground: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="pink"
-                size="sm"
-              />
-            </div>
-            
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-600/30">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
-              <Switch
-                checked={overlay.enabled}
-                onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="pink"
-              />
-            </div>
-          </div>
-        )
-        
-      case "timelapse_name":
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <FileText className="w-4 h-4 text-cyan" />
-              <Label className="text-white text-sm font-medium">Timelapse Name</Label>
-            </div>
-            
-            {/* Preview */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Preview</Label>
-              <div className="p-2 bg-gray-800/50 border border-gray-600/50 rounded text-white text-sm">
-                {timelapse.name}
-              </div>
-            </div>
-            
-            {/* Text Size */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Text Size</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.textSize || 16]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item =>
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, textSize: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={72}
-                  min={8}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-8 text-right">{overlay.settings?.textSize || 16}px</span>
-              </div>
-            </div>
-
-            {/* Enable Background */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Enable Background</Label>
-              <Switch
-                checked={overlay.settings?.enableBackground || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item => 
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, enableBackground: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="cyan"
-                size="sm"
-              />
-            </div>
-            
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-600/30">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
-              <Switch
-                checked={overlay.enabled}
-                onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="cyan"
-              />
-            </div>
-          </div>
-        )
-        
-      case "day_counter":
-        return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Activity className="w-4 h-4 text-purple" />
-              <Label className="text-white text-sm font-medium">Day Counter</Label>
-            </div>
-            
-            {/* Text Size */}
-            <div className="space-y-2">
-              <Label className="text-white text-xs font-medium">Text Size</Label>
-              <div className="flex items-center gap-2">
-                <Slider
-                  value={[overlay.settings?.textSize || 16]}
-                  onValueChange={(value) => {
-                    setOverlayItems(prev => prev.map(item =>
-                      item.id === overlayId 
-                        ? { ...item, settings: { ...item.settings, textSize: value[0] } }
-                        : item
-                    ))
-                  }}
-                  max={72}
-                  min={8}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-white text-xs w-8 text-right">{overlay.settings?.textSize || 16}px</span>
-              </div>
-            </div>
-            
-            {/* Leading Zeros */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Leading Zeros</Label>
-              <Switch
-                checked={overlay.settings?.leadingZeros || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item =>
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, leadingZeros: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="purple"
-                size="sm"
-              />
-            </div>
-
-            {/* Hide Prefix */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Hide Prefix</Label>
-              <Switch
-                checked={overlay.settings?.hidePrefix || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item =>
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, hidePrefix: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="purple"
-                size="sm"
-              />
-            </div>
-            <div className="text-xs text-gray-400 -mt-1">
-              Show "01" instead of "Day 01"
-            </div>
-
-            {/* Enable Background */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-xs font-medium">Enable Background</Label>
-              <Switch
-                checked={overlay.settings?.enableBackground || false}
-                onCheckedChange={(checked) => {
-                  setOverlayItems(prev => prev.map(item => 
-                    item.id === overlayId 
-                      ? { ...item, settings: { ...item.settings, enableBackground: checked } }
-                      : item
-                  ))
-                }}
-                colorTheme="purple"
-                size="sm"
-              />
-            </div>
-            
-            {/* Enabled Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-600/30">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
-              <Switch
-                checked={overlay.enabled}
-                onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="purple"
-              />
-            </div>
-          </div>
-        )
-        
-      case "date_time":
-        return (
-          <DateTimeFormatBuilder
-            overlay={overlay}
-            onSettingsChange={(newSettings) => {
-              setOverlayItems(prev => prev.map(item =>
-                item.id === overlay.id 
-                  ? { ...item, settings: { ...item.settings, ...newSettings } }
-                  : item
-              ))
+          <WeatherOverlayEditor
+            overlay={{
+              id: overlay.id,
+              type: overlay.type,
+              position: overlay.position,
+              enabled: overlay.enabled,
+              settings: overlay.settings || {},
             }}
-            onToggle={() => toggleOverlayItem(overlay.id)}
+            onUpdateOverlay={(updatedOverlay) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlay.id
+                    ? {
+                        ...item,
+                        enabled: updatedOverlay.enabled,
+                        settings: updatedOverlay.settings,
+                      }
+                    : item
+                )
+              )
+            }}
           />
         )
-        
+
+      case "watermark":
+        return (
+          <WatermarkConfig
+            settings={overlay.settings || {}}
+            onChange={(newSettings) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlayId
+                    ? {
+                        ...item,
+                        settings: {
+                          ...item.settings,
+                          ...newSettings,
+                        },
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
+      case "frame_number":
+        return (
+          <FrameNumberConfig
+            settings={overlay.settings || {}}
+            onChange={(newSettings) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlayId
+                    ? {
+                        ...item,
+                        settings: {
+                          ...item.settings,
+                          ...newSettings,
+                        },
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
+      case "custom_text":
+        return (
+          <CustomTextConfig
+            settings={overlay.settings || {}}
+            onChange={(newSettings) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlayId
+                    ? {
+                        ...item,
+                        settings: {
+                          ...item.settings,
+                          ...newSettings,
+                        },
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
+      case "timelapse_name":
+        return (
+          <TimelapseNameConfig
+            settings={overlay.settings || {}}
+            timelapseTitle={timelapse.name}
+            onChange={(newSettings) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlayId
+                    ? {
+                        ...item,
+                        settings: {
+                          ...item.settings,
+                          ...newSettings,
+                        },
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
+      case "day_number":
+        return (
+          <DayNumberConfig
+            settings={overlay.settings || {}}
+            onChange={(newSettings) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlayId
+                    ? {
+                        ...item,
+                        settings: {
+                          ...item.settings,
+                          ...newSettings,
+                        },
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
+      case "date_time":
+        return (
+          <DateTimeOverlayEditor
+            overlay={{
+              id: overlay.id,
+              type: overlay.type,
+              position: overlay.position,
+              enabled: overlay.enabled,
+              settings: overlay.settings || {},
+            }}
+            onUpdateOverlay={(updatedOverlay) => {
+              setOverlayItems((prev) =>
+                prev.map((item) =>
+                  item.id === overlay.id
+                    ? {
+                        ...item,
+                        enabled: updatedOverlay.enabled,
+                        settings: updatedOverlay.settings,
+                      }
+                    : item
+                )
+              )
+            }}
+          />
+        )
+
       default:
         return (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <overlay.icon className={cn("w-4 h-4", overlay.color)} />
-              <Label className="text-white text-sm font-medium">{overlay.name}</Label>
+          <div className='space-y-3'>
+            <div className='flex items-center gap-2 mb-2'>
+              <overlay.icon
+                className={cn(
+                  "w-4 h-4",
+                  overlayTypeMap[overlay.type]?.color || "text-white"
+                )}
+              />
+              <Label className='text-white text-sm font-medium'>
+                {overlay.name}
+              </Label>
             </div>
-            
+
             {/* Basic settings for other overlay types */}
-            <div className="flex items-center justify-between">
-              <Label className="text-white text-sm font-medium">Enabled</Label>
+            <div className='flex items-center justify-between'>
+              <Label className='text-white text-sm font-medium'>Enabled</Label>
               <Switch
                 checked={overlay.enabled}
                 onCheckedChange={() => toggleOverlayItem(overlay.id)}
-                colorTheme="purple"
+                colorTheme='cyan'
               />
             </div>
           </div>
@@ -860,29 +574,29 @@ export function OverlaysTab({
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+    <div className='grid grid-cols-1 lg:grid-cols-4 gap-6 h-full'>
       {/* Left Column - Preview */}
-      <div className="lg:col-span-3 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-cyan" />
-            <h3 className="text-lg font-semibold text-white">Live Preview</h3>
+      <div className='lg:col-span-3 space-y-4'>
+        <div className='flex items-center justify-between'>
+          <div className='flex items-center gap-2'>
+            <Camera className='w-5 h-5 text-cyan' />
+            <h3 className='text-lg font-semibold text-white'>Live Preview</h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className='flex items-center gap-2'>
             <Button
               onClick={handleGrabFreshFrame}
               disabled={isGrabbingFrame}
-              size="sm"
-              className="bg-red-500/80 hover:bg-red-500 text-white border-0"
+              size='sm'
+              className='bg-red-500/80 hover:bg-red-500 text-white border-0'
             >
               {isGrabbingFrame ? (
                 <>
-                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className='w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin' />
                   Capturing...
                 </>
               ) : (
                 <>
-                  <DownloadCloud className="w-4 h-4 mr-2" />
+                  <DownloadCloud className='w-4 h-4 mr-2' />
                   Grab Fresh Frame
                 </>
               )}
@@ -891,35 +605,35 @@ export function OverlaysTab({
         </div>
 
         {/* Image Preview with Overlays */}
-        <div className="relative bg-black/20 border border-cyan/20 rounded-xl overflow-hidden aspect-video">
+        <div className='relative bg-black/20 border border-cyan/20 rounded-xl overflow-hidden aspect-video'>
           {imageUrl ? (
-            <div className="relative w-full h-full">
-              <img 
-                src={imageUrl} 
-                alt="Camera preview"
-                className="w-full h-full object-cover"
+            <div className='relative w-full h-full'>
+              <img
+                src={imageUrl}
+                alt='Camera preview'
+                className='w-full h-full object-cover'
               />
-              
+
               {/* Grid Overlay */}
               {showGrid && (
-                <div className="absolute inset-0 pointer-events-none">
+                <div className='absolute inset-0 pointer-events-none'>
                   {/* 3x3 grid */}
-                  <div className="absolute inset-0">
+                  <div className='absolute inset-0'>
                     {/* Vertical lines */}
-                    <div className="absolute left-1/3 top-0 bottom-0 w-px bg-cyan/50"></div>
-                    <div className="absolute left-2/3 top-0 bottom-0 w-px bg-cyan/50"></div>
+                    <div className='absolute left-1/3 top-0 bottom-0 w-px bg-cyan/50'></div>
+                    <div className='absolute left-2/3 top-0 bottom-0 w-px bg-cyan/50'></div>
                     {/* Horizontal lines */}
-                    <div className="absolute top-1/3 left-0 right-0 h-px bg-cyan/50"></div>
-                    <div className="absolute top-2/3 left-0 right-0 h-px bg-cyan/50"></div>
+                    <div className='absolute top-1/3 left-0 right-0 h-px bg-cyan/50'></div>
+                    <div className='absolute top-2/3 left-0 right-0 h-px bg-cyan/50'></div>
                   </div>
                 </div>
               )}
-              
+
               {/* Margins Overlay */}
               {showMargins && (
-                <div className="absolute inset-0 pointer-events-none">
-                  <div 
-                    className="absolute border border-purple/50 border-dashed"
+                <div className='absolute inset-0 pointer-events-none'>
+                  <div
+                    className='absolute border border-purple/50 border-dashed'
                     style={{
                       top: `${globalSettings.yMargin}px`,
                       left: `${globalSettings.xMargin}px`,
@@ -929,98 +643,135 @@ export function OverlaysTab({
                   ></div>
                 </div>
               )}
-              
+
               {/* Overlay Elements */}
               {overlaysEnabled && (
                 <>
                   {overlayItems.map((item) => {
                     if (!item.enabled) return null
-                    
+
                     const style = {
                       opacity: globalSettings.opacity / 100,
-                      filter: `drop-shadow(0 2px ${globalSettings.dropShadow / 10}px rgba(0,0,0,0.5))`,
+                      filter: `drop-shadow(0 2px ${
+                        globalSettings.dropShadow / 10
+                      }px rgba(0,0,0,0.5))`,
                     }
-                    
+
                     switch (item.type) {
                       case "weather":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-3 border border-white/20"
+                            className='absolute top-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-3 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-sm font-medium flex items-center gap-2">
-                              <Cloud className="w-4 h-4" />
+                            <div className='text-white text-sm font-medium flex items-center gap-2'>
+                              <span className='text-lg'>
+                                {getWeatherIcon("01d")}
+                              </span>
                               72°
-                              {item.settings?.display === "Temp + Symbol" && <Activity className="w-4 h-4" />}
                             </div>
-                            {item.settings?.display === "Temp + Symbol" && (
-                              <div className="text-white/80 text-xs">Sunny</div>
-                            )}
                           </div>
                         )
                       case "watermark":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute bottom-4 right-4'
                             style={style}
                           >
-                            <ImageIcon className="w-6 h-6 text-white" />
+                            {item.settings?.imageUrl ? (
+                              <img
+                                src={item.settings.imageUrl}
+                                alt='Watermark preview'
+                                className='max-w-16 max-h-16 object-contain'
+                                style={{
+                                  transform: `scale(${
+                                    (item.settings.imageScale || 100) / 100
+                                  }) rotate(${item.settings.rotation || 0}deg)`,
+                                  filter: `blur(${
+                                    item.settings.blur || 0
+                                  }px) opacity(${
+                                    item.settings.opacity || 100
+                                  }%)${
+                                    item.settings.dropShadow
+                                      ? ` drop-shadow(0 ${
+                                          item.settings.shadowOffsetY || 3
+                                        }px ${
+                                          item.settings.shadowBlur || 2
+                                        }px rgba(0,0,0,${
+                                          item.settings.shadowOpacity || 0.5
+                                        }))`
+                                      : ""
+                                  }`,
+                                }}
+                              />
+                            ) : (
+                              <div className='bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'>
+                                <ImageIcon className='w-6 h-6 text-white' />
+                              </div>
+                            )}
                           </div>
                         )
                       case "frame_number":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-sm font-mono">#1,247</div>
+                            <div className='text-white text-sm font-mono'>
+                              {item.settings?.prefix || "Frame"} 1,247
+                            </div>
                           </div>
                         )
                       case "date_time":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute top-4 right-4 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute top-4 right-4 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-xs font-mono">
-                              {formatDateTime(item.settings?.dateFormat || "YYYY-MM-DD HH:mm:ss")}
+                            <div className='text-white text-xs font-mono'>
+                              {formatDateTime(
+                                item.settings?.dateFormat ||
+                                  "YYYY-MM-DD HH:mm:ss"
+                              )}
                             </div>
                           </div>
                         )
-                      case "day_counter":
+                      case "day_number":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute top-4 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-sm font-medium">Day 47</div>
+                            <div className='text-white text-sm font-medium'>
+                              {item.settings?.hidePrefix ? "47" : "Day 47"}
+                            </div>
                           </div>
                         )
                       case "custom_text":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-sm">
+                            <div className='text-white text-sm'>
                               {item.settings?.customText || "Custom Text"}
                             </div>
                           </div>
                         )
                       case "timelapse_name":
                         return (
-                          <div 
+                          <div
                             key={item.id}
-                            className="absolute bottom-4 right-1/2 transform translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20"
+                            className='absolute bottom-4 right-1/2 transform translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-lg p-2 border border-white/20'
                             style={style}
                           >
-                            <div className="text-white text-sm font-medium">
+                            <div className='text-white text-sm font-medium'>
                               {timelapse.name}
                             </div>
                           </div>
@@ -1032,11 +783,9 @@ export function OverlaysTab({
 
                   {/* Selected overlay highlight */}
                   {selectedOverlay && (
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 opacity-75 transition-opacity">
-                      <div className="bg-purple/20 border border-purple/50 rounded-lg p-2 backdrop-blur-sm">
-                        <div className="text-white text-sm">
-                          {overlayItems.find(item => item.id === selectedOverlay)?.name}
-                        </div>
+                    <div className='absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 opacity-75 transition-opacity'>
+                      <div className='bg-purple/20 border border-purple/50 rounded-lg p-1 backdrop-blur-sm'>
+                        <div className='w-2 h-2 bg-purple rounded-full'></div>
                       </div>
                     </div>
                   )}
@@ -1044,67 +793,101 @@ export function OverlaysTab({
               )}
             </div>
           ) : (
-            <div className="flex items-center justify-center w-full h-full text-gray-500">
-              <div className="text-center">
-                <Camera className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-                <p className="text-lg font-medium">Loading preview...</p>
+            <div className='flex items-center justify-center w-full h-full text-gray-500'>
+              <div className='text-center'>
+                <Camera className='w-16 h-16 mx-auto text-gray-400 mb-4' />
+                <p className='text-lg font-medium'>Loading preview...</p>
               </div>
             </div>
           )}
         </div>
 
         {/* Bottom Controls */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
+        <div className='flex items-center justify-between'>
+          <div className='flex items-center gap-6'>
             {/* Overlays Toggle */}
-            <div className="flex items-center gap-3">
-              <Label className="text-white text-sm font-medium">Overlays</Label>
-              <div className="flex items-center">
-                <span className={cn("text-xs mr-2", overlaysEnabled ? "text-gray-400" : "text-white")}>
+            <div className='flex items-center gap-3'>
+              <Label className='text-white text-sm font-medium'>Overlays</Label>
+              <div className='flex items-center'>
+                <span
+                  className={cn(
+                    "text-xs mr-2",
+                    overlaysEnabled ? "text-gray-400" : "text-white"
+                  )}
+                >
                   OFF
                 </span>
                 <Switch
                   checked={overlaysEnabled}
                   onCheckedChange={setOverlaysEnabled}
-                  colorTheme="pink"
+                  colorTheme='pink'
                 />
-                <span className={cn("text-xs ml-2", overlaysEnabled ? "text-white" : "text-gray-400")}>
+                <span
+                  className={cn(
+                    "text-xs ml-2",
+                    overlaysEnabled ? "text-white" : "text-gray-400"
+                  )}
+                >
                   ON
                 </span>
               </div>
             </div>
 
             {/* Show Grid Toggle */}
-            <div className="flex items-center gap-3">
-              <Label className="text-white text-sm font-medium">Show Grid</Label>
-              <div className="flex items-center">
-                <span className={cn("text-xs mr-2", showGrid ? "text-gray-400" : "text-white")}>
+            <div className='flex items-center gap-3'>
+              <Label className='text-white text-sm font-medium'>
+                Show Grid
+              </Label>
+              <div className='flex items-center'>
+                <span
+                  className={cn(
+                    "text-xs mr-2",
+                    showGrid ? "text-gray-400" : "text-white"
+                  )}
+                >
                   OFF
                 </span>
                 <Switch
                   checked={showGrid}
                   onCheckedChange={setShowGrid}
-                  colorTheme="cyan"
+                  colorTheme='cyan'
                 />
-                <span className={cn("text-xs ml-2", showGrid ? "text-white" : "text-gray-400")}>
+                <span
+                  className={cn(
+                    "text-xs ml-2",
+                    showGrid ? "text-white" : "text-gray-400"
+                  )}
+                >
                   ON
                 </span>
               </div>
             </div>
 
             {/* Show Margins Toggle */}
-            <div className="flex items-center gap-3">
-              <Label className="text-white text-sm font-medium">Show Margins</Label>
-              <div className="flex items-center">
-                <span className={cn("text-xs mr-2", showMargins ? "text-gray-400" : "text-white")}>
+            <div className='flex items-center gap-3'>
+              <Label className='text-white text-sm font-medium'>
+                Show Margins
+              </Label>
+              <div className='flex items-center'>
+                <span
+                  className={cn(
+                    "text-xs mr-2",
+                    showMargins ? "text-gray-400" : "text-white"
+                  )}
+                >
                   OFF
                 </span>
                 <Switch
                   checked={showMargins}
                   onCheckedChange={setShowMargins}
-                  colorTheme="purple"
+                  colorTheme='cyan'
                 />
-                <span className={cn("text-xs ml-2", showMargins ? "text-white" : "text-gray-400")}>
+                <span
+                  className={cn(
+                    "text-xs ml-2",
+                    showMargins ? "text-white" : "text-gray-400"
+                  )}
+                >
                   ON
                 </span>
               </div>
@@ -1114,189 +897,224 @@ export function OverlaysTab({
           {/* Export Button */}
           <Button
             onClick={handleExport}
-            size="sm"
-            variant="outline"
-            className="border-cyan/30 text-white hover:bg-cyan/20"
+            size='sm'
+            variant='outline'
+            className='border-cyan/30 text-white hover:bg-cyan/20'
           >
-            <Download className="w-4 h-4 mr-2" />
+            <Download className='w-4 h-4 mr-2' />
             Export
           </Button>
         </div>
       </div>
 
       {/* Right Column - Controls */}
-      <div className="space-y-4">
+      <div className='space-y-4'>
         {/* Globals Section */}
-        <div className="space-y-3">
+        <div className='space-y-3'>
           <Button
-            variant="ghost"
+            variant='ghost'
             onClick={() => setGlobalsExpanded(!globalsExpanded)}
-            className="w-full justify-between p-3 h-auto bg-cyan/5 border border-cyan/20 rounded-lg hover:bg-cyan/10"
+            className='w-full justify-between p-3 h-auto bg-cyan/5 border border-cyan/20 rounded-lg hover:bg-cyan/10'
           >
-            <div className="flex items-center gap-2">
-              <Globe className="w-4 h-4 text-cyan" />
-              <span className="text-white font-medium">Globals</span>
+            <div className='flex items-center gap-2'>
+              <Globe className='w-4 h-4 text-cyan' />
+              <span className='text-white font-medium'>Globals</span>
             </div>
-            <ChevronRight 
-              className={cn("w-4 h-4 text-cyan transition-transform", globalsExpanded && "rotate-90")} 
+            <ChevronRight
+              className={cn(
+                "w-4 h-4 text-cyan transition-transform",
+                globalsExpanded && "rotate-90"
+              )}
             />
           </Button>
-          
+
           {globalsExpanded && (
-            <div className="mt-3 space-y-4">
+            <div className='mt-3 space-y-4'>
               {/* Global Settings Panel */}
-              <div className="space-y-4 p-3 bg-black/10 border border-gray-600/20 rounded-lg">
+              <div className='space-y-4 p-3 bg-black/10 border border-gray-600/20 rounded-lg'>
                 {/* Preset */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Preset</Label>
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Preset
+                  </Label>
                   <Button
-                    variant="outline"
-                    className="w-full justify-between h-8 text-xs border-gray-500/50 text-white hover:bg-gray-700/50"
+                    variant='outline'
+                    className='w-full justify-between h-8 text-xs border-gray-500/50 text-white hover:bg-gray-700/50'
                     onClick={() => {
                       // TODO: Implement preset dropdown
                     }}
                   >
-                    <div className="flex items-center gap-2">
-                      <Activity className="w-3 h-3 text-cyan" />
+                    <div className='flex items-center gap-2'>
+                      <Activity className='w-3 h-3 text-cyan' />
                       <span>{globalSettings.preset}</span>
                     </div>
-                    <ChevronDown className="w-3 h-3" />
+                    <ChevronDown className='w-3 h-3' />
                   </Button>
                 </div>
-                
+
                 {/* Margins */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Margins</Label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <Label className="text-gray-400 text-xs">X:</Label>
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Margins
+                  </Label>
+                  <div className='flex items-center gap-2'>
+                    <div className='flex items-center gap-1'>
+                      <Label className='text-gray-400 text-xs'>X:</Label>
                       <Input
-                        type="number"
+                        type='number'
                         value={globalSettings.xMargin}
-                        onChange={(e) => setGlobalSettings(prev => ({
-                          ...prev,
-                          xMargin: parseInt(e.target.value) || 0
-                        }))}
-                        className="w-12 h-6 text-xs bg-gray-800/50 border-gray-600/50 text-white"
+                        onChange={(e) =>
+                          setGlobalSettings((prev) => ({
+                            ...prev,
+                            xMargin: parseInt(e.target.value) || 0,
+                          }))
+                        }
+                        className='w-12 h-6 text-xs bg-gray-800/50 border-gray-600/50 text-white'
                       />
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Label className="text-gray-400 text-xs">Y:</Label>
+                    <div className='flex items-center gap-1'>
+                      <Label className='text-gray-400 text-xs'>Y:</Label>
                       <Input
-                        type="number"
+                        type='number'
                         value={globalSettings.yMargin}
-                        onChange={(e) => setGlobalSettings(prev => ({
-                          ...prev,
-                          yMargin: parseInt(e.target.value) || 0
-                        }))}
-                        className="w-12 h-6 text-xs bg-gray-800/50 border-gray-600/50 text-white"
+                        onChange={(e) =>
+                          setGlobalSettings((prev) => ({
+                            ...prev,
+                            yMargin: parseInt(e.target.value) || 0,
+                          }))
+                        }
+                        className='w-12 h-6 text-xs bg-gray-800/50 border-gray-600/50 text-white'
                       />
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Opacity */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Opacity</Label>
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Opacity
+                  </Label>
                   <Slider
                     value={[globalSettings.opacity]}
-                    onValueChange={(value) => setGlobalSettings(prev => ({
-                      ...prev,
-                      opacity: value[0]
-                    }))}
+                    onValueChange={(value) =>
+                      setGlobalSettings((prev) => ({
+                        ...prev,
+                        opacity: value[0],
+                      }))
+                    }
                     max={100}
                     min={0}
                     step={1}
-                    className="w-full"
+                    className='w-full'
                   />
                 </div>
-                
+
                 {/* Drop Shadow */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Drop Shadow</Label>
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Drop Shadow
+                  </Label>
                   <Slider
                     value={[globalSettings.dropShadow]}
-                    onValueChange={(value) => setGlobalSettings(prev => ({
-                      ...prev,
-                      dropShadow: value[0]
-                    }))}
+                    onValueChange={(value) =>
+                      setGlobalSettings((prev) => ({
+                        ...prev,
+                        dropShadow: value[0],
+                      }))
+                    }
                     max={100}
                     min={0}
                     step={1}
-                    className="w-full"
+                    className='w-full'
                   />
                 </div>
-                
+
                 {/* Font */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Font</Label>
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>Font</Label>
                   <Button
-                    variant="outline"
-                    className="w-full justify-between h-8 text-xs border-gray-500/50 text-white hover:bg-gray-700/50"
+                    variant='outline'
+                    className='w-full justify-between h-8 text-xs border-gray-500/50 text-white hover:bg-gray-700/50'
                     onClick={() => {
                       // TODO: Implement font dropdown
                     }}
                   >
-                    <div className="flex items-center gap-2">
-                      <Type className="w-3 h-3 text-gray-400" />
+                    <div className='flex items-center gap-2'>
+                      <Type className='w-3 h-3 text-gray-400' />
                       <span>{globalSettings.font}</span>
                     </div>
-                    <ChevronDown className="w-3 h-3" />
+                    <ChevronDown className='w-3 h-3' />
                   </Button>
                 </div>
-                
+
                 {/* Fill Color */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Fill Color</Label>
-                  <div className="flex items-center gap-2">
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Fill Color
+                  </Label>
+                  <div className='flex items-center gap-2'>
                     <button
-                      className="w-6 h-6 rounded-full border-2 border-white/20"
+                      className='w-6 h-6 rounded-full border-2 border-white/20'
                       style={{ backgroundColor: globalSettings.fillColor }}
                       onClick={() => {
                         // TODO: Implement color picker
                       }}
                     />
-                    <span className="text-white text-xs">{globalSettings.fillColor}</span>
+                    <span className='text-white text-xs'>
+                      {globalSettings.fillColor}
+                    </span>
                   </div>
                 </div>
 
                 {/* Background Color */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Background Color</Label>
-                  <div className="flex items-center gap-2">
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Background Color
+                  </Label>
+                  <div className='flex items-center gap-2'>
                     <button
-                      className="w-6 h-6 rounded-full border-2 border-white/20"
-                      style={{ backgroundColor: globalSettings.backgroundColor }}
+                      className='w-6 h-6 rounded-full border-2 border-white/20'
+                      style={{
+                        backgroundColor: globalSettings.backgroundColor,
+                      }}
                       onClick={() => {
                         // TODO: Implement color picker
                       }}
                     />
-                    <span className="text-white text-xs">{globalSettings.backgroundColor}</span>
+                    <span className='text-white text-xs'>
+                      {globalSettings.backgroundColor}
+                    </span>
                   </div>
                 </div>
 
                 {/* Background Opacity */}
-                <div className="space-y-2">
-                  <Label className="text-white text-xs font-medium">Background Opacity</Label>
-                  <div className="flex items-center gap-2">
+                <div className='space-y-2'>
+                  <Label className='text-white text-xs font-medium'>
+                    Background Opacity
+                  </Label>
+                  <div className='flex items-center gap-2'>
                     <Slider
                       value={[globalSettings.backgroundOpacity]}
-                      onValueChange={(value) => setGlobalSettings(prev => ({
-                        ...prev,
-                        backgroundOpacity: value[0]
-                      }))}
+                      onValueChange={(value) =>
+                        setGlobalSettings((prev) => ({
+                          ...prev,
+                          backgroundOpacity: value[0],
+                        }))
+                      }
                       max={100}
                       min={0}
                       step={1}
-                      className="flex-1"
+                      className='flex-1'
                     />
-                    <span className="text-white text-xs w-8 text-right">{globalSettings.backgroundOpacity}%</span>
+                    <span className='text-white text-xs w-8 text-right'>
+                      {globalSettings.backgroundOpacity}%
+                    </span>
                   </div>
                 </div>
               </div>
-              
+
               {/* Overlay Items */}
-              <div className="space-y-2">
+              <div className='space-y-2'>
                 {overlayItems.map((item) => (
                   <div
                     key={item.id}
@@ -1304,8 +1122,8 @@ export function OverlaysTab({
                       "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer",
                       selectedOverlay === item.id
                         ? "bg-purple/10 border-purple/30"
-                        : item.enabled 
-                        ? "bg-cyan/10 border-cyan/30" 
+                        : item.enabled
+                        ? "bg-cyan/10 border-cyan/30"
                         : "bg-black/20 border-gray-600/30 hover:border-gray-500/50"
                     )}
                     onClick={() => {
@@ -1316,42 +1134,58 @@ export function OverlaysTab({
                       }
                     }}
                   >
-                    <div className="flex items-center gap-2 flex-1">
-                      <div className={cn("w-2 h-2 rounded-full", item.enabled ? "bg-purple" : "bg-gray-500")} />
-                      <item.icon className={cn("w-4 h-4", item.enabled ? item.color : "text-gray-500")} />
-                      <span className={cn("text-sm font-medium", item.enabled ? "text-white" : "text-gray-400")}>
+                    <div className='flex items-center gap-2 flex-1'>
+                      <div
+                        className={cn(
+                          "w-2 h-2 rounded-full",
+                          item.enabled ? "bg-purple" : "bg-gray-500"
+                        )}
+                      />
+                      <item.icon
+                        className={cn(
+                          "w-4 h-4",
+                          item.enabled
+                            ? overlayTypeMap[item.type]?.color || "text-white"
+                            : "text-gray-500"
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "text-sm font-medium",
+                          item.enabled ? "text-white" : "text-gray-400"
+                        )}
+                      >
                         {item.name}
                       </span>
                     </div>
-                    
-                    <div className="flex items-center gap-2">
+
+                    <div className='flex items-center gap-2'>
                       <Switch
                         checked={item.enabled}
                         onCheckedChange={() => toggleOverlayItem(item.id)}
-                        colorTheme="purple"
-                        size="sm"
+                        colorTheme='cyan'
                       />
                       {selectedOverlay === item.id && (
-                        <ChevronDown className="w-4 h-4 text-purple" />
+                        <ChevronDown className='w-4 h-4 text-purple' />
                       )}
                     </div>
                   </div>
                 ))}
-                
+
                 {/* Add New Overlay Button */}
                 <Button
                   onClick={() => setShowAddModal(true)}
-                  variant="outline"
-                  className="w-full border-dashed border-gray-500/50 text-gray-400 hover:text-white hover:border-purple/50 hover:bg-purple/10"
+                  variant='outline'
+                  className='w-full border-dashed border-gray-500/50 text-gray-400 hover:text-white hover:border-purple/50 hover:bg-purple/10'
                 >
-                  <Plus className="w-4 h-4 mr-2" />
+                  <Plus className='w-4 h-4 mr-2' />
                   Add Overlay
                 </Button>
               </div>
-              
+
               {/* Overlay-Specific Settings */}
               {selectedOverlay && (
-                <div className="p-3 bg-purple/5 border border-purple/20 rounded-lg space-y-3">
+                <div className='p-3 bg-purple/5 border border-purple/20 rounded-lg space-y-3'>
                   {renderOverlaySettings(selectedOverlay)}
                 </div>
               )}
@@ -1359,7 +1193,7 @@ export function OverlaysTab({
           )}
         </div>
       </div>
-      
+
       {/* Add Overlay Modal */}
       <AddOverlayModal
         isOpen={showAddModal}

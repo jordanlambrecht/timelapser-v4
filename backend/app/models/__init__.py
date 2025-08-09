@@ -72,13 +72,12 @@ from .camera_model import (  # Crop and rotation models
 from .image_model import Image, ImageCreate
 from .log_model import Log, LogCreate
 from .overlay_model import (
-    GlobalOverlayOptions,
+    GlobalSettings,
     OverlayAsset,
     OverlayAssetCreate,
     OverlayConfiguration,
     OverlayGenerationJob,
     OverlayGenerationJobCreate,
-    OverlayGridPosition,
     OverlayItem,
     OverlayJobPriority,
     OverlayJobStatistics,
@@ -89,7 +88,6 @@ from .overlay_model import (
     OverlayPresetUpdate,
     OverlayPreviewRequest,
     OverlayPreviewResponse,
-    OverlayType,
     TimelapseOverlay,
     TimelapseOverlayCreate,
     TimelapseOverlayUpdate,
@@ -168,7 +166,7 @@ __all__ = [
     # Overlay Models
     "OverlayConfiguration",
     "OverlayItem",
-    "GlobalOverlayOptions",
+    "GlobalSettings",
     "OverlayPreset",
     "OverlayPresetCreate",
     "OverlayPresetUpdate",
@@ -182,8 +180,6 @@ __all__ = [
     "OverlayJobStatistics",
     "OverlayPreviewRequest",
     "OverlayPreviewResponse",
-    "OverlayType",
-    "OverlayGridPosition",
     "OverlayJobPriority",
     "OverlayJobStatus",
     "OverlayJobType",

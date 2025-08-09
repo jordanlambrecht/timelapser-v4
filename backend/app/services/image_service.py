@@ -26,12 +26,6 @@ from ..constants import (
     MAX_BULK_OPERATION_ITEMS,
 )
 from ..database.core import SyncDatabase
-from ..database.image_operations import (
-    AsyncImageOperations,
-    ImageOperations,
-    SyncImageOperations,
-)
-from ..database.sse_events_operations import SSEEventsOperations
 from ..enums import LoggerName, LogSource, SSEEvent, SSEEventSource, SSEPriority
 from ..exceptions import (
     ImageNotFoundError,
@@ -85,22 +79,26 @@ class ImageService:
         self,
         db,
         settings_service,
+        image_ops,
+        sse_ops,
         # corruption_service: Optional[CorruptionService] = None,  # Removed
         health_service=None,
     ):
         """
-        Initialize ImageService with async database instance and service dependencies.
+        Initialize ImageService with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
             settings_service: SettingsService instance for configuration management
+            image_ops: Injected ImageOperations singleton
+            sse_ops: Injected SSEEventsOperations singleton
             # corruption_service: Optional CorruptionService for quality data coordination (removed)
             health_service: Optional HealthService for health monitoring
         """
         self.db = db
-        self.image_ops = ImageOperations(db)
-        self.async_image_ops = AsyncImageOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
+        self.image_ops = image_ops
+        self.async_image_ops = image_ops  # Use the same instance for consistency
+        self.sse_ops = sse_ops
         self.settings_service = settings_service
         # self.corruption_service = corruption_service  # Removed
         self.health_service = health_service
@@ -420,19 +418,9 @@ class ImageService:
         #         user_id="system",
         #     )
 
-        # Create SSE event for real-time updates
-        await self.sse_ops.create_event(
-            event_type=SSEEvent.IMAGE_CAPTURED,
-            event_data={
-                "image_id": image_record.id,
-                "camera_id": image_record.camera_id,
-                "timelapse_id": image_record.timelapse_id,
-                "filename": image_record.file_path,
-                "captured_at": image_record.captured_at.isoformat(),
-            },
-            priority=SSEPriority.NORMAL,
-            source=SSEEventSource.WORKER,
-        )
+        # NOTE: SSE event for IMAGE_CAPTURED is handled by workflow_orchestrator_service.py
+        # to avoid duplicate events. The orchestrator has full context (timelapse info, job results)
+        # and is the authoritative source for capture completion events.
 
         return image_record
 
@@ -965,16 +953,16 @@ class SyncImageService:
     dependency injection instead of mixin inheritance.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, image_ops):
         """
-        Initialize SyncImageService with sync database instance.
+        Initialize SyncImageService with injected dependencies.
 
         Args:
             db: SyncDatabase instance
-            log_service: Optional SyncLogService for structured logging
+            image_ops: Injected SyncImageOperations singleton
         """
         self.db = db
-        self.image_ops = SyncImageOperations(db)
+        self.image_ops = image_ops
 
     def record_captured_image(self, image_data: Dict[str, Any]) -> Image:
         """

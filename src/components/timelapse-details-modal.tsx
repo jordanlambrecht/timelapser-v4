@@ -925,7 +925,7 @@ export const TimelapseDetailsModal = memo(
                 <div className='max-h-[calc(80vh-200px)] overflow-y-auto'>
                   <TabsContent value='overview' className='space-y-6 mt-0'>
                     {/* Stats Grid */}
-                    <StatsGrid columns={5}>
+                    <StatsGrid columns={4}>
                       <StatItem
                         icon={ImageIcon}
                         label='Total Images'
@@ -950,7 +950,7 @@ export const TimelapseDetailsModal = memo(
                               )}%`
                             : "Loading..."
                         }
-                        accent='pink'
+                        accent='purple'
                       />
                       <StatItem
                         icon={Calendar}

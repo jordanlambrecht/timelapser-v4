@@ -2,54 +2,74 @@
   "name": "Complete Information",
   "description": "Comprehensive overlay with timelapse name, weather, timestamp, and frame count",
   "overlay_config": {
-    "overlayPositions": {
-      "topLeft": {
+    "overlay_items": [
+      {
+        "id": "timelapse_name_1",
         "type": "timelapse_name",
-        "textSize": 20,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 70,
-        "enableBackground": true,
-        "backgroundColor": "#1F2937"
+        "position": "topLeft",
+        "enabled": true,
+        "settings": {
+          "textSize": 20,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 70,
+          "enableBackground": true,
+          "backgroundColor": "#1F2937"
+        }
       },
-      "topRight": {
-        "type": "weather_temp_conditions",
-        "textSize": 14,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 50,
-        "enableBackground": true,
-        "backgroundColor": "#1E3A8A",
-        "unit": "fahrenheit",
-        "display": "both"
+      {
+        "id": "weather_1",
+        "type": "weather",
+        "position": "topRight",
+        "enabled": true,
+        "settings": {
+          "textSize": 14,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 50,
+          "enableBackground": true,
+          "backgroundColor": "#1E3A8A",
+          "unit": "fahrenheit",
+          "display": "both"
+        }
       },
-      "bottomLeft": {
+      {
+        "id": "timestamp_1",
         "type": "date_time",
-        "textSize": 16,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 60,
-        "dateFormat": "MM/dd/yyyy HH:mm:ss",
-        "enableBackground": true,
-        "backgroundColor": "#000000"
+        "position": "bottomLeft",
+        "enabled": true,
+        "settings": {
+          "textSize": 16,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 60,
+          "dateFormat": "MM/dd/yyyy HH:mm:ss",
+          "enableBackground": true,
+          "backgroundColor": "#000000"
+        }
       },
-      "bottomRight": {
+      {
+        "id": "frame_number_1",
         "type": "frame_number",
-        "textSize": 14,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 40,
-        "enableBackground": true,
-        "backgroundColor": "#374151",
-        "leadingZeros": 6,
-        "hidePrefix": false
+        "position": "bottomRight",
+        "enabled": true,
+        "settings": {
+          "textSize": 14,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 40,
+          "enableBackground": true,
+          "backgroundColor": "#374151",
+          "leadingZeros": 6,
+          "hidePrefix": false
+        }
       }
-    },
-    "globalOptions": {
+    ],
+    "global_settings": {
       "opacity": 100,
       "font": "Arial",
-      "xMargin": 25,
-      "yMargin": 25,
-      "backgroundColor": "#000000",
-      "backgroundOpacity": 55,
-      "fillColor": "#FFFFFF",
-      "dropShadow": 3,
+      "x_margin": 25,
+      "y_margin": 25,
+      "background_color": "#000000",
+      "background_opacity": 55,
+      "fill_color": "#FFFFFF",
+      "drop_shadow": 3,
       "preset": "complete_info"
     }
   },

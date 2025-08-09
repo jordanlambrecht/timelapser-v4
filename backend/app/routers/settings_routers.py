@@ -18,7 +18,6 @@ from ..models import (
     Setting,
     SettingCreate,
     SettingUpdate,
-    WeatherSettingUpdate,
 )
 from ..services.logger import get_service_logger
 from ..utils.cache_manager import (
@@ -218,80 +217,4 @@ async def update_multiple_settings(
     return ResponseFormatter.success(
         f"Successfully updated {len(bulk_data.settings)} settings",
         data={"updated_keys": list(bulk_data.settings.keys())},
-    )
-
-
-# IMPLEMENTED: ETag + 15 minute cache (weather settings change rarely)
-# ETag based on weather settings updated_at timestamps
-@router.get("/settings/weather")
-@handle_exceptions("get weather settings")
-async def get_weather_settings(response: Response, weather_manager: WeatherManagerDep):
-    """Get weather-related settings"""
-    # Delegate all weather settings logic to weather service
-    weather_settings = await weather_manager.get_weather_settings()
-
-    # Generate ETag based on content of weather settings
-    etag = generate_content_hash_etag(weather_settings)
-
-    # Add longer cache for weather settings (they change rarely)
-    response.headers["Cache-Control"] = (
-        "public, max-age=900, s-maxage=900"  # 15 minutes
-    )
-    response.headers["ETag"] = etag
-
-    return ResponseFormatter.success(
-        "Weather settings retrieved successfully", data=weather_settings
-    )
-
-
-@router.put("/settings/weather")
-@handle_exceptions("update weather setting")
-async def update_weather_setting(
-    setting_data: WeatherSettingUpdate, settings_service: SettingsServiceDep
-):
-    """Update a weather-related setting with validation"""
-    key = setting_data.key
-    value = setting_data.value
-
-    success = await settings_service.set_setting(key, str(value))
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to update weather setting")
-
-    # SSE broadcasting handled by service layer (proper architecture)
-
-    return ResponseFormatter.success(
-        "Weather setting updated successfully", data={"key": key, "value": str(value)}
-    )
-
-
-@router.post("/settings/weather/refresh")
-@handle_exceptions("refresh weather data")
-async def refresh_weather_data(weather_manager: WeatherManagerDep):
-    """Manually refresh weather data immediately"""
-    # Delegate all weather refresh logic to weather service
-    result = await weather_manager.manual_weather_refresh()
-
-    if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
-
-    # Check if weather data is available
-    if not result.weather_data:
-        raise HTTPException(status_code=500, detail="Weather data not available")
-
-    # Return success response with weather data
-    weather_data = result.weather_data
-    return ResponseFormatter.success(
-        "Weather data refreshed successfully",
-        data={
-            "temperature": weather_data.temperature,
-            "description": weather_data.description,
-            "icon": weather_data.icon,
-            "sunrise_timestamp": weather_data.sunrise_timestamp,
-            "sunset_timestamp": weather_data.sunset_timestamp,
-            "date_fetched": (
-                weather_data.date_fetched.isoformat()
-                if hasattr(weather_data.date_fetched, "isoformat")
-                else str(weather_data.date_fetched)
-            ),
-        },
     )

@@ -13,14 +13,20 @@ from ....enums import LoggerName, LogSource
 from ....models.overlay_model import OverlayPreset
 from ....services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
+logger = get_service_logger(LoggerName.OVERLAY_PRESET_SERVICE, LogSource.PIPELINE)
 
 
 class SyncOverlayTemplateService:
     """Read-only access to built-in overlay templates."""
 
-    def __init__(self, db: SyncDatabase):
-        self.overlay_ops = SyncOverlayOperations(db)
+    def __init__(self, db: SyncDatabase, overlay_ops=None):
+        self.overlay_ops = overlay_ops or self._get_default_overlay_ops()
+        
+    def _get_default_overlay_ops(self):
+        """Fallback to create SyncOverlayOperations directly if not injected"""
+        # Using injected SyncOverlayOperations singleton
+        from ....dependencies.specialized import get_sync_overlay_operations
+        return get_sync_overlay_operations()
 
     def get_template_by_name(self, template_name: str) -> Optional[OverlayPreset]:
         """Get built-in template by name."""
@@ -39,7 +45,7 @@ class SyncOverlayTemplateService:
             logger.debug(f"Template not found: {template_name}")
             return None
         except Exception as e:
-            logger.error(f"Failed to get template '{template_name}'", exception=e)
+            logger.error(f"Failed to get template '{template_name}': {e}")
             return None
 
     def list_templates(self) -> List[OverlayPreset]:
@@ -58,8 +64,15 @@ class SyncOverlayTemplateService:
 class OverlayTemplateService:
     """Async read-only access to built-in overlay templates."""
 
-    def __init__(self, db: AsyncDatabase):
-        self.overlay_ops = OverlayOperations(db)
+    def __init__(self, db: AsyncDatabase, overlay_ops=None):
+        self.db = db
+        self.overlay_ops = overlay_ops or self._get_default_overlay_ops()
+        
+    def _get_default_overlay_ops(self):
+        """Fallback to get OverlayOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ....database.overlay_operations import OverlayOperations
+        return OverlayOperations(self.db)
 
     async def get_template_by_name(self, template_name: str) -> Optional[OverlayPreset]:
         """Get built-in template by name (async)."""

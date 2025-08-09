@@ -156,7 +156,8 @@ export default function CameraDetailsPage() {
       // Let useCameraDetails hook handle data refetching automatically
       refetch()
     },
-    onStatusChanged: () => {
+    onStatusChanged: (data) => {
+      console.log("🔌 Camera status changed via SSE:", data)
       // Force image refresh and let SSE system handle data updates
       setImageKey(Date.now())
       refetch()

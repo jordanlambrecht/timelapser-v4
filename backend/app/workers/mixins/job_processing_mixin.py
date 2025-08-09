@@ -366,8 +366,9 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
                 # Perform periodic cleanup
                 await self.periodic_cleanup()
 
-                # Broadcast statistics periodically
-                if processed_count > 0 or self._should_broadcast_stats():
+                # Broadcast statistics only periodically (every 5 minutes), not on every job processing cycle
+                # This prevents event spam during active capture workflows
+                if self._should_broadcast_stats():
                     await self._broadcast_worker_statistics()
 
                 # Wait before next cycle
@@ -412,7 +413,19 @@ class JobProcessingMixin(BaseWorker, Generic[JobType]):
             True if statistics should be broadcasted
         """
         # Broadcast stats every 5 minutes during normal operation
-        return utc_now().minute % 5 == 0
+        # Use a timestamp check to prevent spam during the broadcast minute
+        now = utc_now()
+        if not hasattr(self, '_last_stats_broadcast'):
+            self._last_stats_broadcast = now
+            return True
+        
+        # Only broadcast if 5 minutes have passed since last broadcast
+        time_since_last = (now - self._last_stats_broadcast).total_seconds()
+        if time_since_last >= 300:  # 5 minutes = 300 seconds
+            self._last_stats_broadcast = now
+            return True
+        
+        return False
 
     def _get_job_data_for_events(self, job: JobType) -> Dict[str, Any]:
         """

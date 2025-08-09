@@ -6,6 +6,7 @@ injection instead of mixin inheritance, providing type-safe Pydantic model
 interfaces.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -303,7 +304,7 @@ class ImageOperations:
             db: AsyncDatabase instance
         """
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is a static utility - no instance needed
 
     async def _clear_image_caches(
         self,
@@ -332,7 +333,7 @@ class ImageOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(image_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"image:metadata:{image_id}", etag
                 )
 
@@ -582,7 +583,7 @@ class ImageOperations:
         """
         query = """
         DELETE FROM images
-        WHERE captured_at < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
+        WHERE captured_at < %(now)s - INTERVAL '1 day' * %(days)s
         """
         params = {"now": utc_now(), "days": days_to_keep}
         async with self.db.get_connection() as conn:
@@ -608,17 +609,28 @@ class ImageOperations:
         """
         query = """
         INSERT INTO images (
-            timelapse_id, camera_id, file_path, filename, file_size, captured_at,
+            timelapse_id, camera_id, file_path, file_name, file_size, captured_at,
             day_number, thumbnail_path, corruption_detected,
-            corruption_score, is_flagged,
-            weather_temperature, weather_conditions, weather_icon, weather_fetched_at
+            corruption_score, is_flagged, corruption_details,
+            weather_temperature, weather_conditions, weather_icon, weather_fetched_at,
+            has_valid_overlay
         ) VALUES (
-            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(filename)s, %(file_size)s, %(captured_at)s,
+            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(file_name)s, %(file_size)s, %(captured_at)s,
             %(day_number)s, %(thumbnail_path)s, %(corruption_detected)s,
-            %(corruption_score)s, %(is_flagged)s,
-            %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s
+            %(corruption_score)s, %(is_flagged)s, %(corruption_details)s,
+            %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s,
+            %(has_valid_overlay)s
         ) RETURNING *
         """
+
+        # Serialize corruption_details to JSON if present
+        if (
+            "corruption_details" in image_data
+            and image_data["corruption_details"] is not None
+        ):
+            image_data["corruption_details"] = json.dumps(
+                image_data["corruption_details"]
+            )
 
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
@@ -850,17 +862,28 @@ class SyncImageOperations:
         """
         query = """
         INSERT INTO images (
-            timelapse_id, camera_id, file_path, filename, file_size, captured_at,
+            timelapse_id, camera_id, file_path, file_name, file_size, captured_at,
             day_number, thumbnail_path, corruption_detected,
-            corruption_score, is_flagged,
-            weather_temperature, weather_conditions, weather_icon, weather_fetched_at
+            corruption_score, is_flagged, corruption_details,
+            weather_temperature, weather_conditions, weather_icon, weather_fetched_at,
+            has_valid_overlay
         ) VALUES (
-            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(filename)s, %(file_size)s, %(captured_at)s,
+            %(timelapse_id)s, %(camera_id)s, %(file_path)s, %(file_name)s, %(file_size)s, %(captured_at)s,
             %(day_number)s, %(thumbnail_path)s, %(corruption_detected)s,
-            %(corruption_score)s, %(is_flagged)s,
-            %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s
+            %(corruption_score)s, %(is_flagged)s, %(corruption_details)s,
+            %(weather_temperature)s, %(weather_conditions)s, %(weather_icon)s, %(weather_fetched_at)s,
+            %(has_valid_overlay)s
         ) RETURNING *
         """
+
+        # Serialize corruption_details to JSON if present
+        if (
+            "corruption_details" in image_data
+            and image_data["corruption_details"] is not None
+        ):
+            image_data["corruption_details"] = json.dumps(
+                image_data["corruption_details"]
+            )
 
         with self.db.get_connection() as conn:
             with conn.cursor() as cur:
@@ -1062,7 +1085,7 @@ class SyncImageOperations:
         """
         query = """
         DELETE FROM images
-        WHERE captured_at < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
+        WHERE captured_at < %(now)s - INTERVAL '1 day' * %(days)s
         """
         params = {"now": utc_now(), "days": days_to_keep}
         with self.db.get_connection() as conn:

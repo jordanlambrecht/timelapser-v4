@@ -1,7 +1,7 @@
 import { Grid2X2, List, ArrowUpDown, Star, LayoutGrid, CheckSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { ToggleGroup } from "@/components/ui/toggle-group"
 import { Badge } from "@/components/ui/badge"
 import type { ViewMode, SortBy } from "@/app/timelapses/page"
 

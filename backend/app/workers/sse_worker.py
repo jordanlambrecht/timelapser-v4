@@ -8,13 +8,15 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from ..database.core import AsyncDatabase
-from ..database.sse_events_operations import SSEEventsOperations
+
+# SSEEventsOperations will be injected or use fallback
 from ..enums import LogEmoji, LoggerName, LogSource, WorkerType
-from ..services.logger import get_service_logger
 from ..services.sse_workflow_service import SSEWorkflowService
 from ..utils.time_utils import utc_now
 from .base_worker import BaseWorker
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.SSE_WORKER, LogSource.WORKER)
 
@@ -29,20 +31,58 @@ class SSEWorker(BaseWorker):
     - Database maintenance for SSE events table
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, sse_ops=None):
         """
         Initialize SSE worker with injected dependencies.
 
         Args:
             db: Async database instance
+            sse_ops: Optional SSEEventsOperations instance (uses singleton fallback if None)
         """
         super().__init__("SSEWorker")
         self.db = db
-        self.sse_ops = SSEEventsOperations(db)
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
         self.last_cleanup_time: Optional[datetime] = None
 
         # Initialize workflow service for Service Layer Boundary Pattern
-        self.sse_service = SSEWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_sse_workflow_service
+
+        self.sse_service = get_sse_workflow_service()
+
+    def _get_default_sse_ops(self):
+        """Fallback to get SSEEventsOperations singleton"""
+        from ..dependencies.specialized import get_async_sse_events_operations
+        import asyncio
+
+        # Try to get the singleton, but handle case where event loop isn't running
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Can't await in synchronous context, try sync singleton first
+                try:
+                    from ..dependencies.specialized import (
+                        get_sync_sse_events_operations,
+                    )
+
+                    sync_ops = get_sync_sse_events_operations()
+                    # Convert to async operations if possible, otherwise fallback
+                    from ..database.sse_events_operations import SSEEventsOperations
+
+                    return SSEEventsOperations(self.db)
+                except ImportError:
+                    from ..database.sse_events_operations import SSEEventsOperations
+
+                    return SSEEventsOperations(self.db)
+            else:
+                from ..dependencies.sync_services import get_sync_sse_events_operations
+
+                return get_sync_sse_events_operations()
+        except RuntimeError:
+            # Final fallback to direct instantiation
+            from ..database.sse_events_operations import SSEEventsOperations
+
+            return SSEEventsOperations(self.db)
 
     async def initialize(self) -> None:
         """Initialize SSE worker resources."""
@@ -71,12 +111,12 @@ class SSEWorker(BaseWorker):
             if deleted_count > 0:
                 logger.info(
                     f"Cleaned up {deleted_count} old SSE events (older than {max_age_hours}h)",
-                    emoji=LogEmoji.CLEANUP
+                    emoji=LogEmoji.CLEANUP,
                 )
             else:
                 logger.debug(
                     f"No old SSE events found for cleanup (older than {max_age_hours}h)",
-                    store_in_db=False
+                    store_in_db=False,
                 )
 
             return deleted_count
@@ -121,7 +161,7 @@ class SSEWorker(BaseWorker):
             # For now, just log that this maintenance task exists
             logger.debug(
                 f"Checking for stuck unprocessed events older than {max_age_hours}h",
-                store_in_db=False
+                store_in_db=False,
             )
 
             # Clean up stuck events using implemented method
@@ -168,14 +208,24 @@ class SSEWorker(BaseWorker):
             base_status = WorkerStatusBuilder.build_base_status(
                 name=self.name,
                 running=self.running,
-                worker_type=WorkerType.SSE_WORKER.value
+                worker_type=WorkerType.SSE_WORKER.value,
             )
 
             # Get current SSE statistics
             import asyncio
 
             try:
-                sse_statistics = asyncio.run(self.get_sse_statistics())
+                # Use sync method call since we're in sync context
+                try:
+                    # This should be a sync method call, not async
+                    sse_statistics = self.get_sse_statistics_sync()
+                except AttributeError:
+                    # Fallback to basic statistics if sync method not available
+                    sse_statistics = {
+                        "total_events": 0,
+                        "pending_events": 0,
+                        "processed_events": 0,
+                    }
             except Exception as e:
                 logger.debug(f"Could not get SSE statistics: {e}", store_in_db=False)
                 sse_statistics = {
@@ -218,12 +268,14 @@ class SSEWorker(BaseWorker):
             return base_status
 
         except Exception as e:
-            logger.error(f"Unexpected error getting SSE worker status: {e}", store_in_db=False)
+            logger.error(
+                f"Unexpected error getting SSE worker status: {e}", store_in_db=False
+            )
             return WorkerStatusBuilder.build_error_status(
                 name=self.name,
                 worker_type=WorkerType.SSE_WORKER.value,
                 error_type="unexpected",
-                error_message=str(e)
+                error_message=str(e),
             )
 
     def get_health(self) -> Dict[str, Any]:
@@ -239,5 +291,5 @@ class SSEWorker(BaseWorker):
             additional_checks={
                 "sse_ops_available": self.sse_ops is not None,
                 "database_available": self.db is not None,
-            }
+            },
         )

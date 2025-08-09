@@ -26,7 +26,6 @@ from ..constants import (
     THUMBNAIL_QUEUE_SIZE_LOW_THRESHOLD,
 )
 from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.timelapse_operations import SyncTimelapseOperations
 from ..enums import (
     JobTypes,
     LogEmoji,
@@ -36,14 +35,14 @@ from ..enums import (
     WorkerType,
 )
 from ..models.shared_models import ThumbnailGenerationJob, ThumbnailGenerationResult
-from ..services.logger import get_service_logger
 from ..services.thumbnail_pipeline.services.job_service import SyncThumbnailJobService
 from ..services.thumbnail_pipeline.thumbnail_pipeline import ThumbnailPipeline
-from ..services.thumbnail_workflow_service import ThumbnailWorkflowService
 from .constants import MILLISECONDS_PER_SECOND
 from .mixins.job_processing_mixin import JobProcessingMixin
 from .mixins.startup_recovery_mixin import StartupRecoveryMixin
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.THUMBNAIL_WORKER, LogSource.WORKER)
 
@@ -92,6 +91,7 @@ class ThumbnailWorker(
         worker_interval: int = DEFAULT_THUMBNAIL_WORKER_INTERVAL,
         max_retries: int = DEFAULT_THUMBNAIL_MAX_RETRIES,
         cleanup_hours: int = DEFAULT_THUMBNAIL_CLEANUP_HOURS,
+        timelapse_ops=None,
     ):
         """
         Initialize ThumbnailWorker with shared job processing infrastructure.
@@ -104,6 +104,7 @@ class ThumbnailWorker(
             worker_interval: Seconds between job queue polling
             max_retries: Maximum retry attempts for failed jobs
             cleanup_hours: Hours to keep completed jobs before cleanup
+            timelapse_ops: Optional SyncTimelapseOperations instance
         """
         # Initialize shared job processing infrastructure
         super().__init__(
@@ -124,17 +125,24 @@ class ThumbnailWorker(
         # Thumbnail-specific services
         self.thumbnail_job_service = thumbnail_job_service
         self.thumbnail_pipeline = thumbnail_pipeline
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.thumbnail_service = ThumbnailWorkflowService()
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ..dependencies.specialized import get_sync_timelapse_operations
+
+        return get_sync_timelapse_operations()
+
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_thumbnail_workflow_service
+
+        self.thumbnail_service = get_thumbnail_workflow_service()
 
     async def initialize(self) -> None:
         """Initialize thumbnail worker resources."""
         logger.info(
-            f"Initialized with batch_size="
-            f"{self.job_batch_processor.current_batch_size}, "
-            f"interval={self.worker_interval}s, "
-            f"max_retries={self.retry_manager.max_retries}",
+            f"Initialized with batch_size={self.job_batch_processor.current_batch_size}, "
+            f"interval={self.worker_interval}s, max_retries={self.retry_manager.max_retries}",
             store_in_db=False,
             emoji=LogEmoji.SYSTEM,
             extra_context={
@@ -252,8 +260,7 @@ class ThumbnailWorker(
                 self.thumbnail_pipeline.process_image_thumbnails(job.image_id)
             )
 
-            # Ensure result_dict contains all required fields for
-            # ThumbnailGenerationResult
+            # Ensure result_dict contains all required fields for ThumbnailGenerationResult
             if not isinstance(result_dict, dict):
                 logger.error(
                     f"Invalid result type from thumbnail pipeline: {type(result_dict)}",
@@ -310,8 +317,7 @@ class ThumbnailWorker(
                 # Log slow processing as warning (thumbnail-specific threshold)
                 if processing_time_ms > THUMBNAIL_PROCESSING_TIME_WARNING_MS:
                     logger.warning(
-                        f"Slow thumbnail processing detected: job {job.id} "
-                        f"took {processing_time_ms}ms",
+                        f"Slow thumbnail processing detected: job {job.id} took {processing_time_ms}ms",
                         store_in_db=False,
                         extra_context={
                             "job_id": job.id,
@@ -323,8 +329,7 @@ class ThumbnailWorker(
                     )
 
                 logger.debug(
-                    f"Successfully completed thumbnail job {job.id} "
-                    f"in {processing_time_ms}ms",
+                    f"Successfully completed thumbnail job {job.id} in {processing_time_ms}ms",
                     store_in_db=False,
                     extra_context={
                         "job_id": job.id,
@@ -457,10 +462,8 @@ class ThumbnailWorker(
 
             if increment_thumbnail or increment_small:
 
-                timelapse_ops = SyncTimelapseOperations(self.thumbnail_job_service.db)
-
-                # Update counts synchronously in worker
-                success = timelapse_ops.increment_thumbnail_counts_sync(
+                # Update counts synchronously in worker using injected operations
+                success = self.timelapse_ops.increment_thumbnail_counts_sync(
                     result.timelapse_id,
                     increment_thumbnail=increment_thumbnail,
                     increment_small=increment_small,
@@ -479,8 +482,7 @@ class ThumbnailWorker(
                     )
                 else:
                     logger.warning(
-                        f"Failed to update thumbnail counts for timelapse "
-                        f"{result.timelapse_id}",
+                        f"Failed to update thumbnail counts for timelapse {result.timelapse_id}",
                         store_in_db=False,
                         extra_context={
                             "timelapse_id": result.timelapse_id,
@@ -493,8 +495,7 @@ class ThumbnailWorker(
 
         except Exception as e:
             logger.error(
-                f"Error updating thumbnail counts for timelapse "
-                f"{result.timelapse_id}: {e}",
+                f"Error updating thumbnail counts for timelapse {result.timelapse_id}: {e}",
                 store_in_db=False,
             )
 
@@ -531,9 +532,7 @@ class ThumbnailWorker(
             # Get service-specific status
             service_status = self.thumbnail_service.get_worker_status(
                 thumbnail_pipeline=self.thumbnail_pipeline,
-                processing_time_warning_threshold_ms=(
-                    THUMBNAIL_PROCESSING_TIME_WARNING_MS
-                ),
+                processing_time_warning_threshold_ms=THUMBNAIL_PROCESSING_TIME_WARNING_MS,
                 concurrent_jobs_limit=THUMBNAIL_CONCURRENT_JOBS,
                 base_status=base_status,
             )

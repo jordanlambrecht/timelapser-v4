@@ -2,7 +2,7 @@
 "use client"
 
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Settings, FileText, Video, Layers, ChevronDown } from "lucide-react"
+import { LayoutDashboard, Settings, FileText, Video, Layers, ChevronDown, Activity } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { useState } from "react"
@@ -43,9 +43,14 @@ export function NavigationLinks() {
       label: "Overlays",
       icon: Layers,
     },
+    {
+      href: "/jobs",
+      label: "Jobs Monitor",
+      icon: Activity,
+    },
   ]
 
-  const isSettingsActive = pathname === "/settings" || pathname === "/overlays"
+  const isSettingsActive = pathname === "/settings" || pathname === "/overlays" || pathname === "/jobs"
 
   return (
     <div className='hidden md:flex items-center space-x-1 bg-black/30 rounded-full p-1 border border-purple-muted/30 backdrop-blur-sm'>

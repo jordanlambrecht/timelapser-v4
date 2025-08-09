@@ -156,7 +156,7 @@ class TimelapseOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_timelapse_caches(
         self,
@@ -185,7 +185,7 @@ class TimelapseOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(timelapse_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"timelapse:metadata:{timelapse_id}", etag
                 )
 
@@ -368,11 +368,12 @@ class TimelapseOperations:
         # Convert Pydantic model to dict for database insertion, including defaults
         insert_data = timelapse_data.model_dump(exclude_unset=False)
         insert_data["camera_id"] = camera_id
+        insert_data["start_date"] = utc_now().date()  # Set start date to today
 
         # Create the timelapse record
         query = """
         INSERT INTO timelapses (
-            camera_id, name, status, auto_stop_at, capture_interval_seconds,
+            camera_id, name, status, start_date, auto_stop_at, capture_interval_seconds,
             time_window_type, time_window_start, time_window_end,
             sunrise_offset_minutes, sunset_offset_minutes, use_custom_time_window,
             video_generation_mode, standard_fps, enable_time_limits,
@@ -380,7 +381,7 @@ class TimelapseOperations:
             fps_bounds_min, fps_bounds_max, video_automation_mode,
             generation_schedule, milestone_config
         ) VALUES (
-            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
+            %(camera_id)s, %(name)s, %(status)s, %(start_date)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
             %(time_window_type)s, %(time_window_start)s, %(time_window_end)s,
             %(sunrise_offset_minutes)s, %(sunset_offset_minutes)s, %(use_custom_time_window)s,
             %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,
@@ -738,7 +739,7 @@ class TimelapseOperations:
         query = """
         DELETE FROM timelapses
         WHERE status = 'completed'
-        AND updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
+        AND updated_at < %(current_time)s - INTERVAL '1 day' * %(retention_days)s
         """
 
         current_time = utc_now()
@@ -1053,7 +1054,7 @@ class SyncTimelapseOperations:
         FROM timelapses t
         JOIN cameras c ON t.camera_id = c.id
         WHERE t.status = 'completed'
-        AND t.updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
+        AND t.updated_at < %(current_time)s - INTERVAL '1 day' * %(retention_days)s
         ORDER BY t.updated_at ASC
         """
 
@@ -1104,7 +1105,7 @@ class SyncTimelapseOperations:
         query = """
         DELETE FROM timelapses
         WHERE status = 'completed'
-        AND updated_at < %(current_time)s - %(retention_days)s * INTERVAL '1 day'
+        AND updated_at < %(current_time)s - INTERVAL '1 day' * %(retention_days)s
         """
 
         current_time = utc_now()
@@ -1214,10 +1215,11 @@ class SyncTimelapseOperations:
         """
         # Convert Pydantic model to dict for database insertion
         insert_data = timelapse_data.model_dump(exclude_unset=True)
+        insert_data["start_date"] = utc_now().date()  # Set start date to today
 
         query = """
         INSERT INTO timelapses (
-            camera_id, name, status, auto_stop_at, capture_interval_seconds,
+            camera_id, name, status, start_date, auto_stop_at, capture_interval_seconds,
             time_window_type, time_window_start, time_window_end,
             sunrise_offset_minutes, sunset_offset_minutes, use_custom_time_window,
             video_generation_mode, standard_fps, enable_time_limits,
@@ -1225,7 +1227,7 @@ class SyncTimelapseOperations:
             fps_bounds_min, fps_bounds_max, video_automation_mode,
             generation_schedule, milestone_config
         ) VALUES (
-            %(camera_id)s, %(name)s, %(status)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
+            %(camera_id)s, %(name)s, %(status)s, %(start_date)s, %(auto_stop_at)s, %(capture_interval_seconds)s,
             %(time_window_type)s, %(time_window_start)s, %(time_window_end)s,
             %(sunrise_offset_minutes)s, %(sunset_offset_minutes)s, %(use_custom_time_window)s,
             %(video_generation_mode)s, %(standard_fps)s, %(enable_time_limits)s,

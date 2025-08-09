@@ -114,6 +114,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
                     "request_info": request_info,
                 },
                 emoji=LogEmoji.REQUEST,
+                store_in_db=False,
             )
 
         except Exception as e:
@@ -131,15 +132,19 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             if status_code >= 500:
                 log_level = "error"
                 emoji = "💥"
+                store_in_db = True
             elif status_code >= 400:
                 log_level = "warning"
                 emoji = "⚠️"
+                store_in_db = True
             elif duration > 5.0:  # Slow requests
                 log_level = "warning"
                 emoji = "🐌"
+                store_in_db = True
             else:
                 log_level = "info"
                 emoji = "✅"
+                store_in_db = False
 
             # Build response info
             response_info = {
@@ -150,7 +155,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             }
 
             # Log with appropriate level
-            log_message = f"{emoji} {request.method} {request.url.path} -> {status_code} ({response_info['duration_ms']}ms)"
+            log_message = f"{request.method} {request.url.path} -> {status_code} ({response_info['duration_ms']}ms)"
 
             getattr(logger, log_level)(
                 log_message,
@@ -159,6 +164,8 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
                     "event_type": "request_complete",
                     "response_info": response_info,
                 },
+                store_in_db=store_in_db,
+                emoji=emoji,
             )
 
         except Exception as e:

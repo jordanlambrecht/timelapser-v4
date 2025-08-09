@@ -50,7 +50,6 @@ from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..database.timelapse_operations import SyncTimelapseOperations
 from ..enums import JobPriority, LogEmoji, LoggerName, LogSource, WorkerType
 from ..models.scheduled_job_model import ScheduledJobCreate
-from ..services.logger import get_service_logger
 from ..services.scheduler_workflow_service import SchedulerWorkflowService
 from ..services.scheduling.capture_timing_service import SyncCaptureTimingService
 from ..services.settings_service import SyncSettingsService
@@ -62,7 +61,8 @@ from .standard_job_manager import StandardJobManager
 from .utils import JobIdGenerator, SchedulerJobTemplate, SchedulerTimeUtils
 from .utils.worker_status_builder import WorkerStatusBuilder
 
-# Initialize scheduler worker logger
+from ..services.logger import get_service_logger
+
 scheduler_logger = get_service_logger(LoggerName.SCHEDULER_WORKER, LogSource.WORKER)
 
 
@@ -81,6 +81,9 @@ class SchedulerWorker(BaseWorker):
         settings_service: SyncSettingsService,
         db: SyncDatabase,
         scheduling_service: SyncCaptureTimingService,
+        timelapse_ops=None,
+        sse_ops=None,
+        scheduled_job_ops=None,
     ):
         """
         Initialize scheduler worker with injected dependencies.
@@ -89,6 +92,9 @@ class SchedulerWorker(BaseWorker):
             settings_service: Settings operations service
             db: Sync database instance for timelapse operations
             scheduling_service: Scheduling service for capture validation (required)
+            timelapse_ops: Optional SyncTimelapseOperations instance
+            sse_ops: Optional SyncSSEEventsOperations instance
+            scheduled_job_ops: Optional SyncScheduledJobOperations instance
         """
         super().__init__(WorkerType.SCHEDULER_WORKER)
 
@@ -97,10 +103,12 @@ class SchedulerWorker(BaseWorker):
         self.db = db
         self.scheduling_service = scheduling_service
 
-        # Database operations
-        self.timelapse_ops = SyncTimelapseOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
-        self.scheduled_job_ops = SyncScheduledJobOperations(db)
+        # Database operations with dependency injection
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
+        self.scheduled_job_ops = (
+            scheduled_job_ops or self._get_default_scheduled_job_ops()
+        )
 
         # APScheduler setup
         self.scheduler = AsyncIOScheduler()
@@ -109,11 +117,31 @@ class SchedulerWorker(BaseWorker):
         # External function references
         self.timelapse_capture_func: Optional[Callable] = None
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.scheduler_service = SchedulerWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_scheduler_workflow_service
+
+        self.scheduler_service = get_scheduler_workflow_service()
 
         # Utility and manager initialization
         self._initialize_managers()
+
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ..dependencies.specialized import get_sync_timelapse_operations
+
+        return get_sync_timelapse_operations()
+
+    def _get_default_sse_ops(self):
+        """Fallback to get SyncSSEEventsOperations singleton"""
+        from ..dependencies.specialized import get_sync_sse_events_operations
+
+        return get_sync_sse_events_operations()
+
+    def _get_default_scheduled_job_ops(self):
+        """Fallback to get SyncScheduledJobOperations singleton"""
+        from ..dependencies.specialized import get_sync_scheduled_job_operations
+
+        return get_sync_scheduled_job_operations()
 
     def _initialize_managers(self) -> None:
         """Initialize specialized managers and utilities."""
@@ -180,6 +208,10 @@ class SchedulerWorker(BaseWorker):
 
         # Rebuild APScheduler jobs from database
         await self._rebuild_jobs_from_database()
+
+        # NOTE: Timelapse capture recovery is now handled by the centralized
+        # RecoveryService during worker ecosystem startup. This ensures
+        # consistent recovery patterns across all job types.
 
         scheduler_logger.info(
             "Scheduler worker initialization completed",
@@ -258,6 +290,14 @@ class SchedulerWorker(BaseWorker):
                 try:
                     # Determine job type and rebuild accordingly
                     if job_record.job_type == "timelapse_capture":
+                        # Skip timelapse jobs if capture function not configured yet
+                        # They will be added later when set_timelapse_capture_function is called
+                        if not self.timelapse_capture_func:
+                            scheduler_logger.debug(
+                                f"Skipping timelapse job rebuild (capture function not set): {job_record.job_id}"
+                            )
+                            continue
+
                         if job_record.entity_id and job_record.interval_seconds:
                             success = self.add_timelapse_job(
                                 job_record.entity_id, job_record.interval_seconds
@@ -334,6 +374,21 @@ class SchedulerWorker(BaseWorker):
             # Get next run time
             next_run_time = job.next_run_time
 
+            # Filter kwargs to only include JSON-serializable values
+            # Exclude function objects, trigger objects, and other non-serializable items
+            safe_config = {}
+            for key, value in kwargs.items():
+                if key in ["func", "trigger", "executor", "job_defaults"]:
+                    continue  # Skip non-serializable objects
+                if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                    safe_config[key] = value
+                elif hasattr(value, "__dict__"):
+                    # Try to convert objects with __dict__ to a simple representation
+                    try:
+                        safe_config[key] = str(value)
+                    except Exception:
+                        pass  # Skip if can't convert to string
+
             # Create job record
             job_data = ScheduledJobCreate(
                 job_id=job_id,
@@ -343,7 +398,7 @@ class SchedulerWorker(BaseWorker):
                 next_run_time=next_run_time,
                 entity_id=entity_id,
                 entity_type=entity_type,
-                config=kwargs,
+                config=safe_config,
                 status="active",
             )
 
@@ -666,6 +721,7 @@ class SchedulerWorker(BaseWorker):
         weather_refresh_func: Optional[Callable] = None,
         video_automation_func: Optional[Callable] = None,
         sse_cleanup_func: Optional[Callable] = None,
+        cleanup_func: Optional[Callable] = None,
     ) -> int:
         """
         Add all standard recurring jobs with execution tracking.
@@ -675,6 +731,7 @@ class SchedulerWorker(BaseWorker):
             weather_refresh_func: Weather data refresh function
             video_automation_func: Video automation processing function
             sse_cleanup_func: SSE cleanup function
+            cleanup_func: System cleanup function (logs, images, etc.)
 
         Returns:
             Number of jobs successfully added
@@ -684,6 +741,7 @@ class SchedulerWorker(BaseWorker):
         tracked_weather_func = None
         tracked_video_automation_func = None
         tracked_sse_cleanup_func = None
+        tracked_cleanup_func = None
         tracked_automation_triggers_func = None
         tracked_sync_timelapses_func = None
 
@@ -707,6 +765,11 @@ class SchedulerWorker(BaseWorker):
                 "sse_cleanup_job", sse_cleanup_func
             )
 
+        if cleanup_func:
+            tracked_cleanup_func = self._create_tracked_job_wrapper(
+                "cleanup_job", cleanup_func
+            )
+
         # Always create tracked versions of internal functions
         tracked_automation_triggers_func = self._create_tracked_job_wrapper(
             "automation_triggers_job", self.evaluate_automation_triggers
@@ -724,6 +787,7 @@ class SchedulerWorker(BaseWorker):
         )
         self.standard_job_manager.sync_timelapses_func = tracked_sync_timelapses_func
         self.standard_job_manager.sse_cleanup_func = tracked_sse_cleanup_func
+        self.standard_job_manager.cleanup_func = tracked_cleanup_func
 
         jobs_added = self.standard_job_manager.add_all_standard_jobs()
 
@@ -742,9 +806,23 @@ class SchedulerWorker(BaseWorker):
             # Get running and paused timelapses
             active_timelapses = self.timelapse_ops.get_running_and_paused_timelapses()
 
+            if not active_timelapses:
+                scheduler_logger.debug("No running or paused timelapses found")
+                return
+
+            scheduler_logger.info(
+                f"Found {len(active_timelapses)} active timelapses to sync",
+                store_in_db=False,
+                extra_context={
+                    "active_count": len(active_timelapses),
+                    "timelapse_ids": [t["id"] for t in active_timelapses],
+                },
+            )
+
             # Track which timelapses should have jobs
             expected_jobs = set()
             jobs_added = 0
+            jobs_updated = 0
 
             for timelapse in active_timelapses:
                 timelapse_id = timelapse["id"]
@@ -757,9 +835,14 @@ class SchedulerWorker(BaseWorker):
                 if job_id not in self.job_registry:
                     if self.add_timelapse_job(timelapse_id, interval_seconds):
                         jobs_added += 1
+                        scheduler_logger.info(
+                            f"Restored timelapse job {timelapse_id} (interval: {interval_seconds}s)",
+                            store_in_db=False,
+                        )
                 else:
                     # Update next_run_time in database for existing jobs
                     self._sync_job_timing_to_database(job_id)
+                    jobs_updated += 1
 
             # Remove jobs for timelapses that are no longer active
             jobs_removed = 0
@@ -844,7 +927,7 @@ class SchedulerWorker(BaseWorker):
         }
 
     def set_timelapse_capture_function(self, func: Callable) -> None:
-        """Set the timelapse capture function reference."""
+        """Set the timelapse capture function reference and rebuild skipped timelapse jobs."""
         self.timelapse_capture_func = func
         scheduler_logger.info(
             f"Set timelapse capture function: {func.__name__ if func else 'None'}",
@@ -854,6 +937,41 @@ class SchedulerWorker(BaseWorker):
 
         # Update immediate job manager reference
         self.immediate_job_manager.timelapse_capture_func = func
+
+        # Rebuild any timelapse jobs that were skipped during initialization
+        self._rebuild_skipped_timelapse_jobs()
+
+    def _rebuild_skipped_timelapse_jobs(self) -> None:
+        """Rebuild timelapse jobs that were skipped during initialization due to missing capture function."""
+        try:
+            # Get all active timelapse capture jobs from database
+            active_jobs = self.scheduled_job_ops.get_active_jobs()
+            jobs_rebuilt = 0
+
+            for job_record in active_jobs:
+                if job_record.job_type == "timelapse_capture":
+                    # Check if job is already in APScheduler
+                    if job_record.job_id not in self.job_registry:
+                        if job_record.entity_id and job_record.interval_seconds:
+                            success = self.add_timelapse_job(
+                                job_record.entity_id, job_record.interval_seconds
+                            )
+                            if success:
+                                jobs_rebuilt += 1
+                                scheduler_logger.debug(
+                                    f"Rebuilt previously skipped timelapse job: {job_record.job_id}"
+                                )
+
+            if jobs_rebuilt > 0:
+                scheduler_logger.info(
+                    f"Rebuilt {jobs_rebuilt} previously skipped timelapse jobs",
+                    emoji=LogEmoji.SUCCESS,
+                )
+            else:
+                scheduler_logger.debug("No skipped timelapse jobs to rebuild")
+
+        except Exception as e:
+            scheduler_logger.error(f"Failed to rebuild skipped timelapse jobs: {e}")
 
     def get_status(self) -> Dict[str, Any]:
         """

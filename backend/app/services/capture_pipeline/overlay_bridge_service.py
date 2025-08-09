@@ -35,7 +35,11 @@ while preparing for future architectural evolution.
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ...services.settings_service import SyncSettingsService
+    from ...services.weather.service import WeatherManager
 
 from PIL import Image
 
@@ -46,8 +50,6 @@ from ...constants import (
     SETTING_KEY_GENERATE_OVERLAYS,
 )
 from ...database.core import SyncDatabase
-from ...database.image_operations import SyncImageOperations
-from ...database.overlay_operations import SyncOverlayOperations
 from ...enums import LoggerName, LogSource
 from ...models.overlay_model import OverlayConfiguration
 from ...services.logger import get_service_logger
@@ -56,8 +58,6 @@ from ...services.overlay_pipeline.utils.overlay_helpers import (  # Used for ove
     OverlaySettingsResolver,
 )
 from ...services.overlay_pipeline.utils.overlay_utils import OverlayRenderer
-from ...services.settings_service import SyncSettingsService
-from ...services.weather.service import WeatherManager
 from ...utils import file_helpers
 from ...utils.time_utils import (  # Using timezone-aware system
     format_date_string,
@@ -90,23 +90,56 @@ class OverlayBridgeService:
     - Fallback overlay creation when generation fails
     """
 
-    def __init__(self, db: SyncDatabase) -> None:
+    def __init__(
+        self,
+        db: SyncDatabase,
+        settings_service: Optional["SyncSettingsService"] = None,
+        weather_manager: Optional["WeatherManager"] = None,
+    ) -> None:
         """
         Initialize overlay bridge service.
 
         Args:
             db: Synchronized database connection
+            settings_service: Optional settings service (uses singleton if None)
+            weather_manager: Optional weather manager (uses singleton if None)
         """
         self.db = db
 
-        # Initialize services
-        self.settings_service = SyncSettingsService(db)
-        self.weather_manager = WeatherManager(db)
+        # Use provided services or get singletons
+        if settings_service is None:
+            from ...dependencies.sync_services import get_sync_settings_service
+
+            settings_service = get_sync_settings_service()
+        if weather_manager is None:
+            # Use singleton WeatherManager
+            import asyncio
+            from ...dependencies.async_services import get_weather_manager
+
+            try:
+                loop = asyncio.get_event_loop()
+                weather_manager = loop.run_until_complete(get_weather_manager())
+            except RuntimeError:
+                # Use dependency injection singleton to prevent database connection multiplication
+                from ...dependencies.sync_services import get_sync_weather_manager
+
+                weather_manager = get_sync_weather_manager()
+
+        self.settings_service = settings_service
+        self.weather_manager = weather_manager
+        # Use dependency injection to avoid creating OverlayService directly where possible
+        # Note: OverlayService doesn't have a singleton factory yet due to complex dependencies
         self.overlay_service = OverlayService(
             db, self.settings_service, self.weather_manager
         )
-        self.overlay_ops = SyncOverlayOperations(db)
-        self.image_ops = SyncImageOperations(db)
+        # Using injected Operations singletons
+        from ...dependencies.specialized import (
+            get_sync_overlay_operations,
+            get_sync_image_operations,
+        )
+
+        self.overlay_ops = get_sync_overlay_operations()
+        self.image_ops = get_sync_image_operations()
 
     def generate_overlay_for_image(
         self,
@@ -374,7 +407,7 @@ class OverlayBridgeService:
                     "success": True,
                     "output_path": str(output_path),
                     "file_size": file_size,
-                    "content_items": len(overlay_settings.get("overlayPositions", {})),
+                    "content_items": len(overlay_settings.get("overlay_items", [])),
                 }
             else:
                 return {

@@ -27,19 +27,16 @@ from ..constants import (
     JOB_STATUS_LIST,
     MAX_PAGE_SIZE,
 )
-from ..database.sse_events_operations import SSEEventsOperations
-
 # Local application imports
-from ..dependencies import (
-    SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: New scheduler dependency
-)
-from ..dependencies import VideoPipelineDep  # Still used by queue/stats endpoints
-from ..dependencies import VideoServiceDep  # For queue statistics delegation
 from ..dependencies import (
     AsyncDatabaseDep,
     CameraServiceDep,
+    SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: New scheduler dependency
     SettingsServiceDep,
+    SSEEventsOperationsDep,
     TimelapseServiceDep,
+    VideoPipelineDep,  # Still used by queue/stats endpoints
+    VideoServiceDep,  # For queue statistics delegation
 )
 
 # Constants and enums for consistency
@@ -103,7 +100,8 @@ class AutomationSettingsUpdate(
 ):
     """Automation settings update request model"""
 
-    pass
+    # Add a concrete field to fix Pydantic model definition
+    model_config = {"extra": "forbid"}
 
 
 # Video automation request models moved to shared_models.py
@@ -222,7 +220,7 @@ async def trigger_manual_generation(
     request: ManualGenerationRequest,
     scheduler_service: SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: Use scheduler authority
     timelapse_service: TimelapseServiceDep,
-    db: AsyncDatabaseDep,
+    sse_ops: SSEEventsOperationsDep,
 ):
     """
     Manually trigger video generation for a timelapse.
@@ -257,7 +255,6 @@ async def trigger_manual_generation(
             )
 
         # Create SSE event for real-time updates
-        sse_ops = SSEEventsOperations(db)
         await sse_ops.create_event(
             event_type=SSEEvent.VIDEO_JOB_CREATED,
             event_data={
@@ -347,7 +344,7 @@ async def update_timelapse_automation_settings(
     timelapse_id: int,
     settings: AutomationSettingsUpdate,
     timelapse_service: TimelapseServiceDep,
-    db: AsyncDatabaseDep,
+    sse_ops: SSEEventsOperationsDep,
 ):
     """Update automation settings for a timelapse"""
     # Verify timelapse exists
@@ -382,7 +379,6 @@ async def update_timelapse_automation_settings(
         await timelapse_service.update_timelapse(timelapse_id, timelapse_update)
 
         # Create SSE event for real-time updates
-        sse_ops = SSEEventsOperations(db)
         await sse_ops.create_event(
             event_type=SSEEvent.TIMELAPSE_SETTINGS_UPDATED,
             event_data={

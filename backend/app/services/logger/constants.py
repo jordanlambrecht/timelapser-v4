@@ -15,6 +15,7 @@ ANSI_COLOR_GREEN = "\033[32m"    # Info
 ANSI_COLOR_YELLOW = "\033[33m"   # Warning
 ANSI_COLOR_RED = "\033[31m"      # Error
 ANSI_COLOR_MAGENTA = "\033[35m"  # Critical
+ANSI_COLOR_PURPLE = "\033[35m"   # Capture process indicator
 
 # ANSI formatting codes
 ANSI_RESET = "\033[0m"
@@ -25,6 +26,7 @@ ANSI_DIM = "\033[2m"
 CONSOLE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 CONSOLE_MAX_CONTEXT_ITEMS = 3
 CONSOLE_CONTEXT_INDENTATION = "  ↳ "
+CONSOLE_CAPTURE_BAR = "▎"  # Thick purple bar for capture processes
 
 # ====================================================================
 # CONTEXT EXTRACTOR CONSTANTS

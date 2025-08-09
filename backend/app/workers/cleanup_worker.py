@@ -25,21 +25,15 @@ from ..constants import (
 from ..database import SyncDatabase
 
 # from ..services.corruption_service import SyncCorruptionService  # Replaced by corruption_pipeline
-from ..database.corruption_operations import SyncCorruptionOperations
-from ..database.image_operations import SyncImageOperations
-from ..database.log_operations import LogOperations, SyncLogOperations
-from ..database.overlay_job_operations import SyncOverlayJobOperations
-from ..database.sse_events_operations import SyncSSEEventsOperations
-from ..database.statistics_operations import SyncStatisticsOperations
+
 from ..enums import LogEmoji, LoggerName, LogSource, WorkerType
-from ..services.cleanup_workflow_service import CleanupWorkflowService
-from ..services.logger import get_service_logger
+
 from ..services.logger.services.cleanup_service import LogCleanupService
 from ..services.settings_service import SyncSettingsService
 
 # Defer video pipeline import to avoid circular dependency
 # from ..services.video_pipeline import create_video_pipeline
-from ..services.timelapse_service import SyncTimelapseService
+
 from ..utils.temp_file_manager import cleanup_temporary_files
 from ..utils.time_utils import utc_now
 from .base_worker import BaseWorker
@@ -65,6 +59,8 @@ from .utils.worker_status_builder import WorkerStatusBuilder
 
 # from ..models.health_model import HealthStatus  # Unused
 
+
+from ..services.logger import get_service_logger
 
 cleanup_logger = get_service_logger(LoggerName.CLEANUP_WORKER, LogSource.WORKER)
 
@@ -96,15 +92,25 @@ class CleanupWorker(SettingsHelperMixin, BaseWorker):
         async_db: "AsyncDatabase",
         settings_service: SyncSettingsService,
         cleanup_interval_hours: int = CLEANUP_INTERVAL_HOURS_DEFAULT,  # Run every 6 hours by default
+        corruption_ops=None,
+        timelapse_service=None,
+        image_ops=None,
+        statistics_ops=None,
+        overlay_job_ops=None,
     ):
         """
-        Initialize cleanup worker.
+        Initialize cleanup worker with injected dependencies.
 
         Args:
             sync_db: Synchronous database connection
             async_db: Asynchronous database connection
             settings_service: Settings service for configuration
             cleanup_interval_hours: How often to run cleanup (in hours)
+            corruption_ops: Optional SyncCorruptionOperations instance
+            timelapse_service: Optional SyncTimelapseService instance
+            image_ops: Optional SyncImageOperations instance
+            statistics_ops: Optional SyncStatisticsOperations instance
+            overlay_job_ops: Optional SyncOverlayJobOperations instance
 
         Raises:
             WorkerInitializationError: If required dependencies are missing
@@ -125,31 +131,81 @@ class CleanupWorker(SettingsHelperMixin, BaseWorker):
         self.settings_service = settings_service
         self.cleanup_interval_hours = cleanup_interval_hours
 
-        # Initialize service dependencies
+        # Initialize service dependencies with dependency injection
         self.log_service: Optional[LogCleanupService] = None
         # self.corruption_service: Optional[SyncCorruptionService] = None  # Replaced by corruption_pipeline
-        self.corruption_ops: Optional[SyncCorruptionOperations] = None
+        self.corruption_ops = corruption_ops or self._get_default_corruption_ops()
         self.video_pipeline = None
-        self.timelapse_service: Optional[SyncTimelapseService] = None
-        self.image_ops: Optional[SyncImageOperations] = None
-        self.statistics_ops: Optional[SyncStatisticsOperations] = None
-        self.overlay_job_ops: Optional[SyncOverlayJobOperations] = None
+        self.timelapse_service = (
+            timelapse_service or self._get_default_timelapse_service()
+        )
+        self.image_ops = image_ops or self._get_default_image_ops()
+        self.statistics_ops = statistics_ops or self._get_default_statistics_ops()
+        self.overlay_job_ops = overlay_job_ops or self._get_default_overlay_job_ops()
 
         # Track cleanup stats
         self.last_cleanup_time: Optional[datetime] = None
         self.cleanup_stats: CleanupStats = CleanupStats()
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.cleanup_service = CleanupWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_cleanup_workflow_service
+
+        self.cleanup_service = get_cleanup_workflow_service()
+
+    def _get_default_corruption_ops(self):
+        """Fallback to get SyncCorruptionOperations singleton"""
+        from ..dependencies.specialized import get_sync_corruption_operations
+
+        return get_sync_corruption_operations()
+
+    def _get_default_timelapse_service(self):
+        """Fallback to get SyncTimelapseService singleton"""
+        from ..dependencies.sync_services import get_sync_timelapse_service
+
+        return get_sync_timelapse_service()
+
+    def _get_default_image_ops(self):
+        """Fallback to get SyncImageOperations singleton"""
+        from ..dependencies.specialized import get_sync_image_operations
+
+        return get_sync_image_operations()
+
+    def _get_default_statistics_ops(self):
+        """Fallback to get SyncStatisticsOperations singleton"""
+        from ..dependencies.specialized import get_sync_statistics_operations
+
+        return get_sync_statistics_operations()
+
+    def _get_default_overlay_job_ops(self):
+        """Fallback to get SyncOverlayJobOperations singleton"""
+        from ..dependencies.specialized import get_sync_overlay_job_operations
+
+        return get_sync_overlay_job_operations()
 
     async def initialize(self) -> None:
         """Initialize worker dependencies."""
         try:
             # Initialize service layer dependencies
-            # Initialize log operations
+            # Initialize log operations using singletons
             if self.async_db:
-                async_log_ops = LogOperations(self.async_db)
-                sync_log_ops = SyncLogOperations(self.sync_db)
+                from ..dependencies.specialized import (
+                    get_log_operations,
+                    get_sync_log_operations,
+                )
+                import asyncio
+
+                # Get singleton operations
+                try:
+                    async_log_ops = await get_log_operations()
+                except RuntimeError:
+                    # Handle case where we can't await in sync context
+                    # Use direct instantiation for async operations
+                    from ..database.log_operations import LogOperations
+
+                    async_log_ops = LogOperations(self.async_db)
+
+                sync_log_ops = get_sync_log_operations()
+
                 self.log_service = LogCleanupService(
                     async_log_ops=async_log_ops, sync_log_ops=sync_log_ops
                 )
@@ -159,20 +215,12 @@ class CleanupWorker(SettingsHelperMixin, BaseWorker):
                     "Log cleanup service unavailable - async_db not provided"
                 )
                 self.log_service = None
-            # self.corruption_service = SyncCorruptionService(self.sync_db)  # Replaced by corruption_pipeline
-            self.corruption_ops = SyncCorruptionOperations(self.sync_db)
-
             # Import here to avoid circular dependency
             from ..services.video_pipeline import create_video_pipeline
 
+            # Note: Video pipeline and other operations already initialized in constructor
+            # using dependency injection. No need for direct instantiation here.
             self.video_pipeline = create_video_pipeline(self.sync_db)
-
-            self.timelapse_service = SyncTimelapseService(self.sync_db)
-
-            # Initialize database operations
-            self.image_ops = SyncImageOperations(self.sync_db)
-            self.statistics_ops = SyncStatisticsOperations(self.sync_db)
-            self.overlay_job_ops = SyncOverlayJobOperations(self.sync_db)
 
             cleanup_logger.info(
                 "Cleanup worker initialized successfully",
@@ -437,8 +485,10 @@ class CleanupWorker(SettingsHelperMixin, BaseWorker):
     def _cleanup_sse_events(self, max_age_hours: int) -> int:
         """Clean up old SSE events."""
         try:
-            # Use sync database for SSE events in worker
-            sse_ops = SyncSSEEventsOperations(self.sync_db)
+            # Use singleton SSE operations
+            from ..dependencies.specialized import get_sync_sse_events_operations
+
+            sse_ops = get_sync_sse_events_operations()
             return sse_ops.cleanup_old_events(max_age_hours)
         except CleanupServiceError as e:
             cleanup_logger.error(f"Cleanup service error during SSE event cleanup: {e}")

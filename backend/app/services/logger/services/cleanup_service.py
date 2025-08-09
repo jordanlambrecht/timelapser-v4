@@ -104,6 +104,27 @@ class LogCleanupService:
 
         return self.default_retention_days
 
+    def _get_max_database_logs(self, override_max: Optional[int] = None) -> int:
+        """
+        Get max database logs limit with fallback hierarchy.
+
+        Args:
+            override_max: Explicit override (takes precedence)
+
+        Returns:
+            Maximum number of logs to keep in database
+        """
+        if override_max is not None:
+            return override_max
+
+        if self.settings_cache:
+            try:
+                return self.settings_cache.get_setting_sync("max_database_logs")
+            except Exception:
+                pass
+
+        return 50000  # Default fallback
+
     async def cleanup_old_logs(
         self,
         days_to_keep: Optional[int] = None,
@@ -127,8 +148,15 @@ class LogCleanupService:
             # Get retention days from user settings or override
             days_to_keep = await self._get_retention_days_async(days_to_keep)
 
-            # Use the existing delete_old_logs method
-            deleted_count = await self.async_log_ops.delete_old_logs(days_to_keep)
+            # Step 1: Time-based cleanup (remove logs older than retention period)
+            time_deleted = await self.async_log_ops.delete_old_logs(days_to_keep)
+            
+            # Step 2: Count-based cleanup (ensure we don't exceed max database logs)
+            max_logs = self._get_max_database_logs()
+            count_deleted = await self.async_log_ops.delete_old_logs_by_count(max_logs)
+            
+            # Total deleted is combination of both cleanups
+            deleted_count = time_deleted + count_deleted
 
             # Update statistics
             self._total_logs_cleaned += deleted_count
@@ -137,9 +165,12 @@ class LogCleanupService:
             return {
                 "success": True,
                 "logs_deleted": deleted_count,
+                "time_based_deleted": time_deleted,
+                "count_based_deleted": count_deleted,
                 "days_to_keep": days_to_keep,
+                "max_logs_limit": max_logs,
                 "cleanup_time": self._last_cleanup_time.isoformat(),
-                "note": "Source and level filters not yet supported by underlying database operations",
+                "note": "Applied both time-based and count-based cleanup",
             }
 
         except Exception as e:
@@ -321,8 +352,15 @@ class LogCleanupService:
             # Calculate cutoff date using timezone-aware timestamp
             cutoff_date = utc_now() - timedelta(days=days_to_keep)
 
-            # Use sync operations for cleanup
-            deleted_count = self.sync_log_ops.cleanup_old_logs(days_to_keep)
+            # Step 1: Time-based cleanup (remove logs older than retention period)
+            time_deleted = self.sync_log_ops.cleanup_old_logs(days_to_keep)
+            
+            # Step 2: Count-based cleanup (ensure we don't exceed max database logs)
+            max_logs = self._get_max_database_logs()
+            count_deleted = self.sync_log_ops.cleanup_old_logs_by_count(max_logs)
+            
+            # Total deleted is combination of both cleanups
+            deleted_count = time_deleted + count_deleted
 
             # Update statistics
             self._total_logs_cleaned += deleted_count
@@ -331,8 +369,11 @@ class LogCleanupService:
             return {
                 "success": True,
                 "logs_deleted": deleted_count,
+                "time_based_deleted": time_deleted,
+                "count_based_deleted": count_deleted,
                 "cutoff_date": cutoff_date.isoformat(),
                 "days_to_keep": days_to_keep,
+                "max_logs_limit": max_logs,
                 "cleanup_time": self._last_cleanup_time.isoformat(),
             }
 

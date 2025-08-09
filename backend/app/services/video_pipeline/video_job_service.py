@@ -50,21 +50,42 @@ class VideoJobService:
     - Queue status and statistics
     """
 
-    def __init__(self, db: SyncDatabase, async_db: AsyncDatabase, settings_service):
+    def __init__(self, db: SyncDatabase, async_db: AsyncDatabase, settings_service, 
+                 video_ops=None, timelapse_ops=None, sse_ops=None):
         """
-        Initialize VideoJobService with database dependency.
+        Initialize VideoJobService with injected dependencies.
 
         Args:
             db: SyncDatabase instance for database operations
             async_db: AsyncDatabase instance
             settings_service: SettingsService for configuration access
+            video_ops: Optional SyncVideoOperations instance
+            timelapse_ops: Optional SyncTimelapseOperations instance
+            sse_ops: Optional SyncSSEEventsOperations instance
         """
         self.db = db
         self.async_db = async_db
-        self.video_ops = SyncVideoOperations(db)
-        self.timelapse_ops = SyncTimelapseOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        self.video_ops = video_ops or self._get_default_video_ops()
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
         self.settings_service = settings_service
+        logger.debug("VideoJobService initialized with simplified architecture")
+        
+    def _get_default_video_ops(self):
+        """Fallback to get SyncVideoOperations singleton"""
+        from ...dependencies.specialized import get_sync_video_operations
+        return get_sync_video_operations()
+        
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ...dependencies.specialized import get_sync_timelapse_operations
+        return get_sync_timelapse_operations()
+        
+    def _get_default_sse_ops(self):
+        """Fallback to get SyncSSEEventsOperations singleton"""
+        from ...dependencies.specialized import get_sync_sse_events_operations
+        return get_sync_sse_events_operations()
+        
         logger.debug("VideoJobService initialized with simplified architecture")
 
     def create_job(
@@ -232,16 +253,10 @@ class VideoJobService:
             )
 
             if success:
-                # Get job details for event
-                job = self.video_ops.get_video_generation_job_by_id(job_id)
-                if job:
-                    self._broadcast_job_event(
-                        event_type=SSEEvent.VIDEO_JOB_STARTED,
-                        job_id=job_id,
-                        timelapse_id=job.timelapse_id,
-                        extra_data={"trigger_type": job.trigger_type},
-                    )
-
+                # NOTE: SSE event for VIDEO_JOB_STARTED is handled by video_workflow_service.py
+                # to avoid duplicate events. The workflow service has full context (job details, processing pipeline)
+                # and is the authoritative source for video job lifecycle events.
+                
                 logger.info(f"Started video job {job_id}")
                 return True
 
@@ -284,34 +299,10 @@ class VideoJobService:
             )
 
             if job_update_success:
-                # Get job details for event
-                job = self.video_ops.get_video_generation_job_by_id(job_id)
-                if job:
-                    # Broadcast appropriate event
-                    event_type = (
-                        SSEEvent.VIDEO_JOB_COMPLETED
-                        if success
-                        else SSEEvent.VIDEO_JOB_FAILED
-                    )
-
-                    extra_data = {
-                        "trigger_type": job.trigger_type,
-                        "success": success,
-                    }
-
-                    if success and video_id:
-                        extra_data["video_id"] = video_id
-
-                    if not success and error_message:
-                        extra_data["error"] = error_message
-
-                    self._broadcast_job_event(
-                        event_type=event_type,
-                        job_id=job_id,
-                        timelapse_id=job.timelapse_id,
-                        extra_data=extra_data,
-                    )
-
+                # NOTE: SSE events for VIDEO_JOB_COMPLETED/VIDEO_JOB_FAILED are handled by video_workflow_service.py
+                # to avoid duplicate events. The workflow service has full context (job details, video metadata, error details)
+                # and is the authoritative source for video job completion events.
+                
                 status_text = "completed" if success else "failed"
                 logger.info(f"Video job {job_id} {status_text}")
                 return True

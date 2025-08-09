@@ -6,14 +6,16 @@ Provides standardized Server-Sent Events broadcasting for worker job lifecycle e
 eliminating duplication between ThumbnailWorker and OverlayWorker.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...enums import LoggerName, SSEEvent, SSEEventSource, SSEPriority
-from ...services.logger import get_service_logger
+from ...enums import LogSource, LoggerName, SSEEvent, SSEEventSource, SSEPriority
+from ...services.sse_event_batcher import SSEEventBatcher
 from ...utils.time_utils import utc_timestamp
 
-logger = get_service_logger(LoggerName.SSEBROADCASTER)
+from ...services.logger import get_service_logger
+
+logger = get_service_logger(LoggerName.SSEBROADCASTER, LogSource.WORKER)
 
 
 class SSEBroadcaster:
@@ -37,6 +39,7 @@ class SSEBroadcaster:
         sse_ops: SyncSSEEventsOperations,
         worker_name: str,
         event_source: SSEEventSource,
+        use_batching: bool = True,
     ):
         """
         Initialize SSE broadcaster.
@@ -45,11 +48,19 @@ class SSEBroadcaster:
             sse_ops: SSE operations service for database event creation
             worker_name: Name of the worker for logging and identification
             event_source: SSE event source enumeration for this worker type
+            use_batching: Whether to use event batching (default True)
         """
         self.sse_ops = sse_ops
         self.worker_name = worker_name
         self.event_source = event_source
         self.failed_broadcast_count = 0
+        self.use_batching = use_batching
+
+        # Initialize event batcher if batching is enabled
+        if self.use_batching:
+            self.event_batcher = SSEEventBatcher(sse_ops)
+        else:
+            self.event_batcher = None
 
     def broadcast_job_started(
         self,
@@ -318,6 +329,161 @@ class SSEBroadcaster:
             priority=priority,
         )
 
+    def broadcast_jobs_started_batch(
+        self,
+        job_data_list: List[Dict[str, Any]],
+        priority: SSEPriority = SSEPriority.NORMAL,
+    ) -> bool:
+        """
+        Broadcast multiple job started events in a single batch operation.
+
+        Args:
+            job_data_list: List of job data dictionaries (each with job_id and other data)
+            priority: Event priority level
+
+        Returns:
+            True if batch broadcast successful, False otherwise
+        """
+        if not job_data_list:
+            return True
+
+        events = []
+        timestamp = utc_timestamp()
+
+        for job_data in job_data_list:
+            event_data = {
+                "job_id": job_data.get("job_id"),
+                "worker_name": self.worker_name,
+                "timestamp": timestamp,
+                **{k: v for k, v in job_data.items() if k != "job_id"},
+            }
+
+            events.append(
+                {
+                    "event_type": f"{self.worker_name.lower()}_{SSEEvent.JOB_STARTED}",
+                    "event_data": event_data,
+                    "priority": priority.value,
+                    "source": self.event_source.value,
+                }
+            )
+
+        return self._create_events_batch(events)
+
+    def broadcast_jobs_completed_batch(
+        self,
+        job_data_list: List[Dict[str, Any]],
+        priority: SSEPriority = SSEPriority.NORMAL,
+    ) -> bool:
+        """
+        Broadcast multiple job completed events in a single batch operation.
+
+        Args:
+            job_data_list: List of job completion data (each with job_id, processing_time_ms, etc.)
+            priority: Event priority level
+
+        Returns:
+            True if batch broadcast successful, False otherwise
+        """
+        if not job_data_list:
+            return True
+
+        events = []
+        timestamp = utc_timestamp()
+
+        for job_data in job_data_list:
+            event_data = {
+                "job_id": job_data.get("job_id"),
+                "worker_name": self.worker_name,
+                "processing_time_ms": job_data.get("processing_time_ms", 0),
+                "timestamp": timestamp,
+                **{
+                    k: v
+                    for k, v in job_data.items()
+                    if k not in ["job_id", "processing_time_ms"]
+                },
+            }
+
+            events.append(
+                {
+                    "event_type": f"{self.worker_name.lower()}_{SSEEvent.JOB_COMPLETED}",
+                    "event_data": event_data,
+                    "priority": priority.value,
+                    "source": self.event_source.value,
+                }
+            )
+
+        return self._create_events_batch(events)
+
+    def broadcast_jobs_failed_batch(
+        self,
+        job_failures: List[Dict[str, Any]],
+        is_permanent: bool = False,
+        priority: SSEPriority = SSEPriority.NORMAL,
+    ) -> bool:
+        """
+        Broadcast multiple job failure events in a single batch operation.
+
+        Args:
+            job_failures: List of failure data (each with job_id, error_message, etc.)
+            is_permanent: Whether these are permanent failures
+            priority: Event priority level
+
+        Returns:
+            True if batch broadcast successful, False otherwise
+        """
+        if not job_failures:
+            return True
+
+        events = []
+        timestamp = utc_timestamp()
+        event_type = "job_failed_permanently" if is_permanent else "job_failed"
+
+        for failure_data in job_failures:
+            event_data = {
+                "job_id": failure_data.get("job_id"),
+                "worker_name": self.worker_name,
+                "error_message": failure_data.get("error_message", "Unknown error"),
+                "is_permanent_failure": is_permanent,
+                "timestamp": timestamp,
+                **{
+                    k: v
+                    for k, v in failure_data.items()
+                    if k not in ["job_id", "error_message"]
+                },
+            }
+
+            events.append(
+                {
+                    "event_type": f"{self.worker_name.lower()}_{event_type}",
+                    "event_data": event_data,
+                    "priority": priority.value,
+                    "source": self.event_source.value,
+                }
+            )
+
+        return self._create_events_batch(events)
+
+    def _create_events_batch(self, events: List[Dict[str, Any]]) -> bool:
+        """
+        Create multiple SSE events in batch using the existing batch operation.
+
+        Args:
+            events: List of event dictionaries
+
+        Returns:
+            True if batch creation successful, False otherwise
+        """
+        try:
+            # Use the existing create_events_batch method
+            self.sse_ops.create_events_batch(events)
+            return True
+        except Exception as e:
+            self.failed_broadcast_count += len(events)
+            logger.warning(
+                f"[{self.worker_name}] Failed to broadcast batch of {len(events)} events: {e}"
+            )
+            return False
+
     def _create_event(
         self, event_type: str, event_data: Dict[str, Any], priority: SSEPriority
     ) -> bool:
@@ -333,13 +499,26 @@ class SSEBroadcaster:
             True if event created successfully, False otherwise
         """
         try:
-            self.sse_ops.create_event(
-                event_type=f"{self.worker_name.lower()}_{event_type}",
-                event_data=event_data,
-                priority=priority,
-                source=self.event_source.value,
-            )
-            return True
+            full_event_type = f"{self.worker_name.lower()}_{event_type}"
+
+            if self.use_batching and self.event_batcher:
+                # Use batching for better performance and reduced frontend spam
+                return self.event_batcher.add_event(
+                    event_type=full_event_type,
+                    event_data=event_data,
+                    priority=priority,
+                    source=self.event_source.value,
+                    worker_name=self.worker_name,
+                )
+            else:
+                # Direct database write (fallback)
+                self.sse_ops.create_event(
+                    event_type=full_event_type,
+                    event_data=event_data,
+                    priority=priority,
+                    source=self.event_source.value,
+                )
+                return True
 
         except Exception as e:
             self.failed_broadcast_count += 1
@@ -355,20 +534,38 @@ class SSEBroadcaster:
         Returns:
             Dictionary with broadcast statistics
         """
-        return {
+        stats = {
             "worker_name": self.worker_name,
             "event_source": self.event_source.value,
             "failed_broadcast_count": self.failed_broadcast_count,
+            "batching_enabled": self.use_batching,
         }
+
+        # Add batcher statistics if available
+        if self.use_batching and self.event_batcher:
+            batcher_stats = self.event_batcher.get_stats()
+            stats.update({"batcher_" + k: v for k, v in batcher_stats.items()})
+
+        return stats
 
     def reset_stats(self) -> None:
         """Reset broadcasting statistics."""
         self.failed_broadcast_count = 0
+
+    def shutdown(self) -> None:
+        """Gracefully shutdown the broadcaster and flush any pending events."""
+        if self.use_batching and self.event_batcher:
+            self.event_batcher.shutdown()
 
     def __repr__(self) -> str:
         """String representation of SSE broadcaster."""
         return (
             f"SSEBroadcaster(worker='{self.worker_name}', "
             f"source={self.event_source.value}, "
+            f"batching={self.use_batching}, "
             f"failed_broadcasts={self.failed_broadcast_count})"
         )
+
+    def __del__(self):
+        """Ensure cleanup on deletion."""
+        self.shutdown()

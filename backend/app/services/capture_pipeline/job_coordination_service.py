@@ -46,10 +46,6 @@ from ...constants import (
 
 # Initialize database operations
 from ...database.core import AsyncDatabase, SyncDatabase
-from ...database.sse_events_operations import SyncSSEEventsOperations
-from ...database.thumbnail_job_operations import SyncThumbnailJobOperations
-from ...database.timelapse_operations import SyncTimelapseOperations
-from ...database.video_operations import SyncVideoOperations
 from ...enums import (
     JobPriority,
     JobStatus,
@@ -110,24 +106,34 @@ class JobCoordinationService:
         async_db: AsyncDatabase,
         settings_service,
         scheduler_service=None,
+        thumbnail_job_ops=None,
+        video_ops=None,
+        timelapse_ops=None,
+        sse_ops=None,
     ):
         """
-        Initialize job coordination service with scheduler dependency.
+        Initialize job coordination service with injected dependencies.
 
         Args:
             db: Synchronized database connection
             async_db: Asynchronous database connection
             settings_service: SettingsService for configuration access
             scheduler_service: Optional SchedulerService for immediate operations
+            thumbnail_job_ops: Optional SyncThumbnailJobOperations instance
+            video_ops: Optional SyncVideoOperations instance
+            timelapse_ops: Optional SyncTimelapseOperations instance
+            sse_ops: Optional SyncSSEEventsOperations instance
         """
         self.db = db
 
-        # Core database operations (for status tracking only)
+        # Core database operations with dependency injection
         self.settings_service = settings_service
-        self.thumbnail_job_ops = SyncThumbnailJobOperations(db)
-        self.video_ops = SyncVideoOperations(db)
-        self.timelapse_ops = SyncTimelapseOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        self.thumbnail_job_ops = (
+            thumbnail_job_ops or self._get_default_thumbnail_job_ops()
+        )
+        self.video_ops = video_ops or self._get_default_video_ops()
+        self.timelapse_ops = timelapse_ops or self._get_default_timelapse_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
 
         # Scheduler authority (the new boss!)
         self.scheduler_service = scheduler_service  # Will be injected
@@ -139,6 +145,30 @@ class JobCoordinationService:
         self.video_pipeline_service = (
             None  # Will be injected - simplified video pipeline
         )
+
+    def _get_default_thumbnail_job_ops(self):
+        """Fallback to get SyncThumbnailJobOperations singleton"""
+        from ...dependencies.specialized import get_sync_thumbnail_job_operations
+
+        return get_sync_thumbnail_job_operations()
+
+    def _get_default_video_ops(self):
+        """Fallback to get SyncVideoOperations singleton"""
+        from ...dependencies.specialized import get_sync_video_operations
+
+        return get_sync_video_operations()
+
+    def _get_default_timelapse_ops(self):
+        """Fallback to get SyncTimelapseOperations singleton"""
+        from ...dependencies.specialized import get_sync_timelapse_operations
+
+        return get_sync_timelapse_operations()
+
+    def _get_default_sse_ops(self):
+        """Fallback to get SyncSSEEventsOperations singleton"""
+        from ...dependencies.specialized import get_sync_sse_events_operations
+
+        return get_sync_sse_events_operations()
 
     def coordinate_thumbnail_job(
         self,

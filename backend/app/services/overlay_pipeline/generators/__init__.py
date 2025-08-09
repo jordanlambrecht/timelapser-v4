@@ -14,7 +14,7 @@ from .base_generator import (
 from .datetime_generator import DateTimeGenerator
 from .sequence_generator import SequenceGenerator
 from .text_generator import TextGenerator
-from .watermark_generator import WatermarkGenerator
+from .watermark_generator import WatermarkOverlayGenerator
 from .weather_generator import WeatherGenerator
 
 
@@ -25,11 +25,23 @@ def register_all_generators():
     overlay_generator_registry.register(TextGenerator())
     overlay_generator_registry.register(SequenceGenerator())
     overlay_generator_registry.register(WeatherGenerator())
-    overlay_generator_registry.register(WatermarkGenerator())
+    overlay_generator_registry.register(WatermarkOverlayGenerator())
 
 
 # Auto-register on import
 register_all_generators()
+
+
+def get_available_generators():
+    """Get list of all available generator classes."""
+    return [
+        DateTimeGenerator,
+        TextGenerator,
+        SequenceGenerator,
+        WeatherGenerator,
+        WatermarkOverlayGenerator,
+    ]
+
 
 __all__ = [
     "BaseOverlayGenerator",
@@ -39,5 +51,6 @@ __all__ = [
     "TextGenerator",
     "SequenceGenerator",
     "WeatherGenerator",
-    "WatermarkGenerator",
+    "WatermarkOverlayGenerator",
+    "get_available_generators",
 ]

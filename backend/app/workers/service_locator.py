@@ -61,8 +61,9 @@ class ServiceLocator:
 
     @lru_cache(maxsize=None)
     def get_sync_settings_service(self) -> SyncSettingsService:
-        """Get sync settings service (cached)."""
-        return SyncSettingsService(self.sync_db)
+        """Get sync settings service (cached singleton)."""
+        from ..dependencies.sync_services import get_sync_settings_service
+        return get_sync_settings_service()
 
     @lru_cache(maxsize=None)
     def get_async_settings_service(self) -> SettingsService:
@@ -71,13 +72,15 @@ class ServiceLocator:
 
     @lru_cache(maxsize=None)
     def get_sync_image_service(self) -> SyncImageService:
-        """Get sync image service (cached)."""
-        return SyncImageService(self.sync_db)
+        """Get sync image service (cached singleton)."""
+        from ..dependencies.sync_services import get_sync_image_service
+        return get_sync_image_service()
 
     @lru_cache(maxsize=None)
     def get_sync_timelapse_service(self) -> SyncTimelapseService:
-        """Get sync timelapse service (cached)."""
-        return SyncTimelapseService(self.sync_db)
+        """Get sync timelapse service (cached singleton)."""
+        from ..dependencies.sync_services import get_sync_timelapse_service
+        return get_sync_timelapse_service()
 
     @lru_cache(maxsize=None)
     def get_async_timelapse_service(self) -> TimelapseService:
@@ -93,33 +96,58 @@ class ServiceLocator:
             settings_service=self.get_async_settings_service(),
         )
 
-    @lru_cache(maxsize=None)
+    @lru_cache(maxsize=None)  
     def get_weather_manager(self) -> WeatherManager:
-        """Get weather manager (cached)."""
-        weather_ops = SyncWeatherOperations(self.sync_db)
-        settings_service = self.get_sync_settings_service()
-        return WeatherManager(weather_ops, settings_service)
+        """Get weather manager (cached singleton)."""
+        # Use async factory since WeatherManager is registered there
+        import asyncio
+        from ..dependencies.async_services import get_weather_manager
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(get_weather_manager())
+        except RuntimeError:
+            # Fallback for sync contexts
+            from ..dependencies.specialized import get_sync_weather_operations
+            weather_ops = get_sync_weather_operations()
+            settings_service = self.get_sync_settings_service()
+            return WeatherManager(weather_ops, settings_service)
 
     @lru_cache(maxsize=None)
     def get_sync_sse_operations(self) -> SyncSSEEventsOperations:
-        """Get sync SSE operations (cached)."""
-        return SyncSSEEventsOperations(self.sync_db)
+        """Get sync SSE operations (cached singleton)."""
+        from ..dependencies.specialized import get_sync_sse_events_operations
+        return get_sync_sse_events_operations()
 
     @lru_cache(maxsize=None)
     def get_async_sse_operations(self) -> SSEEventsOperations:
-        """Get async SSE operations (cached)."""
-        return SSEEventsOperations(self.async_db)
+        """Get async SSE operations (cached singleton)."""
+        from ..dependencies.specialized import get_async_sse_events_operations
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(get_async_sse_events_operations())
+        except RuntimeError:
+            # Fallback - use sync SSE operations instead
+            from ..dependencies.specialized import get_sync_sse_events_operations
+            return get_sync_sse_events_operations()
 
     @lru_cache(maxsize=None)
     def get_thumbnail_pipeline(self) -> ThumbnailPipeline:
-        """Get thumbnail pipeline (cached)."""
-        return ThumbnailPipeline(
-            database=self.sync_db,
-            async_database=self.async_db,
-            settings_service=self.get_sync_settings_service(),
-            image_service=self.get_sync_image_service(),
-            timelapse_service=self.get_sync_timelapse_service(),
-        )
+        """Get thumbnail pipeline (cached singleton)."""
+        from ..dependencies.pipelines import get_thumbnail_pipeline
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(get_thumbnail_pipeline())
+        except RuntimeError:
+            # Fallback for sync contexts - create directly but with singleton services
+            return ThumbnailPipeline(
+                database=self.sync_db,
+                async_database=self.async_db,
+                settings_service=self.get_sync_settings_service(),
+                image_service=self.get_sync_image_service(),
+                timelapse_service=self.get_sync_timelapse_service(),
+            )
 
     @lru_cache(maxsize=None)
     def get_overlay_pipeline(self) -> OverlayPipeline:
@@ -133,43 +161,21 @@ class ServiceLocator:
 
     @lru_cache(maxsize=None)
     def get_thumbnail_job_service(self) -> SyncThumbnailJobService:
-        """Get thumbnail job service (cached)."""
-        settings_service = self.get_sync_settings_service()
-        return SyncThumbnailJobService(self.sync_db, settings_service)
+        """Get thumbnail job service (cached singleton)."""
+        from ..dependencies.sync_services import get_sync_thumbnail_job_service
+        return get_sync_thumbnail_job_service()
 
     @lru_cache(maxsize=None)
     def get_overlay_job_service(self) -> SyncOverlayJobService:
-        """Get overlay job service (cached)."""
-        settings_service = self.get_sync_settings_service()
-        return SyncOverlayJobService(self.sync_db, settings_service)
+        """Get overlay job service (cached singleton)."""
+        from ..dependencies.sync_services import get_sync_overlay_job_service
+        return get_sync_overlay_job_service()
 
     @lru_cache(maxsize=None)
     def get_workflow_orchestrator(self) -> WorkflowOrchestratorService:
-        """Get workflow orchestrator service (cached)."""
-        return WorkflowOrchestratorService(
-            db=self.sync_db,
-            image_service=self.get_sync_image_service(),
-            corruption_evaluation_service=SyncCorruptionEvaluationService(self.sync_db),
-            camera_service=SyncCameraService(
-                db=self.sync_db,
-                async_db=self.async_db,
-                settings_service=self.get_sync_settings_service(),
-            ),
-            timelapse_service=self.get_sync_timelapse_service(),
-            rtsp_service=RTSPService(
-                db=self.sync_db,
-                async_db=self.async_db,
-                settings_service=self.get_sync_settings_service(),
-            ),
-            job_coordinator=JobCoordinationService(
-                db=self.sync_db,
-                async_db=self.async_db,
-                settings_service=self.get_async_settings_service(),
-            ),
-            sse_ops=self.get_sync_sse_operations(),
-            weather_service=self.get_weather_manager(),
-            settings_service=self.get_sync_settings_service(),
-        )
+        """Get workflow orchestrator service (cached singleton)."""
+        from ..dependencies.sync_services import get_workflow_orchestrator_service
+        return get_workflow_orchestrator_service()
 
     def create_capture_worker_dependencies(self) -> Dict[str, Any]:
         """Create dependencies for CaptureWorker."""

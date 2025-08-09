@@ -21,10 +21,12 @@ from ..constants import (
     ANSI_COLOR_CYAN,
     ANSI_COLOR_GREEN,
     ANSI_COLOR_MAGENTA,
+    ANSI_COLOR_PURPLE,
     ANSI_COLOR_RED,
     ANSI_COLOR_YELLOW,
     ANSI_DIM,
     ANSI_RESET,
+    CONSOLE_CAPTURE_BAR,
     CONSOLE_CONTEXT_INDENTATION,
     CONSOLE_MAX_CONTEXT_ITEMS,
 )
@@ -120,6 +122,11 @@ class ConsoleHandler:
             # Build console output
             output_parts = []
 
+            # Add purple capture bar for pipeline and worker logs
+            capture_bar = ""
+            if self.use_colors and source in [LogSource.PIPELINE, LogSource.WORKER]:
+                capture_bar = f"{ANSI_COLOR_PURPLE}{CONSOLE_CAPTURE_BAR}{ANSI_RESET} "
+
             # Add timestamp if enabled
             if self.include_timestamp:
                 # Convert to timezone-aware timestamp for console display
@@ -139,11 +146,26 @@ class ConsoleHandler:
                 source_str = self._format_source(source, logger_name)
                 output_parts.append(source_str)
 
-            # Add the message
-            output_parts.append(message)
+            # Add the message with level-specific coloring
+            if self.use_colors:
+                if level == LogLevel.WARNING:
+                    # Yellow text for warnings
+                    colored_message = (
+                        f"{self.COLORS[LogLevel.WARNING]}{message}{self.RESET}"
+                    )
+                elif level in [LogLevel.ERROR, LogLevel.CRITICAL]:
+                    # Red and bold text for errors and critical
+                    colored_message = (
+                        f"{self.COLORS[level]}{self.BOLD}{message}{self.RESET}"
+                    )
+                else:
+                    colored_message = message
+                output_parts.append(colored_message)
+            else:
+                output_parts.append(message)
 
-            # Combine and output
-            formatted_output = " ".join(output_parts)
+            # Combine and output with capture bar prefix
+            formatted_output = f"{capture_bar}{' '.join(output_parts)}"
             print(formatted_output, file=sys.stdout)
 
             # Flush for immediate output
@@ -312,12 +334,11 @@ class ConsoleHandler:
             else:
                 # Try to get timezone from global database connections
                 try:
-                    # Import here to avoid circular imports
-                    from ....database import sync_db
-                    from ....services.settings_service import SyncSettingsService
+                    # Use dependency injection singleton to prevent database connection multiplication
+                    from ....dependencies.sync_services import get_sync_settings_service
 
-                    # Create a temporary settings service to get timezone
-                    temp_settings_service = SyncSettingsService(sync_db)
+                    # Use singleton settings service to get timezone
+                    temp_settings_service = get_sync_settings_service()
                     timezone_str = (
                         temp_settings_service.get_setting("timezone") or "UTC"
                     )
@@ -417,14 +438,21 @@ class DevConsoleHandler(ConsoleHandler):
         if context and len(context) > 0 and self._should_show_context(context):
             context_preview = self._format_context_preview(context)
             if context_preview:
+                # Add purple capture bar for pipeline and worker context too
+                capture_bar = ""
+                if self.use_colors and source in [LogSource.PIPELINE, LogSource.WORKER]:
+                    capture_bar = (
+                        f"{ANSI_COLOR_PURPLE}{CONSOLE_CAPTURE_BAR}{ANSI_RESET} "
+                    )
+
                 if self.use_colors:
                     print(
-                        f"{CONSOLE_CONTEXT_INDENTATION}{self.DIM}{context_preview}{self.RESET}",
+                        f"{capture_bar}{CONSOLE_CONTEXT_INDENTATION}{self.DIM}{context_preview}{self.RESET}",
                         file=sys.stdout,
                     )
                 else:
                     print(
-                        f"{CONSOLE_CONTEXT_INDENTATION}{context_preview}",
+                        f"{capture_bar}{CONSOLE_CONTEXT_INDENTATION}{context_preview}",
                         file=sys.stdout,
                     )
                 sys.stdout.flush()

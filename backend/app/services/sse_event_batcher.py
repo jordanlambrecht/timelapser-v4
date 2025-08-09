@@ -24,7 +24,7 @@ from ..constants import (
 from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..enums import LoggerName, SSEPriority
 from ..services.logger import get_service_logger
-from ..utils.time_utils import utc_now, utc_timestamp
+from ..utils.time_utils import utc_timestamp
 
 sse_logger = get_service_logger(LoggerName.SSEBROADCASTER)
 

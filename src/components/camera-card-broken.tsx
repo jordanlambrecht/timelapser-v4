@@ -981,6 +981,6 @@ const CameraCardComponent = ({
       />
     </Card>
   )
-})
+}
 
 export default CameraCardComponent

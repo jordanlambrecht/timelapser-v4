@@ -44,8 +44,6 @@ IMMEDIATE vs SCHEDULED JOBS:
 """
 
 from typing import Any, Callable, Dict, Optional
-
-from ..services.settings_service import SyncSettingsService
 from ..workers.overlay_worker import OverlayWorker
 
 from ..database.core import SyncDatabase
@@ -206,8 +204,10 @@ class ImmediateJobManager:
             async def immediate_overlay_wrapper():
                 try:
 
-                    # Create settings service and overlay worker with correct constructor
-                    settings_service = SyncSettingsService(self.db)
+                    # Use singleton settings service
+                    from ..dependencies.sync_services import get_sync_settings_service
+
+                    settings_service = get_sync_settings_service()
                     overlay_worker = OverlayWorker(
                         db=self.db, settings_service=settings_service
                     )
@@ -267,8 +267,19 @@ class ImmediateJobManager:
                         ThumbnailPipeline,
                     )
 
-                    # Create thumbnail pipeline
-                    thumbnail_pipeline = ThumbnailPipeline(database=self.db)
+                    # Create thumbnail pipeline with proper dependencies - use DI to prevent connection multiplication
+                    from ..dependencies.sync_services import get_sync_settings_service, get_sync_image_service
+
+                    settings_service = get_sync_settings_service()
+                    image_service = get_sync_image_service()
+                    # timelapse_service removed to break circular dependency
+
+                    thumbnail_pipeline = ThumbnailPipeline(
+                        database=self.db,
+                        settings_service=settings_service,
+                        image_service=image_service,
+                        # timelapse_service removed
+                    )
 
                     # Generate thumbnails (sync method, not async)
                     result_dict = thumbnail_pipeline.process_image_thumbnails(image_id)

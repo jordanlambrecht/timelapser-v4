@@ -28,11 +28,16 @@ logger = get_service_logger(LoggerName.THUMBNAIL_PIPELINE, LogSource.PIPELINE)
 class SyncThumbnailJobService:
     """Synchronous thumbnail job service for worker processes."""
 
-    def __init__(self, db: SyncDatabase, settings_service=None) -> None:
-        """Initialize with sync database."""
+    def __init__(self, db: SyncDatabase, settings_service=None, thumbnail_job_ops=None) -> None:
+        """Initialize with injected dependencies."""
         self.db = db
-        self.thumbnail_job_ops = SyncThumbnailJobOperations(db)
+        self.thumbnail_job_ops = thumbnail_job_ops or self._get_default_operations()
         self.settings_service = settings_service
+        
+    def _get_default_operations(self):
+        """Fallback to get SyncThumbnailJobOperations singleton"""
+        from ....dependencies.specialized import get_sync_thumbnail_job_operations
+        return get_sync_thumbnail_job_operations()
 
     def queue_job(
         self,
@@ -120,11 +125,17 @@ class SyncThumbnailJobService:
 class ThumbnailJobService:
     """Async thumbnail job service for API endpoints."""
 
-    def __init__(self, db: AsyncDatabase, settings_service=None) -> None:
-        """Initialize with async database."""
+    def __init__(self, db: AsyncDatabase, settings_service=None, thumbnail_job_ops=None) -> None:
+        """Initialize with injected dependencies."""
         self.db = db
-        self.thumbnail_job_ops = ThumbnailJobOperations(db)
+        self.thumbnail_job_ops = thumbnail_job_ops or self._get_default_operations()
         self.settings_service = settings_service
+        
+    def _get_default_operations(self):
+        """Fallback to get ThumbnailJobOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ....database.thumbnail_job_operations import ThumbnailJobOperations
+        return ThumbnailJobOperations(self.db)
 
     async def queue_job(
         self,

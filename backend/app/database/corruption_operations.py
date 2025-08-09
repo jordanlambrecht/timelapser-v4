@@ -99,7 +99,7 @@ class CorruptionQueryBuilder:
             JOIN cameras c ON cl.camera_id = c.id
             LEFT JOIN images i ON cl.image_id = i.id
             WHERE cl.camera_id = %(camera_id)s
-                AND cl.created_at > %(now)s - INTERVAL %(hours)s * INTERVAL '1 hour'
+                AND cl.created_at > %(now)s - INTERVAL '1 hour' * %(hours)s
             ORDER BY cl.created_at DESC
         """
 
@@ -174,7 +174,7 @@ class CorruptionOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_corruption_caches(
         self,
@@ -203,7 +203,7 @@ class CorruptionOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(corruption_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"corruption:metadata:{corruption_id}", etag
                 )
 
@@ -538,14 +538,13 @@ class CorruptionOperations:
         current_time = utc_now()
         async with self.db.get_connection() as conn:
             async with conn.cursor() as cur:
-                # Execute settings updates efficiently
-                for key, value in settings.items():
-                    params = {
-                        "key": f"corruption_{key}",
-                        "value": str(value),
-                        "updated_at": current_time,
-                    }
-                    await cur.execute(query, params)
+                # Execute settings updates in batch for better performance
+                if settings:
+                    batch_params = [
+                        (f"corruption_{key}", str(value), current_time)
+                        for key, value in settings.items()
+                    ]
+                    await cur.executemany(query, batch_params)
 
     async def get_camera_corruption_settings(self, camera_id: int) -> Dict[str, Any]:
         """Get camera-specific corruption settings."""
@@ -882,7 +881,7 @@ class SyncCorruptionOperations:
         # Get total captures and failures in time window using optimized CTE query
         query = """
         WITH time_window AS (
-            SELECT %(now)s - INTERVAL %(time_window)s * INTERVAL '1 minute' as window_start
+            SELECT %(now)s - INTERVAL '1 minute' * %(time_window)s as window_start
         ),
         failure_stats AS (
             SELECT COUNT(*) as total_failures
@@ -1009,7 +1008,7 @@ class SyncCorruptionOperations:
         """
         query = """
         DELETE FROM corruption_logs
-        WHERE created_at < %(now)s - INTERVAL %(days)s * INTERVAL '1 day'
+        WHERE created_at < %(now)s - INTERVAL '1 day' * %(days)s
         """
 
         params = {

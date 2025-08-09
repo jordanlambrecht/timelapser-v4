@@ -266,23 +266,46 @@ class BatchingDatabaseHandler:
             batch_to_flush = self.current_batch
             self.current_batch = []
 
-        # Attempt to write batch with retries
+        # Attempt to write batch with retries and exponential backoff
         for attempt in range(self.max_retries):
             try:
                 # Bulk insert logs
                 await self.async_log_ops.bulk_create_logs(batch_to_flush)
 
-                # Update statistics
+                # Update statistics and mark as healthy on success
                 self._total_logs_batched += len(batch_to_flush)
                 self._total_batches_flushed += 1
+                self._healthy = True  # Reset health status on successful write
 
                 return  # Success
 
             except Exception as e:
-                logger.error(f"Batch flush attempt {attempt + 1} failed: {e}")
+                is_connection_error = (
+                    any(
+                        error_type in str(type(e))
+                        for error_type in [
+                            "ConnectionError",
+                            "OperationalError",
+                            "DatabaseError",
+                            "SSL",
+                        ]
+                    )
+                    or "connection" in str(e).lower()
+                )
+
+                logger.error(
+                    f"Batch flush attempt {attempt + 1}/{self.max_retries} failed: {e}"
+                    + (" [Connection Error]" if is_connection_error else "")
+                )
 
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay)
+                    # Exponential backoff for connection errors, linear for others
+                    delay = (
+                        (self.retry_delay * (2**attempt))
+                        if is_connection_error
+                        else self.retry_delay
+                    )
+                    await asyncio.sleep(min(delay, 10.0))  # Cap at 10 seconds
                 else:
                     # Final attempt failed
                     self._failed_batches += 1
@@ -356,18 +379,32 @@ class BatchingDatabaseHandler:
         self.sync_log_ops.create_log(log_entry)
 
     async def _fallback_individual_writes_async(self, batch: List[LogCreate]):
-        """Attempt to write logs individually as fallback (async)."""
+        """Attempt to write logs individually as fallback with retry (async)."""
         saved_count = 0
 
         for log_entry in batch:
-            try:
-                await self.async_log_ops.create_log(log_entry)
-                saved_count += 1
-            except Exception as e:
-                logger.error(f"Failed to save individual log: {e}")
+            # Try each individual log with limited retries
+            for attempt in range(2):  # Only 2 attempts for fallback
+                try:
+                    await self.async_log_ops.create_log(log_entry)
+                    saved_count += 1
+                    break  # Success, move to next log
+                except Exception as e:
+                    if attempt == 0:
+                        # Brief delay before retry
+                        await asyncio.sleep(0.5)
+                    else:
+                        # Final attempt failed
+                        logger.error(
+                            f"Failed to save individual log after {attempt + 1} attempts: {e}"
+                        )
 
         if saved_count > 0:
-            logger.info(f"Saved {saved_count}/{len(batch)} logs via fallback")
+            logger.info(
+                f"Saved {saved_count}/{len(batch)} logs via individual fallback"
+            )
+        elif len(batch) > 0:
+            logger.warning(f"Failed to save all {len(batch)} logs in fallback mode")
 
     def _fallback_individual_writes_sync(self, batch: List[LogCreate]):
         """Attempt to write logs individually as fallback (sync)."""

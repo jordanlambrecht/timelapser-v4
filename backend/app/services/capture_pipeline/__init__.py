@@ -92,66 +92,68 @@ def create_capture_pipeline(
     try:
         logger.info("Creating capture pipeline with dependency injection...")
 
-        # Step 1: Create shared database instances
-        logger.debug("Creating shared SyncDatabase and AsyncDatabase instances")
-        db = SyncDatabase()
-        db.initialize()  # Initialize connection pool
-
-        # Create async database for services that need it
-        async_db = AsyncDatabase()
+        # Step 1: Use shared database instances
+        logger.debug("Using shared SyncDatabase and AsyncDatabase instances")
+        from ...database import sync_db, async_db
+        db = sync_db
+        # Connection pool already initialized
 
         # Step 2: Create required services first
         logger.debug("Creating required services layer")
         if settings_service is None:
-            settings_service = SyncSettingsService(db)
+            from ...dependencies.sync_services import get_sync_settings_service
+            settings_service = get_sync_settings_service()
 
-        # Create scheduling service for validation
-        from ..scheduling import SyncSchedulingService, SyncTimeWindowService
+        # Use dependency injection singletons to prevent database connection multiplication
+        from ...dependencies.sync_services import get_sync_time_window_service, get_sync_capture_timing_service
 
-        time_window_service = SyncTimeWindowService(db)
-        scheduling_service = SyncSchedulingService(
-            db, async_db, time_window_service, settings_service
-        )
+        time_window_service = get_sync_time_window_service()
+        scheduling_service = get_sync_capture_timing_service()
 
         # Step 3: Create business services with dependency injection
         logger.debug("Creating business services layer")
-        image_service = SyncImageService(db)
+        from ...dependencies.sync_services import get_sync_image_service
+        image_service = get_sync_image_service()
 
-        # Create timelapse service
-        timelapse_service = SyncTimelapseService(db)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.sync_services import get_sync_timelapse_service
+        timelapse_service = get_sync_timelapse_service()
 
         # Create corruption evaluation service from new pipeline
         from ..corruption_pipeline.services.evaluation_service import (
             SyncCorruptionEvaluationService,
         )
 
-        corruption_evaluation_service = SyncCorruptionEvaluationService(db)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.sync_services import get_sync_corruption_evaluation_service
+        corruption_evaluation_service = get_sync_corruption_evaluation_service()
 
-        # Create SSE operations (still needed until we have a dedicated SSE service)
-        sse_ops = SyncSSEEventsOperations(db)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.specialized import get_sync_sse_events_operations
+        sse_ops = get_sync_sse_events_operations()
 
-        camera_service = SyncCameraService(
-            db,
-            async_db,
-            rtsp_service=None,  # Will be set after RTSP service creation
-            scheduling_service=scheduling_service,
-            settings_service=settings_service,
-        )
-        rtsp_service = RTSPService(db, async_db, settings_service)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.sync_services import get_sync_camera_service
+        camera_service = get_sync_camera_service()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.sync_services import get_rtsp_service
+        rtsp_service = get_rtsp_service()
 
         # Now set the rtsp_service dependency for camera_service
         camera_service.rtsp_service = rtsp_service
 
-        # Create job management services
-        job_queue_service = SyncJobQueueService(db)
+        # Create job management services using singleton
+        from ...dependencies.sync_services import get_sync_job_queue_service
+        job_queue_service = get_sync_job_queue_service()
 
         # 🎯 SCHEDULER-CENTRIC: Remove video workflow service injection to prevent
         # autonomous video triggering. Video jobs are now scheduled by SchedulerWorker.
         # from ..video_pipeline import create_video_pipeline
         # video_workflow_service = create_video_pipeline(db)
 
-        # Create job coordinator (scheduler-centric, no autonomous video triggers)
-        job_coordinator = JobCoordinationService(db, async_db, settings_service)
+        # Create job coordinator using singleton (scheduler-centric, no autonomous video triggers)
+        from ...dependencies.sync_services import get_job_coordination_service
+        job_coordinator = get_job_coordination_service()
         job_coordinator.job_queue_service = job_queue_service
         # job_coordinator.video_workflow_service = video_workflow_service  # REMOVED: scheduler-centric
 
@@ -160,13 +162,13 @@ def create_capture_pipeline(
         from ..overlay_pipeline import OverlayService
         from ..weather.service import WeatherManager
 
-        weather_ops = SyncWeatherOperations(db)
-        weather_service = WeatherManager(weather_ops, settings_service)
+        # Use sync WeatherManager singleton (factory is sync context)
+        from ...dependencies.sync_services import get_weather_manager
+        weather_service = get_weather_manager()
 
-        # Create overlay service with proper dependencies
-        overlay_service = OverlayService(
-            db=db, sync_image_service=image_service, settings_service=settings_service
-        )
+        # Create overlay service using singleton
+        from ...dependencies.sync_services import get_overlay_service
+        overlay_service = get_overlay_service()
 
         # Step 5: Create main orchestrator with all dependencies
         logger.debug("Creating WorkflowOrchestratorService with dependency injection")

@@ -27,7 +27,6 @@ from app.routers import corruption_routers as corruption
 from app.routers import dashboard_routers as dashboard
 from app.routers import health_routers as health
 from app.routers import image_routers as images
-from app.routers import jobs_router as jobs
 from app.routers import log_routers as logs
 from app.routers import monitoring_routers as monitoring
 from app.routers import overlay_routers as overlay
@@ -257,7 +256,6 @@ app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(images.router, prefix="/api", tags=["images"])
-app.include_router(jobs.router, tags=["jobs"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(thumbnails.router, prefix="/api", tags=["thumbnails"])

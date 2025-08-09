@@ -20,8 +20,6 @@ from ..enums import (
     WorkerType,
 )
 from ..models.health_model import HealthStatus
-from ..services.logger import get_service_logger
-from ..services.video_pipeline import create_video_pipeline, get_video_pipeline_health
 from .base_worker import BaseWorker
 from .exceptions import (
     CleanupOperationError,
@@ -32,6 +30,8 @@ from .exceptions import (
     WorkerInitializationError,
 )
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 logger = get_service_logger(LoggerName.VIDEO_WORKER, LogSource.WORKER)
 
@@ -76,6 +76,9 @@ class VideoWorker(BaseWorker):
     async def initialize(self) -> None:
         """Initialize video worker resources using factory pattern."""
         try:
+            # Import locally to avoid circular import
+            from ..services.video_pipeline import create_video_pipeline
+
             # Create video pipeline using factory
             self.workflow_service = create_video_pipeline(self.db)
 
@@ -412,6 +415,8 @@ class VideoWorker(BaseWorker):
         try:
             # Service guaranteed to exist after initialization
             # Get pipeline health using helper function
+            from ..services.video_pipeline import get_video_pipeline_health
+
             health_status_dict = await self.run_in_executor(
                 get_video_pipeline_health, self.workflow_service
             )

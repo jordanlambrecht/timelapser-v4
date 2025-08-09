@@ -29,9 +29,9 @@ async def main():
     print("=" * 80)
 
     # Initialize database
-    db = AsyncDatabase()
+    from app.database import async_db
+    db = async_db
     try:
-        await db.initialize()
         print("✅ Database connection established")
 
         # Initialize profiler

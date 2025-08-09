@@ -57,7 +57,7 @@ class HealthQueryBuilder:
             activity_stats AS (
                 SELECT COUNT(*) as images_last_24h
                 FROM images
-                WHERE captured_at > %(current_time)s - INTERVAL %(hours)s * INTERVAL '1 hour'
+                WHERE captured_at > %(current_time)s - INTERVAL '1 hour' * %(hours)s
             ),
             video_stats AS (
                 SELECT
@@ -136,7 +136,7 @@ class HealthOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_health_caches(self, updated_at: Optional[datetime] = None) -> None:
         """Clear caches related to health operations using sophisticated cache system."""
@@ -150,7 +150,7 @@ class HealthOperations:
         # Use ETag-aware invalidation if timestamp provided
         if updated_at:
             etag = generate_timestamp_etag(updated_at)
-            await self.cache_invalidation.invalidate_with_etag_validation(
+            await CacheInvalidationService.invalidate_with_etag_validation(
                 "health:metadata", etag
             )
 

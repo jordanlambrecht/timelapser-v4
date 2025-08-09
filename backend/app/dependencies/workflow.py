@@ -16,9 +16,9 @@ if TYPE_CHECKING:
     )
 
 
-# Async RTSP Service Factory
-async def get_async_rtsp_service() -> "AsyncRTSPService":
-    """Get capture pipeline AsyncRTSPService with wrapped sync RTSP service."""
+# Async RTSP Service Factory (Singleton)
+def _create_async_rtsp_service():
+    """Factory for creating AsyncRTSPService."""
     from ..services.capture_pipeline import AsyncRTSPService
     from .sync_services import get_rtsp_service
 
@@ -26,11 +26,17 @@ async def get_async_rtsp_service() -> "AsyncRTSPService":
     return AsyncRTSPService(sync_rtsp_service)
 
 
-# Workflow Orchestrator Service Factory
+from .registry import get_singleton_service, register_singleton_factory
+register_singleton_factory("async_rtsp_service", _create_async_rtsp_service)
+
+
+async def get_async_rtsp_service() -> "AsyncRTSPService":
+    """Get capture pipeline AsyncRTSPService singleton with wrapped sync RTSP service."""
+    return get_singleton_service("async_rtsp_service")
+
+
+# Workflow Orchestrator Service Factory (Singleton)
 def get_workflow_orchestrator_service() -> "WorkflowOrchestratorService":
-    """Get WorkflowOrchestratorService with complete dependency injection through factory pattern."""
-    factory = PipelineFactory(
-        factory_module="app.services.capture_pipeline",
-        factory_function="create_capture_pipeline",
-    )
-    return factory.get_service()
+    """Get WorkflowOrchestratorService singleton with complete dependency injection."""
+    from .sync_services import get_workflow_orchestrator_service as _get_workflow_orchestrator
+    return _get_workflow_orchestrator()

@@ -169,6 +169,26 @@ class Settings(BaseSettings):
         default="", description="OpenWeather API key (optional)"
     )
 
+    # Overlay Pipeline Configuration
+    overlay_processing_batch_size: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Number of overlay jobs to process in each batch",
+    )
+    overlay_high_throughput_threshold: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description="Daily job count threshold for high throughput classification",
+    )
+    overlay_moderate_throughput_threshold: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Daily job count threshold for moderate throughput classification",
+    )
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> LogLevel:

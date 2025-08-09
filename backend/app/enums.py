@@ -150,7 +150,7 @@ class OverlayType(str, Enum):
     TIMELAPSE_NAME = "timelapse_name"
     TEMPERATURE = "temperature"
     WEATHER_CONDITIONS = "weather_conditions"
-    WEATHER_TEMP_CONDITIONS = "weather_temp_conditions"
+    WEATHER = "weather"  # Unified weather type (replaces weather_temp_conditions)
     WATERMARK = "watermark"
 
 
@@ -496,6 +496,7 @@ class LogEmoji(str, Enum):
     FIRE = "🔥"
     ROCKET = "🚀"
     MAGIC = "✨"
+    TEST = "🧪"  # Test function
     CHART = "📊"
     ROBOT = "🤖"
     BROADCAST = "📡"
@@ -538,6 +539,7 @@ class LoggerName(str, Enum):
     LOG_SERVICE = "log_service"
     WEATHER_SERVICE = "weather_service"
     SCHEDULING_SERVICE = "scheduling_service"
+    OVERLAY_PRESET_SERVICE = "overlay_preset_service"
     STATISTICS_SERVICE = "statistics_service"
 
     # System loggers

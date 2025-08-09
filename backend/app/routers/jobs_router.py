@@ -8,17 +8,20 @@ from datetime import datetime, timedelta, timezone
 from app.services.logger import get_service_logger
 from app.enums import LoggerName, LogSource
 from app.database.core import AsyncDatabase
-from app.dependencies import get_async_database
-from app.database.thumbnail_job_operations import ThumbnailJobOperations
-from app.services.overlay_pipeline.services.job_service import AsyncOverlayJobService
-from app.database.overlay_job_operations import OverlayJobOperations
+from app.dependencies import (
+    get_async_database,
+    OverlayJobOperationsDep,
+    ThumbnailJobOperationsDep,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 logger = get_service_logger(LoggerName.API, LogSource.API)
 
 @router.get("/status")
 async def get_jobs_status(
-    db: AsyncDatabase = Depends(get_async_database)
+    db: AsyncDatabase = Depends(get_async_database),
+    thumbnail_ops: ThumbnailJobOperationsDep = Depends(),
+    overlay_ops: OverlayJobOperationsDep = Depends(),
 ) -> Dict[str, Any]:
     """
     Get current status of all jobs including scheduled, running, and recent jobs
@@ -172,7 +175,6 @@ async def get_jobs_status(
         # Get thumbnail job statistics
         thumbnail_stats = {}
         try:
-            thumbnail_ops = ThumbnailJobOperations(db)
             thumbnail_stats = await thumbnail_ops.get_job_statistics()
         except Exception as e:
             logger.warning(f"Failed to get thumbnail statistics: {str(e)}")
@@ -189,7 +191,6 @@ async def get_jobs_status(
         # Get overlay job statistics
         overlay_stats = {}
         try:
-            overlay_ops = OverlayJobOperations(db)
             overlay_stats_model = await overlay_ops.get_job_statistics()
             # Convert Pydantic model to dictionary
             overlay_stats = overlay_stats_model.model_dump() if overlay_stats_model else {

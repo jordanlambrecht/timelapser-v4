@@ -124,18 +124,20 @@ class ThumbnailPipeline:
         """Get timelapse by ID through database operations."""
         if not self.async_database:
             raise ValueError("Async database is required but not provided")
-        from ...database.timelapse_operations import TimelapseOperations
+        # Using injected TimelapseOperations singleton
+        from ...dependencies.specialized import get_timelapse_operations
 
-        timelapse_ops = TimelapseOperations(self.async_database)
+        timelapse_ops = await get_timelapse_operations()
         return await timelapse_ops.get_timelapse_by_id(timelapse_id)
 
     def _get_timelapse_by_id_safe_sync(self, timelapse_id: int):
         """Get timelapse by ID through database operations - sync version."""
         if not self.database:
             raise ValueError("Database is required but not provided")
-        from ...database.timelapse_operations import SyncTimelapseOperations
+        # Using injected SyncTimelapseOperations singleton
+        from ...dependencies.specialized import get_sync_timelapse_operations
 
-        timelapse_ops = SyncTimelapseOperations(self.database)
+        timelapse_ops = get_sync_timelapse_operations()
         return timelapse_ops.get_timelapse_by_id(timelapse_id)
 
     async def _get_images_by_timelapse_safe(self, timelapse_id: int):
@@ -151,35 +153,45 @@ class ThumbnailPipeline:
         """Clear small path - thumbnail-specific operation using direct database access."""
         if not self.async_database:
             raise ValueError("Async database is required for thumbnail operations")
-        image_ops = AsyncImageOperations(self.async_database)
+        # Using injected AsyncImageOperations singleton
+        from ...dependencies.specialized import get_image_operations
+        image_ops = await get_image_operations()
         return await image_ops.clear_small_path(image_id)
 
     def _clear_small_path_safe_sync(self, image_id: int):
         """Clear small path - sync version for thumbnail-specific operations."""
         if not self.database:
             raise ValueError("Database is required for thumbnail operations")
-        image_ops = SyncImageOperations(self.database)
+        # Using injected SyncImageOperations singleton
+        from ...dependencies.specialized import get_sync_image_operations
+        image_ops = get_sync_image_operations()
         return image_ops.clear_small_path(image_id)
 
     async def _get_images_without_thumbnails_safe(self, limit: int):
         """Get images without thumbnails - thumbnail-specific operation."""
         if not self.async_database:
             raise ValueError("Async database is required for thumbnail operations")
-        image_ops = AsyncImageOperations(self.async_database)
+        # Using injected AsyncImageOperations singleton
+        from ...dependencies.specialized import get_image_operations
+        image_ops = await get_image_operations()
         return await image_ops.get_images_without_thumbnails(limit)
 
     async def _clear_all_thumbnail_paths_safe(self):
         """Clear all thumbnail paths - thumbnail-specific operation."""
         if not self.async_database:
             raise ValueError("Async database is required for thumbnail operations")
-        image_ops = AsyncImageOperations(self.async_database)
+        # Using injected AsyncImageOperations singleton
+        from ...dependencies.specialized import get_image_operations
+        image_ops = await get_image_operations()
         return await image_ops.clear_all_thumbnail_paths()
 
     def _get_images_with_small_thumbnails_by_timelapse_safe(self, timelapse_id: int):
         """Get images with small thumbnails by timelapse - thumbnail-specific operation."""
         if not self.database:
             raise ValueError("Database is required for thumbnail operations")
-        image_ops = SyncImageOperations(self.database)
+        # Using injected SyncImageOperations singleton
+        from ...dependencies.specialized import get_sync_image_operations
+        image_ops = get_sync_image_operations()
         return image_ops.get_images_with_small_thumbnails_by_timelapse(timelapse_id)
 
     def _initialize_sync_services(self):
@@ -188,14 +200,26 @@ class ThumbnailPipeline:
             return
 
         try:
-            self.sync_job_service = SyncThumbnailJobService(self.database)
-            self.sync_performance_service = SyncThumbnailPerformanceService(
-                self.database
+            # Using injected singleton services from dependencies
+            from ...dependencies.sync_services import (
+                get_sync_thumbnail_job_service,
+                # get_sync_thumbnail_performance_service,  # Not yet available
+                # get_sync_thumbnail_verification_service,  # Not yet available
+                # get_sync_thumbnail_repair_service,  # Not yet available
             )
-            self.sync_verification_service = SyncThumbnailVerificationService(
-                self.database
+            
+            # Use singleton for available services to prevent cascade multiplication
+            self.sync_job_service = get_sync_thumbnail_job_service()
+            
+            # Use singletons to prevent connection multiplication
+            from ...dependencies.sync_services import (
+                get_sync_thumbnail_performance_service, 
+                get_sync_thumbnail_verification_service, 
+                get_sync_thumbnail_repair_service
             )
-            self.sync_repair_service = SyncThumbnailRepairService(self.database)
+            self.sync_performance_service = get_sync_thumbnail_performance_service()
+            self.sync_verification_service = get_sync_thumbnail_verification_service()
+            self.sync_repair_service = get_sync_thumbnail_repair_service()
             logger.debug("✅ Thumbnail pipeline sync services initialized")
         except Exception as e:
             logger.error(
@@ -210,12 +234,17 @@ class ThumbnailPipeline:
             return
 
         try:
-            self.job_service = ThumbnailJobService(self.async_database)
-            self.performance_service = ThumbnailPerformanceService(self.async_database)
-            self.verification_service = ThumbnailVerificationService(
-                self.async_database
+            # Use sync equivalents since this is a sync constructor
+            from ...dependencies.sync_services import (
+                get_sync_thumbnail_job_service,
+                get_sync_thumbnail_performance_service, 
+                get_sync_thumbnail_verification_service,
+                get_sync_thumbnail_repair_service
             )
-            self.repair_service = ThumbnailRepairService(self.async_database)
+            self.job_service = get_sync_thumbnail_job_service()
+            self.performance_service = get_sync_thumbnail_performance_service()
+            self.verification_service = get_sync_thumbnail_verification_service()
+            self.repair_service = get_sync_thumbnail_repair_service()
             logger.debug("✅ Thumbnail pipeline async services initialized")
         except Exception as e:
             logger.error(
@@ -969,7 +998,9 @@ class ThumbnailPipeline:
                     operation="cancel_regeneration",
                     timestamp=utc_now(),
                 )
-            job_ops = ThumbnailJobOperations(self.async_database)
+            # Using injected ThumbnailJobOperations singleton
+            from ...dependencies.specialized import get_thumbnail_job_operations
+            job_ops = await get_thumbnail_job_operations()
             cancelled_count = await job_ops.cancel_active_jobs()
 
             return ThumbnailOperationResponse(

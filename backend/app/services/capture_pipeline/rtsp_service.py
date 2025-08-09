@@ -75,9 +75,9 @@ class RTSPService:
             settings_service: SettingsService for configuration access
         """
         self.db = db
-        # Initialize database operations for camera data access
-
-        self.camera_ops = SyncCameraOperations(db, async_db)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ...dependencies.specialized import get_sync_camera_operations
+        self.camera_ops = get_sync_camera_operations()
         self.settings_service = settings_service
 
     def test_connection(
@@ -103,7 +103,7 @@ class RTSPService:
 
             settings = self._get_capture_settings()
             success, message = rtsp_utils.test_rtsp_connection(
-                rtsp_url, timeout_seconds=settings["timeout"]
+                rtsp_url, camera_id, timeout_seconds=settings["timeout"]
             )
 
             response_time_ms = (time.time() - start_time) * 1000
@@ -157,6 +157,7 @@ class RTSPService:
                 timeout_seconds=capture_settings.get(
                     "timeout", DEFAULT_RTSP_TIMEOUT_SECONDS
                 ),
+                force_low_fps_mode=capture_settings.get("force_low_fps_mode", False),
             )
 
             return frame
@@ -184,7 +185,7 @@ class RTSPService:
             Processing result with success status and metadata
         """
         try:
-            # Capture raw frame
+            # Capture raw frame with camera-specific optimizations
             frame = self.capture_frame_raw(camera.rtsp_url, capture_settings)
             if frame is None:
                 return {"success": False, "error": "Failed to capture raw frame"}
@@ -279,9 +280,12 @@ class RTSPService:
 
             # Capture a frame to detect resolution
             logger.debug(f"Detecting source resolution for camera {camera_id}")
-            settings = self._get_capture_settings()
+            settings = self._get_capture_settings(camera)
             frame = rtsp_utils.capture_with_retry(
-                rtsp_url, max_retries=2, timeout_seconds=settings["timeout"]
+                rtsp_url,
+                max_retries=2,
+                timeout_seconds=settings["timeout"],
+                force_low_fps_mode=settings.get("force_low_fps_mode", False),
             )
 
             if frame is None:
@@ -340,9 +344,12 @@ class RTSPService:
 
             # Capture a test frame
             logger.debug(f"Testing crop settings for camera {camera_id}")
-            capture_settings = self._get_capture_settings()
+            capture_settings = self._get_capture_settings(camera)
             frame = rtsp_utils.capture_with_retry(
-                rtsp_url, max_retries=2, timeout_seconds=capture_settings["timeout"]
+                rtsp_url,
+                max_retries=2,
+                timeout_seconds=capture_settings["timeout"],
+                force_low_fps_mode=capture_settings.get("force_low_fps_mode", False),
             )
 
             if frame is None:
@@ -394,8 +401,8 @@ class RTSPService:
                     error=f"Connectivity test failed: {connectivity_result.error}",
                 )
 
-            # Capture frame without saving to database
-            settings = self._get_capture_settings()
+            # Capture frame without saving to database with camera-specific optimizations
+            settings = self._get_capture_settings(camera)
             frame = self.capture_frame_raw(camera.rtsp_url, settings)
 
             if frame is None:
@@ -415,7 +422,7 @@ class RTSPService:
             )
             return RTSPCaptureResult(success=False, error=str(e))
 
-    def validate_rtsp_url(self, rtsp_url: str) -> Dict[str, Any]:
+    def validate_rtsp_url(self, rtsp_url: str, camera_id: int) -> Dict[str, Any]:
         """
         Validate RTSP URL format and accessibility.
 
@@ -449,7 +456,7 @@ class RTSPService:
 
             settings = self._get_capture_settings()
             success, message = rtsp_utils.test_rtsp_connection(
-                rtsp_url, timeout_seconds=settings["timeout"]
+                rtsp_url, camera_id, timeout_seconds=settings["timeout"]
             )
 
             return {
@@ -524,14 +531,17 @@ class RTSPService:
             logger.error(f"Database error getting camera {camera_id}: {e}", exception=e)
             return None
 
-    def _get_capture_settings(self) -> Dict[str, Any]:
+    def _get_capture_settings(self, camera: Optional[Camera] = None) -> Dict[str, Any]:
         """
-        Get capture settings with defaults.
+        Get capture settings with defaults and camera-specific optimizations.
 
-        Internal helper for retrieving capture configuration.
+        Internal helper for retrieving capture configuration with low FPS detection.
+
+        Args:
+            camera: Optional camera model for FPS-specific optimizations
 
         Returns:
-            Capture settings dictionary with defaults
+            Capture settings dictionary with defaults and camera-specific settings
         """
         try:
             quality_setting = self.settings_service.get_setting("image_quality")
@@ -569,11 +579,26 @@ class RTSPService:
                         f"Invalid rtsp_timeout_seconds setting, using default {DEFAULT_RTSP_TIMEOUT_SECONDS}"
                     )
 
-            return {
+            # Detect if low FPS mode should be enabled
+            force_low_fps_mode = self._should_use_low_fps_mode(camera)
+
+            base_settings = {
                 "quality": quality,
                 "timeout": timeout,
                 "max_retries": DEFAULT_MAX_RETRIES,
+                "force_low_fps_mode": force_low_fps_mode,
             }
+
+            # Adjust timeout for low FPS cameras
+            if force_low_fps_mode:
+                base_settings["timeout"] = max(
+                    timeout * 2, 20
+                )  # At least 20s for low FPS
+                logger.debug(
+                    f"Low FPS mode detected - increasing timeout to {base_settings['timeout']}s"
+                )
+
+            return base_settings
 
         except Exception as e:
             logger.warning(f"Failed to get capture settings: {e}", exception=e)
@@ -581,7 +606,51 @@ class RTSPService:
                 "quality": DEFAULT_RTSP_QUALITY,
                 "timeout": DEFAULT_RTSP_TIMEOUT_SECONDS,
                 "max_retries": DEFAULT_MAX_RETRIES,
+                "force_low_fps_mode": False,
             }
+
+    def _should_use_low_fps_mode(self, camera: Optional[Camera] = None) -> bool:
+        """
+        Determine if low FPS mode should be used for a camera.
+
+        Args:
+            camera: Camera model to check
+
+        Returns:
+            True if low FPS optimizations should be enabled
+        """
+        if not camera:
+            return False
+
+        try:
+            # Check if camera name/model indicates low FPS
+            camera_name = getattr(camera, "name", "").lower()
+            camera_model = getattr(camera, "model", "").lower()
+
+            # Known low FPS indicators
+            low_fps_indicators = [
+                "5fps",
+                "5 fps",
+                "trail",
+                "wildlife",
+                "battery",
+                "solar",
+            ]
+
+            for indicator in low_fps_indicators:
+                if indicator in camera_name or indicator in camera_model:
+                    logger.info(
+                        f"Camera {camera.id} ({camera_name}) detected as low FPS due to '{indicator}' indicator"
+                    )
+                    return True
+
+            # Could add more heuristics here like checking camera settings,
+            # previous capture timing statistics, etc.
+
+            return False
+        except Exception as e:
+            logger.debug(f"Error detecting low FPS mode for camera: {e}")
+            return False
 
     def _apply_processing_pipeline(
         self, frame: Any, camera: Camera

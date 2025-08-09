@@ -1,312 +1,184 @@
 # backend/app/services/overlay_pipeline/generators/watermark_generator.py
 """
-Watermark Overlay Generator - Handles image-based overlay content generation.
+Watermark Overlay Generator - Adds watermarks/logos to video frames.
 
-Supports watermark and logo overlays with scaling and positioning.
+Handles image-based overlays with support for:
+- Multiple image formats (PNG, JPEG, GIF, WebP)
+- Scaling and rotation transformations
+- Visual effects (blur, shadow, opacity)
+- Flexible positioning system
 """
 
-from pathlib import Path
-from typing import Union
+from typing import List, Union
 
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
-from ....models.overlay_model import OverlayItem, OverlayType
-
-# Import moved to function level to avoid circular import
-# from ....routers.settings_routers import get_settings
+from ....models.overlay_model import OverlayItem
 from ....services.logger import get_service_logger
-from ....utils.validation_helpers import validate_image_path, validate_image_scale
+from ..utils.image_path_utils import load_image_from_path
+from ..utils.image_utils import (
+    apply_blur,
+    apply_drop_shadow,
+    apply_opacity,
+    ensure_rgba_mode,
+    rotate_image,
+    scale_image,
+)
 from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
 
 logger = get_service_logger(LoggerName.OVERLAY_PIPELINE, LogSource.PIPELINE)
 
 
-class WatermarkGenerator(BaseOverlayGenerator):
+class WatermarkOverlayGenerator(BaseOverlayGenerator):
     """
-    Generator for image-based overlay content.
+    Generator for watermark overlays with image processing capabilities.
 
-    Handles:
-    - watermark: Custom image overlays (logos, watermarks, etc.)
-
-    Produces static content that can be cached for performance.
+    Supports various image formats and processing effects including:
+    - Scaling and rotation
+    - Blur and drop shadow effects
+    - Opacity control (applied last for proper blending)
     """
 
     @property
-    def supported_types(self) -> list[OverlayType]:
-        """Watermark generator supports watermark overlays."""
-        return [OverlayType.WATERMARK]
+    def generator_type(self) -> str:
+        """Return the primary generator type."""
+        return "watermark"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for this generator."""
+        return "Watermark Overlay"
+
+    @property
+    def description(self) -> str:
+        """Description of what this generator does."""
+        return "Adds image-based watermarks with scaling, rotation, and visual effects"
+
+    @property
+    def supported_types(self) -> List[str]:
+        """Return list of supported overlay types."""
+        return ["watermark"]
 
     @property
     def is_static(self) -> bool:
-        """Watermark content is static - doesn't change between frames."""
+        """Watermarks are static content."""
         return True
 
     def generate_content(
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
     ) -> Union[str, PILImage.Image]:
         """
-        Generate watermark image content.
+        Generate watermark overlay content for the frame.
 
         Args:
-            overlay_item: Watermark overlay configuration
-            context: Generation context (not used for watermarks)
+            overlay_item: Overlay configuration
+            context: Generation context with image and timelapse data
 
         Returns:
-            PIL Image object for the watermark
+            Processed watermark image
 
         Raises:
             ValueError: If overlay type is not supported or image cannot be loaded
+            RuntimeError: If content generation fails
         """
-        logger.debug(f"Starting {overlay_item.type} watermark overlay generation")
+        logger.debug(f"🖼️ Generating watermark overlay for frame {context.frame_number}")
 
         try:
+            # Validate overlay item
             self.validate_overlay_item(overlay_item)
-            logger.debug(
-                f"Watermark overlay validation passed for type: {overlay_item.type}"
-            )
 
-            if overlay_item.type == "watermark":
-                result = self._generate_watermark_image(overlay_item, context)
-                logger.debug(f"Generated watermark overlay image: {result.size} pixels")
-                return result
-            else:
-                logger.error(f"Unsupported watermark overlay type: {overlay_item.type}")
-                raise ValueError(f"Unsupported overlay type: {overlay_item.type}")
+            # Load base image from settings
+            image_url = overlay_item.settings.get(
+                "imageUrl"
+            ) or overlay_item.settings.get("image_path")
+            if not image_url:
+                logger.error("❌ No image URL provided for watermark")
+                raise ValueError("Image URL is required for watermark overlay")
 
-        except ValueError as e:
-            logger.error(
-                "Validation error in watermark overlay generation", exception=e
-            )
-            raise
+            logger.debug(f"📁 Loading watermark image: {image_url}")
+            watermark = load_image_from_path(image_url)
+
+            # Ensure image is in RGBA mode for proper transparency handling
+            watermark = ensure_rgba_mode(watermark)
+
+            # Apply transformations in correct order
+            # 1. Scale first (affects all subsequent operations)
+            scale_factor = overlay_item.settings.get("imageScale", 100) / 100.0
+            if scale_factor != 1.0:
+                logger.debug(f"🔍 Applying scaling transformation: {scale_factor}")
+                watermark = scale_image(watermark, scale_factor)
+
+            # 2. Rotate (affects blur and shadow calculations)
+            rotation = overlay_item.settings.get("imageRotation", 0)
+            if rotation != 0:
+                logger.debug(f"🔄 Applying rotation transformation: {rotation}°")
+                watermark = rotate_image(watermark, rotation)
+
+            # 3. Apply blur effect (before shadow for better visual result)
+            blur_radius = overlay_item.settings.get("blurRadius", 0)
+            if blur_radius > 0:
+                logger.debug(f"🌀 Applying blur effect: {blur_radius}px")
+                watermark = apply_blur(watermark, blur_radius)
+
+            # 4. Apply drop shadow (before opacity for proper shadow visibility)
+            shadow_settings = overlay_item.settings.get("dropShadow")
+            if shadow_settings and shadow_settings.get("enabled", False):
+                logger.debug("🌑 Applying drop shadow effect")
+                watermark = apply_drop_shadow(watermark, shadow_settings)
+
+            # 5. Apply opacity LAST (ensures proper blending with background)
+            opacity = overlay_item.settings.get("imageOpacity", 100) / 100.0
+            if opacity < 1.0:
+                logger.debug(f"🎭 Applying opacity effect: {opacity}")
+                watermark = apply_opacity(watermark, opacity)
+
+            logger.debug("✅ Watermark overlay generated successfully")
+            return watermark
+
         except Exception as e:
-            logger.error("Failed to generate watermark overlay content", exception=e)
+            logger.error(f"❌ Failed to generate watermark overlay: {e}")
             raise RuntimeError(f"Failed to generate watermark content: {e}")
-
-    def _generate_watermark_image(
-        self, overlay_item: OverlayItem, context: OverlayGenerationContext
-    ) -> PILImage.Image:
-        """
-        Generate watermark image content.
-
-        Args:
-            overlay_item: Watermark overlay configuration
-            context: Generation context
-
-        Returns:
-            Processed PIL Image for the watermark
-
-        Raises:
-            ValueError: If image cannot be loaded or processed
-        """
-        logger.debug("Processing watermark image generation")
-
-        if not overlay_item.image_url:
-            logger.error("Watermark overlay missing image_url property")
-            raise ValueError("Watermark overlay requires image_url property")
-
-        logger.debug(f"Loading watermark from: {overlay_item.image_url}")
-
-        # Load the image
-        watermark_image = self._load_image(overlay_item.image_url)
-        logger.debug(
-            f"Watermark loaded: {watermark_image.size} pixels, mode: {watermark_image.mode}"
-        )
-
-        # Apply scaling if specified
-        if overlay_item.image_scale != 100:
-            logger.debug(f"Scaling watermark: {overlay_item.image_scale}%")
-            watermark_image = self._scale_image(
-                watermark_image, overlay_item.image_scale
-            )
-            logger.debug(f"Watermark scaled to: {watermark_image.size} pixels")
-        else:
-            logger.debug("No scaling needed, using original size")
-
-        # Ensure image has alpha channel for transparency
-        if watermark_image.mode != "RGBA":
-            logger.debug(
-                f"Converting watermark mode from {watermark_image.mode} to RGBA"
-            )
-            watermark_image = watermark_image.convert("RGBA")
-        else:
-            logger.debug("Watermark already has alpha channel")
-
-        logger.debug("Watermark image generated successfully")
-        return watermark_image
-
-    def _load_image(self, image_path: str) -> PILImage.Image:
-        """
-        Load image from file system or URL.
-
-        Args:
-            image_path: Path or URL to the image
-
-        Returns:
-            PIL Image object
-
-        Raises:
-            ValueError: If image cannot be loaded
-        """
-        logger.debug(f"Loading image from path: {image_path}")
-
-        try:
-            # Handle different path formats
-            if image_path.startswith(("http://", "https://")):
-                logger.error("HTTP URLs not supported for security reasons")
-                # For now, don't support HTTP URLs for security
-                # Future enhancement: Could support with proper validation
-                raise ValueError("HTTP URLs not supported for watermarks")
-
-            # Handle local file paths
-            if image_path.startswith("/assets/"):
-                logger.debug("Resolving frontend asset path to file system path")
-                # Frontend asset path - need to resolve to actual file system path
-                # This would need to be configured based on your asset storage setup
-                # For now, assume assets are stored in a known directory
-                actual_path = self._resolve_asset_path(image_path)
-                logger.debug(f"Resolved asset path: {actual_path}")
-            else:
-                actual_path = Path(image_path)
-                logger.debug(f"Using direct file path: {actual_path}")
-
-            # Validate path exists and is readable
-            if not actual_path.exists():
-                logger.error(f"Image file not found: {actual_path}")
-                raise ValueError(f"Image file not found: {actual_path}")
-
-            if not actual_path.is_file():
-                logger.error(f"Path is not a file: {actual_path}")
-                raise ValueError(f"Path is not a file: {actual_path}")
-
-            logger.debug("Image file found, attempting to load")
-
-            # Load image
-            image = PILImage.open(actual_path)
-            logger.debug(
-                f"Image loaded: {image.size} pixels, format: {image.format}, mode: {image.mode}"
-            )
-
-            # Validate image format
-            if image.format not in ["PNG", "JPEG", "JPG", "WEBP", "GIF"]:
-                logger.error(f"Unsupported image format: {image.format}")
-                raise ValueError(f"Unsupported image format: {image.format}")
-
-            logger.debug("Image loaded successfully")
-            return image
-
-        except Exception as e:
-            logger.error("Failed to load watermark image", exception=e)
-            raise ValueError(f"Cannot load watermark image: {e}")
-
-    def _resolve_asset_path(self, frontend_path: str) -> Path:
-        """
-        Resolve frontend asset path to actual file system path.
-
-        Args:
-            frontend_path: Frontend asset path (e.g., "/assets/logo.png")
-
-        Returns:
-            Resolved file system path
-
-        Note:
-            This would need to be configured based on your asset storage setup.
-            For now, assuming a basic assets directory structure.
-        """
-        logger.debug(f"Resolving frontend asset path: {frontend_path}")
-
-        # Remove leading /assets/ and resolve to actual directory
-        relative_path = frontend_path.replace("/assets/", "")
-        logger.debug(f"Relative path: {relative_path}")
-
-        # This path should be configurable via settings
-        # For now, assume assets are stored relative to the data directory
-
-        # Import here to avoid circular import
-        from ....routers.settings_routers import get_settings
-
-        settings = get_settings()
-
-        # Construct full path to assets
-        assets_dir = Path(settings.data_directory) / "assets" / "overlays"
-        full_path = assets_dir / relative_path
-
-        logger.debug(f"Resolved full path: {full_path}")
-        return full_path
-
-    def _scale_image(self, image: PILImage.Image, scale_percent: int) -> PILImage.Image:
-        """
-        Scale image by the specified percentage.
-
-        Args:
-            image: PIL Image to scale
-            scale_percent: Scale percentage (100 = original size)
-
-        Returns:
-            Scaled PIL Image
-        """
-        logger.debug(f"Scaling image: {scale_percent}% (original: {image.size})")
-
-        if scale_percent == 100:
-            logger.debug("No scaling needed, returning original")
-            return image
-
-        # Calculate new dimensions
-        original_width, original_height = image.size
-        scale_factor = scale_percent / 100.0
-
-        new_width = int(original_width * scale_factor)
-        new_height = int(original_height * scale_factor)
-
-        logger.debug(
-            f"Calculated new size: {new_width}x{new_height} (factor: {scale_factor})"
-        )
-
-        # Ensure minimum size
-        if new_width < 1:
-            new_width = 1
-            logger.debug("Adjusted width to minimum (1 pixel)")
-        if new_height < 1:
-            new_height = 1
-            logger.debug("Adjusted height to minimum (1 pixel)")
-
-        # Scale using high-quality resampling
-        logger.debug("Applying LANCZOS resampling for high quality")
-        scaled_image = image.resize(
-            (new_width, new_height), PILImage.Resampling.LANCZOS
-        )
-
-        logger.debug(f"Image scaled successfully to {scaled_image.size}")
-        return scaled_image
 
     def validate_overlay_item(self, overlay_item: OverlayItem) -> None:
         """
         Validate watermark overlay item configuration.
 
         Args:
-            overlay_item: Overlay item to validate
+            overlay_item: Overlay configuration to validate
 
         Raises:
             ValueError: If overlay item is invalid for watermark generation
         """
-        logger.debug(f"Validating watermark overlay item of type: {overlay_item.type}")
+        logger.debug("🔍 Validating watermark overlay item")
 
+        # Call parent validation first
         super().validate_overlay_item(overlay_item)
 
-        # Use validation helpers for consistent validation
-        try:
-            # Validate image path (handles security and format checks)
-            validated_path = validate_image_path(overlay_item.image_url)
-            logger.debug(f"Validated image path: {validated_path}")
-
-            # Validate image scale
-            validated_scale = validate_image_scale(overlay_item.image_scale)
-            logger.debug(f"Validated image scale: {validated_scale}%")
-
-        except ValueError as e:
-            logger.error("Watermark validation failed", exception=e)
-            raise
-
-        logger.debug(
-            f"Watermark overlay validation completed for type: {overlay_item.type}"
+        # Validate image URL/path exists
+        image_url = overlay_item.settings.get("imageUrl") or overlay_item.settings.get(
+            "image_path"
         )
+        if not image_url or not isinstance(image_url, str):
+            raise ValueError(
+                "Watermark overlay requires 'imageUrl' or 'image_path' in settings"
+            )
+
+        # Validate optional parameters
+        scale = overlay_item.settings.get("imageScale", 100)
+        if not isinstance(scale, (int, float)) or scale <= 0:
+            raise ValueError("imageScale must be a positive number")
+
+        rotation = overlay_item.settings.get("imageRotation", 0)
+        if not isinstance(rotation, (int, float)):
+            raise ValueError("imageRotation must be a number")
+
+        opacity = overlay_item.settings.get("imageOpacity", 100)
+        if not isinstance(opacity, (int, float)) or not (0 <= opacity <= 100):
+            raise ValueError("imageOpacity must be between 0 and 100")
+
+        blur_radius = overlay_item.settings.get("blurRadius", 0)
+        if not isinstance(blur_radius, (int, float)) or blur_radius < 0:
+            raise ValueError("blurRadius must be non-negative")
+
+        logger.debug("✅ Watermark overlay item validation passed")

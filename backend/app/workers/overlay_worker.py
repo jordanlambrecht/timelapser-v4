@@ -28,7 +28,6 @@ from ..constants import (
     OVERLAY_JOB_RETRY_DELAYS,
 )
 from ..database.core import SyncDatabase
-from ..database.sse_events_operations import SyncSSEEventsOperations
 from ..enums import (
     JobTypes,
     LogEmoji,
@@ -39,8 +38,6 @@ from ..enums import (
 )
 from ..models.health_model import HealthStatus
 from ..models.overlay_model import OverlayGenerationJob
-from ..services.image_service import SyncImageService
-from ..services.logger import get_service_logger
 from ..services.overlay_pipeline import OverlayService
 from ..services.overlay_pipeline.services.job_service import SyncOverlayJobService
 from ..services.settings_service import SyncSettingsService
@@ -49,6 +46,8 @@ from .constants import MILLISECONDS_PER_SECOND
 from .mixins.job_processing_mixin import JobProcessingMixin
 from .mixins.startup_recovery_mixin import StartupRecoveryMixin
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 overlay_logger = get_service_logger(LoggerName.OVERLAY_WORKER, LogSource.WORKER)
 
@@ -110,8 +109,10 @@ class OverlayWorker(StartupRecoveryMixin, JobProcessingMixin[OverlayGenerationJo
             max_retries: Maximum retry attempts for failed jobs
             cleanup_hours: Hours after which completed jobs are cleaned up
         """
-        # Initialize SSE operations for shared components
-        sse_ops = SyncSSEEventsOperations(db)
+        # Initialize SSE operations for shared components using singleton
+        from ..dependencies.specialized import get_sync_sse_events_operations
+
+        sse_ops = get_sync_sse_events_operations()
 
         # Initialize shared job processing infrastructure
         super().__init__(
@@ -134,7 +135,10 @@ class OverlayWorker(StartupRecoveryMixin, JobProcessingMixin[OverlayGenerationJo
             db=db, settings_service=settings_service
         )
 
-        sync_image_service = SyncImageService(db)
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_sync_image_service
+
+        sync_image_service = get_sync_image_service()
 
         self.overlay_service = OverlayService(
             db,
@@ -446,8 +450,7 @@ class OverlayWorker(StartupRecoveryMixin, JobProcessingMixin[OverlayGenerationJo
         """
         Get comprehensive overlay worker status.
 
-        Extends the base status from JobProcessingMixin with overlay-specific
-        information.
+        Extends the base status from JobProcessingMixin with overlay-specific information.
 
         Returns:
             Dictionary with complete worker status

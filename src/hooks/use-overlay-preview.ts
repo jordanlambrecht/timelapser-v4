@@ -7,13 +7,22 @@ import { toast } from "sonner"
 export interface OverlayPreviewRequest {
   camera_id: number
   overlay_config: {
-    overlayPositions: Record<string, any>
-    globalOptions: {
+    overlayItems: Array<{
+      id: string
+      type: string
+      position: string
+      enabled: boolean
+      settings: any
+    }>
+    globalSettings: {
       opacity: number
-      dropShadow?: number
       font: string
       xMargin: number
       yMargin: number
+      backgroundColor: string
+      backgroundOpacity: number
+      fillColor: string
+      dropShadow: number
     }
   }
 }
@@ -29,22 +38,28 @@ export interface UseOverlayPreviewReturn {
   previewData: OverlayPreviewResponse | null
   isGenerating: boolean
   error: string | null
-  generatePreview: (request: OverlayPreviewRequest) => Promise<OverlayPreviewResponse | null>
+  generatePreview: (
+    request: OverlayPreviewRequest
+  ) => Promise<OverlayPreviewResponse | null>
   clearPreview: () => void
 }
 
 export const useOverlayPreview = (): UseOverlayPreviewReturn => {
-  const [previewData, setPreviewData] = useState<OverlayPreviewResponse | null>(null)
+  const [previewData, setPreviewData] = useState<OverlayPreviewResponse | null>(
+    null
+  )
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const generatePreview = async (request: OverlayPreviewRequest): Promise<OverlayPreviewResponse | null> => {
+  const generatePreview = async (
+    request: OverlayPreviewRequest
+  ): Promise<OverlayPreviewResponse | null> => {
     try {
       setIsGenerating(true)
       setError(null)
-      
+
       console.log("Generating overlay preview for camera:", request.camera_id)
-      
+
       const response = await fetch("/api/overlays/preview", {
         method: "POST",
         headers: {
@@ -56,7 +71,9 @@ export const useOverlayPreview = (): UseOverlayPreviewReturn => {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || `Failed to generate preview: ${response.statusText}`)
+        throw new Error(
+          data.error || `Failed to generate preview: ${response.statusText}`
+        )
       }
 
       if (!data.success) {
@@ -67,7 +84,10 @@ export const useOverlayPreview = (): UseOverlayPreviewReturn => {
       toast.success("Overlay preview generated successfully")
       return data
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to generate overlay preview"
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "Failed to generate overlay preview"
       setError(errorMessage)
       toast.error(errorMessage)
       return null

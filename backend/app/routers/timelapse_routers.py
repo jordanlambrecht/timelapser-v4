@@ -25,7 +25,8 @@ from ..dependencies import (
     TimelapseServiceDep,
     VideoServiceDep,
 )
-from ..enums import JobPriority
+from ..enums import JobPriority, LoggerName, LogSource
+from ..services.logger import get_service_logger
 from ..models import VideoWithDetails
 from ..models.image_model import Image
 from ..models.shared_models import (
@@ -60,6 +61,8 @@ from ..utils.validation_helpers import (
 # - Progress: SSE broadcasting - critical real-time monitoring
 # Individual endpoint NOTEs are excellently defined throughout this file.
 router = APIRouter(tags=["timelapses"])
+
+logger = get_service_logger(LoggerName.ROUTER, LogSource.API)
 
 
 # Pydantic validation for timelapse IDs
@@ -269,6 +272,7 @@ async def get_timelapse(
 async def update_timelapse(
     timelapse_data: TimelapseUpdate,
     timelapse_service: TimelapseServiceDep,
+    scheduler_service: SchedulerServiceDep,  # 🎯 SCHEDULER-CENTRIC: Add scheduler dependency
     timelapse_id: int = Depends(valid_timelapse_id),
 ):
     """
@@ -279,6 +283,16 @@ async def update_timelapse(
     """
 
     try:
+        # 🎯 SCHEDULER-CENTRIC: Get current timelapse to check if capture interval changed
+        current_timelapse = await timelapse_service.get_timelapse_by_id(timelapse_id)
+        if not current_timelapse:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Timelapse with ID {timelapse_id} not found",
+            )
+
+        current_interval = current_timelapse.capture_interval_seconds
+
         updated_timelapse = await timelapse_service.update_timelapse(
             timelapse_id, timelapse_data
         )
@@ -287,6 +301,33 @@ async def update_timelapse(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Timelapse with ID {timelapse_id} not found",
             )
+
+        # 🎯 SCHEDULER-CENTRIC: Update scheduler job if capture interval changed
+        if (
+            hasattr(timelapse_data, "capture_interval_seconds")
+            and timelapse_data.capture_interval_seconds is not None
+            and timelapse_data.capture_interval_seconds != current_interval
+        ):
+
+            try:
+                scheduler_result = await scheduler_service.update_timelapse_job(
+                    timelapse_id, timelapse_data.capture_interval_seconds
+                )
+                if scheduler_result.get("success"):
+                    logger.info(
+                        f"📅 Updated scheduler job for timelapse {timelapse_id}: "
+                        f"{current_interval}s → {timelapse_data.capture_interval_seconds}s"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Failed to update scheduler job for timelapse {timelapse_id}: "
+                        f"{scheduler_result.get('error', 'Unknown error')}"
+                    )
+            except Exception as scheduler_error:
+                logger.warning(
+                    f"⚠️ Scheduler update failed for timelapse {timelapse_id}: {scheduler_error}"
+                )
+                # Don't fail the entire update if scheduler update fails
 
         # SSE broadcasting handled in service layer
 

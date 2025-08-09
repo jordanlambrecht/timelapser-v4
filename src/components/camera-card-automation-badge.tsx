@@ -1,7 +1,7 @@
 // src/components/camera-card-automation-badge.tsx
 "use client"
 
-import { VideoAutomationMode } from "@/types"
+import { VideoAutomationMode } from "@/types/video-automation"
 import { VideoAutomationBadge } from "@/components/video-automation-badge"
 
 interface CameraCardAutomationBadgeProps {

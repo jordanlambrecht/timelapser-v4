@@ -84,7 +84,7 @@ class SSEEventsOperations:
             db: AsyncDatabase instance
         """
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_sse_event_caches(
         self,
@@ -110,7 +110,7 @@ class SSEEventsOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(event_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"sse_events:metadata:{event_id}", etag
                 )
 
@@ -586,6 +586,63 @@ class SyncSSEEventsOperations:
                     "event_type": event_type,
                     "priority": priority,
                     "source": source,
+                },
+            )
+
+    def create_events_batch(self, events: List[Dict[str, Any]]) -> List[int]:
+        """
+        Create multiple SSE events in a single transaction for optimal performance (sync version).
+
+        Args:
+            events: List of event dictionaries with keys: event_type, event_data, priority, source
+
+        Returns:
+            List of created event IDs
+
+        Raises:
+            Exception: If batch creation fails
+        """
+        if not events:
+            return []
+
+        try:
+            query = """
+                INSERT INTO sse_events (event_type, event_data, priority, source, retry_count)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """
+
+            event_ids = []
+
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    for event in events:
+                        cur.execute(
+                            query,
+                            (
+                                event["event_type"],
+                                json.dumps(event["event_data"]),
+                                event.get("priority", SSEPriority.NORMAL),
+                                event.get("source", "worker"),
+                                0,
+                            ),
+                        )
+                        result = cur.fetchone()
+                        if result:
+                            event_ids.append(result["id"])
+                        else:
+                            raise psycopg.DatabaseError(
+                                f"Failed to create SSE event: {event['event_type']}"
+                            )
+
+            return event_ids
+
+        except (psycopg.Error, KeyError, ValueError, json.JSONDecodeError):
+            raise SSEOperationError(
+                f"Failed to create SSE events batch ({len(events)} events)",
+                details={
+                    "operation": "create_events_batch_sync",
+                    "batch_size": len(events),
                 },
             )
 

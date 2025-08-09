@@ -242,7 +242,7 @@ export function WeatherSettingsCard() {
     setRefreshError(null)
 
     try {
-      const response = await fetch("/api/settings/weather/refresh", {
+      const response = await fetch("/api/weather/refresh", {
         method: "POST",
       })
 

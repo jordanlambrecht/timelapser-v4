@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Union
 from PIL import Image as PILImage
 
 from ....models.image_model import Image
-from ....models.overlay_model import OverlayItem, OverlayType
+from ....models.overlay_model import OverlayItem
 from ....models.timelapse_model import Timelapse as TimelapseModel
 
 
@@ -39,6 +39,7 @@ class OverlayGenerationContext:
     # Weather information (optional)
     temperature: Optional[float] = None
     weather_conditions: Optional[str] = None
+    weather_icon: Optional[str] = None
     temperature_unit: str = "F"
 
     # Settings service for timezone and other settings
@@ -67,7 +68,7 @@ class BaseOverlayGenerator(ABC):
 
     @property
     @abstractmethod
-    def supported_types(self) -> list[OverlayType]:
+    def supported_types(self) -> list[str]:
         """Return list of overlay types this generator supports."""
         pass
 
@@ -102,7 +103,7 @@ class BaseOverlayGenerator(ABC):
         """
         pass
 
-    def supports_type(self, overlay_type: OverlayType) -> bool:
+    def supports_type(self, overlay_type: str) -> bool:
         """Check if this generator supports the given overlay type."""
         return overlay_type in self.supported_types
 
@@ -125,20 +126,25 @@ class BaseOverlayGenerator(ABC):
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
     ) -> str:
         """Get effective text color, preferring item-specific over global."""
-        return overlay_item.text_color or context.global_fill_color
+        return overlay_item.settings.get("text_color") or context.global_fill_color
 
     def get_effective_background_color(
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
     ) -> str:
         """Get effective background color, preferring item-specific over global."""
-        return overlay_item.background_color or context.global_background_color
+        return (
+            overlay_item.settings.get("background_color")
+            or context.global_background_color
+        )
 
     def should_render_background(self, overlay_item: OverlayItem) -> bool:
         """Check if background should be rendered for this overlay item."""
         # Use item-specific setting if available, otherwise check if backgroundOpacity > 0
-        if overlay_item.enable_background is not None:
-            return overlay_item.enable_background
-        return overlay_item.background_opacity > 0
+        enable_background = overlay_item.settings.get("enable_background")
+        if enable_background is not None:
+            return enable_background
+        background_opacity = overlay_item.settings.get("background_opacity", 0)
+        return background_opacity > 0
 
 
 class OverlayGeneratorRegistry:
@@ -150,7 +156,7 @@ class OverlayGeneratorRegistry:
     """
 
     def __init__(self):
-        self._generators: Dict[OverlayType, BaseOverlayGenerator] = {}
+        self._generators: Dict[str, BaseOverlayGenerator] = {}
 
     def register(self, generator: BaseOverlayGenerator) -> None:
         """Register a generator for its supported overlay types."""
@@ -161,13 +167,13 @@ class OverlayGeneratorRegistry:
                 )
             self._generators[overlay_type] = generator
 
-    def get_generator(self, overlay_type: OverlayType) -> BaseOverlayGenerator:
+    def get_generator(self, overlay_type: str) -> BaseOverlayGenerator:
         """Get the generator for the given overlay type."""
         if overlay_type not in self._generators:
             raise ValueError(f"No generator registered for overlay type {overlay_type}")
         return self._generators[overlay_type]
 
-    def has_generator(self, overlay_type: OverlayType) -> bool:
+    def has_generator(self, overlay_type: str) -> bool:
         """Check if a generator is registered for the given overlay type."""
         return overlay_type in self._generators
 

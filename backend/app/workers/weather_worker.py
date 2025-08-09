@@ -22,10 +22,8 @@ from ..database.sse_events_operations import (
 )
 from ..enums import LogEmoji, LoggerName, LogSource, SSEPriority, WorkerType
 from ..models.weather_model import OpenWeatherApiData
-from ..services.logger import get_service_logger
 from ..services.settings_service import SettingsService, SyncSettingsService
 from ..services.weather.service import WeatherManager
-from ..services.weather_workflow_service import WeatherWorkflowService
 from ..utils.time_utils import get_timezone_from_cache_sync, utc_now
 from .base_worker import BaseWorker
 from .constants import (
@@ -46,6 +44,8 @@ from .models.weather_responses import (
     WeatherWorkerStatus,
 )
 from .utils.worker_status_builder import WorkerStatusBuilder
+
+from ..services.logger import get_service_logger
 
 weather_logger = get_service_logger(LoggerName.WEATHER_WORKER, LogSource.WORKER)
 
@@ -101,8 +101,10 @@ class WeatherWorker(BaseWorker):
         self.sse_ops = sse_ops
         self.async_sse_ops = async_sse_ops
 
-        # Initialize workflow service for Service Layer Boundary Pattern
-        self.weather_service = WeatherWorkflowService()
+        # Use dependency injection singleton to prevent database connection multiplication
+        from ..dependencies.sync_services import get_weather_workflow_service
+
+        self.weather_service = get_weather_workflow_service()
 
     async def initialize(self) -> None:
         """Initialize weather worker resources."""

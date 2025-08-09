@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
+from ....constants import DEFAULT_MAX_DATABASE_LOGS, MAX_DATABASE_LOGS_LIMIT
 from ....database.core import AsyncDatabase, SyncDatabase
 from ....enums import LogLevel
 from ....services.settings_cache import (
@@ -41,6 +42,7 @@ class LoggerSettingsCache:
     DEFAULT_SETTINGS = {
         # Database logging defaults
         "db_log_retention_days": 30,
+        "max_database_logs": DEFAULT_MAX_DATABASE_LOGS,
         "db_log_level": LogLevel.INFO,
         # File logging defaults
         "file_log_retention_days": 7,
@@ -124,6 +126,15 @@ class LoggerSettingsCache:
                 value = int(raw_value)
                 # Validate retention days (1-3650 days = ~10 years max)
                 if value < 1 or value > 3650:
+                    return self.DEFAULT_SETTINGS[setting_key]
+                return value
+            except (ValueError, TypeError):
+                return self.DEFAULT_SETTINGS[setting_key]
+        elif setting_key == "max_database_logs":
+            try:
+                value = int(raw_value)
+                # Validate max logs count using constants
+                if value < 1000 or value > MAX_DATABASE_LOGS_LIMIT:
                     return self.DEFAULT_SETTINGS[setting_key]
                 return value
             except (ValueError, TypeError):

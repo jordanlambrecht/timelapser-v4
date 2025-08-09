@@ -19,12 +19,70 @@ from ...constants import (
     DEFAULT_RTSP_TIMEOUT_SECONDS,
     RETRY_BACKOFF_BASE,
 )
-from ...enums import LoggerName
+from ...enums import LogEmoji, LoggerName, LogSource
 from ...exceptions import RTSPCaptureError, RTSPConnectionError
 from ...services.logger import get_service_logger
 
-logger = get_service_logger(LoggerName.CAPTURE_PIPELINE)
+logger = get_service_logger(LoggerName.CAPTURE_PIPELINE, LogSource.PIPELINE)
 # Default capture retries imported but not used
+
+
+def _is_frame_valid(frame: Any) -> bool:
+    """
+    Validate if a captured frame is not grey/corrupted.
+    Detects common issues:
+    - Grey/monochrome frames (often from stream initialization)
+    - Very dark frames (possible connection issues)
+    - Frames with insufficient contrast
+    Args:
+        frame: OpenCV frame to validate
+
+    Returns:
+        True if frame appears valid, False if likely corrupted
+    """
+    try:
+        if frame is None:
+            return False
+        # Convert to grayscale for analysis
+        if len(frame.shape) == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+        # Check 1: Mean brightness (avoid very dark frames)
+        mean_brightness = gray.mean()
+        if mean_brightness < 10:  # Very dark frame
+            logger.debug(f"Frame too dark - mean brightness: {mean_brightness:.1f}")
+            return False
+
+        # Check 2: Standard deviation (contrast check)
+        std_dev = gray.std()
+        if std_dev < 8:  # Very low contrast (likely grey frame)
+            logger.debug(
+                f"Frame too flat - std dev: {std_dev:.1f}, brightness: {mean_brightness:.1f}"
+            )
+            return False
+
+        # Check 3: Histogram analysis for grey frames
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+
+        # Find the peak value in histogram
+        peak_value = hist.argmax()
+        peak_count = hist[peak_value][0]
+        total_pixels = gray.shape[0] * gray.shape[1]
+
+        # If more than 80% of pixels are the same value, likely a grey frame
+        if peak_count > (0.8 * total_pixels):
+            logger.debug(
+                f"Frame likely grey - {peak_count/total_pixels:.1%} pixels at value {peak_value}"
+            )
+            return False
+
+        # Frame appears valid
+        return True
+
+    except Exception as e:
+        logger.debug(f"Frame validation error: {e}")
+        return True  # Default to valid if validation fails
 
 
 def configure_opencv_logging() -> None:
@@ -42,7 +100,9 @@ def configure_opencv_logging() -> None:
 
 
 def configure_rtsp_capture(
-    cap: cv2.VideoCapture, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS
+    cap: cv2.VideoCapture,
+    timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS,
+    low_fps_mode: bool = False,
 ) -> None:
     """
     Configure VideoCapture object for optimal RTSP/HEVC performance.
@@ -50,17 +110,38 @@ def configure_rtsp_capture(
     Args:
         cap: OpenCV VideoCapture object to configure
         timeout_seconds: Timeout for capture operations
+        low_fps_mode: Enable optimizations for low FPS cameras (5fps or lower)
     """
     # Set timeout and buffer size
     cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_seconds * 1000)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
+
+    if low_fps_mode:
+        # For low FPS cameras, use larger buffer to avoid frame drops during slow intervals
+        cap.set(
+            cv2.CAP_PROP_BUFFERSIZE, 3
+        )  # Larger buffer to handle irregular frame timing in 5fps streams
+        logger.debug("Configured for low FPS camera - using buffer size 3")
+
+        # Increase read timeout significantly for slow cameras
+        cap.set(
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_seconds * 2000
+        )  # Double the read timeout
+    else:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency for normal cameras
 
     # Set video codec preference (helps with HEVC streams)
     cap.set(cv2.CAP_PROP_CODEC_PIXEL_FORMAT, -1)  # Let OpenCV choose best format
 
-    # Reduce frame rate for more stable capture
-    cap.set(cv2.CAP_PROP_FPS, 5)
+    # Frame rate configuration
+    if low_fps_mode:
+        # Don't force FPS for low FPS cameras - let them use their natural rate
+        logger.debug(
+            "Low FPS mode - not forcing frame rate, using camera's natural FPS"
+        )
+    else:
+        # For normal cameras, suggest a reasonable frame rate
+        cap.set(cv2.CAP_PROP_FPS, 15)  # Higher FPS for normal cameras
 
     # Additional settings for problematic streams
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)  # Suggest resolution
@@ -70,17 +151,23 @@ def configure_rtsp_capture(
 def capture_frame_from_rtsp(
     rtsp_url: str,
     timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS,
-    skip_frames: int = 3,
+    skip_frames: int = 10,
+    warmup_seconds: float = 2.0,
+    auto_detect_fps: bool = True,
+    force_low_fps_mode: bool = False,
 ) -> Optional[Any]:
     """
-    Capture a single frame from RTSP stream with timeout handling.
+    Capture a single frame from RTSP stream with adaptive camera priming.
 
     Supports both regular RTSP and RTSPS (RTSP over SSL/TLS) connections.
+    Implements adaptive capture strategies for different camera frame rates.
 
     Args:
         rtsp_url: RTSP stream URL
         timeout_seconds: Timeout for capture operations
-        skip_frames: Number of frames to skip before capturing
+        skip_frames: Number of frames to skip before capturing (default: 10)
+        warmup_seconds: Time to let camera stream stabilize (default: 2.0s)
+        auto_detect_fps: Automatically detect and adapt to low FPS cameras
 
     Returns:
         OpenCV frame if successful, None if failed
@@ -105,8 +192,33 @@ def capture_frame_from_rtsp(
         # Configure OpenCV for RTSP with HEVC/H.265 optimization
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
 
-        # Apply RTSP configuration
-        configure_rtsp_capture(cap, timeout_seconds)
+        # Enhanced FPS detection and low FPS mode determination
+        low_fps_mode = force_low_fps_mode
+        detected_fps = None
+
+        if auto_detect_fps and not force_low_fps_mode:
+            try:
+                # Try to get FPS from stream properties
+                detected_fps = cap.get(cv2.CAP_PROP_FPS)
+                if (
+                    detected_fps > 0 and detected_fps <= 6
+                ):  # 6fps or lower considered low FPS
+                    low_fps_mode = True
+                    logger.info(
+                        f"Low FPS camera detected: {detected_fps:.1f}fps - enabling adaptive mode"
+                    )
+                elif detected_fps > 0:
+                    logger.debug(f"Normal FPS camera detected: {detected_fps:.1f}fps")
+                else:
+                    logger.debug("Could not detect camera FPS - using standard mode")
+            except Exception as e:
+                logger.debug(f"FPS detection failed: {e}")
+        elif force_low_fps_mode:
+            low_fps_mode = True
+            logger.info("Forced low FPS mode enabled for 5fps camera optimization")
+
+        # Apply RTSP configuration with FPS-specific optimizations
+        configure_rtsp_capture(cap, timeout_seconds, low_fps_mode)
 
         # Additional configuration for RTSPS streams
         if is_rtsps:
@@ -118,34 +230,179 @@ def capture_frame_from_rtsp(
                 logger.debug("Primary RTSPS capture failed, attempting fallbacks...")
                 cap.release()
                 return _capture_frame_rtsps_fallback(
-                    rtsp_url, timeout_seconds, skip_frames
+                    rtsp_url, timeout_seconds, skip_frames, warmup_seconds
                 )
             else:
                 raise RTSPConnectionError(f"Failed to open RTSP stream: {rtsp_url}")
 
-        # Skip frames to get past initial codec issues
-        for _ in range(skip_frames):
-            ret, _ = cap.read()
+        # Enhanced adaptive camera priming based on detected FPS
+        if low_fps_mode:
+            # For low FPS cameras (5fps = 200ms per frame), use longer stabilization
+            adjusted_warmup = max(
+                6.0, warmup_seconds * 2.0
+            )  # At least 6 seconds for stream stability
+
+            # Skip fewer frames but respect the frame rate timing
+            # For 5fps: skip 2-3 frames = 400-600ms of content = fresh frame
+            adjusted_skip_frames = max(
+                2, skip_frames // 5
+            )  # Much fewer frames (2-3 instead of 10)
+
+            # Increase timeout for low FPS cameras
+            adjusted_timeout = max(timeout_seconds * 2, 20)  # At least 20s timeout
+
+            logger.info(
+                f"Low FPS mode: Using {adjusted_warmup}s warmup, skipping {adjusted_skip_frames} frames, timeout {adjusted_timeout}s"
+            )
+        else:
+            adjusted_warmup = warmup_seconds
+            adjusted_skip_frames = skip_frames
+            adjusted_timeout = timeout_seconds
+
+        # Camera priming: Let the stream stabilize before capturing
+        logger.debug(f"Priming camera stream for {adjusted_warmup}s...")
+        time.sleep(adjusted_warmup)
+
+        # Skip frames to get past initial codec issues and buffered frames
+        logger.debug(f"Skipping {adjusted_skip_frames} frames to clear buffer...")
+        frames_skipped = 0
+        for i in range(adjusted_skip_frames):
+            start_read = time.time()
+            ret, frame = cap.read()
+            read_time = time.time() - start_read
+
             if not ret:
+                logger.debug(
+                    f"Failed to read frame {i+1}/{adjusted_skip_frames} during priming (after {read_time:.2f}s)"
+                )
+                # For low FPS cameras, wait a bit longer between failed reads
+                if low_fps_mode:
+                    time.sleep(0.3)
                 break
 
-        # Capture the actual frame
-        start_time = time.time()
-        ret, frame = cap.read()
-        elapsed_time = time.time() - start_time
+            frames_skipped += 1
 
-        if not ret or frame is None:
-            # For RTSPS, try fallback if frame capture fails
-            if is_rtsps:
-                logger.debug("RTSPS frame capture failed, trying fallback...")
-                cap.release()
-                return _capture_frame_rtsps_fallback(
-                    rtsp_url, timeout_seconds, skip_frames
+            # Optional: Basic frame validation during skip phase
+            if frame is not None and _is_frame_valid(frame):
+                logger.debug(
+                    f"Valid frame detected during skip phase ({i+1}/{adjusted_skip_frames}, read in {read_time:.2f}s)"
                 )
             else:
-                raise RTSPCaptureError(
-                    f"Failed to read frame from stream (took {elapsed_time:.2f}s)"
+                logger.debug(
+                    f"Invalid/grey frame detected during skip phase ({i+1}/{adjusted_skip_frames}, read in {read_time:.2f}s)"
                 )
+
+            # For low FPS cameras, add appropriate delay between reads to match frame rate
+            if low_fps_mode:
+                if detected_fps and detected_fps > 0:
+                    frame_interval = 1.0 / detected_fps
+                    if read_time < frame_interval:
+                        sleep_time = frame_interval - read_time
+                        logger.debug(
+                            f"Waiting {sleep_time:.2f}s to match {detected_fps:.1f}fps frame rate"
+                        )
+                        time.sleep(sleep_time)
+                else:
+                    # If FPS unknown, assume 5fps for low FPS mode
+                    time.sleep(0.2)  # 200ms for assumed 5fps
+
+        logger.debug(f"Successfully skipped {frames_skipped} frames")
+
+        # Additional pause after frame skipping - longer for low FPS to ensure fresh frame
+        final_pause = 2.0 if low_fps_mode else 0.5
+        logger.debug(f"Final pause before capture: {final_pause}s")
+        time.sleep(final_pause)
+
+        # Capture the actual frame with validation - more attempts and patience for low FPS
+        max_capture_attempts = (
+            8 if low_fps_mode else 3
+        )  # More attempts for low FPS cameras
+
+        # Initialize variables to avoid unbound warnings
+        frame = None
+        elapsed_time = 0.0
+
+        for attempt in range(max_capture_attempts):
+            start_time = time.time()
+            ret, frame = cap.read()
+            elapsed_time = time.time() - start_time
+
+            if not ret or frame is None:
+                logger.debug(
+                    f"Frame capture attempt {attempt + 1} failed - no frame returned (took {elapsed_time:.2f}s)"
+                )
+                if attempt < max_capture_attempts - 1:
+                    # For low FPS cameras, wait longer between attempts (one frame interval)
+                    if low_fps_mode:
+                        if detected_fps and detected_fps > 0:
+                            wait_time = (
+                                1.2 / detected_fps
+                            )  # Slightly longer than one frame
+                        else:
+                            wait_time = 0.25  # 250ms for assumed 5fps
+                    else:
+                        wait_time = 0.2
+
+                    logger.debug(
+                        f"Waiting {wait_time:.2f}s before retry attempt {attempt + 2}"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Final attempt failed - try fallback for RTSPS
+                    if is_rtsps:
+                        logger.debug("RTSPS frame capture failed, trying fallback...")
+                        cap.release()
+                        return _capture_frame_rtsps_fallback(
+                            rtsp_url, timeout_seconds, skip_frames, warmup_seconds
+                        )
+                    else:
+                        raise RTSPCaptureError(
+                            f"Failed to read frame from stream (took {elapsed_time:.2f}s)"
+                        )
+
+            # Validate the captured frame
+            if not _is_frame_valid(frame):
+                logger.debug(
+                    f"Frame capture attempt {attempt + 1} - invalid/grey frame detected (took {elapsed_time:.2f}s)"
+                )
+                if attempt < max_capture_attempts - 1:
+                    # Skip a few more frames and try again
+                    frames_to_skip = (
+                        1 if low_fps_mode else 2
+                    )  # Skip fewer frames for low FPS
+                    for _ in range(frames_to_skip):
+                        cap.read()
+                    # Wait longer for low FPS cameras to get a fresh frame
+                    if low_fps_mode:
+                        if detected_fps and detected_fps > 0:
+                            wait_time = (
+                                1.5 / detected_fps
+                            )  # 1.5 frame intervals for fresh frame
+                        else:
+                            wait_time = 0.3  # 300ms for assumed 5fps
+                    else:
+                        wait_time = 0.2
+
+                    logger.debug(
+                        f"Waiting {wait_time:.2f}s for fresh frame after invalid frame"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(
+                        "All frame validation attempts failed - proceeding with potentially invalid frame"
+                    )
+                    break
+            else:
+                logger.info(
+                    f"Valid frame captured on attempt {attempt + 1} (took {elapsed_time:.2f}s)"
+                )
+                if low_fps_mode:
+                    logger.info(
+                        f"Low FPS camera successful - frame rate: {detected_fps:.1f}fps"
+                    )
+                break
 
         logger.debug(f"Successfully captured frame ({elapsed_time:.2f}s)")
         return frame
@@ -171,15 +428,16 @@ def capture_frame_from_rtsp(
 
 
 def _capture_frame_rtsps_fallback(
-    rtsp_url: str, timeout_seconds: int, skip_frames: int
+    rtsp_url: str, timeout_seconds: int, skip_frames: int, warmup_seconds: float = 2.0
 ) -> Optional[Any]:
     """
-    Fallback frame capture for RTSPS connections.
+    Fallback frame capture for RTSPS connections with camera priming.
 
     Args:
         rtsp_url: RTSPS URL to capture from
         timeout_seconds: Timeout for capture operations
         skip_frames: Number of frames to skip
+        warmup_seconds: Time to let camera stream stabilize
 
     Returns:
         OpenCV frame if successful, None if failed
@@ -196,6 +454,12 @@ def _capture_frame_rtsps_fallback(
         configure_rtsp_capture(cap, timeout_seconds)
 
         if cap.isOpened():
+            # Camera priming for fallback
+            logger.debug(
+                f"Priming camera stream (TCP fallback) for {warmup_seconds}s..."
+            )
+            time.sleep(warmup_seconds)
+
             # Skip frames
             for _ in range(skip_frames):
                 ret, _ = cap.read()
@@ -205,8 +469,11 @@ def _capture_frame_rtsps_fallback(
             ret, frame = cap.read()
             cap.release()
 
-            if ret and frame is not None:
+            if ret and frame is not None and _is_frame_valid(frame):
                 logger.info("RTSPS TCP fallback capture successful")
+                return frame
+            elif ret and frame is not None:
+                logger.debug("RTSPS TCP fallback captured potentially invalid frame")
                 return frame
         else:
             cap.release()
@@ -226,6 +493,12 @@ def _capture_frame_rtsps_fallback(
         configure_rtsp_capture(cap, timeout_seconds)
 
         if cap.isOpened():
+            # Camera priming for regular RTSP fallback
+            logger.debug(
+                f"Priming camera stream (regular RTSP fallback) for {warmup_seconds}s..."
+            )
+            time.sleep(warmup_seconds)
+
             # Skip frames
             for _ in range(skip_frames):
                 ret, _ = cap.read()
@@ -235,9 +508,14 @@ def _capture_frame_rtsps_fallback(
             ret, frame = cap.read()
             cap.release()
 
-            if ret and frame is not None:
+            if ret and frame is not None and _is_frame_valid(frame):
                 logger.warning(
                     "Regular RTSP fallback capture successful (insecure connection)"
+                )
+                return frame
+            elif ret and frame is not None:
+                logger.warning(
+                    "Regular RTSP fallback captured potentially invalid frame (insecure connection)"
                 )
                 return frame
         else:
@@ -252,7 +530,7 @@ def _capture_frame_rtsps_fallback(
 
 
 def test_rtsp_connection(
-    rtsp_url: str, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS
+    rtsp_url: str, camera_id: int, timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS
 ) -> Tuple[bool, str]:
     """
     Test RTSP connection without capturing frames.
@@ -267,14 +545,19 @@ def test_rtsp_connection(
         Tuple of (success: bool, message: str)
     """
     try:
-        logger.info(f"🔗 Testing RTSP connection to: {rtsp_url}")
+        logger.debug(
+            f"Testing Camera {camera_id}'s RTSP connection to: {rtsp_url}",
+            emoji=LogEmoji.TEST,
+        )
 
         # Check if this is an RTSPS (secure) connection
         is_rtsps = rtsp_url.lower().startswith("rtsps://")
         if is_rtsps:
-            logger.info("🔒 Detected RTSPS (secure RTSP) connection")
+            logger.debug(
+                "🔐 Detected RTSPS (secure RTSP) connection", emoji=LogEmoji.TEST
+            )
         else:
-            logger.info("🔓 Detected regular RTSP connection")
+            logger.debug("🔓 Detected regular RTSP connection", emoji=LogEmoji.TEST)
 
         # Configure environment for SSL/TLS support
         if is_rtsps:
@@ -297,10 +580,16 @@ def test_rtsp_connection(
 
             # If RTSPS failed, try fallback approaches
             if is_rtsps:
-                logger.debug("RTSPS connection failed, trying fallback approaches...")
-                return _test_rtsps_fallback(rtsp_url, timeout_seconds)
+                logger.debug(
+                    f"🔴 RTSP connection test to Camera {camera_id} failed, trying fallback approaches...",
+                    emoji=LogEmoji.TEST,
+                )
+                return _test_rtsps_fallback(rtsp_url, camera_id, timeout_seconds)
             else:
-                logger.error(f"Failed to open RTSP stream: {rtsp_url}")
+                logger.error(
+                    f"🔴 Failed to open RTSP stream for Camera {camera_id}: {rtsp_url}",
+                    emoji=LogEmoji.TEST,
+                )
                 return False, "Failed to open RTSP stream"
 
         # Get basic stream properties to verify it's working
@@ -310,18 +599,30 @@ def test_rtsp_connection(
         cap.release()
 
         if width > 0 and height > 0:
-            logger.info(f"RTSP connection successful: {int(width)}x{int(height)}")
+            logger.info(
+                f"🟢 RTSP connection to Camera {camera_id} successful: {int(width)}x{int(height)}",
+                emoji=LogEmoji.TEST,
+                camera_id=camera_id,
+            )
             return True, f"Connection successful - Stream: {int(width)}x{int(height)}"
         else:
-            logger.warning("Stream opened but properties unavailable")
-            return False, "Stream opened but properties unavailable"
+            logger.warning(
+                f"🟡 RTSP connection to Camera {camera_id} degraded: Stream opened but properties unavailable",
+                emoji=LogEmoji.TEST,
+                camera_id=camera_id,
+            )
+            return False, "🟡 Stream opened but properties unavailable"
 
     except Exception as e:
-        logger.error("RTSP connection test exception", exception=e)
+        logger.error(
+            "🔴 RTSP connection test exception", exception=e, emoji=LogEmoji.TEST
+        )
         return False, f"Connection test failed: {str(e)}"
 
 
-def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str]:
+def _test_rtsps_fallback(
+    rtsp_url: str, camera_id: int, timeout_seconds: int
+) -> Tuple[bool, str]:
     """
     Fallback testing for RTSPS connections with alternative approaches.
 
@@ -339,7 +640,11 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
         else:
             tcp_url = rtsp_url + "?rtsp_transport=tcp"
 
-        logger.debug(f"Trying RTSPS with TCP transport: {tcp_url}")
+        logger.debug(
+            f"⌛️ Trying RTSPS test with TCP transport for Camera {camera_id}: {tcp_url}",
+            emoji=LogEmoji.TEST,
+            store_in_db=False,
+        )
         cap = cv2.VideoCapture(tcp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
 
@@ -350,11 +655,13 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
 
             if width > 0 and height > 0:
                 logger.info(
-                    f"RTSPS TCP fallback successful: {int(width)}x{int(height)}"
+                    f"🟢 RTSPS TCP fallback test for Camera {camera_id} successful. Stream dimensions found: {int(width)}x{int(height)}px",
+                    emoji=LogEmoji.TEST,
+                    store_in_db=True,
                 )
                 return (
                     True,
-                    f"RTSPS TCP connection successful - Stream: {int(width)}x{int(height)}",
+                    f"🟢 RTSPS TCP connection test successful - Stream dimensions: {int(width)}x{int(height)}px",
                 )
         else:
             cap.release()
@@ -364,9 +671,21 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
         # Remove enableSrtp parameter as it may not be compatible with regular RTSP
         if "enableSrtp" in regular_rtsp_url:
             regular_rtsp_url = regular_rtsp_url.split("?")[0]
-        logger.info(f"🔍 RTSP Fallback Debug - Original URL: {rtsp_url}")
-        logger.info(f"🔍 RTSP Fallback Debug - Modified URL: {regular_rtsp_url}")
-        logger.debug(f"Trying regular RTSP fallback (no SRTP): {regular_rtsp_url}")
+        logger.debug(
+            f"🔍 RTSP Fallback Debug - Original URL: {rtsp_url}",
+            store_in_db=False,
+            emoji=LogEmoji.TEST,
+        )
+        logger.debug(
+            f"🔍 RTSP Fallback Debug - Modified URL: {regular_rtsp_url}",
+            store_in_db=False,
+            emoji=LogEmoji.TEST,
+        )
+        logger.debug(
+            f"Trying regular RTSP fallback (no SRTP): {regular_rtsp_url}",
+            store_in_db=False,
+            emoji=LogEmoji.TEST,
+        )
 
         cap = cv2.VideoCapture(regular_rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_seconds * 1000)
@@ -378,7 +697,8 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
 
             if width > 0 and height > 0:
                 logger.warning(
-                    f"Regular RTSP fallback worked (insecure): {int(width)}x{int(height)}"
+                    f"🟢 Regular RTSP fallback test worked for Camera {camera_id} (insecure): {int(width)}x{int(height)}",
+                    emoji=LogEmoji.TEST,
                 )
                 return (
                     True,
@@ -390,7 +710,11 @@ def _test_rtsps_fallback(rtsp_url: str, timeout_seconds: int) -> Tuple[bool, str
         return False, "All RTSPS fallback approaches failed"
 
     except Exception as e:
-        logger.error("RTSPS fallback failed", exception=e)
+        logger.error(
+            f"🔴 RTSPS fallback test for Camera {camera_id} failed",
+            exception=e,
+            emoji=LogEmoji.TEST,
+        )
         return False, f"RTSPS fallback failed: {str(e)}"
 
 
@@ -409,13 +733,15 @@ def capture_frame_with_fallback(
     """
     # Strategy 1: Standard FFMPEG backend
     try:
-        frame = capture_frame_from_rtsp(rtsp_url, timeout_seconds)
+        frame = capture_frame_from_rtsp(
+            rtsp_url, timeout_seconds, skip_frames=10, warmup_seconds=2.0
+        )
         if frame is not None:
             return frame
     except (RTSPConnectionError, RTSPCaptureError) as e:
-        logger.debug(f"Standard capture failed: {e}")
+        logger.debug(f"🔴 Standard capture failed: {e}")
 
-    logger.debug("Standard capture failed, trying fallback strategies")
+    logger.debug("🔴 Standard capture failed, trying fallback strategies")
 
     # Strategy 2: Try with GSTREAMER backend if available
     try:
@@ -423,8 +749,11 @@ def capture_frame_with_fallback(
         configure_rtsp_capture(cap, timeout_seconds)
 
         if cap.isOpened():
+            # Camera priming for GStreamer backend
+            time.sleep(1.5)  # Shorter warmup for fallback strategy
+
             # Skip frames and read
-            for _ in range(3):
+            for _ in range(8):  # More frames for GStreamer
                 ret, _ = cap.read()
                 if not ret:
                     break
@@ -432,8 +761,11 @@ def capture_frame_with_fallback(
             ret, frame = cap.read()
             cap.release()
 
-            if ret and frame is not None:
-                logger.debug("GStreamer backend successful")
+            if ret and frame is not None and _is_frame_valid(frame):
+                logger.debug("GStreamer backend successful with valid frame")
+                return frame
+            elif ret and frame is not None:
+                logger.debug("GStreamer backend captured potentially invalid frame")
                 return frame
     except Exception as e:
         logger.debug(f"GStreamer fallback failed: {e}")
@@ -447,13 +779,26 @@ def capture_frame_with_fallback(
         cap.set(cv2.CAP_PROP_FORMAT, cv2.CV_8UC3)  # Force RGB format
 
         if cap.isOpened():
+            # Camera priming for alternative format
+            time.sleep(1.0)  # Brief warmup for final fallback
+
             # Read multiple frames to stabilize stream
-            for _ in range(5):
+            for i in range(8):
                 ret, frame = cap.read()
                 if ret and frame is not None:
-                    cap.release()
-                    logger.debug("Alternative format capture successful")
-                    return frame
+                    # Check if frame is valid after a few reads
+                    if i >= 3 and _is_frame_valid(frame):
+                        cap.release()
+                        logger.debug(
+                            "Alternative format capture successful with valid frame"
+                        )
+                        return frame
+                    elif i == 7:  # Last attempt
+                        cap.release()
+                        logger.debug(
+                            "Alternative format capture - using potentially invalid frame"
+                        )
+                        return frame
 
         cap.release()
     except Exception as e:
@@ -724,15 +1069,20 @@ def capture_with_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
     timeout_seconds: int = DEFAULT_RTSP_TIMEOUT_SECONDS,
     use_fallback: bool = True,
+    skip_frames: int = 10,
+    warmup_seconds: float = 2.0,
+    force_low_fps_mode: bool = False,
 ) -> Optional[Any]:
     """
-    Capture frame with retry logic and exponential backoff.
+    Capture frame with retry logic, exponential backoff, and camera priming.
 
     Args:
         rtsp_url: RTSP stream URL
         max_retries: Maximum number of retry attempts
         timeout_seconds: Timeout for each attempt
         use_fallback: Whether to use fallback strategies
+        skip_frames: Number of frames to skip before capturing
+        warmup_seconds: Time to let camera stream stabilize
 
     Returns:
         OpenCV frame if successful, None if all attempts failed
@@ -748,7 +1098,14 @@ def capture_with_retry(
                 # Use fallback on last attempt
                 frame = capture_frame_with_fallback(rtsp_url, timeout_seconds)
             else:
-                frame = capture_frame_from_rtsp(rtsp_url, timeout_seconds)
+                frame = capture_frame_from_rtsp(
+                    rtsp_url,
+                    timeout_seconds,
+                    skip_frames,
+                    warmup_seconds,
+                    True,
+                    force_low_fps_mode,
+                )
 
             if frame is not None:
                 return frame

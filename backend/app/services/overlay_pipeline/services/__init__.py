@@ -5,6 +5,7 @@ Overlay Services Module
 Contains all overlay service functionality including job management, presets, templates, and integration.
 """
 
+# Re-enabling integration service after fixing legacy format issues
 from .integration_service import (
     OverlayIntegrationService,
     SyncOverlayIntegrationService,
@@ -20,6 +21,6 @@ __all__ = [
     "SyncOverlayPresetService",
     "OverlayTemplateService",
     "SyncOverlayTemplateService",
-    "OverlayIntegrationService",
-    "SyncOverlayIntegrationService",
+    "OverlayIntegrationService",  # Re-enabled
+    "SyncOverlayIntegrationService",  # Re-enabled
 ]

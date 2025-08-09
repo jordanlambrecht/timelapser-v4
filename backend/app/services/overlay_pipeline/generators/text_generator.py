@@ -10,7 +10,7 @@ from typing import Union
 from PIL import Image as PILImage
 
 from ....enums import LoggerName, LogSource
-from ....models.overlay_model import OverlayItem, OverlayType
+from ....models.overlay_model import OverlayItem
 from ....services.logger import get_service_logger
 from ....utils.validation_helpers import validate_custom_text
 from .base_generator import BaseOverlayGenerator, OverlayGenerationContext
@@ -30,9 +30,24 @@ class TextGenerator(BaseOverlayGenerator):
     """
 
     @property
-    def supported_types(self) -> list[OverlayType]:
+    def generator_type(self) -> str:
+        """Return the primary generator type."""
+        return "custom_text"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for this generator."""
+        return "Custom Text"
+
+    @property
+    def description(self) -> str:
+        """Description of what this generator does."""
+        return "Adds custom text and timelapse name overlays"
+
+    @property
+    def supported_types(self) -> list[str]:
         """Text generator supports custom_text and timelapse_name overlays."""
-        return [OverlayType.CUSTOM_TEXT, OverlayType.TIMELAPSE_NAME]
+        return ["custom_text", "timelapse_name"]
 
     @property
     def is_static(self) -> bool:
@@ -80,7 +95,7 @@ class TextGenerator(BaseOverlayGenerator):
             raise
         except Exception as e:
             logger.error("Failed to generate text overlay content", exception=e)
-            raise RuntimeError(f"Failed to generate text content: {e}")
+            raise RuntimeError("Failed to generate text content")
 
     def _generate_custom_text(
         self, overlay_item: OverlayItem, context: OverlayGenerationContext
@@ -100,17 +115,18 @@ class TextGenerator(BaseOverlayGenerator):
         """
         logger.debug("Processing custom text overlay generation")
 
-        if not overlay_item.custom_text:
+        custom_text = overlay_item.settings.get("custom_text")
+        if not custom_text:
             logger.error("Custom text overlay missing custom_text property")
             raise ValueError("Custom text overlay requires custom_text property")
 
         logger.debug(
-            f"Custom text content: '{overlay_item.custom_text[:50]}{'...' if len(overlay_item.custom_text) > 50 else ''}'"
+            f"Custom text content: '{custom_text[:50]}{'...' if len(custom_text) > 50 else ''}'"
         )
 
         # Return the text as-is
         # Future enhancement: Could support text templating/variables here
-        result = overlay_item.custom_text.strip()
+        result = custom_text.strip()
         logger.debug("Custom text overlay generated successfully")
         return result
 
@@ -168,10 +184,14 @@ class TextGenerator(BaseOverlayGenerator):
 
             try:
                 # Use validation helper for consistent validation
-                validated_text = validate_custom_text(overlay_item.custom_text)
-                logger.debug(
-                    f"Custom text overlay validation passed: {len(validated_text)} characters"
-                )
+                custom_text = overlay_item.settings.get("custom_text")
+                if custom_text:
+                    validated_text = validate_custom_text(custom_text)
+                    logger.debug(
+                        f"Custom text overlay validation passed: {len(validated_text)} characters"
+                    )
+                else:
+                    raise ValueError("Custom text is required for custom_text overlay")
             except ValueError as e:
                 logger.error("Custom text validation failed", exception=e)
                 raise

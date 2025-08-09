@@ -23,7 +23,7 @@ Architecture: API Layer - delegates all business logic to services
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from app.dependencies import (
     AdminServiceDep,
@@ -67,7 +67,7 @@ def _validate_job_type(job_type: str) -> None:
 @router.get("/jobs", response_model=Dict[str, Any])
 @handle_exceptions("list scheduled jobs")
 async def list_scheduled_jobs(
-    admin_service: AdminServiceDep,
+    admin_service: AdminServiceDep = Depends(),
     job_type: Optional[str] = Query(None, description="Filter by job type"),
     status: Optional[str] = Query(None, description="Filter by status"),
     entity_type: Optional[str] = Query(None, description="Filter by entity type"),
@@ -109,7 +109,7 @@ async def list_scheduled_jobs(
 @router.get("/jobs/{job_id}", response_model=Dict[str, Any])
 @handle_exceptions("get scheduled job details")
 async def get_scheduled_job_details(
-    scheduled_job_ops: ScheduledJobOperationsDep,
+    scheduled_job_ops: ScheduledJobOperationsDep = Depends(),
     job_id: str = Path(..., description="Job ID to retrieve"),
 ) -> Dict[str, Any]:
     """
@@ -150,7 +150,7 @@ async def get_scheduled_job_details(
 @router.get("/jobs/{job_id}/executions", response_model=Dict[str, Any])
 @handle_exceptions("get job execution history")
 async def get_job_execution_history(
-    scheduled_job_ops: ScheduledJobOperationsDep,
+    scheduled_job_ops: ScheduledJobOperationsDep = Depends(),
     job_id: str = Path(..., description="Job ID"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -192,7 +192,7 @@ async def get_job_execution_history(
 @router.get("/statistics", response_model=Dict[str, Any])
 @handle_exceptions("get job statistics")
 async def get_job_statistics(
-    scheduled_job_ops: ScheduledJobOperationsDep,
+    scheduled_job_ops: ScheduledJobOperationsDep = Depends(),
 ) -> Dict[str, Any]:
     """
     Get comprehensive statistics about all scheduled jobs.
@@ -227,7 +227,7 @@ async def get_job_statistics(
 @router.put("/jobs/{job_id}", response_model=Dict[str, Any])
 @handle_exceptions("update scheduled job")
 async def update_scheduled_job(
-    scheduled_job_ops: ScheduledJobOperationsDep,
+    scheduled_job_ops: ScheduledJobOperationsDep = Depends(),
     job_id: str = Path(..., description="Job ID to update"),
     update_data: ScheduledJobUpdate = Body(...),
 ) -> Dict[str, Any]:
@@ -272,7 +272,7 @@ async def update_scheduled_job(
 @router.post("/jobs/{job_id}/actions/{action}", response_model=Dict[str, Any])
 @handle_exceptions("execute job action")
 async def execute_job_action(
-    admin_service: AdminServiceDep,
+    admin_service: AdminServiceDep = Depends(),
     job_id: str = Path(..., description="Job ID"),
     action: str = Path(..., description="Action to execute"),
 ) -> Dict[str, Any]:
@@ -317,7 +317,7 @@ async def execute_job_action(
 @router.post("/jobs/bulk-actions/{action}", response_model=Dict[str, Any])
 @handle_exceptions("execute bulk job action")
 async def execute_bulk_job_action(
-    admin_service: AdminServiceDep,
+    admin_service: AdminServiceDep = Depends(),
     action: str = Path(..., description="Bulk action to execute"),
     job_ids: List[str] = Query(..., description="List of job IDs"),
 ) -> Dict[str, Any]:
@@ -356,7 +356,7 @@ async def execute_bulk_job_action(
 @router.get("/health", response_model=Dict[str, Any])
 @handle_exceptions("admin health check")
 async def admin_health_check(
-    admin_service: AdminServiceDep,
+    admin_service: AdminServiceDep = Depends(),
 ) -> Dict[str, Any]:
     """
     Health check for the admin system and scheduler integration.

@@ -90,18 +90,46 @@ class JobQueueService:
     - Provides type-safe interfaces for all job types
     """
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, thumbnail_job_ops=None, overlay_job_ops=None, video_ops=None, sse_ops=None):
         """
-        Initialize JobQueueService with async database instance.
+        Initialize JobQueueService with injected dependencies.
 
         Args:
             db: AsyncDatabase instance
+            thumbnail_job_ops: Optional ThumbnailJobOperations instance
+            overlay_job_ops: Optional OverlayJobOperations instance
+            video_ops: Optional VideoOperations instance
+            sse_ops: Optional SSEEventsOperations instance
         """
         self.db = db
-        self.thumbnail_job_ops = ThumbnailJobOperations(db)
-        self.overlay_job_ops = OverlayJobOperations(db)
-        self.video_ops = VideoOperations(db)
-        self.sse_ops = SSEEventsOperations(db)
+        self.thumbnail_job_ops = thumbnail_job_ops or self._get_default_thumbnail_job_ops()
+        self.overlay_job_ops = overlay_job_ops or self._get_default_overlay_job_ops()
+        self.video_ops = video_ops or self._get_default_video_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
+        
+    def _get_default_thumbnail_job_ops(self):
+        """Fallback to get ThumbnailJobOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ...database.thumbnail_job_operations import ThumbnailJobOperations
+        return ThumbnailJobOperations(self.db)
+        
+    def _get_default_overlay_job_ops(self):
+        """Fallback to get OverlayJobOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ...database.overlay_job_operations import OverlayJobOperations
+        return OverlayJobOperations(self.db)
+        
+    def _get_default_video_ops(self):
+        """Fallback to get VideoOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ...database.video_operations import VideoOperations
+        return VideoOperations(self.db)
+        
+    def _get_default_sse_ops(self):
+        """Fallback to get SSEEventsOperations singleton"""
+        # This is a sync method in an async class, use direct instantiation
+        from ...database.sse_events_operations import SSEEventsOperations
+        return SSEEventsOperations(self.db)
 
     async def create_thumbnail_job(
         self,
@@ -397,18 +425,42 @@ class SyncJobQueueService:
     that need to create jobs without async/await complexity.
     """
 
-    def __init__(self, db: SyncDatabase):
+    def __init__(self, db: SyncDatabase, thumbnail_job_ops=None, overlay_job_ops=None, video_ops=None, sse_ops=None):
         """
-        Initialize SyncJobQueueService with sync database instance.
+        Initialize SyncJobQueueService with injected dependencies.
 
         Args:
             db: SyncDatabase instance
+            thumbnail_job_ops: Optional SyncThumbnailJobOperations instance
+            overlay_job_ops: Optional SyncOverlayJobOperations instance
+            video_ops: Optional SyncVideoOperations instance
+            sse_ops: Optional SyncSSEEventsOperations instance
         """
         self.db = db
-        self.thumbnail_job_ops = SyncThumbnailJobOperations(db)
-        self.overlay_job_ops = SyncOverlayJobOperations(db)
-        self.video_ops = SyncVideoOperations(db)
-        self.sse_ops = SyncSSEEventsOperations(db)
+        self.thumbnail_job_ops = thumbnail_job_ops or self._get_default_thumbnail_job_ops()
+        self.overlay_job_ops = overlay_job_ops or self._get_default_overlay_job_ops()
+        self.video_ops = video_ops or self._get_default_video_ops()
+        self.sse_ops = sse_ops or self._get_default_sse_ops()
+        
+    def _get_default_thumbnail_job_ops(self):
+        """Fallback to get SyncThumbnailJobOperations singleton"""
+        from ...dependencies.specialized import get_sync_thumbnail_job_operations
+        return get_sync_thumbnail_job_operations()
+        
+    def _get_default_overlay_job_ops(self):
+        """Fallback to get SyncOverlayJobOperations singleton"""
+        from ...dependencies.specialized import get_sync_overlay_job_operations
+        return get_sync_overlay_job_operations()
+        
+    def _get_default_video_ops(self):
+        """Fallback to get SyncVideoOperations singleton"""
+        from ...dependencies.specialized import get_sync_video_operations
+        return get_sync_video_operations()
+        
+    def _get_default_sse_ops(self):
+        """Fallback to get SyncSSEEventsOperations singleton"""
+        from ...dependencies.specialized import get_sync_sse_events_operations
+        return get_sync_sse_events_operations()
 
     def create_thumbnail_job(
         self,

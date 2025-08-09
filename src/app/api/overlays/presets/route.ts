@@ -5,28 +5,35 @@ const FASTAPI_URL =
   process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
 
 // Built-in presets to show until backend is ready
-const BUILTIN_PRESETS = [
+const builtinPresets = [
   {
     id: 1,
     name: "Basic Timestamp",
-    description: "Simple date and time overlay in bottom-left corner",
+    description: "Simple timestamp overlay in the bottom right corner",
     overlay_config: {
-      overlayPositions: {
-        bottomLeft: {
-          type: "date_time",
-          textSize: 16,
-          textColor: "#FFFFFF",
-          backgroundOpacity: 0,
-          imageScale: 100,
-        },
-      },
-      globalOptions: {
+      globalSettings: {
         opacity: 100,
-        dropShadow: 2,
         font: "Arial",
         xMargin: 20,
         yMargin: 20,
+        backgroundColor: "#000000",
+        backgroundOpacity: 0,
+        fillColor: "#FFFFFF",
+        dropShadow: 2,
       },
+      overlayItems: [
+        {
+          id: "timestamp_1",
+          type: "date_time",
+          position: "bottomRight",
+          enabled: true,
+          settings: {
+            textSize: 16,
+            textColor: "#FFFFFF",
+            backgroundOpacity: 0,
+          },
+        },
+      ],
     },
     is_builtin: true,
     created_at: "2025-01-01T00:00:00Z",
@@ -37,29 +44,42 @@ const BUILTIN_PRESETS = [
     name: "Weather + Time",
     description: "Weather conditions with timestamp and temperature",
     overlay_config: {
-      overlayPositions: {
-        topLeft: {
-          type: "weather_temp_conditions",
-          textSize: 14,
-          textColor: "#FFFFFF",
-          backgroundOpacity: 0,
-          imageScale: 100,
-        },
-        bottomRight: {
-          type: "time_only",
-          textSize: 18,
-          textColor: "#FFFFFF",
-          backgroundOpacity: 0,
-          imageScale: 100,
-        },
-      },
-      globalOptions: {
+      globalSettings: {
         opacity: 90,
-        dropShadow: 3,
         font: "Arial",
         xMargin: 25,
         yMargin: 25,
+        backgroundColor: "#000000",
+        backgroundOpacity: 0,
+        fillColor: "#FFFFFF",
+        dropShadow: 3,
       },
+      overlayItems: [
+        {
+          id: "weather_1",
+          type: "weather_conditions",
+          position: "topLeft",
+          enabled: true,
+          settings: {
+            textSize: 14,
+            textColor: "#FFFFFF",
+            backgroundOpacity: 0,
+            includeTemperature: true,
+          },
+        },
+        {
+          id: "time_1",
+          type: "date_time",
+          position: "bottomRight",
+          enabled: true,
+          settings: {
+            textSize: 18,
+            textColor: "#FFFFFF",
+            backgroundOpacity: 0,
+            timeOnly: true,
+          },
+        },
+      ],
     },
     is_builtin: true,
     created_at: "2025-01-01T00:00:00Z",
@@ -70,29 +90,41 @@ const BUILTIN_PRESETS = [
     name: "Minimal Corner",
     description: "Date in top corner and frame count in bottom",
     overlay_config: {
-      overlayPositions: {
-        topRight: {
-          type: "date_only",
-          textSize: 12,
-          textColor: "#FFFFFF",
-          backgroundOpacity: 0,
-          imageScale: 100,
-        },
-        bottomLeft: {
-          type: "frame_number",
-          textSize: 12,
-          textColor: "#CCCCCC",
-          backgroundOpacity: 0,
-          imageScale: 100,
-        },
-      },
-      globalOptions: {
+      globalSettings: {
         opacity: 80,
-        dropShadow: 1,
         font: "Arial",
         xMargin: 15,
         yMargin: 15,
+        backgroundColor: "#000000",
+        backgroundOpacity: 0,
+        fillColor: "#FFFFFF",
+        dropShadow: 1,
       },
+      overlayItems: [
+        {
+          id: "date_1",
+          type: "date_time",
+          position: "topRight",
+          enabled: true,
+          settings: {
+            textSize: 12,
+            textColor: "#FFFFFF",
+            backgroundOpacity: 0,
+            dateOnly: true,
+          },
+        },
+        {
+          id: "frame_1",
+          type: "frame_number",
+          position: "bottomLeft",
+          enabled: true,
+          settings: {
+            textSize: 12,
+            textColor: "#CCCCCC",
+            backgroundOpacity: 0,
+          },
+        },
+      ],
     },
     is_builtin: true,
     created_at: "2025-01-01T00:00:00Z",
@@ -104,7 +136,7 @@ export async function GET() {
   try {
     console.log("Fetching overlay presets...")
 
-    const response = await fetch(`${FASTAPI_URL}/api/overlays/presets`, {
+    const response = await fetch(`${FASTAPI_URL}/api/overlays`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -116,7 +148,7 @@ export async function GET() {
         `Backend overlay endpoint returned ${response.status}, falling back to built-in presets`
       )
       // Return built-in presets as fallback
-      return NextResponse.json(BUILTIN_PRESETS)
+      return NextResponse.json(builtinPresets)
     }
 
     const data = await response.json()
@@ -127,7 +159,7 @@ export async function GET() {
   } catch (error) {
     console.error("Error fetching overlay presets:", error)
     // Return built-in presets on connection error
-    return NextResponse.json(BUILTIN_PRESETS)
+    return NextResponse.json(builtinPresets)
   }
 }
 
@@ -136,7 +168,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     console.log("Creating overlay preset:", body.name)
 
-    const response = await fetch(`${FASTAPI_URL}/api/overlays/presets`, {
+    const response = await fetch(`${FASTAPI_URL}/api/overlays`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

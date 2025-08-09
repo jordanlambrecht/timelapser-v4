@@ -763,7 +763,9 @@ class LoggingHelper:
 
     def __init__(self, async_db: AsyncDatabase, sync_db: SyncDatabase):
         """Initialize with database connections for logging."""
-        self.log = LoggerService(async_db, sync_db)
+        # Use singleton LoggerService to prevent database connection multiplication
+        from ..dependencies.sync_services import get_logger_service
+        self.log = get_logger_service()
 
     async def log_operation_start(
         self, operation: str, entity_type: str, entity_id: Union[int, str]

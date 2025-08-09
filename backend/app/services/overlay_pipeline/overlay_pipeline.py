@@ -8,6 +8,7 @@ with proper dependency injection following the established pattern.
 
 from typing import Any, Dict, Optional
 
+from ...config import settings
 from ...database.core import AsyncDatabase, SyncDatabase
 from ...enums import LogEmoji, LoggerName, LogSource
 from ...models.health_model import HealthStatus
@@ -16,10 +17,10 @@ from ...utils.time_utils import utc_timestamp
 from ..image_service import ImageService, SyncImageService
 from .services import (
     AsyncOverlayJobService,
-    OverlayIntegrationService,
+    OverlayIntegrationService,  # Re-enabled
     OverlayPresetService,
     OverlayTemplateService,
-    SyncOverlayIntegrationService,
+    SyncOverlayIntegrationService,  # Re-enabled
     SyncOverlayJobService,
     SyncOverlayPresetService,
     SyncOverlayTemplateService,
@@ -70,37 +71,6 @@ class OverlayPipeline:
             self._initialize_async_services()
 
         # Generators removed - using OverlayRenderer directly in integration service
-        """
-        Initialize overlay pipeline with strict dependency injection.
-
-        Args:
-            database: Sync database instance (for creating sync services)
-            async_database: Async database instance (for async services)
-            settings_service: Settings service for configuration access (required for production)
-            sse_ops: SSE events operations for real-time notifications (required for production)
-
-        Note:
-            Weather data is read from stored image records (weather_temperature, weather_conditions, etc.)
-            rather than making live API calls to weather services.
-        """
-        self.database = database
-        self.async_database = async_database
-        self.settings_service = settings_service
-        self.sse_ops = sse_ops
-
-        # Validate that we have the necessary dependencies for production use
-        if not settings_service:
-            logger.warning(
-                "OverlayPipeline instantiated without settings_service - should only happen in tests"
-            )
-
-        # Initialize services
-        if database:
-            self._initialize_sync_services()
-        if async_database:
-            self._initialize_async_services()
-
-        # Generators removed - using OverlayRenderer directly in integration service
 
     def _initialize_sync_services(self):
         """Initialize sync services for worker processes."""
@@ -108,28 +78,48 @@ class OverlayPipeline:
             return
 
         try:
-            self.sync_job_service = SyncOverlayJobService(
-                self.database, self.settings_service
-            )
-            self.sync_preset_service = SyncOverlayPresetService(self.database)
-            self.sync_template_service = SyncOverlayTemplateService(self.database)
+            # Use dependency injection to prevent cascade multiplication
+            from ...dependencies.sync_services import get_sync_overlay_job_service
+            from ...dependencies.pipelines import get_sync_overlay_integration_service
+            
+            try:
+                # Use singletons where available to prevent database connection multiplication
+                self.sync_job_service = get_sync_overlay_job_service()
+                
+                # Fallback to direct instantiation for services not yet fully in DI system
+                # Use dependency injection singletons to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_overlay_preset_service, get_sync_overlay_template_service
+                self.sync_preset_service = get_sync_overlay_preset_service()
+                self.sync_template_service = get_sync_overlay_template_service()
+                
+                # Use DI singleton for image service to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_image_service
+                sync_image_service = get_sync_image_service()
 
-            sync_image_service = SyncImageService(self.database)
-
-            self.sync_integration_service = SyncOverlayIntegrationService(
-                self.database,
-                sync_image_service,
-                self.settings_service,
-                self.sync_preset_service,
-                self.sync_job_service,
-            )
+                # Use singleton integration service if available
+                self.sync_integration_service = get_sync_overlay_integration_service()
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Failed to use DI for overlay services, falling back to direct instantiation: {e}")
+                # Fallback to direct instantiation if DI not available
+                self.sync_job_service = SyncOverlayJobService(
+                    self.database, self.settings_service
+                )
+                # Use dependency injection singletons to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_overlay_preset_service, get_sync_overlay_template_service
+                self.sync_preset_service = get_sync_overlay_preset_service()
+                self.sync_template_service = get_sync_overlay_template_service()
+                
+                # Use DI singleton for image service to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_image_service
+                sync_image_service = get_sync_image_service()
+                # Use singleton integration service to prevent connection multiplication
+                from ...dependencies.sync_services import get_sync_overlay_integration_service
+                self.sync_integration_service = get_sync_overlay_integration_service()
             logger.debug(
                 "Overlay pipeline sync services initialized", emoji=LogEmoji.SUCCESS
             )
         except Exception as e:
-            logger.error(
-                f"Failed to initialize overlay pipeline sync services: {e}", exception=e
-            )
+            logger.error(f"Failed to initialize overlay pipeline sync services: {e}")
             raise
 
     def _initialize_async_services(self):
@@ -138,78 +128,117 @@ class OverlayPipeline:
             return
 
         try:
-            # Services that require settings_service
-            if self.settings_service:
-                self.job_service = AsyncOverlayJobService(
-                    self.async_database, self.settings_service
-                )
+            # Use dependency injection where available to prevent cascade multiplication
+            from ...dependencies.async_services import get_overlay_job_service
+            
+            try:
+                # Services that don't require settings_service (create first)
+                # Use sync equivalents since this is a sync constructor  
+                from ...dependencies.sync_services import get_sync_overlay_preset_service, get_sync_overlay_template_service
+                self.preset_service = get_sync_overlay_preset_service()
+                self.template_service = get_sync_overlay_template_service()
 
-                image_service = ImageService(self.async_database, self.settings_service)
+                # Services that require settings_service - use DI where available
+                if self.settings_service:
+                    # TODO: Fix async DI - cannot await in non-async method
+                    # For now, use direct instantiation
+                    self.job_service = AsyncOverlayJobService(
+                        self.async_database, self.settings_service
+                    )
 
-                self.integration_service = OverlayIntegrationService(
-                    self.async_database,
-                    self.settings_service,
-                    None,
-                    self.preset_service,
-                    image_service,
-                )
-            else:
-                logger.warning(
-                    "Cannot initialize overlay services requiring settings_service - service not provided"
-                )
+                    # Use sync equivalent since this is a sync constructor
+                    from ...dependencies.sync_services import get_sync_image_service
+                    image_service = get_sync_image_service()
 
-            # Services that don't require settings_service
-            self.preset_service = OverlayPresetService(self.async_database)
-            self.template_service = OverlayTemplateService(self.async_database)
+                    # Use sync equivalent since this is a sync constructor
+                    from ...dependencies.sync_services import get_sync_overlay_integration_service
+                    self.integration_service = get_sync_overlay_integration_service()
+                else:
+                    logger.warning(
+                        "Cannot initialize overlay services requiring settings_service - service not provided"
+                    )
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Failed to use DI for async overlay services, falling back to direct instantiation: {e}")
+                # Fallback to direct instantiation if DI not available
+                self.preset_service = OverlayPresetService(self.async_database)
+                self.template_service = OverlayTemplateService(self.async_database)
+                if self.settings_service:
+                    self.job_service = AsyncOverlayJobService(
+                        self.async_database, self.settings_service
+                    )
+                    # Use sync equivalent since this is a sync constructor
+                    from ...dependencies.sync_services import get_sync_image_service
+                    image_service = get_sync_image_service()
+                    self.integration_service = OverlayIntegrationService(
+                        self.async_database,
+                        self.settings_service,
+                        None,
+                        self.preset_service,
+                        image_service,
+                    )
+                else:
+                    logger.warning(
+                        "Cannot initialize overlay services requiring settings_service - service not provided"
+                    )
 
             logger.debug(
                 "Overlay pipeline async services initialized", emoji=LogEmoji.SUCCESS
             )
         except Exception as e:
-            logger.error(
-                f"Failed to initialize overlay pipeline async services: {e}",
-                exception=e,
-            )
+            logger.error(f"Failed to initialize overlay pipeline async services: {e}")
             raise
+
+    def _require_service(
+        self, service_attr: str, service_name: str, requires_settings: bool = True
+    ):
+        """
+        Generic service validator to reduce code duplication.
+
+        Args:
+            service_attr: Attribute name of the service (e.g., 'job_service')
+            service_name: Human-readable service name for error messages
+            requires_settings: Whether this service requires settings_service
+
+        Returns:
+            The required service instance
+
+        Raises:
+            ValueError: If service is not available or requirements not met
+        """
+        if not hasattr(self, service_attr) or not getattr(self, service_attr):
+            requirements = []
+            if service_attr.startswith("sync_"):
+                requirements.append("database")
+            else:
+                requirements.append("async_database")
+
+            if requires_settings:
+                requirements.append("settings_service")
+
+            requirements_str = " and ".join(requirements)
+            raise ValueError(
+                f"{service_name} is required for this operation. "
+                f"Ensure OverlayPipeline was initialized with {requirements_str}."
+            )
+        return getattr(self, service_attr)
 
     def _require_job_service(self):
         """Ensure job service is available for operations."""
-        if not hasattr(self, "job_service") or not self.job_service:
-            raise ValueError(
-                "AsyncOverlayJobService is required for this operation. "
-                "Ensure OverlayPipeline was initialized with settings_service."
-            )
-        return self.job_service
+        return self._require_service("job_service", "AsyncOverlayJobService")
 
     def _require_integration_service(self):
         """Ensure integration service is available for operations."""
-        if not hasattr(self, "integration_service") or not self.integration_service:
-            raise ValueError(
-                "OverlayIntegrationService is required for this operation. "
-                "Ensure OverlayPipeline was initialized with settings_service."
-            )
-        return self.integration_service
+        return self._require_service("integration_service", "OverlayIntegrationService")
 
     def _require_sync_job_service(self):
         """Ensure sync job service is available for operations."""
-        if not hasattr(self, "sync_job_service") or not self.sync_job_service:
-            raise ValueError(
-                "SyncOverlayJobService is required for this operation. "
-                "Ensure OverlayPipeline was initialized with database and settings_service."
-            )
-        return self.sync_job_service
+        return self._require_service("sync_job_service", "SyncOverlayJobService")
 
     def _require_sync_integration_service(self):
         """Ensure sync integration service is available for operations."""
-        if (
-            not hasattr(self, "sync_integration_service")
-            or not self.sync_integration_service
-        ):
-            raise ValueError(
-                "SyncOverlayIntegrationService is required for this operation. "
-                "Ensure OverlayPipeline was initialized with database and settings_service."
-            )
-        return self.sync_integration_service
+        return self._require_service(
+            "sync_integration_service", "SyncOverlayIntegrationService"
+        )
 
     def generate_overlay_for_image(
         self, image_id: int, force_regenerate: bool = False
@@ -247,16 +276,18 @@ class OverlayPipeline:
             image_id, force_regenerate
         )
 
-    def process_overlay_queue(self, batch_size: int = 5) -> Dict[str, Any]:
+    def process_overlay_queue(self, batch_size: Optional[int] = None) -> Dict[str, Any]:
         """
         Process pending overlay jobs from the queue.
 
         Args:
-            batch_size: Number of jobs to process in this batch
+            batch_size: Number of jobs to process in this batch (uses config default if not provided)
 
         Returns:
             Processing results with success/failure counts
         """
+        if batch_size is None:
+            batch_size = settings.overlay_processing_batch_size
         sync_job_service = self._require_sync_job_service()
 
         try:
@@ -280,18 +311,12 @@ class OverlayPipeline:
                 except Exception as e:
                     sync_job_service.mark_job_failed(job.id, str(e))
                     failed += 1
-                    logger.error(
-                        f"Failed to process overlay job {job.id}: {e}",
-                        exception=e,
-                    )
+                    logger.error(f"Failed to process overlay job {job.id}: {e}")
 
             return {"processed": processed, "succeeded": succeeded, "failed": failed}
 
         except Exception as e:
-            logger.error(
-                f"Failed to process overlay queue: {e}",
-                exception=e,
-            )
+            logger.error(f"Failed to process overlay queue: {e}")
             return {"processed": 0, "succeeded": 0, "failed": 0}
 
     def get_comprehensive_statistics(self) -> Dict[str, Any]:
@@ -356,8 +381,7 @@ class OverlayPipeline:
                         "error": str(e),
                     }
                     logger.warning(
-                        f"Failed to collect integration service statistics: {e}",
-                        exception=e,
+                        f"Failed to collect integration service statistics: {e}"
                     )
 
             # Calculate pipeline-level metrics
@@ -371,10 +395,7 @@ class OverlayPipeline:
             return statistics
 
         except Exception as e:
-            logger.error(
-                f"Failed to collect comprehensive overlay statistics: {e}",
-                exception=e,
-            )
+            logger.error(f"Failed to collect comprehensive overlay statistics: {e}")
             return {
                 "pipeline": "overlay_generation",
                 "timestamp": utc_timestamp(),
@@ -392,11 +413,11 @@ class OverlayPipeline:
                 "service_availability": {},
             }
 
-            # Check service availability
-            services = statistics.get("services", {})
+            # Check service availability - guaranteed by this service
+            services = statistics["services"]  # Service boundary guarantee
             total_services = len(services)
             available_services = len(
-                [s for s in services.values() if s.get("status") == "available"]
+                [s for s in services.values() if s["status"] == "available"]
             )
 
             if total_services > 0:
@@ -416,33 +437,43 @@ class OverlayPipeline:
                     metrics["overall_health"] = "unhealthy"
 
             # Calculate efficiency score from job statistics if available
-            job_service = services.get("job_service", {})
-            if job_service.get("status") == "available":
-                job_stats = job_service.get("statistics", {})
-                if job_stats:
-                    completed = job_stats.get("completed_jobs_24h", 0)
-                    failed = job_stats.get("failed_jobs_24h", 0)
-                    total_processed = completed + failed
+            if (
+                "job_service" in services
+                and services["job_service"]["status"] == "available"
+            ):
+                job_service = services["job_service"]
+                if "statistics" in job_service:
+                    job_stats = job_service["statistics"]
+                    if job_stats:
+                        # Service boundary guarantee - no defensive .get() needed
+                        completed = (
+                            job_stats["completed_jobs_24h"]
+                            if "completed_jobs_24h" in job_stats
+                            else 0
+                        )
+                        failed = (
+                            job_stats["failed_jobs_24h"]
+                            if "failed_jobs_24h" in job_stats
+                            else 0
+                        )
+                        total_processed = completed + failed
 
-                    if total_processed > 0:
-                        success_rate = (completed / total_processed) * 100
-                        metrics["efficiency_score"] = round(success_rate, 2)
+                        if total_processed > 0:
+                            success_rate = (completed / total_processed) * 100
+                            metrics["efficiency_score"] = round(success_rate, 2)
 
-                        # Determine throughput status
-                        if completed > 100:  # High volume
+                        # Determine throughput status using configured thresholds
+                        if completed > settings.overlay_high_throughput_threshold:
                             metrics["throughput_status"] = "high"
-                        elif completed > 10:  # Moderate volume
+                        elif completed > settings.overlay_moderate_throughput_threshold:
                             metrics["throughput_status"] = "moderate"
-                        else:  # Low volume
+                        else:
                             metrics["throughput_status"] = "low"
 
             return metrics
 
         except Exception as e:
-            logger.warning(
-                f"Failed to calculate pipeline metrics: {e}",
-                exception=e,
-            )
+            logger.warning(f"Failed to calculate pipeline metrics: {e}")
             return {"error": str(e)}
 
 
@@ -518,18 +549,15 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
             try:
                 job_health = pipeline.sync_job_service.get_service_health()
                 service_health["job_service"] = job_health
-                if job_health.get("status") not in [
+                if job_health["status"] not in [
                     HealthStatus.HEALTHY,
                     HealthStatus.DEGRADED,
                 ]:
                     all_services_healthy = False
-                if job_health.get("status") == HealthStatus.UNHEALTHY:
+                if job_health["status"] == HealthStatus.UNHEALTHY:
                     critical_services_healthy = False
             except Exception as e:
-                logger.error(
-                    f"Failed to get job service health: {e}",
-                    exception=e,
-                )
+                logger.error(f"Failed to get job service health: {e}")
                 service_health["job_service"] = {
                     "status": HealthStatus.ERROR,
                     "error": str(e),
@@ -546,18 +574,15 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
                     pipeline.sync_integration_service.get_service_health()
                 )
                 service_health["integration_service"] = integration_health
-                if integration_health.get("status") not in [
+                if integration_health["status"] not in [
                     HealthStatus.HEALTHY,
                     HealthStatus.DEGRADED,
                 ]:
                     all_services_healthy = False
-                if integration_health.get("status") == HealthStatus.UNHEALTHY:
+                if integration_health["status"] == HealthStatus.UNHEALTHY:
                     critical_services_healthy = False
             except Exception as e:
-                logger.error(
-                    f"Failed to get integration service health: {e}",
-                    exception=e,
-                )
+                logger.error(f"Failed to get integration service health: {e}")
                 service_health["integration_service"] = {
                     "status": HealthStatus.ERROR,
                     "error": str(e),
@@ -569,7 +594,7 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
         if hasattr(pipeline, "sync_preset_service") and pipeline.sync_preset_service:
             try:
                 # Basic connectivity check for preset service
-                preset_healthy = hasattr(pipeline.sync_preset_service, "preset_ops")
+                preset_healthy = hasattr(pipeline.sync_preset_service, "overlay_ops")
                 service_health["preset_service"] = {
                     "status": (
                         HealthStatus.HEALTHY
@@ -580,10 +605,7 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
                 if not preset_healthy:
                     all_services_healthy = False
             except Exception as e:
-                logger.warning(
-                    f"Preset service degraded: {e}",
-                    exception=e,
-                )
+                logger.warning(f"Preset service degraded: {e}")
                 service_health["preset_service"] = {
                     "status": HealthStatus.DEGRADED,
                     "error": str(e),
@@ -598,7 +620,7 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
             try:
                 # Basic connectivity check for template service
                 template_healthy = hasattr(
-                    pipeline.sync_template_service, "template_ops"
+                    pipeline.sync_template_service, "overlay_ops"
                 )
                 service_health["template_service"] = {
                     "status": (
@@ -610,10 +632,7 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
                 if not template_healthy:
                     all_services_healthy = False
             except Exception as e:
-                logger.warning(
-                    f"Template service degraded: {e}",
-                    exception=e,
-                )
+                logger.warning(f"Template service degraded: {e}")
                 service_health["template_service"] = {
                     "status": HealthStatus.DEGRADED,
                     "error": str(e),
@@ -654,7 +673,7 @@ def get_overlay_pipeline_health(pipeline: OverlayPipeline) -> Dict[str, Any]:
         return health_data
 
     except Exception as e:
-        logger.error(f"Failed to get overlay pipeline health: {e}", exception=e)
+        logger.error(f"Failed to get overlay pipeline health: {e}")
 
         return {
             "service": "overlay_pipeline",

@@ -182,7 +182,7 @@ export default function TimelapsesLibraryPage() {
       </div>
 
       {/* Statistics Dashboard */}
-      <StatsDashboard statistics={statistics} error={statisticsError} />
+      <StatsDashboard statistics={statistics || undefined} error={statisticsError} />
 
       {/* Library Controls */}
       <LibraryHeader

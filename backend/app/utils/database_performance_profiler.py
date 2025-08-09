@@ -9,9 +9,7 @@ Identifies bottlenecks, provides optimization recommendations, and tracks perfor
 import time
 from typing import Any, Dict, List, Optional
 
-from ..database.camera_operations import AsyncCameraOperations
 from ..database.core import AsyncDatabase
-from ..database.image_operations import AsyncImageOperations
 from ..enums import LoggerName
 from ..services.logger import get_service_logger
 from .database_helpers import DatabaseBenchmark
@@ -47,7 +45,9 @@ class DatabasePerformanceProfiler:
         Returns:
             Dictionary containing performance metrics and recommendations
         """
-        camera_ops = AsyncCameraOperations(self.db, None)
+        # Use singleton camera operations for profiling
+        from ..dependencies.specialized import get_camera_operations
+        camera_ops = await get_camera_operations()
         results = {}
 
         # Profile get_cameras operation
@@ -95,7 +95,9 @@ class DatabasePerformanceProfiler:
         Returns:
             Dictionary containing performance metrics and recommendations
         """
-        image_ops = AsyncImageOperations(self.db)
+        # Use singleton image operations for profiling
+        from ..dependencies.specialized import get_image_operations
+        image_ops = await get_image_operations()
         results = {}
 
         # Profile get_images with pagination
@@ -121,12 +123,20 @@ class DatabasePerformanceProfiler:
         Returns:
             Dictionary containing performance metrics and recommendations
         """
-        # For profiling, we need direct access to SettingsOperations to benchmark it
-        # This is one of the few legitimate uses of direct instantiation
+        # Use singleton settings operations for profiling
         if self._settings_ops is None:
-            from ..database.settings_operations import SettingsOperations
-
-            self._settings_ops = SettingsOperations(self.db)
+            from ..dependencies.specialized import get_settings_operations
+            import asyncio
+            try:
+                # Try to get from existing event loop
+                self._settings_ops = await get_settings_operations()
+            except RuntimeError:
+                # No event loop, create one temporarily
+                loop = asyncio.new_event_loop()
+                try:
+                    self._settings_ops = loop.run_until_complete(get_settings_operations())
+                finally:
+                    loop.close()
 
         results = {}
 

@@ -113,8 +113,18 @@ class VideoOperations:
             db: AsyncDatabase instance
         """
         self.db = db
-        self.recovery_ops = RecoveryOperations(db)
-        self.cache_invalidation = CacheInvalidationService()
+        self.recovery_ops = self._get_recovery_operations()
+        
+    def _get_recovery_operations(self):
+        """Get RecoveryOperations singleton to avoid connection multiplication"""
+        try:
+            from ..dependencies.specialized import get_sync_recovery_operations
+            return get_sync_recovery_operations()
+        except (RuntimeError, ImportError):
+            # Fallback if singleton not available
+            from .recovery_operations import RecoveryOperations
+            return RecoveryOperations(self.db)
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_video_caches(
         self,
@@ -139,7 +149,7 @@ class VideoOperations:
             # Use ETag-aware invalidation if timestamp provided
             if updated_at:
                 etag = generate_composite_etag(video_id, updated_at)
-                await self.cache_invalidation.invalidate_with_etag_validation(
+                await CacheInvalidationService.invalidate_with_etag_validation(
                     f"video:metadata:{video_id}", etag
                 )
 
@@ -745,7 +755,17 @@ class SyncVideoOperations:
             db: SyncDatabase instance
         """
         self.db = db
-        self.recovery_ops = SyncRecoveryOperations(db)
+        self.recovery_ops = self._get_recovery_operations()
+        
+    def _get_recovery_operations(self):
+        """Get SyncRecoveryOperations singleton to avoid connection multiplication"""
+        try:
+            from ..dependencies.specialized import get_sync_recovery_operations
+            return get_sync_recovery_operations()
+        except ImportError:
+            # Fallback if singleton not available
+            from .recovery_operations import SyncRecoveryOperations
+            return SyncRecoveryOperations(self.db)
 
     def _row_to_video_generation_job_with_details(
         self, row: Dict[str, Any]
@@ -1009,7 +1029,7 @@ class SyncVideoOperations:
         query = """
         DELETE FROM video_generation_jobs
         WHERE status IN ('completed', 'failed')
-        AND completed_at < %(current_time)s - %(days_to_keep)s * INTERVAL '1 day'
+        AND completed_at < %(current_time)s - INTERVAL '1 day' * %(days_to_keep)s
         """
         current_time = utc_now()
         with self.db.get_connection() as conn:

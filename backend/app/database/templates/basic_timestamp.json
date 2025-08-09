@@ -2,26 +2,31 @@
   "name": "Basic Timestamp",
   "description": "Simple date and time overlay in bottom-left corner with clean styling",
   "overlay_config": {
-    "overlayPositions": {
-      "bottomLeft": {
+    "overlay_items": [
+      {
+        "id": "timestamp_1",
         "type": "date_time",
-        "textSize": 18,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 60,
-        "dateFormat": "MM/dd/yyyy HH:mm",
-        "enableBackground": true,
-        "backgroundColor": "#000000"
+        "position": "bottomLeft",
+        "enabled": true,
+        "settings": {
+          "textSize": 18,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 60,
+          "dateFormat": "MM/dd/yyyy HH:mm",
+          "enableBackground": true,
+          "backgroundColor": "#000000"
+        }
       }
-    },
-    "globalOptions": {
+    ],
+    "global_settings": {
       "opacity": 100,
       "font": "Arial",
-      "xMargin": 25,
-      "yMargin": 25,
-      "backgroundColor": "#000000",
-      "backgroundOpacity": 60,
-      "fillColor": "#FFFFFF",
-      "dropShadow": 2,
+      "x_margin": 25,
+      "y_margin": 25,
+      "background_color": "#000000",
+      "background_opacity": 60,
+      "fill_color": "#FFFFFF",
+      "drop_shadow": 2,
       "preset": "basic_timestamp"
     }
   },

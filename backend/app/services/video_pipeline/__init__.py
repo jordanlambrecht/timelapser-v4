@@ -40,34 +40,42 @@ def create_video_pipeline(
     try:
         logger.info("Creating simplified video pipeline...")
 
-        # Step 1: Create shared database instances if not provided
+        # Step 1: Use shared database instances if not provided
         if db is None:
-            db = SyncDatabase()
-            logger.debug("Created new database instance for video pipeline")
+            from ...database import sync_db
+            db = sync_db
+            logger.debug("Using shared sync database instance for video pipeline")
 
-        # Create async database for services that need it
-
-        async_db = AsyncDatabase()
+        # Use shared async database for services that need it
+        from ...database import async_db
 
         # Create settings service if not provided
         if settings_service is None:
-
-            settings_service = SyncSettingsService(db)
-            logger.debug("Created settings service for video pipeline")
+            from ...dependencies.sync_services import get_sync_settings_service
+            settings_service = get_sync_settings_service()
+            logger.debug("Using singleton settings service for video pipeline")
 
         # Step 2: Create business services (simplified architecture)
         logger.debug("Initializing video pipeline services...")
 
-        job_service = VideoJobService(db, async_db, settings_service)
-        logger.debug("VideoJobService created")
+        # Use singleton services instead of creating new instances
+        from ...dependencies.pipelines import (
+            get_video_job_service,
+            get_overlay_integration_service,
+        )
+        from ...dependencies.sync_services import (
+            get_sync_video_service,
+            get_sync_timelapse_service,
+        )
+        
+        job_service = get_video_job_service()
+        logger.debug("VideoJobService retrieved from singleton")
 
-        overlay_service = OverlayIntegrationService(db)
-        logger.debug("OverlayIntegrationService created")
+        overlay_service = get_overlay_integration_service()
+        logger.debug("OverlayIntegrationService retrieved from singleton")
 
-        # Create video and timelapse services for workflow service
-
-        video_service = SyncVideoService(db, settings_service)
-        timelapse_service = SyncTimelapseService(db)
+        video_service = get_sync_video_service()
+        timelapse_service = get_sync_timelapse_service()
         logger.debug("Video and timelapse services created")
 
         # Step 3: Create main workflow service (consolidated orchestrator)
@@ -81,7 +89,7 @@ def create_video_pipeline(
         )
         logger.debug("VideoWorkflowService created with all dependencies")
 
-        logger.info("Simplified video pipeline created successfully")
+        logger.info("Video pipeline created successfully")
         return workflow_service
 
     except Exception as e:
@@ -108,12 +116,11 @@ def create_video_job_service(
 
         # Create missing dependencies
         if async_db is None:
-
-            async_db = AsyncDatabase()
+            from ...database import async_db
 
         if settings_service is None:
-
-            settings_service = SyncSettingsService(db)
+            from ...dependencies.sync_services import get_sync_settings_service
+            settings_service = get_sync_settings_service()
 
         return VideoJobService(db, async_db, settings_service)
     except Exception as e:

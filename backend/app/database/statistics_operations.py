@@ -207,7 +207,7 @@ class StatisticsOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_statistics_caches(
         self, stat_type: Optional[str] = None, updated_at: Optional[datetime] = None
@@ -231,7 +231,7 @@ class StatisticsOperations:
         # Use ETag-aware invalidation if timestamp provided
         if updated_at:
             etag = generate_timestamp_etag(updated_at)
-            await self.cache_invalidation.invalidate_with_etag_validation(
+            await CacheInvalidationService.invalidate_with_etag_validation(
                 "statistics:metadata", etag
             )
 
@@ -379,7 +379,7 @@ class StatisticsOperations:
                 COUNT(*) FILTER (WHERE i.is_flagged = true) as flagged_count
             FROM images i
             JOIN timelapses t ON i.timelapse_id = t.id
-            WHERE i.captured_at > %(current_time)s - %(hours)s * INTERVAL '1 hour'"""
+            WHERE i.captured_at > %(current_time)s - INTERVAL '1 hour' * %(hours)s"""
 
             if camera_id:
                 base_query += " AND t.camera_id = %(camera_id)s"
@@ -617,7 +617,7 @@ class SyncStatisticsOperations:
                 COUNT(*) FILTER (WHERE cl.action_taken = 'saved') as successful_captures
             FROM corruption_logs cl
             WHERE cl.camera_id = %(camera_id)s
-            AND cl.created_at > %(current_time)s - %(hours)s * INTERVAL '1 hour'
+            AND cl.created_at > %(current_time)s - INTERVAL '1 hour' * %(hours)s
             """
 
             params: Dict[str, Any] = {

@@ -203,27 +203,32 @@ result = initialize_database()
 
 ### Template Configuration Format
 
-Templates use the backend `overlayPositions` format with grid-based positioning:
+Templates use the unified overlay format with overlay_items array:
 
 ```json
 {
   "name": "Template Name",
   "description": "Template description",
   "overlay_config": {
-    "overlayPositions": {
-      "bottomLeft": {
+    "overlay_items": [
+      {
+        "id": "timestamp_1",
         "type": "date_time",
-        "textSize": 18,
-        "textColor": "#FFFFFF",
-        "backgroundOpacity": 60,
-        "dateFormat": "MM/dd/yyyy HH:mm"
+        "position": "bottomLeft",
+        "enabled": true,
+        "settings": {
+          "textSize": 18,
+          "textColor": "#FFFFFF",
+          "backgroundOpacity": 60,
+          "dateFormat": "MM/dd/yyyy HH:mm"
+        }
       }
-    },
-    "globalOptions": {
+    ],
+    "global_settings": {
       "opacity": 100,
       "font": "Arial",
-      "xMargin": 25,
-      "yMargin": 25
+      "x_margin": 25,
+      "y_margin": 25
     }
   },
   "is_builtin": true
@@ -249,11 +254,11 @@ Templates use the backend `overlayPositions` format with grid-based positioning:
 
 ### 3. Data Transformation
 
-**Responsible**: _[TO BE IMPLEMENTED - Frontend Adapter]_
+**Responsible**: _[UNIFIED FORMAT COMPLETED]_
 
-- Transform frontend overlayItems array to backend overlayPositions dict
-- Convert frontend settings to backend OverlayItem properties
-- Map position strings to GridPosition enum values
+- Backend now uses unified overlay_items array format matching frontend
+- No transformation needed - frontend and backend use consistent data structure
+- Unified OverlayConfiguration model handles all overlay settings consistently
 
 ### 4. Business Logic Coordination
 
@@ -330,12 +335,11 @@ python3 test_docker_templates.py          # Test Docker readiness
 
 ### 🔄 Ongoing Issues
 
-1. **Data Structure Mismatch**: Frontend sends array, backend expects dict
-2. **Monolithic Content Generation**: Single large if-elif chain instead of
+1. **Monolithic Content Generation**: Single large if-elif chain instead of
    modular generators
-3. **Missing Properties**: Backend doesn't support some frontend properties
-   (unit, display, leadingZeros, hidePrefix)
-4. **Performance**: Limited caching of static overlay elements
+2. **Performance**: Limited caching of static overlay elements
+3. **Frontend Legacy Patterns**: Frontend still contains legacy overlayPositions
+   format in some components
 
 ## Future Improvements
 

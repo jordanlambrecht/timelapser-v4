@@ -119,7 +119,7 @@ class RecoveryOperations:
     def __init__(self, db: AsyncDatabase) -> None:
         """Initialize with async database instance."""
         self.db = db
-        self.cache_invalidation = CacheInvalidationService()
+        # CacheInvalidationService is now used as static class methods
 
     async def _clear_recovery_caches(
         self, table_name: str, updated_at: Optional[datetime] = None
@@ -156,7 +156,7 @@ class RecoveryOperations:
         # Use ETag-aware invalidation if timestamp provided
         if updated_at:
             etag = generate_timestamp_etag(updated_at)
-            await self.cache_invalidation.invalidate_with_etag_validation(
+            await CacheInvalidationService.invalidate_with_etag_validation(
                 f"recovery:metadata:{table_name}", etag
             )
 

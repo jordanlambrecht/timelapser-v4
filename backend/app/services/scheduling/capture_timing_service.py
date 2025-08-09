@@ -561,16 +561,18 @@ class SyncCaptureTimingService:
         self.async_db = async_db
         self.time_window_service = time_window_service
         self.settings_service = settings_service
-        
+
         # Validate that we got a sync settings service
-        if hasattr(settings_service, 'get_setting'):
+        if hasattr(settings_service, "get_setting"):
             # Test call to ensure it's sync
             try:
                 test_call = settings_service.get_setting("timezone")
                 # If it's a coroutine, it means we got an async service by mistake
-                if hasattr(test_call, '__await__'):
-                    raise ValueError("SyncCaptureTimingService received async settings service instead of sync")
-            except Exception as e:
+                if hasattr(test_call, "__await__"):
+                    raise ValueError(
+                        "SyncCaptureTimingService received async settings service instead of sync"
+                    )
+            except Exception:
                 # This is fine, could just be a database issue
                 pass
 
@@ -715,12 +717,11 @@ class SyncCaptureTimingService:
             CaptureValidationResult with validation status and details
         """
         try:
-            # Import here to avoid circular imports
-            from ...database.camera_operations import SyncCameraOperations
-            from ...database.timelapse_operations import SyncTimelapseOperations
+            # Using injected Operations singletons
+            from ...dependencies.specialized import get_sync_camera_operations, get_sync_timelapse_operations
 
-            camera_ops = SyncCameraOperations(self.db, self.async_db)
-            timelapse_ops = SyncTimelapseOperations(self.db)
+            camera_ops = get_sync_camera_operations()
+            timelapse_ops = get_sync_timelapse_operations()
 
             # Step 0: Extract camera_id from timelapse if camera_id=0 (scheduler convenience)
             if camera_id == 0:
