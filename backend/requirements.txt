@@ -18,7 +18,7 @@ asyncio-throttle==1.0.2
 apscheduler==3.11.0
 
 # HTTP requests for SSE broadcasting
-requests==2.32.3
+requests==2.32.4
 
 # Utilities
 python-multipart==0.0.22
