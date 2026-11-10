@@ -5,10 +5,10 @@ const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:800
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const timelapseId = params.id
+    const timelapseId = (await params).id
     console.log(`Fetching overlay configuration for timelapse ${timelapseId}`)
     
     const response = await fetch(`${FASTAPI_URL}/api/overlays/config/${timelapseId}`, {
@@ -44,10 +44,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const timelapseId = params.id
+    const timelapseId = (await params).id
     const body = await request.json()
     console.log(`Creating overlay configuration for timelapse ${timelapseId}`)
     
@@ -82,10 +82,10 @@ export async function POST(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const timelapseId = params.id
+    const timelapseId = (await params).id
     const body = await request.json()
     console.log(`Updating overlay configuration for timelapse ${timelapseId}`)
     
@@ -120,10 +120,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const timelapseId = params.id
+    const timelapseId = (await params).id
     console.log(`Deleting overlay configuration for timelapse ${timelapseId}`)
     
     const response = await fetch(`${FASTAPI_URL}/api/overlays/config/${timelapseId}`, {

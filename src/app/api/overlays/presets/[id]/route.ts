@@ -5,10 +5,10 @@ const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:800
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
 
     const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
       method: "GET",
@@ -37,10 +37,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     
     const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
@@ -72,10 +72,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     
     const response = await fetch(`${FASTAPI_URL}/api/overlays/presets/${id}`, {
       method: "DELETE",

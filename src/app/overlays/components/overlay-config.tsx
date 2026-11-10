@@ -59,7 +59,7 @@ export function OverlayConfig({ overlayPositions, onUpdateOverlay, selectedPosit
           setColorState(newColor)
           onChange(newColor.hex)
         }}
-        alpha={false}
+        hideAlpha
         hideInput={["hsv"]}
       />
     )
